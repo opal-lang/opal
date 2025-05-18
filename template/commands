@@ -1,0 +1,10 @@
+# Basic devcmd commands file
+# Format: [command-name]: command to execute
+
+# Simple examples
+hello: echo "Hello from devcmd!"
+date: date
+pwd: pwd
+
+# Git shortcuts (if git is installed)
+status: git status
