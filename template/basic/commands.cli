@@ -1,0 +1,55 @@
+# Basic development commands template
+# Customize these commands for your project
+
+def SRC = ./src;
+def BUILD_DIR = ./build;
+
+# Build the project
+build: {
+  echo "Building project...";
+  mkdir -p $(BUILD_DIR);
+  echo "Build complete"
+}
+
+# Run tests
+test: {
+  echo "Running tests...";
+  echo "Tests complete"
+}
+
+# Clean build artifacts
+clean: {
+  echo "Cleaning build artifacts...";
+  rm -rf $(BUILD_DIR);
+  echo "Clean complete"
+}
+
+# Install dependencies
+deps: {
+  echo "Installing dependencies...";
+  echo "Dependencies installed"
+}
+
+# Format code
+format: {
+  echo "Formatting code...";
+  echo "Formatting complete"
+}
+
+# Run linters
+lint: {
+  echo "Running linters...";
+  echo "Linting complete"
+}
+
+# Development server or watch mode
+watch dev: {
+  echo "Starting development mode...";
+  echo "Development mode started"
+}
+
+# Stop development processes
+stop dev: {
+  echo "Stopping development processes...";
+  echo "Development processes stopped"
+}

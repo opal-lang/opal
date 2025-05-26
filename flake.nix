@@ -1,175 +1,196 @@
 {
-  description = "devcmd - Simple shell command DSL for Nix development environments";
+  description = "devcmd - Domain-specific language for generating development command CLIs";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, ... }:
-    let
-      # Standard library and helpers
-      lib = nixpkgs.lib;
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAllSystems = f: lib.genAttrs systems f;
-      pkgsFor = system: import nixpkgs { inherit system; };
-      version = "0.1.0";
-    in
-    {
-      # Go parser binary package
-      packages = forAllSystems (system:
-        let pkgs = pkgsFor system;
-        in {
-          default = pkgs.buildGoModule {
-            pname = "devcmd-parser";
-            inherit version;
-            src = ./.;
-            vendorHash = null; # Skip vendoring for projects with no external dependencies
-            subPackages = [ "cmd/devcmd-parser" ];
+  outputs = { self, nixpkgs, flake-utils }:
+    flake-utils.lib.eachDefaultSystem
+      (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          lib = nixpkgs.lib;
+
+          # Main devcmd package
+          devcmdPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
+
+          # Library functions
+          devcmdLib = import ./.nix/lib.nix { inherit pkgs self system lib; };
+
+          # Import all examples from examples.nix
+          examples = import ./.nix/examples.nix { inherit pkgs lib self system; };
+
+          # Import tests from tests.nix
+          tests = import ./.nix/tests.nix { inherit pkgs lib self system; };
+
+        in
+        {
+          # Main packages including examples and tests
+          packages = {
+            # Core devcmd package
+            default = devcmdPackage;
+            devcmd = devcmdPackage;
+
+            # All example CLIs from examples.nix
+            basicDev = examples.basicDev;
+            webDev = examples.webDev;
+            goProject = examples.goProject;
+            rustProject = examples.rustProject;
+            dataScienceProject = examples.dataScienceProject;
+            devOpsProject = examples.devOpsProject;
+
+            # Test packages
+            tests = tests.runAllTests;
+            test-examples = tests.testExamples;
+
+            # Individual test suites (for granular testing)
+            test-basic = tests.basicTests.simpleCommand or null;
+            test-posix = tests.basicTests.posixSyntax or null;
+            test-variables = tests.basicTests.variableExpansion or null;
+            test-processes = tests.processManagementTests.watchStopCommands or null;
+            test-blocks = tests.blockCommandTests.backgroundProcesses or null;
+            test-errors = tests.errorHandlingTests.invalidCommands or null;
+            test-performance = tests.performanceTests.largeCLI or null;
+            test-webdev = tests.realWorldTests.webDevelopment or null;
+            test-go = tests.realWorldTests.goProject or null;
           };
-        }
-      );
 
-      # Export the library functions
-      lib = {
-        mkDevCommands =
-          { pkgs
-          , system ? builtins.currentSystem
-          , commandsFile ? null
-          , commandsContent ? null
-          , commands ? null  # Alias for commandsContent for backward compatibility
-          , preProcess ? (text: text)
-          , postProcess ? (text: text)
-          , extraShellHook ? ""
-          , templateFile ? null
-          , debug ? false
-          }:
-          let
-            # Helper function to read a file safely at evaluation time
-            safeReadFile = path:
-              if builtins.pathExists path
-              then builtins.readFile path
-              else null;
+          # Development shells including example shells from examples.nix
+          devShells = {
+            default = import ./.nix/development.nix { inherit pkgs; };
 
-            # Get content from commandsFile if provided
-            fileContent =
-              if commandsFile != null
-              then safeReadFile commandsFile
-              else null;
+            # Example development shells
+            basic = examples.shells.basicShell;
+            web = examples.shells.webShell;
+            go = examples.shells.goShell;
+            data = examples.shells.dataShell;
 
-            # Use either commandsContent or commands for inline content
-            inlineContent =
-              if commandsContent != null then commandsContent
-              else if commands != null then commands
-              else null;
+            # Test environment shell
+            testEnv = pkgs.mkShell {
+              name = "devcmd-test-env";
+              buildInputs = with pkgs; [
+                # Core development tools
+                go
+                gopls
+                golangci-lint
+                # Testing tools
+                python3
+                nodejs
+                # Utilities
+                git
+                curl
+                wget
+              ] ++ [
+                # Include all example CLIs for testing
+                examples.basicDev
+                examples.webDev
+                examples.goProject
+              ];
 
-            # Try to find a commands file in common locations
-            autoDetectContent =
-              let
-                # Try to detect commands file in various common locations
-                paths = [
-                  # Absolute paths derived from caller's environment
-                  "${builtins.toString ./.}/commands"
-                  "${builtins.toString ./.}/commands.txt"
-                  "${builtins.toString ./.}/commands.devcmd"
-                  # Look in cwd-relative paths
-                  ./commands
-                  ./commands.txt
-                  ./commands.devcmd
-                ];
-                existingPath = lib.findFirst (p: builtins.pathExists p) null paths;
-              in
-              if existingPath != null
-              then builtins.readFile existingPath
-              else null;
-
-            # Determine what content to use (in order of priority)
-            finalContent =
-              if fileContent != null then fileContent
-              else if inlineContent != null then inlineContent
-              else if autoDetectContent != null then autoDetectContent
-              else "# No commands defined";
-
-            # Temporary file for commands content
-            commandsSrc = pkgs.writeText "commands-content" finalContent;
-
-            # Process text
-            processedPath = pkgs.writeText "processed-commands"
-              (preProcess finalContent);
-
-            # Parse the commands
-            parserBin = self.packages.${system}.default;
-
-            # Safely handle template file paths
-            templatePath =
-              if templateFile != null && builtins.pathExists templateFile
-              then toString templateFile
-              else null;
-
-            parserArgs =
-              if templatePath != null
-              then "--template ${templatePath}"
-              else "";
-
-            parsed =
-              pkgs.runCommand "parsed-commands"
-                { nativeBuildInputs = [ parserBin ]; }
-                ''
-                  ${parserBin}/bin/devcmd-parser ${parserArgs} ${processedPath} > $out || echo "" > $out
-                '';
-
-            # Generate shell code with appropriate messages
-            generatedHook = postProcess (builtins.readFile parsed);
-
-            # Determine source type for logging
-            sourceType =
-              if fileContent != null then "from file ${toString commandsFile}"
-              else if inlineContent != null then "from inline content"
-              else if autoDetectContent != null then "from auto-detected file"
-              else "no commands found";
-
-            # Debugging information
-            debugInfo =
-              if debug then ''
-                echo "Debug: Commands source = ${sourceType}"
-                echo "Debug: Current directory = ${builtins.toString ./.}"
-                echo "Debug: Parser bin = ${toString parserBin}"
-              '' else "";
-          in
-          {
-            # The shellHook to inject into mkShell
-            shellHook = ''
-              ${debugInfo}
-              echo "devcmd commands ${sourceType}"
-              ${generatedHook}
-              ${extraShellHook}
-            '';
-
-            # Exposed metadata for debugging
-            inherit commandsSrc processedPath parsed;
-            source = sourceType;
-            raw = finalContent;
-            generated = generatedHook;
+              shellHook = ''
+                echo "🧪 Devcmd Test Environment"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "Available example CLIs:"
+                echo "  dev --help          # Basic development CLI"
+                echo "  webdev --help       # Web development CLI"
+                echo "  godev --help        # Go project CLI"
+                echo ""
+                echo "Run tests with: just test or just nix-test"
+              '';
+            };
           };
+
+          # Library functions for other flakes
+          lib = devcmdLib;
+
+          # Apps for easy running
+          apps = {
+            default = {
+              type = "app";
+              program = "${self.packages.${system}.default}/bin/devcmd";
+            };
+
+            # Example apps
+            basicDev = {
+              type = "app";
+              program = "${self.packages.${system}.basicDev}/bin/dev";
+            };
+
+            webDev = {
+              type = "app";
+              program = "${self.packages.${system}.webDev}/bin/webdev";
+            };
+
+            goProject = {
+              type = "app";
+              program = "${self.packages.${system}.goProject}/bin/godev";
+            };
+
+            rustProject = {
+              type = "app";
+              program = "${self.packages.${system}.rustProject}/bin/rustdev";
+            };
+
+            dataScienceProject = {
+              type = "app";
+              program = "${self.packages.${system}.dataScienceProject}/bin/datadev";
+            };
+
+            devOpsProject = {
+              type = "app";
+              program = "${self.packages.${system}.devOpsProject}/bin/devops";
+            };
+          };
+
+          # Checks for CI/CD
+          checks = {
+            # Core package builds
+            package-builds = self.packages.${system}.default;
+
+            # Example builds
+            example-basic = self.packages.${system}.basicDev;
+            example-web = self.packages.${system}.webDev;
+            example-go = self.packages.${system}.goProject;
+            example-rust = self.packages.${system}.rustProject;
+            example-data = self.packages.${system}.dataScienceProject;
+            example-devops = self.packages.${system}.devOpsProject;
+
+            # Test builds
+            tests-build = self.packages.${system}.tests;
+            test-examples-build = self.packages.${system}.test-examples;
+          };
+
+          # Formatter
+          formatter = pkgs.nixpkgs-fmt;
+        }) // {
+
+      # Templates for other projects
+      templates = {
+        default = {
+          path = ./template/basic;
+          description = "Basic project with devcmd CLI";
+        };
+
+        basic = {
+          path = ./template/basic;
+          description = "Basic development commands template";
+        };
       };
 
-      # Development shell for the project itself
-      devShells = forAllSystems (system:
-        let pkgs = pkgsFor system;
-        in {
-          default = pkgs.mkShell {
-            buildInputs = with pkgs; [ go gopls go-tools ];
-            shellHook = ''
-              echo "devcmd development shell"
-              echo "Build the parser with: go run ./cmd/devcmd-parser --help"
-            '';
-          };
-        }
-      );
+      # Overlay for use in other flakes
+      overlays.default = final: prev: {
+        devcmd = self.packages.${prev.system}.default;
+        devcmdLib = self.lib.${prev.system};
 
-      # Project template
-      templates.default = {
-        path = ./template;
-        description = "Minimal project with devcmd integration";
+        # Make example CLIs available in overlay
+        devcmd-examples = {
+          inherit (self.packages.${prev.system})
+            basicDev webDev goProject rustProject
+            dataScienceProject devOpsProject;
+        };
       };
     };
 }

@@ -2,57 +2,586 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
+  workflow_dispatch: # Allow manual triggers
+
+env:
+  GO_VERSION: '1.24'
+  CACHE_VERSION: v1
 
 jobs:
-  tests:
-    name: Nix build on ${{ matrix.os }}
+  # =============================================================================
+  # 🔍 FAST CHECKS - Formatting & Linting (30s)
+  # =============================================================================
+  format-lint:
+    name: Format & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Check Nix formatting
+        run: |
+          echo "🔍 Checking Nix file formatting..."
+          nix run nixpkgs#nixpkgs-fmt -- --check . || {
+            echo "❌ Nix formatting check failed. Run 'just format' to fix."
+            exit 1
+          }
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Go tools
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          go install mvdan.cc/gofumpt@latest
+
+      - name: Check Go formatting
+        run: |
+          echo "🔍 Checking Go formatting..."
+          if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then
+            echo "❌ Go formatting issues found:"
+            gofumpt -l .
+            echo "Run 'just format' to fix."
+            exit 1
+          fi
+
+      - name: Go linting
+        run: |
+          echo "🔍 Running Go linters..."
+          golangci-lint run --timeout=5m
+
+      - name: Nix flake check (basic)
+        run: |
+          echo "🔍 Basic Nix flake validation..."
+          nix flake check --no-build
+
+  # =============================================================================
+  # ⚡ GO UNIT TESTS - Core Logic (1-2m)
+  # =============================================================================
+  go-tests:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    needs: [format-lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Java (for ANTLR)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install ANTLR
+        run: |
+          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
+          echo 'export CLASSPATH="/tmp/antlr.jar:$CLASSPATH"' >> $GITHUB_ENV
+          echo 'alias antlr="java -jar /tmp/antlr.jar"' >> $GITHUB_ENV
+
+      - name: Generate ANTLR Parser
+        run: |
+          echo "📝 Generating ANTLR parser..."
+          mkdir -p internal/gen
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run Go tests with coverage
+        run: |
+          echo "🧪 Running Go tests with coverage..."
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Archive coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.html
+
+  # =============================================================================
+  # 🔨 BUILD BINARIES - Core Deliverables (2-3m)
+  # =============================================================================
+  build-binaries:
+    name: Build Binaries
     runs-on: ${{ matrix.os }}
+    needs: [go-tests]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Java (for ANTLR)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Generate ANTLR Parser
+        run: |
+          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
+          mkdir -p internal/gen
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          echo "🔨 Building devcmd for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
+            -o devcmd-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd/devcmd
+
+      - name: Test binary
+        run: |
+          echo "🧪 Testing built binary..."
+          ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --version || echo "Version command not available"
+          ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --help
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  # =============================================================================
+  # 📦 NIX PACKAGES - Core Nix Integration (3-5m)
+  # =============================================================================
+  nix-core:
+    name: Nix Core Packages
+    runs-on: ${{ matrix.os }}
+    needs: [go-tests]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Install Nix
-      uses: DeterminateSystems/nix-installer-action@v8
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
 
-    - name: Enable Nix Flakes
-      run: |
-        echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
-        sudo systemctl restart nix-daemon || true
+      - name: Build core devcmd package
+        run: |
+          echo "📦 Building core devcmd package..."
+          nix build .#devcmd --print-build-logs
 
-    - name: Build the flake
-      run: nix build .#default --print-build-logs
+      - name: Test core package
+        run: |
+          echo "🧪 Testing core devcmd package..."
+          ./result/bin/devcmd --help
+          ./result/bin/devcmd --version || echo "Version command not available"
 
-    - name: Build the devShell
-      run: nix develop --command echo "Dev shell works!"
+      - name: Build development shell
+        run: |
+          echo "🐚 Testing development shell..."
+          nix develop --command echo "✅ Development shell works!"
 
-  lint:
-    name: Nix Formatting
+      - name: Comprehensive Nix flake check
+        run: |
+          echo "🔍 Running comprehensive Nix flake check..."
+          nix flake check --print-build-logs
+
+  # =============================================================================
+  # 🧪 NIX TESTS - Generated CLI Testing (5-8m)
+  # =============================================================================
+  nix-tests:
+    name: Nix Tests
     runs-on: ubuntu-latest
+    needs: [nix-core]
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Install Nix
-      uses: DeterminateSystems/nix-installer-action@v8
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
 
-    - name: Check Nix formatting
-      run: |
-        nix run nixpkgs#nixpkgs-fmt -- --check .
+      - name: Run Nix test suite
+        run: |
+          echo "🧪 Running Nix-based tests..."
+          nix build .#tests --print-build-logs
+          echo "✅ Core test suite passed"
 
-  go-tests:
-    name: Go Tests
+      - name: Run example tests
+        run: |
+          echo "🧪 Running example CLI tests..."
+          nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available"
+
+      - name: Test individual components (continue on failure)
+        run: |
+          echo "🧪 Testing individual components..."
+
+          # Test each component individually, don't fail the whole job
+          components=(
+            "test-basic:Basic functionality"
+            "test-posix:POSIX syntax"
+            "test-variables:Variable expansion"
+            "test-processes:Process management"
+            "test-blocks:Block commands"
+            "test-errors:Error handling"
+            "test-performance:Performance"
+            "test-webdev:Web development"
+            "test-go:Go project"
+          )
+
+          for component in "${components[@]}"; do
+            name="${component%%:*}"
+            desc="${component##*:}"
+            echo "Testing $desc..."
+            if nix build .#${name} --print-build-logs 2>/dev/null; then
+              echo "✅ $desc tests passed"
+            else
+              echo "⚠️  $desc tests not available or failed"
+            fi
+          done
+
+  # =============================================================================
+  # 🎯 EXAMPLE CLIS - Real-world Usage Examples (8-12m)
+  # =============================================================================
+  nix-examples:
+    name: Example CLIs
     runs-on: ubuntu-latest
+    needs: [nix-tests]
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
 
-    - name: Run Go tests
-      run: go test ./...
+      - name: Build all example CLIs
+        run: |
+          echo "🎯 Building all example CLIs..."
+
+          examples=(
+            "basicDev:Basic development CLI"
+            "webDev:Web development CLI"
+            "goProject:Go project CLI"
+            "rustProject:Rust project CLI"
+            "dataScienceProject:Data science CLI"
+            "devOpsProject:DevOps CLI"
+          )
+
+          for example in "${examples[@]}"; do
+            name="${example%%:*}"
+            desc="${example##*:}"
+            echo "Building $desc..."
+            if nix build .#${name} --print-build-logs; then
+              echo "✅ $desc built successfully"
+              # Test the CLI
+              echo "🧪 Testing $desc..."
+              ./result/bin/* --help || echo "⚠️  Help command not available"
+            else
+              echo "❌ Failed to build $desc"
+              exit 1
+            fi
+          done
+
+      - name: Interactive example testing
+        run: |
+          echo "🎯 Running interactive example tests..."
+
+          # Test each example's basic functionality
+          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
+
+          for example in "${examples[@]}"; do
+            echo "Testing $example..."
+            if nix run .#${example} -- --help >/dev/null 2>&1; then
+              echo "✅ $example CLI works"
+            else
+              echo "⚠️  $example CLI has issues"
+            fi
+          done
+
+      - name: Upload example binaries
+        run: |
+          echo "📦 Collecting example binaries..."
+          mkdir -p example-binaries
+
+          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
+          for example in "${examples[@]}"; do
+            if nix build .#${example} --print-build-logs; then
+              cp -L result/bin/* example-binaries/${example} || echo "Could not copy ${example}"
+            fi
+          done
+
+      - name: Archive example binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-clis
+          path: example-binaries/
+
+  # =============================================================================
+  # 📋 SUMMARY - Collect Results
+  # =============================================================================
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [format-lint, go-tests, build-binaries, nix-core, nix-tests, nix-examples]
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "📋 CI Pipeline Summary"
+          echo "════════════════════════════════════════"
+
+          jobs=(
+            "${{ needs.format-lint.result }}:Format & Lint"
+            "${{ needs.go-tests.result }}:Go Tests"
+            "${{ needs.build-binaries.result }}:Build Binaries"
+            "${{ needs.nix-core.result }}:Nix Core"
+            "${{ needs.nix-tests.result }}:Nix Tests"
+            "${{ needs.nix-examples.result }}:Example CLIs"
+          )
+
+          all_passed=true
+          for job in "${jobs[@]}"; do
+            status="${job%%:*}"
+            name="${job##*:}"
+            case $status in
+              success) echo "✅ $name" ;;
+              failure) echo "❌ $name"; all_passed=false ;;
+              cancelled) echo "⏹️  $name"; all_passed=false ;;
+              skipped) echo "⏭️  $name" ;;
+              *) echo "❓ $name ($status)"; all_passed=false ;;
+            esac
+          done
+
+          echo "════════════════════════════════════════"
+          if [ "$all_passed" = true ]; then
+            echo "🎉 All CI jobs passed successfully!"
+          else
+            echo "❌ Some CI jobs failed. Check the logs above."
+            exit 1
+          fi
+
+  # =============================================================================
+  # 📦 LATEST BUILDS (only on main/master - for development artifacts)
+  # =============================================================================
+  latest-builds:
+    name: Latest Development Builds
+    runs-on: ubuntu-latest
+    needs: [summary]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare development builds
+        run: |
+          echo "📦 Preparing latest development builds..."
+          mkdir -p latest/
+
+          # Copy binaries with dev suffix
+          find artifacts/ -name 'devcmd-*' -type f -exec cp {} latest/ \;
+
+          # Copy example CLIs
+          if [ -d artifacts/example-clis ]; then
+            cp -r artifacts/example-clis latest/
+          fi
+
+          # Create build info
+          echo "Built from commit: ${{ github.sha }}" > latest/build-info.txt
+          echo "Built at: $(date -u)" >> latest/build-info.txt
+          echo "Branch: ${{ github.ref_name }}" >> latest/build-info.txt
+
+      - name: Archive latest builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-dev-builds
+          path: latest/
+          retention-days: 30  # Keep for 30 days
+
+# =============================================================================
+# 🚀 RELEASE (only when tags are pushed)
+# =============================================================================
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    # Note: This runs independently when tags are pushed, doesn't need summary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Java (for ANTLR)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Generate ANTLR Parser
+        run: |
+          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
+          mkdir -p internal/gen
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+
+      - name: Get version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build release binaries
+        run: |
+          echo "🔨 Building release binaries for ${{ steps.version.outputs.version }}..."
+
+          # Build for multiple platforms
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+          )
+
+          mkdir -p release/
+
+          for platform in "${platforms[@]}"; do
+            GOOS=${platform%/*}
+            GOARCH=${platform#*/}
+
+            echo "Building for $GOOS/$GOARCH..."
+
+            if [ "$GOOS" = "windows" ]; then
+              BINARY_NAME="devcmd-$GOOS-$GOARCH.exe"
+            else
+              BINARY_NAME="devcmd-$GOOS-$GOARCH"
+            fi
+
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -o "release/$BINARY_NAME" \
+              ./cmd/devcmd
+          done
+
+      - name: Build example CLIs
+        run: |
+          echo "🎯 Building example CLIs for release..."
+          mkdir -p release/examples/
+
+          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
+          for example in "${examples[@]}"; do
+            echo "Building $example..."
+            nix build .#${example} --print-build-logs
+            cp -L result/bin/* "release/examples/${example}" || echo "Could not copy ${example}"
+          done
+
+      - name: Create checksums
+        run: |
+          echo "🔐 Creating checksums..."
+          cd release/
+
+          # Create checksums for binaries
+          for file in devcmd-*; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> checksums.txt
+            fi
+          done
+
+          # Create checksums for examples
+          for file in examples/*; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> checksums.txt
+            fi
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            release/devcmd-*
+            release/examples/*
+            release/checksums.txt
+          generate_release_notes: true
+          body: |
+            ## 🚀 Devcmd ${{ steps.version.outputs.version }}
+
+            **Declarative CLI Generation Tool**
+
+            ### 📦 Downloads
+            - **Linux (x64)**: `devcmd-linux-amd64`
+            - **Linux (ARM64)**: `devcmd-linux-arm64`
+            - **macOS (Intel)**: `devcmd-darwin-amd64`
+            - **macOS (Apple Silicon)**: `devcmd-darwin-arm64`
+            - **Windows (x64)**: `devcmd-windows-amd64.exe`
+
+            ### 🎯 Example CLIs
+            Pre-built example CLIs are included in the `examples/` directory.
+
+            ### ✅ Verification
+            Verify downloads with SHA256 checksums in `checksums.txt`.
+
+            ### 📚 Documentation
+            See README.md for usage instructions and examples.

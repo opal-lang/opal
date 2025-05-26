@@ -1,25 +1,500 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# Devcmd Project .gitignore
+# Comprehensive ignore file for Go, Nix, ANTLR, and editor environments
+
+# =============================================================================
+# PROJECT-SPECIFIC FILES
+# =============================================================================
+
+# ANTLR Generated Files
+internal/gen/
+grammar/*.interp
+grammar/*.tokens
+*Lexer.java
+*Parser.java
+*BaseListener.java
+*Listener.java
+*BaseVisitor.java
+*Visitor.java
+
+# Devcmd compiled binaries
+devcmd
+devcmd.exe
+devcmd-*
+!cmd/devcmd
+
+# Generated CLI files from devcmd
+examples/*.go
+examples/dev/
+examples/build/
+
+# Test artifacts
+coverage.out
+coverage.html
+cpu.prof
+mem.prof
+*.prof
+
+# Documentation generated files
+docs/parser.md
+docs/generator.md
+
+# =============================================================================
+# GO LANGUAGE
+# =============================================================================
+
+# Compiled binaries and executables
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+*.test
 
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output of the go coverage tool
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Dependency directories
+vendor/
 
 # Go workspace file
 go.work
 go.work.sum
 
-# env file
+# Go module download cache
+GOCACHE/
+GOPATH/
+
+# Environment file for Go
 .env
+.env.local
+.env.*.local
+
+# Air live reload tool
+.air.toml
+tmp/
+
+# =============================================================================
+# NIX ECOSYSTEM
+# =============================================================================
+
+# Nix build results
+result
+result-*
+
+# Nix development environments
+.direnv/
+.envrc.cache
+
+# Nix flake lock file (keep this unless you want reproducible builds)
+# flake.lock
+
+# Nix garbage collection protection
+.gcroots
+
+# Nix shell environments
+shell.nix.bak
+
+# =============================================================================
+# JETBRAINS IDES (IntelliJ, GoLand, etc.)
+# =============================================================================
+
+# User-specific stuff
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+
+# AWS User-specific
+.idea/**/aws.xml
+
+# Generated files
+.idea/**/contentModel.xml
+
+# Sensitive or high-churn files
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/dbnavigator.xml
+
+# Gradle
+.idea/**/gradle.xml
+.idea/**/libraries
+
+# File-based project format
+*.iws
+*.iml
+
+# IntelliJ
+out/
+
+# mpeltonen/sbt-idea plugin
+.idea_modules/
+
+# JIRA plugin
+atlassian-ide-plugin.xml
+
+# Cursive Clojure plugin
+.idea/replstate.xml
+
+# SonarLint plugin
+.idea/sonarlint/
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Editor-based Rest Client
+.idea/httpRequests
+
+# Android studio 3.1+ serialized cache file
+.idea/caches/build_file_checksums.ser
+
+# =============================================================================
+# VISUAL STUDIO CODE
+# =============================================================================
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# Local History for Visual Studio Code
+.history/
+
+# Built Visual Studio Code Extensions
+*.vsix
+
+# =============================================================================
+# OTHER EDITORS & TOOLS
+# =============================================================================
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+.org-id-locations
+*_archive
+*_flymake.*
+/eshell/history
+/eshell/lastdir
+/elpa/
+/auto/
+/url/
+/.cask/
+dist/
+flycheck_*.el
+/server/
+.projectile
+
+# Sublime Text
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+*.sublime-project
+
+# TextMate
+*.tmproj
+*.tmproject
+tmtags
+
+# Atom
+.ftpconfig
+.sftpconfig
+
+# Nano
+*.save
+
+# =============================================================================
+# OPERATING SYSTEMS
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# BUILD TOOLS & PACKAGE MANAGERS
+# =============================================================================
+
+# Just command runner
+.justfile.swp
+
+# Make
+*.mk.bak
+
+# Node.js (if using for tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+*.tar.gz
+
+# Python (if using for tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Java (ANTLR is Java-based)
+*.class
+*.log
+*.ctxt
+.mtj.tmp/
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+replay_pid*
+
+# =============================================================================
+# VERSION CONTROL
+# =============================================================================
+
+# Git
+*.orig
+*.rej
+
+# SVN
+.svn/
+
+# Mercurial
+.hg/
+.hgignore
+
+# =============================================================================
+# SECURITY & SECRETS
+# =============================================================================
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets.yml
+secrets.yaml
+config/secrets.yml
+
+# =============================================================================
+# LOGS & TEMPORARY FILES
+# =============================================================================
+
+# Log files
+*.log
+logs/
+log/
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# Temporary folders
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Cache directories
+.cache/
+cache/
+
+# =============================================================================
+# DOCUMENTATION & ASSETS
+# =============================================================================
+
+# Generated documentation (unless you want to commit it)
+docs/generated/
+site/
+_site/
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# =============================================================================
+# PROJECT ARTIFACTS
+# =============================================================================
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Archive files (unless needed)
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.7z
+*.gz
+*.bz2
+*.xz
+*.rar
+
+# =============================================================================
+# PERFORMANCE & PROFILING
+# =============================================================================
+
+# Profiling data
+*.prof
+profile.cov
+profile.out
+cpu.pprof
+heap.pprof
+goroutine.pprof
+block.pprof
+mutex.pprof
+trace.out
+
+# Benchmark results
+*.bench
+benchmark.txt
+
+# =============================================================================
+# ANTLR SPECIFIC
+# =============================================================================
+
+# ANTLR tool cache
+.antlr/
+
+# ANTLR runtime test output
+*.out.tree
+*.out.gui
+*.out.ps
+*.out.svg
+
+# ANTLR debug files
+*.debug
+
+# =============================================================================
+# DEVELOPMENT ENVIRONMENT
+# =============================================================================
+
+# Database files (SQLite, etc.)
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration override files
+config.local.*
+*.local.yml
+*.local.yaml
+*.local.json
+
+# IDE workspace files
+workspace.xml
+*.code-workspace
+
+# Local development scripts
+dev.sh
+dev.bat
+local.*
