@@ -49,8 +49,8 @@ func devcmdparserParserInit() {
 	}
 	staticData.RuleNames = []string{
 		"program", "line", "variableDefinition", "variableValue", "commandDefinition",
-		"commandBody", "annotatedCommand", "annotation", "annotationContent",
-		"annotationElement", "simpleCommand", "annotationCommand", "blockCommand",
+		"commandBody", "decoratedCommand", "decorator", "decoratorContent",
+		"decoratorElement", "simpleCommand", "decoratorCommand", "blockCommand",
 		"blockStatements", "nonEmptyBlockStatements", "blockStatement", "continuationLine",
 		"commandText", "commandTextElement",
 	}
@@ -231,12 +231,12 @@ const (
 	DevcmdParserRULE_variableValue           = 3
 	DevcmdParserRULE_commandDefinition       = 4
 	DevcmdParserRULE_commandBody             = 5
-	DevcmdParserRULE_annotatedCommand        = 6
-	DevcmdParserRULE_annotation              = 7
-	DevcmdParserRULE_annotationContent       = 8
-	DevcmdParserRULE_annotationElement       = 9
+	DevcmdParserRULE_decoratedCommand        = 6
+	DevcmdParserRULE_decorator               = 7
+	DevcmdParserRULE_decoratorContent        = 8
+	DevcmdParserRULE_decoratorElement        = 9
 	DevcmdParserRULE_simpleCommand           = 10
-	DevcmdParserRULE_annotationCommand       = 11
+	DevcmdParserRULE_decoratorCommand        = 11
 	DevcmdParserRULE_blockCommand            = 12
 	DevcmdParserRULE_blockStatements         = 13
 	DevcmdParserRULE_nonEmptyBlockStatements = 14
@@ -1053,7 +1053,7 @@ type ICommandBodyContext interface {
 	GetParser() antlr.Parser
 
 	// Getter signatures
-	AnnotatedCommand() IAnnotatedCommandContext
+	DecoratedCommand() IDecoratedCommandContext
 	BlockCommand() IBlockCommandContext
 	SimpleCommand() ISimpleCommandContext
 
@@ -1093,10 +1093,10 @@ func NewCommandBodyContext(parser antlr.Parser, parent antlr.ParserRuleContext, 
 
 func (s *CommandBodyContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *CommandBodyContext) AnnotatedCommand() IAnnotatedCommandContext {
+func (s *CommandBodyContext) DecoratedCommand() IDecoratedCommandContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotatedCommandContext); ok {
+		if _, ok := ctx.(IDecoratedCommandContext); ok {
 			t = ctx.(antlr.RuleContext)
 			break
 		}
@@ -1106,7 +1106,7 @@ func (s *CommandBodyContext) AnnotatedCommand() IAnnotatedCommandContext {
 		return nil
 	}
 
-	return t.(IAnnotatedCommandContext)
+	return t.(IDecoratedCommandContext)
 }
 
 func (s *CommandBodyContext) BlockCommand() IBlockCommandContext {
@@ -1185,7 +1185,7 @@ func (p *DevcmdParser) CommandBody() (localctx ICommandBodyContext) {
 		p.EnterOuterAlt(localctx, 1)
 		{
 			p.SetState(68)
-			p.AnnotatedCommand()
+			p.DecoratedCommand()
 		}
 
 	case 2:
@@ -1219,86 +1219,166 @@ errorExit:
 	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
-// IAnnotatedCommandContext is an interface to support dynamic dispatch.
-type IAnnotatedCommandContext interface {
+// IDecoratedCommandContext is an interface to support dynamic dispatch.
+type IDecoratedCommandContext interface {
 	antlr.ParserRuleContext
 
 	// GetParser returns the parser.
 	GetParser() antlr.Parser
-	// IsAnnotatedCommandContext differentiates from other interfaces.
-	IsAnnotatedCommandContext()
+	// IsDecoratedCommandContext differentiates from other interfaces.
+	IsDecoratedCommandContext()
 }
 
-type AnnotatedCommandContext struct {
+type DecoratedCommandContext struct {
 	antlr.BaseParserRuleContext
 	parser antlr.Parser
 }
 
-func NewEmptyAnnotatedCommandContext() *AnnotatedCommandContext {
-	var p = new(AnnotatedCommandContext)
+func NewEmptyDecoratedCommandContext() *DecoratedCommandContext {
+	var p = new(DecoratedCommandContext)
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotatedCommand
+	p.RuleIndex = DevcmdParserRULE_decoratedCommand
 	return p
 }
 
-func InitEmptyAnnotatedCommandContext(p *AnnotatedCommandContext) {
+func InitEmptyDecoratedCommandContext(p *DecoratedCommandContext) {
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotatedCommand
+	p.RuleIndex = DevcmdParserRULE_decoratedCommand
 }
 
-func (*AnnotatedCommandContext) IsAnnotatedCommandContext() {}
+func (*DecoratedCommandContext) IsDecoratedCommandContext() {}
 
-func NewAnnotatedCommandContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *AnnotatedCommandContext {
-	var p = new(AnnotatedCommandContext)
+func NewDecoratedCommandContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *DecoratedCommandContext {
+	var p = new(DecoratedCommandContext)
 
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, parent, invokingState)
 
 	p.parser = parser
-	p.RuleIndex = DevcmdParserRULE_annotatedCommand
+	p.RuleIndex = DevcmdParserRULE_decoratedCommand
 
 	return p
 }
 
-func (s *AnnotatedCommandContext) GetParser() antlr.Parser { return s.parser }
+func (s *DecoratedCommandContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *AnnotatedCommandContext) CopyAll(ctx *AnnotatedCommandContext) {
+func (s *DecoratedCommandContext) CopyAll(ctx *DecoratedCommandContext) {
 	s.CopyFrom(&ctx.BaseParserRuleContext)
 }
 
-func (s *AnnotatedCommandContext) GetRuleContext() antlr.RuleContext {
+func (s *DecoratedCommandContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *AnnotatedCommandContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+func (s *DecoratedCommandContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-type FunctionAnnotContext struct {
-	AnnotatedCommandContext
+type SimpleDecoratorContext struct {
+	DecoratedCommandContext
 }
 
-func NewFunctionAnnotContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *FunctionAnnotContext {
-	var p = new(FunctionAnnotContext)
+func NewSimpleDecoratorContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *SimpleDecoratorContext {
+	var p = new(SimpleDecoratorContext)
 
-	InitEmptyAnnotatedCommandContext(&p.AnnotatedCommandContext)
+	InitEmptyDecoratedCommandContext(&p.DecoratedCommandContext)
 	p.parser = parser
-	p.CopyAll(ctx.(*AnnotatedCommandContext))
+	p.CopyAll(ctx.(*DecoratedCommandContext))
 
 	return p
 }
 
-func (s *FunctionAnnotContext) GetRuleContext() antlr.RuleContext {
+func (s *SimpleDecoratorContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *FunctionAnnotContext) AT_NAME_LPAREN() antlr.TerminalNode {
+func (s *SimpleDecoratorContext) AT() antlr.TerminalNode {
+	return s.GetToken(DevcmdParserAT, 0)
+}
+
+func (s *SimpleDecoratorContext) Decorator() IDecoratorContext {
+	var t antlr.RuleContext
+	for _, ctx := range s.GetChildren() {
+		if _, ok := ctx.(IDecoratorContext); ok {
+			t = ctx.(antlr.RuleContext)
+			break
+		}
+	}
+
+	if t == nil {
+		return nil
+	}
+
+	return t.(IDecoratorContext)
+}
+
+func (s *SimpleDecoratorContext) COLON() antlr.TerminalNode {
+	return s.GetToken(DevcmdParserCOLON, 0)
+}
+
+func (s *SimpleDecoratorContext) DecoratorCommand() IDecoratorCommandContext {
+	var t antlr.RuleContext
+	for _, ctx := range s.GetChildren() {
+		if _, ok := ctx.(IDecoratorCommandContext); ok {
+			t = ctx.(antlr.RuleContext)
+			break
+		}
+	}
+
+	if t == nil {
+		return nil
+	}
+
+	return t.(IDecoratorCommandContext)
+}
+
+func (s *SimpleDecoratorContext) EnterRule(listener antlr.ParseTreeListener) {
+	if listenerT, ok := listener.(DevcmdParserListener); ok {
+		listenerT.EnterSimpleDecorator(s)
+	}
+}
+
+func (s *SimpleDecoratorContext) ExitRule(listener antlr.ParseTreeListener) {
+	if listenerT, ok := listener.(DevcmdParserListener); ok {
+		listenerT.ExitSimpleDecorator(s)
+	}
+}
+
+func (s *SimpleDecoratorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DevcmdParserVisitor:
+		return t.VisitSimpleDecorator(s)
+
+	default:
+		return t.VisitChildren(s)
+	}
+}
+
+type FunctionDecoratorContext struct {
+	DecoratedCommandContext
+}
+
+func NewFunctionDecoratorContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *FunctionDecoratorContext {
+	var p = new(FunctionDecoratorContext)
+
+	InitEmptyDecoratedCommandContext(&p.DecoratedCommandContext)
+	p.parser = parser
+	p.CopyAll(ctx.(*DecoratedCommandContext))
+
+	return p
+}
+
+func (s *FunctionDecoratorContext) GetRuleContext() antlr.RuleContext {
+	return s
+}
+
+func (s *FunctionDecoratorContext) AT_NAME_LPAREN() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserAT_NAME_LPAREN, 0)
 }
 
-func (s *FunctionAnnotContext) AnnotationContent() IAnnotationContentContext {
+func (s *FunctionDecoratorContext) DecoratorContent() IDecoratorContentContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationContentContext); ok {
+		if _, ok := ctx.(IDecoratorContentContext); ok {
 			t = ctx.(antlr.RuleContext)
 			break
 		}
@@ -1308,65 +1388,65 @@ func (s *FunctionAnnotContext) AnnotationContent() IAnnotationContentContext {
 		return nil
 	}
 
-	return t.(IAnnotationContentContext)
+	return t.(IDecoratorContentContext)
 }
 
-func (s *FunctionAnnotContext) RPAREN() antlr.TerminalNode {
+func (s *FunctionDecoratorContext) RPAREN() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserRPAREN, 0)
 }
 
-func (s *FunctionAnnotContext) SEMICOLON() antlr.TerminalNode {
+func (s *FunctionDecoratorContext) SEMICOLON() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserSEMICOLON, 0)
 }
 
-func (s *FunctionAnnotContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *FunctionDecoratorContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterFunctionAnnot(s)
+		listenerT.EnterFunctionDecorator(s)
 	}
 }
 
-func (s *FunctionAnnotContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *FunctionDecoratorContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitFunctionAnnot(s)
+		listenerT.ExitFunctionDecorator(s)
 	}
 }
 
-func (s *FunctionAnnotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *FunctionDecoratorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitFunctionAnnot(s)
+		return t.VisitFunctionDecorator(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-type SimpleAnnotContext struct {
-	AnnotatedCommandContext
+type BlockDecoratorContext struct {
+	DecoratedCommandContext
 }
 
-func NewSimpleAnnotContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *SimpleAnnotContext {
-	var p = new(SimpleAnnotContext)
+func NewBlockDecoratorContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *BlockDecoratorContext {
+	var p = new(BlockDecoratorContext)
 
-	InitEmptyAnnotatedCommandContext(&p.AnnotatedCommandContext)
+	InitEmptyDecoratedCommandContext(&p.DecoratedCommandContext)
 	p.parser = parser
-	p.CopyAll(ctx.(*AnnotatedCommandContext))
+	p.CopyAll(ctx.(*DecoratedCommandContext))
 
 	return p
 }
 
-func (s *SimpleAnnotContext) GetRuleContext() antlr.RuleContext {
+func (s *BlockDecoratorContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *SimpleAnnotContext) AT() antlr.TerminalNode {
+func (s *BlockDecoratorContext) AT() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserAT, 0)
 }
 
-func (s *SimpleAnnotContext) Annotation() IAnnotationContext {
+func (s *BlockDecoratorContext) Decorator() IDecoratorContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationContext); ok {
+		if _, ok := ctx.(IDecoratorContext); ok {
 			t = ctx.(antlr.RuleContext)
 			break
 		}
@@ -1376,94 +1456,14 @@ func (s *SimpleAnnotContext) Annotation() IAnnotationContext {
 		return nil
 	}
 
-	return t.(IAnnotationContext)
+	return t.(IDecoratorContext)
 }
 
-func (s *SimpleAnnotContext) COLON() antlr.TerminalNode {
+func (s *BlockDecoratorContext) COLON() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserCOLON, 0)
 }
 
-func (s *SimpleAnnotContext) AnnotationCommand() IAnnotationCommandContext {
-	var t antlr.RuleContext
-	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationCommandContext); ok {
-			t = ctx.(antlr.RuleContext)
-			break
-		}
-	}
-
-	if t == nil {
-		return nil
-	}
-
-	return t.(IAnnotationCommandContext)
-}
-
-func (s *SimpleAnnotContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterSimpleAnnot(s)
-	}
-}
-
-func (s *SimpleAnnotContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitSimpleAnnot(s)
-	}
-}
-
-func (s *SimpleAnnotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
-	switch t := visitor.(type) {
-	case DevcmdParserVisitor:
-		return t.VisitSimpleAnnot(s)
-
-	default:
-		return t.VisitChildren(s)
-	}
-}
-
-type BlockAnnotContext struct {
-	AnnotatedCommandContext
-}
-
-func NewBlockAnnotContext(parser antlr.Parser, ctx antlr.ParserRuleContext) *BlockAnnotContext {
-	var p = new(BlockAnnotContext)
-
-	InitEmptyAnnotatedCommandContext(&p.AnnotatedCommandContext)
-	p.parser = parser
-	p.CopyAll(ctx.(*AnnotatedCommandContext))
-
-	return p
-}
-
-func (s *BlockAnnotContext) GetRuleContext() antlr.RuleContext {
-	return s
-}
-
-func (s *BlockAnnotContext) AT() antlr.TerminalNode {
-	return s.GetToken(DevcmdParserAT, 0)
-}
-
-func (s *BlockAnnotContext) Annotation() IAnnotationContext {
-	var t antlr.RuleContext
-	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationContext); ok {
-			t = ctx.(antlr.RuleContext)
-			break
-		}
-	}
-
-	if t == nil {
-		return nil
-	}
-
-	return t.(IAnnotationContext)
-}
-
-func (s *BlockAnnotContext) COLON() antlr.TerminalNode {
-	return s.GetToken(DevcmdParserCOLON, 0)
-}
-
-func (s *BlockAnnotContext) BlockCommand() IBlockCommandContext {
+func (s *BlockDecoratorContext) BlockCommand() IBlockCommandContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
 		if _, ok := ctx.(IBlockCommandContext); ok {
@@ -1479,31 +1479,31 @@ func (s *BlockAnnotContext) BlockCommand() IBlockCommandContext {
 	return t.(IBlockCommandContext)
 }
 
-func (s *BlockAnnotContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *BlockDecoratorContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterBlockAnnot(s)
+		listenerT.EnterBlockDecorator(s)
 	}
 }
 
-func (s *BlockAnnotContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *BlockDecoratorContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitBlockAnnot(s)
+		listenerT.ExitBlockDecorator(s)
 	}
 }
 
-func (s *BlockAnnotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *BlockDecoratorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitBlockAnnot(s)
+		return t.VisitBlockDecorator(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
-	localctx = NewAnnotatedCommandContext(p, p.GetParserRuleContext(), p.GetState())
-	p.EnterRule(localctx, 12, DevcmdParserRULE_annotatedCommand)
+func (p *DevcmdParser) DecoratedCommand() (localctx IDecoratedCommandContext) {
+	localctx = NewDecoratedCommandContext(p, p.GetParserRuleContext(), p.GetState())
+	p.EnterRule(localctx, 12, DevcmdParserRULE_decoratedCommand)
 	p.SetState(89)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
@@ -1512,7 +1512,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 
 	switch p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 6, p.GetParserRuleContext()) {
 	case 1:
-		localctx = NewFunctionAnnotContext(p, localctx)
+		localctx = NewFunctionDecoratorContext(p, localctx)
 		p.EnterOuterAlt(localctx, 1)
 		{
 			p.SetState(73)
@@ -1524,7 +1524,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 		{
 			p.SetState(74)
-			p.AnnotationContent()
+			p.DecoratorContent()
 		}
 		{
 			p.SetState(75)
@@ -1552,7 +1552,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 
 	case 2:
-		localctx = NewBlockAnnotContext(p, localctx)
+		localctx = NewBlockDecoratorContext(p, localctx)
 		p.EnterOuterAlt(localctx, 2)
 		{
 			p.SetState(79)
@@ -1564,7 +1564,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 		{
 			p.SetState(80)
-			p.Annotation()
+			p.Decorator()
 		}
 		{
 			p.SetState(81)
@@ -1580,7 +1580,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 
 	case 3:
-		localctx = NewSimpleAnnotContext(p, localctx)
+		localctx = NewSimpleDecoratorContext(p, localctx)
 		p.EnterOuterAlt(localctx, 3)
 		{
 			p.SetState(84)
@@ -1592,7 +1592,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 		{
 			p.SetState(85)
-			p.Annotation()
+			p.Decorator()
 		}
 		{
 			p.SetState(86)
@@ -1604,7 +1604,7 @@ func (p *DevcmdParser) AnnotatedCommand() (localctx IAnnotatedCommandContext) {
 		}
 		{
 			p.SetState(87)
-			p.AnnotationCommand()
+			p.DecoratorCommand()
 		}
 
 	case antlr.ATNInvalidAltNumber:
@@ -1624,8 +1624,8 @@ errorExit:
 	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
-// IAnnotationContext is an interface to support dynamic dispatch.
-type IAnnotationContext interface {
+// IDecoratorContext is an interface to support dynamic dispatch.
+type IDecoratorContext interface {
 	antlr.ParserRuleContext
 
 	// GetParser returns the parser.
@@ -1634,79 +1634,79 @@ type IAnnotationContext interface {
 	// Getter signatures
 	NAME() antlr.TerminalNode
 
-	// IsAnnotationContext differentiates from other interfaces.
-	IsAnnotationContext()
+	// IsDecoratorContext differentiates from other interfaces.
+	IsDecoratorContext()
 }
 
-type AnnotationContext struct {
+type DecoratorContext struct {
 	antlr.BaseParserRuleContext
 	parser antlr.Parser
 }
 
-func NewEmptyAnnotationContext() *AnnotationContext {
-	var p = new(AnnotationContext)
+func NewEmptyDecoratorContext() *DecoratorContext {
+	var p = new(DecoratorContext)
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotation
+	p.RuleIndex = DevcmdParserRULE_decorator
 	return p
 }
 
-func InitEmptyAnnotationContext(p *AnnotationContext) {
+func InitEmptyDecoratorContext(p *DecoratorContext) {
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotation
+	p.RuleIndex = DevcmdParserRULE_decorator
 }
 
-func (*AnnotationContext) IsAnnotationContext() {}
+func (*DecoratorContext) IsDecoratorContext() {}
 
-func NewAnnotationContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *AnnotationContext {
-	var p = new(AnnotationContext)
+func NewDecoratorContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *DecoratorContext {
+	var p = new(DecoratorContext)
 
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, parent, invokingState)
 
 	p.parser = parser
-	p.RuleIndex = DevcmdParserRULE_annotation
+	p.RuleIndex = DevcmdParserRULE_decorator
 
 	return p
 }
 
-func (s *AnnotationContext) GetParser() antlr.Parser { return s.parser }
+func (s *DecoratorContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *AnnotationContext) NAME() antlr.TerminalNode {
+func (s *DecoratorContext) NAME() antlr.TerminalNode {
 	return s.GetToken(DevcmdParserNAME, 0)
 }
 
-func (s *AnnotationContext) GetRuleContext() antlr.RuleContext {
+func (s *DecoratorContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *AnnotationContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+func (s *DecoratorContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnnotationContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterAnnotation(s)
+		listenerT.EnterDecorator(s)
 	}
 }
 
-func (s *AnnotationContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitAnnotation(s)
+		listenerT.ExitDecorator(s)
 	}
 }
 
-func (s *AnnotationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecoratorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitAnnotation(s)
+		return t.VisitDecorator(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-func (p *DevcmdParser) Annotation() (localctx IAnnotationContext) {
-	localctx = NewAnnotationContext(p, p.GetParserRuleContext(), p.GetState())
-	p.EnterRule(localctx, 14, DevcmdParserRULE_annotation)
+func (p *DevcmdParser) Decorator() (localctx IDecoratorContext) {
+	localctx = NewDecoratorContext(p, p.GetParserRuleContext(), p.GetState())
+	p.EnterRule(localctx, 14, DevcmdParserRULE_decorator)
 	p.EnterOuterAlt(localctx, 1)
 	{
 		p.SetState(91)
@@ -1730,67 +1730,67 @@ errorExit:
 	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
-// IAnnotationContentContext is an interface to support dynamic dispatch.
-type IAnnotationContentContext interface {
+// IDecoratorContentContext is an interface to support dynamic dispatch.
+type IDecoratorContentContext interface {
 	antlr.ParserRuleContext
 
 	// GetParser returns the parser.
 	GetParser() antlr.Parser
 
 	// Getter signatures
-	AllAnnotationElement() []IAnnotationElementContext
-	AnnotationElement(i int) IAnnotationElementContext
+	AllDecoratorElement() []IDecoratorElementContext
+	DecoratorElement(i int) IDecoratorElementContext
 
-	// IsAnnotationContentContext differentiates from other interfaces.
-	IsAnnotationContentContext()
+	// IsDecoratorContentContext differentiates from other interfaces.
+	IsDecoratorContentContext()
 }
 
-type AnnotationContentContext struct {
+type DecoratorContentContext struct {
 	antlr.BaseParserRuleContext
 	parser antlr.Parser
 }
 
-func NewEmptyAnnotationContentContext() *AnnotationContentContext {
-	var p = new(AnnotationContentContext)
+func NewEmptyDecoratorContentContext() *DecoratorContentContext {
+	var p = new(DecoratorContentContext)
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationContent
+	p.RuleIndex = DevcmdParserRULE_decoratorContent
 	return p
 }
 
-func InitEmptyAnnotationContentContext(p *AnnotationContentContext) {
+func InitEmptyDecoratorContentContext(p *DecoratorContentContext) {
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationContent
+	p.RuleIndex = DevcmdParserRULE_decoratorContent
 }
 
-func (*AnnotationContentContext) IsAnnotationContentContext() {}
+func (*DecoratorContentContext) IsDecoratorContentContext() {}
 
-func NewAnnotationContentContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *AnnotationContentContext {
-	var p = new(AnnotationContentContext)
+func NewDecoratorContentContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *DecoratorContentContext {
+	var p = new(DecoratorContentContext)
 
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, parent, invokingState)
 
 	p.parser = parser
-	p.RuleIndex = DevcmdParserRULE_annotationContent
+	p.RuleIndex = DevcmdParserRULE_decoratorContent
 
 	return p
 }
 
-func (s *AnnotationContentContext) GetParser() antlr.Parser { return s.parser }
+func (s *DecoratorContentContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *AnnotationContentContext) AllAnnotationElement() []IAnnotationElementContext {
+func (s *DecoratorContentContext) AllDecoratorElement() []IDecoratorElementContext {
 	children := s.GetChildren()
 	len := 0
 	for _, ctx := range children {
-		if _, ok := ctx.(IAnnotationElementContext); ok {
+		if _, ok := ctx.(IDecoratorElementContext); ok {
 			len++
 		}
 	}
 
-	tst := make([]IAnnotationElementContext, len)
+	tst := make([]IDecoratorElementContext, len)
 	i := 0
 	for _, ctx := range children {
-		if t, ok := ctx.(IAnnotationElementContext); ok {
-			tst[i] = t.(IAnnotationElementContext)
+		if t, ok := ctx.(IDecoratorElementContext); ok {
+			tst[i] = t.(IDecoratorElementContext)
 			i++
 		}
 	}
@@ -1798,11 +1798,11 @@ func (s *AnnotationContentContext) AllAnnotationElement() []IAnnotationElementCo
 	return tst
 }
 
-func (s *AnnotationContentContext) AnnotationElement(i int) IAnnotationElementContext {
+func (s *DecoratorContentContext) DecoratorElement(i int) IDecoratorElementContext {
 	var t antlr.RuleContext
 	j := 0
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationElementContext); ok {
+		if _, ok := ctx.(IDecoratorElementContext); ok {
 			if j == i {
 				t = ctx.(antlr.RuleContext)
 				break
@@ -1815,42 +1815,42 @@ func (s *AnnotationContentContext) AnnotationElement(i int) IAnnotationElementCo
 		return nil
 	}
 
-	return t.(IAnnotationElementContext)
+	return t.(IDecoratorElementContext)
 }
 
-func (s *AnnotationContentContext) GetRuleContext() antlr.RuleContext {
+func (s *DecoratorContentContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *AnnotationContentContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+func (s *DecoratorContentContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnnotationContentContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorContentContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterAnnotationContent(s)
+		listenerT.EnterDecoratorContent(s)
 	}
 }
 
-func (s *AnnotationContentContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorContentContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitAnnotationContent(s)
+		listenerT.ExitDecoratorContent(s)
 	}
 }
 
-func (s *AnnotationContentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecoratorContentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitAnnotationContent(s)
+		return t.VisitDecoratorContent(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-func (p *DevcmdParser) AnnotationContent() (localctx IAnnotationContentContext) {
-	localctx = NewAnnotationContentContext(p, p.GetParserRuleContext(), p.GetState())
-	p.EnterRule(localctx, 16, DevcmdParserRULE_annotationContent)
+func (p *DevcmdParser) DecoratorContent() (localctx IDecoratorContentContext) {
+	localctx = NewDecoratorContentContext(p, p.GetParserRuleContext(), p.GetState())
+	p.EnterRule(localctx, 16, DevcmdParserRULE_decoratorContent)
 	var _la int
 
 	p.EnterOuterAlt(localctx, 1)
@@ -1864,7 +1864,7 @@ func (p *DevcmdParser) AnnotationContent() (localctx IAnnotationContentContext) 
 	for (int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&562949953417214) != 0 {
 		{
 			p.SetState(93)
-			p.AnnotationElement()
+			p.DecoratorElement()
 		}
 
 		p.SetState(98)
@@ -1888,8 +1888,8 @@ errorExit:
 	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
-// IAnnotationElementContext is an interface to support dynamic dispatch.
-type IAnnotationElementContext interface {
+// IDecoratorElementContext is an interface to support dynamic dispatch.
+type IDecoratorElementContext interface {
 	antlr.ParserRuleContext
 
 	// GetParser returns the parser.
@@ -1898,60 +1898,60 @@ type IAnnotationElementContext interface {
 	// Getter signatures
 	AllLPAREN() []antlr.TerminalNode
 	LPAREN(i int) antlr.TerminalNode
-	AnnotationContent() IAnnotationContentContext
+	DecoratorContent() IDecoratorContentContext
 	AllRPAREN() []antlr.TerminalNode
 	RPAREN(i int) antlr.TerminalNode
 	AllNEWLINE() []antlr.TerminalNode
 	NEWLINE(i int) antlr.TerminalNode
 
-	// IsAnnotationElementContext differentiates from other interfaces.
-	IsAnnotationElementContext()
+	// IsDecoratorElementContext differentiates from other interfaces.
+	IsDecoratorElementContext()
 }
 
-type AnnotationElementContext struct {
+type DecoratorElementContext struct {
 	antlr.BaseParserRuleContext
 	parser antlr.Parser
 }
 
-func NewEmptyAnnotationElementContext() *AnnotationElementContext {
-	var p = new(AnnotationElementContext)
+func NewEmptyDecoratorElementContext() *DecoratorElementContext {
+	var p = new(DecoratorElementContext)
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationElement
+	p.RuleIndex = DevcmdParserRULE_decoratorElement
 	return p
 }
 
-func InitEmptyAnnotationElementContext(p *AnnotationElementContext) {
+func InitEmptyDecoratorElementContext(p *DecoratorElementContext) {
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationElement
+	p.RuleIndex = DevcmdParserRULE_decoratorElement
 }
 
-func (*AnnotationElementContext) IsAnnotationElementContext() {}
+func (*DecoratorElementContext) IsDecoratorElementContext() {}
 
-func NewAnnotationElementContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *AnnotationElementContext {
-	var p = new(AnnotationElementContext)
+func NewDecoratorElementContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *DecoratorElementContext {
+	var p = new(DecoratorElementContext)
 
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, parent, invokingState)
 
 	p.parser = parser
-	p.RuleIndex = DevcmdParserRULE_annotationElement
+	p.RuleIndex = DevcmdParserRULE_decoratorElement
 
 	return p
 }
 
-func (s *AnnotationElementContext) GetParser() antlr.Parser { return s.parser }
+func (s *DecoratorElementContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *AnnotationElementContext) AllLPAREN() []antlr.TerminalNode {
+func (s *DecoratorElementContext) AllLPAREN() []antlr.TerminalNode {
 	return s.GetTokens(DevcmdParserLPAREN)
 }
 
-func (s *AnnotationElementContext) LPAREN(i int) antlr.TerminalNode {
+func (s *DecoratorElementContext) LPAREN(i int) antlr.TerminalNode {
 	return s.GetToken(DevcmdParserLPAREN, i)
 }
 
-func (s *AnnotationElementContext) AnnotationContent() IAnnotationContentContext {
+func (s *DecoratorElementContext) DecoratorContent() IDecoratorContentContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotationContentContext); ok {
+		if _, ok := ctx.(IDecoratorContentContext); ok {
 			t = ctx.(antlr.RuleContext)
 			break
 		}
@@ -1961,58 +1961,58 @@ func (s *AnnotationElementContext) AnnotationContent() IAnnotationContentContext
 		return nil
 	}
 
-	return t.(IAnnotationContentContext)
+	return t.(IDecoratorContentContext)
 }
 
-func (s *AnnotationElementContext) AllRPAREN() []antlr.TerminalNode {
+func (s *DecoratorElementContext) AllRPAREN() []antlr.TerminalNode {
 	return s.GetTokens(DevcmdParserRPAREN)
 }
 
-func (s *AnnotationElementContext) RPAREN(i int) antlr.TerminalNode {
+func (s *DecoratorElementContext) RPAREN(i int) antlr.TerminalNode {
 	return s.GetToken(DevcmdParserRPAREN, i)
 }
 
-func (s *AnnotationElementContext) AllNEWLINE() []antlr.TerminalNode {
+func (s *DecoratorElementContext) AllNEWLINE() []antlr.TerminalNode {
 	return s.GetTokens(DevcmdParserNEWLINE)
 }
 
-func (s *AnnotationElementContext) NEWLINE(i int) antlr.TerminalNode {
+func (s *DecoratorElementContext) NEWLINE(i int) antlr.TerminalNode {
 	return s.GetToken(DevcmdParserNEWLINE, i)
 }
 
-func (s *AnnotationElementContext) GetRuleContext() antlr.RuleContext {
+func (s *DecoratorElementContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *AnnotationElementContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+func (s *DecoratorElementContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnnotationElementContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorElementContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterAnnotationElement(s)
+		listenerT.EnterDecoratorElement(s)
 	}
 }
 
-func (s *AnnotationElementContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorElementContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitAnnotationElement(s)
+		listenerT.ExitDecoratorElement(s)
 	}
 }
 
-func (s *AnnotationElementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecoratorElementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitAnnotationElement(s)
+		return t.VisitDecoratorElement(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-func (p *DevcmdParser) AnnotationElement() (localctx IAnnotationElementContext) {
-	localctx = NewAnnotationElementContext(p, p.GetParserRuleContext(), p.GetState())
-	p.EnterRule(localctx, 18, DevcmdParserRULE_annotationElement)
+func (p *DevcmdParser) DecoratorElement() (localctx IDecoratorElementContext) {
+	localctx = NewDecoratorElementContext(p, p.GetParserRuleContext(), p.GetState())
+	p.EnterRule(localctx, 18, DevcmdParserRULE_decoratorElement)
 	var _la int
 
 	var _alt int
@@ -2036,7 +2036,7 @@ func (p *DevcmdParser) AnnotationElement() (localctx IAnnotationElementContext) 
 		}
 		{
 			p.SetState(100)
-			p.AnnotationContent()
+			p.DecoratorContent()
 		}
 		{
 			p.SetState(101)
@@ -2304,8 +2304,8 @@ errorExit:
 	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
-// IAnnotationCommandContext is an interface to support dynamic dispatch.
-type IAnnotationCommandContext interface {
+// IDecoratorCommandContext is an interface to support dynamic dispatch.
+type IDecoratorCommandContext interface {
 	antlr.ParserRuleContext
 
 	// GetParser returns the parser.
@@ -2316,43 +2316,43 @@ type IAnnotationCommandContext interface {
 	AllContinuationLine() []IContinuationLineContext
 	ContinuationLine(i int) IContinuationLineContext
 
-	// IsAnnotationCommandContext differentiates from other interfaces.
-	IsAnnotationCommandContext()
+	// IsDecoratorCommandContext differentiates from other interfaces.
+	IsDecoratorCommandContext()
 }
 
-type AnnotationCommandContext struct {
+type DecoratorCommandContext struct {
 	antlr.BaseParserRuleContext
 	parser antlr.Parser
 }
 
-func NewEmptyAnnotationCommandContext() *AnnotationCommandContext {
-	var p = new(AnnotationCommandContext)
+func NewEmptyDecoratorCommandContext() *DecoratorCommandContext {
+	var p = new(DecoratorCommandContext)
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationCommand
+	p.RuleIndex = DevcmdParserRULE_decoratorCommand
 	return p
 }
 
-func InitEmptyAnnotationCommandContext(p *AnnotationCommandContext) {
+func InitEmptyDecoratorCommandContext(p *DecoratorCommandContext) {
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, nil, -1)
-	p.RuleIndex = DevcmdParserRULE_annotationCommand
+	p.RuleIndex = DevcmdParserRULE_decoratorCommand
 }
 
-func (*AnnotationCommandContext) IsAnnotationCommandContext() {}
+func (*DecoratorCommandContext) IsDecoratorCommandContext() {}
 
-func NewAnnotationCommandContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *AnnotationCommandContext {
-	var p = new(AnnotationCommandContext)
+func NewDecoratorCommandContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *DecoratorCommandContext {
+	var p = new(DecoratorCommandContext)
 
 	antlr.InitBaseParserRuleContext(&p.BaseParserRuleContext, parent, invokingState)
 
 	p.parser = parser
-	p.RuleIndex = DevcmdParserRULE_annotationCommand
+	p.RuleIndex = DevcmdParserRULE_decoratorCommand
 
 	return p
 }
 
-func (s *AnnotationCommandContext) GetParser() antlr.Parser { return s.parser }
+func (s *DecoratorCommandContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *AnnotationCommandContext) CommandText() ICommandTextContext {
+func (s *DecoratorCommandContext) CommandText() ICommandTextContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
 		if _, ok := ctx.(ICommandTextContext); ok {
@@ -2368,7 +2368,7 @@ func (s *AnnotationCommandContext) CommandText() ICommandTextContext {
 	return t.(ICommandTextContext)
 }
 
-func (s *AnnotationCommandContext) AllContinuationLine() []IContinuationLineContext {
+func (s *DecoratorCommandContext) AllContinuationLine() []IContinuationLineContext {
 	children := s.GetChildren()
 	len := 0
 	for _, ctx := range children {
@@ -2389,7 +2389,7 @@ func (s *AnnotationCommandContext) AllContinuationLine() []IContinuationLineCont
 	return tst
 }
 
-func (s *AnnotationCommandContext) ContinuationLine(i int) IContinuationLineContext {
+func (s *DecoratorCommandContext) ContinuationLine(i int) IContinuationLineContext {
 	var t antlr.RuleContext
 	j := 0
 	for _, ctx := range s.GetChildren() {
@@ -2409,39 +2409,39 @@ func (s *AnnotationCommandContext) ContinuationLine(i int) IContinuationLineCont
 	return t.(IContinuationLineContext)
 }
 
-func (s *AnnotationCommandContext) GetRuleContext() antlr.RuleContext {
+func (s *DecoratorCommandContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *AnnotationCommandContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+func (s *DecoratorCommandContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnnotationCommandContext) EnterRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorCommandContext) EnterRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.EnterAnnotationCommand(s)
+		listenerT.EnterDecoratorCommand(s)
 	}
 }
 
-func (s *AnnotationCommandContext) ExitRule(listener antlr.ParseTreeListener) {
+func (s *DecoratorCommandContext) ExitRule(listener antlr.ParseTreeListener) {
 	if listenerT, ok := listener.(DevcmdParserListener); ok {
-		listenerT.ExitAnnotationCommand(s)
+		listenerT.ExitDecoratorCommand(s)
 	}
 }
 
-func (s *AnnotationCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *DecoratorCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case DevcmdParserVisitor:
-		return t.VisitAnnotationCommand(s)
+		return t.VisitDecoratorCommand(s)
 
 	default:
 		return t.VisitChildren(s)
 	}
 }
 
-func (p *DevcmdParser) AnnotationCommand() (localctx IAnnotationCommandContext) {
-	localctx = NewAnnotationCommandContext(p, p.GetParserRuleContext(), p.GetState())
-	p.EnterRule(localctx, 22, DevcmdParserRULE_annotationCommand)
+func (p *DevcmdParser) DecoratorCommand() (localctx IDecoratorCommandContext) {
+	localctx = NewDecoratorCommandContext(p, p.GetParserRuleContext(), p.GetState())
+	p.EnterRule(localctx, 22, DevcmdParserRULE_decoratorCommand)
 	var _la int
 
 	p.EnterOuterAlt(localctx, 1)
@@ -3053,7 +3053,7 @@ type IBlockStatementContext interface {
 	GetParser() antlr.Parser
 
 	// Getter signatures
-	AnnotatedCommand() IAnnotatedCommandContext
+	DecoratedCommand() IDecoratedCommandContext
 	CommandText() ICommandTextContext
 	AllContinuationLine() []IContinuationLineContext
 	ContinuationLine(i int) IContinuationLineContext
@@ -3094,10 +3094,10 @@ func NewBlockStatementContext(parser antlr.Parser, parent antlr.ParserRuleContex
 
 func (s *BlockStatementContext) GetParser() antlr.Parser { return s.parser }
 
-func (s *BlockStatementContext) AnnotatedCommand() IAnnotatedCommandContext {
+func (s *BlockStatementContext) DecoratedCommand() IDecoratedCommandContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
-		if _, ok := ctx.(IAnnotatedCommandContext); ok {
+		if _, ok := ctx.(IDecoratedCommandContext); ok {
 			t = ctx.(antlr.RuleContext)
 			break
 		}
@@ -3107,7 +3107,7 @@ func (s *BlockStatementContext) AnnotatedCommand() IAnnotatedCommandContext {
 		return nil
 	}
 
-	return t.(IAnnotatedCommandContext)
+	return t.(IDecoratedCommandContext)
 }
 
 func (s *BlockStatementContext) CommandText() ICommandTextContext {
@@ -3213,7 +3213,7 @@ func (p *DevcmdParser) BlockStatement() (localctx IBlockStatementContext) {
 		p.EnterOuterAlt(localctx, 1)
 		{
 			p.SetState(161)
-			p.AnnotatedCommand()
+			p.DecoratedCommand()
 		}
 
 	case 2:

@@ -1,16 +1,19 @@
   /**
- * Devcmd Lexer Grammar - Better content tokenization
+ * Devcmd Lexer Grammar
  *
- * This lexer properly tokenizes devcmd syntax while supporting
- * nested parentheses in @name(...) annotations through careful
- * token ordering and fragment rules.
+ * Lexer for the devcmd language - a declarative syntax for defining
+ * CLI tools from simple command definitions. Devcmd transforms command
+ * definitions into standalone CLI binaries with process management,
+ * variable substitution, and workflow automation.
  *
- * Key design principles:
- * - Proper tokenization of identifiers, numbers, strings
- * - Whitespace and comments are hidden from parser
- * - @name( pattern triggers special handling
- * - Shell operators are properly tokenized
- * - Content preserves shell command structure
+ * Language features:
+ * - Variable definitions: def NAME = value;
+ * - Simple commands: build: go build ./cmd;
+ * - Block commands: deploy: { build; test; kubectl apply -f k8s/ }
+ * - Process management: watch/stop command pairs
+ * - Decorators: @name(...) for command metadata and processing
+ * - Variable expansion: $(VAR) and shell variables $VAR
+ * - Shell command syntax: pipes, redirections, background processes
  */
 lexer grammar DevcmdLexer;
 
@@ -19,11 +22,11 @@ DEF : 'def' ;
 WATCH : 'watch' ;
 STOP : 'stop' ;
 
-// Special annotation pattern - captures @name( as a single token
-// This allows the parser to recognize annotation functions
+// Special decorator pattern - captures @name( as a single token
+// This allows the parser to recognize decorator functions
 AT_NAME_LPAREN : '@' [A-Za-z] [A-Za-z0-9_-]* '(' ;
 
-// Regular annotation start - for @name: syntax
+// Regular decorator start - for @name: syntax
 AT : '@' ;
 
 // Structural operators and delimiters

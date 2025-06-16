@@ -107,12 +107,12 @@ variableDefinition
 variableValue
 commandDefinition
 commandBody
-annotatedCommand
-annotation
-annotationContent
-annotationElement
+decoratedCommand
+decorator
+decoratorContent
+decoratorElement
 simpleCommand
-annotationCommand
+decoratorCommand
 blockCommand
 blockStatements
 nonEmptyBlockStatements

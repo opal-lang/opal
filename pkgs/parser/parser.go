@@ -386,17 +386,17 @@ func (v *DevcmdVisitor) Visit(tree antlr.ParseTree) {
 			v.debug.Log("Visiting command definition")
 		}
 		v.visitCommandDefinition(t)
-	case *gen.FunctionAnnotContext:
+	case *gen.FunctionDecoratorContext:
 		if v.debug != nil {
-			v.debug.Log("Visiting function annotation")
+			v.debug.Log("Visiting function decorator")
 		}
-	case *gen.BlockAnnotContext:
+	case *gen.BlockDecoratorContext:
 		if v.debug != nil {
-			v.debug.Log("Visiting block annotation")
+			v.debug.Log("Visiting block decorator")
 		}
-	case *gen.SimpleAnnotContext:
+	case *gen.SimpleDecoratorContext:
 		if v.debug != nil {
-			v.debug.Log("Visiting simple annotation")
+			v.debug.Log("Visiting simple decorator")
 		}
 	case antlr.TerminalNode:
 		if v.debug != nil {
@@ -464,9 +464,9 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 
 	commandBody := ctx.CommandBody()
 
-	if annotatedCmd := commandBody.AnnotatedCommand(); annotatedCmd != nil {
-		// Handle annotated command at top level
-		annotatedStmt := v.processAnnotatedCommand(annotatedCmd)
+	if decoratedCmd := commandBody.DecoratedCommand(); decoratedCmd != nil {
+		// Handle decorated command at top level
+		decoratedStmt := v.processDecoratedCommand(decoratedCmd)
 
 		v.commandFile.Commands = append(v.commandFile.Commands, Command{
 			Name:    name,
@@ -474,7 +474,7 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 			IsWatch: isWatch,
 			IsStop:  isStop,
 			IsBlock: true,
-			Block:   []BlockStatement{annotatedStmt},
+			Block:   []BlockStatement{decoratedStmt},
 		})
 
 	} else if simpleCmd := commandBody.SimpleCommand(); simpleCmd != nil {
@@ -520,8 +520,8 @@ func (v *DevcmdVisitor) processSimpleCommand(ctx *gen.SimpleCommandContext) stri
 	return fullText.String()
 }
 
-// Process annotation command (similar to simple command but without semicolon)
-func (v *DevcmdVisitor) processAnnotationCommand(ctx *gen.AnnotationCommandContext) string {
+// Process decorator command (similar to simple command but without semicolon)
+func (v *DevcmdVisitor) processDecoratorCommand(ctx *gen.DecoratorCommandContext) string {
 	cmdText := v.getOriginalText(ctx.CommandText())
 	cmdText = strings.TrimRight(cmdText, " \t")
 
@@ -568,12 +568,12 @@ func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []Bloc
 	for i, stmt := range allBlockStmts {
 		stmtCtx := stmt.(*gen.BlockStatementContext)
 
-		if annotatedCmd := stmtCtx.AnnotatedCommand(); annotatedCmd != nil {
+		if decoratedCmd := stmtCtx.DecoratedCommand(); decoratedCmd != nil {
 			if v.debug != nil {
-				v.debug.Log("Block statement %d: annotated command", i)
+				v.debug.Log("Block statement %d: decorated command", i)
 			}
-			annotatedStmt := v.processAnnotatedCommand(annotatedCmd)
-			statements = append(statements, annotatedStmt)
+			decoratedStmt := v.processDecoratedCommand(decoratedCmd)
+			statements = append(statements, decoratedStmt)
 		} else {
 			if v.debug != nil {
 				v.debug.Log("Block statement %d: regular command", i)
@@ -602,7 +602,7 @@ func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []Bloc
 
 			statements = append(statements, BlockStatement{
 				Command:     fullText.String(),
-				IsAnnotated: false,
+				IsDecorated: false,
 			})
 		}
 	}
@@ -610,15 +610,15 @@ func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []Bloc
 	return statements
 }
 
-func (v *DevcmdVisitor) processAnnotatedCommand(ctx antlr.ParserRuleContext) BlockStatement {
-	switch annotCtx := ctx.(type) {
-	case *gen.FunctionAnnotContext:
-		// Extract annotation name from AT_NAME_LPAREN token
-		atNameLParen := annotCtx.AT_NAME_LPAREN().GetText()
-		// Remove @ and ( to get the annotation name
-		annotation := strings.TrimSuffix(strings.TrimPrefix(atNameLParen, "@"), "(")
+func (v *DevcmdVisitor) processDecoratedCommand(ctx antlr.ParserRuleContext) BlockStatement {
+	switch decorCtx := ctx.(type) {
+	case *gen.FunctionDecoratorContext:
+		// Extract decorator name from AT_NAME_LPAREN token
+		atNameLParen := decorCtx.AT_NAME_LPAREN().GetText()
+		// Remove @ and ( to get the decorator name
+		decorator := strings.TrimSuffix(strings.TrimPrefix(atNameLParen, "@"), "(")
 
-		// For function annotations like @sh(...), we need to get the exact text
+		// For function decorators like @sh(...), we need to get the exact text
 		// between the parentheses, preserving all formatting
 		var content string
 
@@ -626,8 +626,8 @@ func (v *DevcmdVisitor) processAnnotatedCommand(ctx antlr.ParserRuleContext) Blo
 		// The RPAREN token is the closing )
 		// We need everything in between
 
-		openParenToken := annotCtx.AT_NAME_LPAREN().GetSymbol()
-		closeParenToken := annotCtx.RPAREN().GetSymbol()
+		openParenToken := decorCtx.AT_NAME_LPAREN().GetSymbol()
+		closeParenToken := decorCtx.RPAREN().GetSymbol()
 
 		// Get positions
 		contentStart := openParenToken.GetStop() + 1  // After the (
@@ -639,50 +639,50 @@ func (v *DevcmdVisitor) processAnnotatedCommand(ctx antlr.ParserRuleContext) Blo
 		}
 
 		if v.debug != nil {
-			v.debug.Log("Function annotation: %s(%s)", annotation, content)
+			v.debug.Log("Function decorator: %s(%s)", decorator, content)
 		}
 		return BlockStatement{
-			IsAnnotated:    true,
-			Annotation:     annotation,
-			AnnotationType: "function",
-			Command:        content,
+			IsDecorated:   true,
+			Decorator:     decorator,
+			DecoratorType: "function",
+			Command:       content,
 		}
 
-	case *gen.BlockAnnotContext:
-		annotation := annotCtx.Annotation().GetText()
-		blockCmd := annotCtx.BlockCommand().(*gen.BlockCommandContext)
+	case *gen.BlockDecoratorContext:
+		decorator := decorCtx.Decorator().GetText()
+		blockCmd := decorCtx.BlockCommand().(*gen.BlockCommandContext)
 		blockStatements := v.processBlockCommand(blockCmd)
 		if v.debug != nil {
-			v.debug.Log("Block annotation: %s with %d statements", annotation, len(blockStatements))
+			v.debug.Log("Block decorator: %s with %d statements", decorator, len(blockStatements))
 		}
 		return BlockStatement{
-			IsAnnotated:    true,
-			Annotation:     annotation,
-			AnnotationType: "block",
-			AnnotatedBlock: blockStatements,
+			IsDecorated:    true,
+			Decorator:      decorator,
+			DecoratorType:  "block",
+			DecoratedBlock: blockStatements,
 		}
 
-	case *gen.SimpleAnnotContext:
-		annotation := annotCtx.Annotation().GetText()
-		// Updated to use AnnotationCommand instead of SimpleCommand
-		annotCmd := annotCtx.AnnotationCommand().(*gen.AnnotationCommandContext)
-		commandText := v.processAnnotationCommand(annotCmd)
+	case *gen.SimpleDecoratorContext:
+		decorator := decorCtx.Decorator().GetText()
+		// Updated to use DecoratorCommand instead of SimpleCommand
+		decorCmd := decorCtx.DecoratorCommand().(*gen.DecoratorCommandContext)
+		commandText := v.processDecoratorCommand(decorCmd)
 		if v.debug != nil {
-			v.debug.Log("Simple annotation: %s:%s", annotation, commandText)
+			v.debug.Log("Simple decorator: %s:%s", decorator, commandText)
 		}
 		return BlockStatement{
-			IsAnnotated:    true,
-			Annotation:     annotation,
-			AnnotationType: "simple",
-			Command:        commandText,
+			IsDecorated:   true,
+			Decorator:     decorator,
+			DecoratorType: "simple",
+			Command:       commandText,
 		}
 
 	default:
 		if v.debug != nil {
-			v.debug.LogError("Unknown annotation context type: %T", ctx)
+			v.debug.LogError("Unknown decorator context type: %T", ctx)
 		}
 		return BlockStatement{
-			IsAnnotated: false,
+			IsDecorated: false,
 			Command:     "",
 		}
 	}

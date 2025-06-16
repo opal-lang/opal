@@ -11,13 +11,13 @@ func dumpBlockStructure(t *testing.T, name string, cmd Command) {
 	t.Logf("=== BLOCK STRUCTURE DUMP for %s ===", name)
 	t.Logf("Command: %s, IsBlock: %v, Block size: %d", cmd.Name, cmd.IsBlock, len(cmd.Block))
 	for i, stmt := range cmd.Block {
-		t.Logf("  [%d] IsAnnotated: %v", i, stmt.IsAnnotated)
-		if stmt.IsAnnotated {
-			t.Logf("      Annotation: %s, Type: %s", stmt.Annotation, stmt.AnnotationType)
+		t.Logf("  [%d] IsDecorated: %v", i, stmt.IsDecorated)
+		if stmt.IsDecorated {
+			t.Logf("      Decorator: %s, Type: %s", stmt.Decorator, stmt.DecoratorType)
 			t.Logf("      Command: %q", stmt.Command)
-			if len(stmt.AnnotatedBlock) > 0 {
-				t.Logf("      AnnotatedBlock size: %d", len(stmt.AnnotatedBlock))
-				for j, nested := range stmt.AnnotatedBlock {
+			if len(stmt.DecoratedBlock) > 0 {
+				t.Logf("      DecoratedBlock size: %d", len(stmt.DecoratedBlock))
+				for j, nested := range stmt.DecoratedBlock {
 					t.Logf("        [%d] Command: %q", j, nested.Command)
 				}
 			}
@@ -146,14 +146,14 @@ func TestBasicParsing(t *testing.T) {
 			wantErr:     false,
 		},
 		{
-			name:        "double parentheses in @sh() annotation",
+			name:        "double parentheses in @sh() decorator",
 			input:       "setup: @sh((cd src && make) || echo \"failed\");",
 			wantCommand: "(cd src && make) || echo \"failed\"",
 			wantName:    "setup",
 			wantErr:     false,
 		},
 		{
-			name:        "nested parentheses in @sh() annotation",
+			name:        "nested parentheses in @sh() decorator",
 			input:       "complex: @sh((test -f config && (source config && run)) || default);",
 			wantCommand: "(test -f config && (source config && run)) || default",
 			wantName:    "complex",
@@ -192,11 +192,11 @@ func TestBasicParsing(t *testing.T) {
 				t.Errorf("Command name = %q, want %q", cmd.Name, tt.wantName)
 			}
 
-			// For @sh() function annotations, check the annotation command
-			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsAnnotated {
-				annotatedStmt := cmd.Block[0]
-				if annotatedStmt.Command != tt.wantCommand {
-					t.Errorf("Annotated command = %q, want %q", annotatedStmt.Command, tt.wantCommand)
+			// For @sh() function decorators, check the decorator command
+			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
+				decoratedStmt := cmd.Block[0]
+				if decoratedStmt.Command != tt.wantCommand {
+					t.Errorf("Decorated command = %q, want %q", decoratedStmt.Command, tt.wantCommand)
 				}
 			} else if cmd.Command != tt.wantCommand {
 				t.Errorf("Command text = %q, want %q", cmd.Command, tt.wantCommand)
@@ -291,7 +291,7 @@ func TestDefinitions(t *testing.T) {
 			wantValue: "watch -n 1 \"ps aux | grep myapp\"",
 			wantErr:   false,
 		},
-		// Simplified definition test to avoid annotation in definitions
+		// Simplified definition test to avoid decorator in definitions
 		{
 			name:      "definition with find command text",
 			input:     "def FIND_CMD = find . -name \"*.tmp\" -delete;",
@@ -399,9 +399,9 @@ func TestBlockCommands(t *testing.T) {
 			wantCommands:  []string{"find . -name \"*.tmp\" -exec rm {} \\;", "echo \"cleanup done\""},
 			wantErr:       false,
 		},
-		// Test @parallel: annotation for concurrent execution
+		// Test @parallel: decorator for concurrent execution
 		{
-			name:          "block with parallel annotation",
+			name:          "block with parallel decorator",
 			input:         "services: { @parallel: { server; client; database } }",
 			wantName:      "services",
 			wantBlockSize: 1,
@@ -453,14 +453,14 @@ func TestBlockCommands(t *testing.T) {
 				stmt := cmd.Block[i]
 				expectedCommand := tt.wantCommands[i]
 
-				// Handle annotated commands (like @sh() and @parallel:)
-				if stmt.IsAnnotated {
-					if stmt.AnnotationType == "function" && expectedCommand != "" {
+				// Handle decorated commands (like @sh() and @parallel:)
+				if stmt.IsDecorated {
+					if stmt.DecoratorType == "function" && expectedCommand != "" {
 						if stmt.Command != expectedCommand {
 							t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
 						}
 					}
-					// For block annotations like @parallel:, don't check command text
+					// For block decorators like @parallel:, don't check command text
 				} else {
 					if stmt.Command != expectedCommand {
 						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
@@ -471,61 +471,61 @@ func TestBlockCommands(t *testing.T) {
 	}
 }
 
-// Test for @ annotation syntax
-func TestAnnotatedCommands(t *testing.T) {
+// Test for @ decorator syntax
+func TestDecoratedCommands(t *testing.T) {
 	tests := []struct {
-		name                string
-		input               string
-		wantBlockSize       int
-		wantAnnotations     []string
-		wantAnnotationTypes []string
-		wantCommands        []string
-		wantErr             bool
+		name               string
+		input              string
+		wantBlockSize      int
+		wantDecorators     []string
+		wantDecoratorTypes []string
+		wantCommands       []string
+		wantErr            bool
 	}{
 		{
-			name:                "function annotation",
-			input:               "cleanup: { @sh(find . -name \"*.tmp\" -exec rm {} \\;) }",
-			wantBlockSize:       1,
-			wantAnnotations:     []string{"sh"},
-			wantAnnotationTypes: []string{"function"},
-			wantCommands:        []string{"find . -name \"*.tmp\" -exec rm {} \\;"},
-			wantErr:             false,
+			name:               "function decorator",
+			input:              "cleanup: { @sh(find . -name \"*.tmp\" -exec rm {} \\;) }",
+			wantBlockSize:      1,
+			wantDecorators:     []string{"sh"},
+			wantDecoratorTypes: []string{"function"},
+			wantCommands:       []string{"find . -name \"*.tmp\" -exec rm {} \\;"},
+			wantErr:            false,
 		},
 		{
-			name:                "simple annotation",
-			input:               "deploy: { @retry: docker push myapp:latest }",
-			wantBlockSize:       1,
-			wantAnnotations:     []string{"retry"},
-			wantAnnotationTypes: []string{"simple"},
-			wantCommands:        []string{"docker push myapp:latest"},
-			wantErr:             false,
+			name:               "simple decorator",
+			input:              "deploy: { @retry: docker push myapp:latest }",
+			wantBlockSize:      1,
+			wantDecorators:     []string{"retry"},
+			wantDecoratorTypes: []string{"simple"},
+			wantCommands:       []string{"docker push myapp:latest"},
+			wantErr:            false,
 		},
 		{
-			name:                "block annotation",
-			input:               "services: { @parallel: { server; client; database } }",
-			wantBlockSize:       1,
-			wantAnnotations:     []string{"parallel"},
-			wantAnnotationTypes: []string{"block"},
-			wantCommands:        []string{""},
-			wantErr:             false,
+			name:               "block decorator",
+			input:              "services: { @parallel: { server; client; database } }",
+			wantBlockSize:      1,
+			wantDecorators:     []string{"parallel"},
+			wantDecoratorTypes: []string{"block"},
+			wantCommands:       []string{""},
+			wantErr:            false,
 		},
 		{
-			name:                "mixed annotations and regular commands",
-			input:               "complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",
-			wantBlockSize:       4,
-			wantAnnotations:     []string{"", "parallel", "retry", ""},
-			wantAnnotationTypes: []string{"", "block", "simple", ""},
-			wantCommands:        []string{"echo \"starting\"", "", "flaky-command", "echo \"done\""},
-			wantErr:             false,
+			name:               "mixed decorators and regular commands",
+			input:              "complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",
+			wantBlockSize:      4,
+			wantDecorators:     []string{"", "parallel", "retry", ""},
+			wantDecoratorTypes: []string{"", "block", "simple", ""},
+			wantCommands:       []string{"echo \"starting\"", "", "flaky-command", "echo \"done\""},
+			wantErr:            false,
 		},
 		{
-			name:                "function annotation with simple content",
-			input:               "check: { @sh(test -f config.json) }",
-			wantBlockSize:       1,
-			wantAnnotations:     []string{"sh"},
-			wantAnnotationTypes: []string{"function"},
-			wantCommands:        []string{"test -f config.json"},
-			wantErr:             false,
+			name:               "function decorator with simple content",
+			input:              "check: { @sh(test -f config.json) }",
+			wantBlockSize:      1,
+			wantDecorators:     []string{"sh"},
+			wantDecoratorTypes: []string{"function"},
+			wantCommands:       []string{"test -f config.json"},
+			wantErr:            false,
 		},
 	}
 
@@ -565,28 +565,28 @@ func TestAnnotatedCommands(t *testing.T) {
 			for i := 0; i < tt.wantBlockSize; i++ {
 				stmt := cmd.Block[i]
 
-				expectedAnnotation := tt.wantAnnotations[i]
-				expectedType := tt.wantAnnotationTypes[i]
+				expectedDecorator := tt.wantDecorators[i]
+				expectedType := tt.wantDecoratorTypes[i]
 				expectedCommand := tt.wantCommands[i]
 
-				if expectedAnnotation == "" {
+				if expectedDecorator == "" {
 					// Regular command
-					if stmt.IsAnnotated {
-						t.Errorf("Block[%d] should not be annotated", i)
+					if stmt.IsDecorated {
+						t.Errorf("Block[%d] should not be decorated", i)
 					}
 					if stmt.Command != expectedCommand {
 						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
 					}
 				} else {
-					// Annotated command
-					if !stmt.IsAnnotated {
-						t.Errorf("Block[%d] should be annotated", i)
+					// Decorated command
+					if !stmt.IsDecorated {
+						t.Errorf("Block[%d] should be decorated", i)
 					}
-					if stmt.Annotation != expectedAnnotation {
-						t.Errorf("Block[%d].Annotation = %q, want %q", i, stmt.Annotation, expectedAnnotation)
+					if stmt.Decorator != expectedDecorator {
+						t.Errorf("Block[%d].Decorator = %q, want %q", i, stmt.Decorator, expectedDecorator)
 					}
-					if stmt.AnnotationType != expectedType {
-						t.Errorf("Block[%d].AnnotationType = %q, want %q", i, stmt.AnnotationType, expectedType)
+					if stmt.DecoratorType != expectedType {
+						t.Errorf("Block[%d].DecoratorType = %q, want %q", i, stmt.DecoratorType, expectedType)
 					}
 					if expectedType != "block" && stmt.Command != expectedCommand {
 						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
@@ -743,11 +743,11 @@ func TestWatchStopCommands(t *testing.T) {
 				t.Errorf("Command text = %q, want %q", cmd.Command, tt.wantText)
 			}
 
-			// For @sh() function annotations in blocks, check the annotation command
-			if tt.wantBlock && len(cmd.Block) == 1 && cmd.Block[0].IsAnnotated {
-				annotatedStmt := cmd.Block[0]
-				if annotatedStmt.Command != tt.wantText {
-					t.Errorf("Annotated command = %q, want %q", annotatedStmt.Command, tt.wantText)
+			// For @sh() function decorators in blocks, check the decorator command
+			if tt.wantBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
+				decoratedStmt := cmd.Block[0]
+				if decoratedStmt.Command != tt.wantText {
+					t.Errorf("Decorated command = %q, want %q", decoratedStmt.Command, tt.wantText)
 				}
 			}
 		})
@@ -858,8 +858,8 @@ func TestVariableReferences(t *testing.T) {
 				if len(cmd.Block) == 0 {
 					t.Fatalf("No block statements found")
 				}
-				// Handle @sh() function annotations
-				if cmd.Block[0].IsAnnotated && cmd.Block[0].AnnotationType == "function" {
+				// Handle @sh() function decorators
+				if cmd.Block[0].IsDecorated && cmd.Block[0].DecoratorType == "function" {
 					expandedText = cmd.Block[0].Command
 				} else {
 					expandedText = cmd.Block[0].Command
@@ -1085,7 +1085,7 @@ func TestDollarSyntaxInBlocks(t *testing.T) {
 				t.Fatalf("Block size = %d, want %d", len(cmd.Block), tt.wantBlockSize)
 			}
 
-			// Check each statement in the block - handle annotations specially
+			// Check each statement in the block - handle decorators specially
 			for i := 0; i < tt.wantBlockSize; i++ {
 				if i >= len(cmd.Block) {
 					t.Fatalf("Missing block statement %d", i)
@@ -1094,8 +1094,8 @@ func TestDollarSyntaxInBlocks(t *testing.T) {
 				stmt := cmd.Block[i]
 				expectedCommand := tt.wantCommands[i]
 
-				if stmt.IsAnnotated && expectedCommand == "" {
-					// This is an annotated command like @parallel: - don't check Command text
+				if stmt.IsDecorated && expectedCommand == "" {
+					// This is a decorated command like @parallel: - don't check Command text
 					continue
 				}
 
@@ -1320,8 +1320,8 @@ func TestContinuationLines(t *testing.T) {
 			}
 
 			var actualCommand string
-			// Handle @sh() function annotations in blocks
-			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsAnnotated {
+			// Handle @sh() function decorators in blocks
+			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
 				actualCommand = cmd.Block[0].Command
 			} else {
 				actualCommand = cmd.Command
@@ -1428,7 +1428,7 @@ monitor: {
 # POSIX shell commands with braces using @sh()
 cleanup: @sh(find . -name "*.tmp" -exec rm {} \;);
 
-# Parallel execution with annotations
+# Parallel execution with decorators
 batch-clean: {
   @parallel: {
     @sh(find /tmp -name "*.log" -exec rm {} \;);
@@ -1522,10 +1522,10 @@ batch-clean: {
 					t.Errorf("Expected first statement to be 'cd $(SRC)', got: %q", firstStmt.Command)
 				}
 
-				// Second statement should be @parallel: annotation
+				// Second statement should be @parallel: decorator
 				secondStmt := watchServerCmd.Block[1]
-				if !secondStmt.IsAnnotated || secondStmt.Annotation != "parallel" {
-					t.Errorf("Expected second statement to be @parallel: annotation, got: %+v", secondStmt)
+				if !secondStmt.IsDecorated || secondStmt.Decorator != "parallel" {
+					t.Errorf("Expected second statement to be @parallel: decorator, got: %+v", secondStmt)
 				}
 			}
 		}
@@ -1583,15 +1583,15 @@ batch-clean: {
 			t.Errorf("Missing 'cleanup' command")
 		} else {
 			if !cleanupCmd.IsBlock {
-				t.Errorf("Expected cleanup command to be a block (for @sh annotation)")
+				t.Errorf("Expected cleanup command to be a block (for @sh decorator)")
 			}
 
 			if len(cleanupCmd.Block) != 1 {
 				t.Errorf("Expected 1 block statement in cleanup command, got %d", len(cleanupCmd.Block))
 			} else {
 				stmt := cleanupCmd.Block[0]
-				if !stmt.IsAnnotated || stmt.Annotation != "sh" {
-					t.Errorf("Expected @sh annotation, got: %+v", stmt)
+				if !stmt.IsDecorated || stmt.Decorator != "sh" {
+					t.Errorf("Expected @sh decorator, got: %+v", stmt)
 				}
 
 				expectedCmd := "find . -name \"*.tmp\" -exec rm {} \\;"
@@ -1601,7 +1601,7 @@ batch-clean: {
 			}
 		}
 
-		// Check batch-clean command (contains @parallel: annotation)
+		// Check batch-clean command (contains @parallel: decorator)
 		if batchCleanCmd == nil {
 			t.Errorf("Missing 'batch-clean' command")
 		} else {
@@ -1612,10 +1612,10 @@ batch-clean: {
 			if len(batchCleanCmd.Block) != 2 {
 				t.Errorf("Expected 2 block statements in batch-clean command, got %d", len(batchCleanCmd.Block))
 			} else {
-				// First statement should be @parallel: annotation
+				// First statement should be @parallel: decorator
 				firstStmt := batchCleanCmd.Block[0]
-				if !firstStmt.IsAnnotated || firstStmt.Annotation != "parallel" {
-					t.Errorf("Expected first statement to be @parallel: annotation, got: %+v", firstStmt)
+				if !firstStmt.IsDecorated || firstStmt.Decorator != "parallel" {
+					t.Errorf("Expected first statement to be @parallel: decorator, got: %+v", firstStmt)
 				}
 
 				// Second statement should be echo command
@@ -1662,7 +1662,7 @@ func TestDebugFunctionality(t *testing.T) {
 			debug: true,
 		},
 		{
-			name:  "block command with annotations and debug",
+			name:  "block command with decorators and debug",
 			input: "services: { @parallel: { server; client }; echo \"done\" }",
 			debug: true,
 		},
@@ -1699,8 +1699,8 @@ func TestDebugFunctionality(t *testing.T) {
 	}
 }
 
-// Test specifically for understanding annotation parsing
-func TestAnnotationParsing(t *testing.T) {
+// Test specifically for understanding decorator parsing
+func TestDecoratorParsing(t *testing.T) {
 	testCases := []string{
 		"services: { @parallel: { server; client; database } }",
 		"complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",

@@ -25,29 +25,29 @@ type DevcmdParserVisitor interface {
 	// Visit a parse tree produced by DevcmdParser#commandBody.
 	VisitCommandBody(ctx *CommandBodyContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#functionAnnot.
-	VisitFunctionAnnot(ctx *FunctionAnnotContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#functionDecorator.
+	VisitFunctionDecorator(ctx *FunctionDecoratorContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#blockAnnot.
-	VisitBlockAnnot(ctx *BlockAnnotContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#blockDecorator.
+	VisitBlockDecorator(ctx *BlockDecoratorContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#simpleAnnot.
-	VisitSimpleAnnot(ctx *SimpleAnnotContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#simpleDecorator.
+	VisitSimpleDecorator(ctx *SimpleDecoratorContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#annotation.
-	VisitAnnotation(ctx *AnnotationContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decorator.
+	VisitDecorator(ctx *DecoratorContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#annotationContent.
-	VisitAnnotationContent(ctx *AnnotationContentContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decoratorContent.
+	VisitDecoratorContent(ctx *DecoratorContentContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#annotationElement.
-	VisitAnnotationElement(ctx *AnnotationElementContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decoratorElement.
+	VisitDecoratorElement(ctx *DecoratorElementContext) interface{}
 
 	// Visit a parse tree produced by DevcmdParser#simpleCommand.
 	VisitSimpleCommand(ctx *SimpleCommandContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#annotationCommand.
-	VisitAnnotationCommand(ctx *AnnotationCommandContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decoratorCommand.
+	VisitDecoratorCommand(ctx *DecoratorCommandContext) interface{}
 
 	// Visit a parse tree produced by DevcmdParser#blockCommand.
 	VisitBlockCommand(ctx *BlockCommandContext) interface{}

@@ -65,7 +65,7 @@ $ mycli deploy
 
 - **Two Integration Modes**: Standalone CLI binaries OR embedded in development shells
 - **Declarative syntax** for defining commands and workflows
-- **Annotation system** for advanced shell operations and parallel execution
+- **Decorator system** for advanced shell operations and parallel execution
 - **Variable substitution** with `$(name)` syntax
 - **Process management** with watch/stop command pairing
 - **Block commands** for multi-step workflows
@@ -237,9 +237,9 @@ stop server: @sh(pkill -f "python -m http.server" || true);
 # mycli server stop   (runs stop command)
 ```
 
-### Annotation System
+### Decorator System
 
-devcmd provides powerful annotations for advanced operations:
+devcmd provides powerful decorators for advanced operations:
 
 ```bash
 # Raw shell commands (for complex POSIX syntax)
@@ -255,7 +255,7 @@ services: {
   echo "All services started"
 }
 
-# Mixed annotations and regular commands
+# Mixed decorators and regular commands
 deploy: {
   echo "Starting deployment...";
   @parallel: {
@@ -500,16 +500,24 @@ scale: {
 
 ## Architecture
 
-- **ANTLR Grammar**: Robust parsing with annotation support and full POSIX shell compatibility
-- **Go Code Generation**: Template-based CLI generation with annotation processing
+- **ANTLR Grammar**: Robust parsing with decorator support and full POSIX shell compatibility
+- **Go Code Generation**: Template-based CLI generation with decorator processing
 - **Process Management**: Safe background process handling with PID tracking
-- **Annotation System**: Extensible framework for advanced shell operations
+- **Decorator System**: Extensible framework for advanced shell operations
 - **Cross-platform**: Single binary works everywhere
 - **No Runtime Dependencies**: Generated CLIs are self-contained
 
 ## Contributing
 
-This project follows [CODE_GUIDELINES.md](CODE_GUIDELINES.md) for development practices.
+devcmd is in early development and experimentation is encouraged! Feel free to:
+
+- **Fork it** and adapt it for your specific use cases
+- **Iterate on the language design** - the DSL is still evolving
+- **Share feedback** on what works well and what doesn't
+- **Open issues** with suggestions, questions, or interesting use cases
+- **Build cool stuff** with it and share your experience
+
+The goal is for people to get real usage out of devcmd and help shape its direction through practical experience. Your fork might solve problems in ways that inspire the main project!
 
 ## License
 

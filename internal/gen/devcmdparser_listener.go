@@ -25,29 +25,29 @@ type DevcmdParserListener interface {
 	// EnterCommandBody is called when entering the commandBody production.
 	EnterCommandBody(c *CommandBodyContext)
 
-	// EnterFunctionAnnot is called when entering the functionAnnot production.
-	EnterFunctionAnnot(c *FunctionAnnotContext)
+	// EnterFunctionDecorator is called when entering the functionDecorator production.
+	EnterFunctionDecorator(c *FunctionDecoratorContext)
 
-	// EnterBlockAnnot is called when entering the blockAnnot production.
-	EnterBlockAnnot(c *BlockAnnotContext)
+	// EnterBlockDecorator is called when entering the blockDecorator production.
+	EnterBlockDecorator(c *BlockDecoratorContext)
 
-	// EnterSimpleAnnot is called when entering the simpleAnnot production.
-	EnterSimpleAnnot(c *SimpleAnnotContext)
+	// EnterSimpleDecorator is called when entering the simpleDecorator production.
+	EnterSimpleDecorator(c *SimpleDecoratorContext)
 
-	// EnterAnnotation is called when entering the annotation production.
-	EnterAnnotation(c *AnnotationContext)
+	// EnterDecorator is called when entering the decorator production.
+	EnterDecorator(c *DecoratorContext)
 
-	// EnterAnnotationContent is called when entering the annotationContent production.
-	EnterAnnotationContent(c *AnnotationContentContext)
+	// EnterDecoratorContent is called when entering the decoratorContent production.
+	EnterDecoratorContent(c *DecoratorContentContext)
 
-	// EnterAnnotationElement is called when entering the annotationElement production.
-	EnterAnnotationElement(c *AnnotationElementContext)
+	// EnterDecoratorElement is called when entering the decoratorElement production.
+	EnterDecoratorElement(c *DecoratorElementContext)
 
 	// EnterSimpleCommand is called when entering the simpleCommand production.
 	EnterSimpleCommand(c *SimpleCommandContext)
 
-	// EnterAnnotationCommand is called when entering the annotationCommand production.
-	EnterAnnotationCommand(c *AnnotationCommandContext)
+	// EnterDecoratorCommand is called when entering the decoratorCommand production.
+	EnterDecoratorCommand(c *DecoratorCommandContext)
 
 	// EnterBlockCommand is called when entering the blockCommand production.
 	EnterBlockCommand(c *BlockCommandContext)
@@ -88,29 +88,29 @@ type DevcmdParserListener interface {
 	// ExitCommandBody is called when exiting the commandBody production.
 	ExitCommandBody(c *CommandBodyContext)
 
-	// ExitFunctionAnnot is called when exiting the functionAnnot production.
-	ExitFunctionAnnot(c *FunctionAnnotContext)
+	// ExitFunctionDecorator is called when exiting the functionDecorator production.
+	ExitFunctionDecorator(c *FunctionDecoratorContext)
 
-	// ExitBlockAnnot is called when exiting the blockAnnot production.
-	ExitBlockAnnot(c *BlockAnnotContext)
+	// ExitBlockDecorator is called when exiting the blockDecorator production.
+	ExitBlockDecorator(c *BlockDecoratorContext)
 
-	// ExitSimpleAnnot is called when exiting the simpleAnnot production.
-	ExitSimpleAnnot(c *SimpleAnnotContext)
+	// ExitSimpleDecorator is called when exiting the simpleDecorator production.
+	ExitSimpleDecorator(c *SimpleDecoratorContext)
 
-	// ExitAnnotation is called when exiting the annotation production.
-	ExitAnnotation(c *AnnotationContext)
+	// ExitDecorator is called when exiting the decorator production.
+	ExitDecorator(c *DecoratorContext)
 
-	// ExitAnnotationContent is called when exiting the annotationContent production.
-	ExitAnnotationContent(c *AnnotationContentContext)
+	// ExitDecoratorContent is called when exiting the decoratorContent production.
+	ExitDecoratorContent(c *DecoratorContentContext)
 
-	// ExitAnnotationElement is called when exiting the annotationElement production.
-	ExitAnnotationElement(c *AnnotationElementContext)
+	// ExitDecoratorElement is called when exiting the decoratorElement production.
+	ExitDecoratorElement(c *DecoratorElementContext)
 
 	// ExitSimpleCommand is called when exiting the simpleCommand production.
 	ExitSimpleCommand(c *SimpleCommandContext)
 
-	// ExitAnnotationCommand is called when exiting the annotationCommand production.
-	ExitAnnotationCommand(c *AnnotationCommandContext)
+	// ExitDecoratorCommand is called when exiting the decoratorCommand production.
+	ExitDecoratorCommand(c *DecoratorCommandContext)
 
 	// ExitBlockCommand is called when exiting the blockCommand production.
 	ExitBlockCommand(c *BlockCommandContext)

@@ -6,41 +6,41 @@ import (
 )
 
 // BlockStatement represents a statement within a block command
-// Supports both regular commands and annotated commands
+// Supports both regular commands and decorated commands
 type BlockStatement struct {
 	// For regular commands
 	Command string // The command text to execute
 
-	// For annotated commands
-	IsAnnotated    bool             // Whether this is an annotated command
-	Annotation     string           // The annotation name (sh, parallel, retry, etc.)
-	AnnotationType string           // "function", "simple", or "block"
-	AnnotatedBlock []BlockStatement // For block-type annotations like @parallel: { }
+	// For decorated commands
+	IsDecorated    bool             // Whether this is a decorated command
+	Decorator      string           // The decorator name (sh, parallel, retry, etc.)
+	DecoratorType  string           // "function", "simple", or "block"
+	DecoratedBlock []BlockStatement // For block-type decorators like @parallel: { }
 }
 
 // Helper methods for BlockStatement
 func (bs *BlockStatement) IsFunction() bool {
-	return bs.IsAnnotated && bs.AnnotationType == "function"
+	return bs.IsDecorated && bs.DecoratorType == "function"
 }
 
-func (bs *BlockStatement) IsSimpleAnnotation() bool {
-	return bs.IsAnnotated && bs.AnnotationType == "simple"
+func (bs *BlockStatement) IsSimpleDecorator() bool {
+	return bs.IsDecorated && bs.DecoratorType == "simple"
 }
 
-func (bs *BlockStatement) IsBlockAnnotation() bool {
-	return bs.IsAnnotated && bs.AnnotationType == "block"
+func (bs *BlockStatement) IsBlockDecorator() bool {
+	return bs.IsDecorated && bs.DecoratorType == "block"
 }
 
 func (bs *BlockStatement) GetCommand() string {
 	return bs.Command
 }
 
-func (bs *BlockStatement) GetAnnotation() string {
-	return bs.Annotation
+func (bs *BlockStatement) GetDecorator() string {
+	return bs.Decorator
 }
 
 func (bs *BlockStatement) GetNestedBlock() []BlockStatement {
-	return bs.AnnotatedBlock
+	return bs.DecoratedBlock
 }
 
 // Definition represents a variable definition in the command file
@@ -101,9 +101,9 @@ func (cf *CommandFile) expandVariablesInBlockStatements(statements []BlockStatem
 	for i := range statements {
 		stmt := &statements[i]
 
-		if stmt.IsAnnotated {
-			// Handle annotated commands
-			switch stmt.AnnotationType {
+		if stmt.IsDecorated {
+			// Handle decorated commands
+			switch stmt.DecoratorType {
 			case "function", "simple":
 				// Expand variables in the command text
 				if stmt.Command != "" {
@@ -115,7 +115,7 @@ func (cf *CommandFile) expandVariablesInBlockStatements(statements []BlockStatem
 				}
 			case "block":
 				// Recursively expand variables in nested block
-				if err := cf.expandVariablesInBlockStatements(stmt.AnnotatedBlock, vars, line); err != nil {
+				if err := cf.expandVariablesInBlockStatements(stmt.DecoratedBlock, vars, line); err != nil {
 					return err
 				}
 			}

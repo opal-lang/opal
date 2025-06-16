@@ -74,7 +74,7 @@ func TestPreprocessCommands(t *testing.T) {
 			},
 		},
 		{
-			name:  "block command with @sh annotation",
+			name:  "block command with @sh decorator",
 			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedData: func(data *TemplateData) bool {
 				return len(data.Commands) == 1 &&
@@ -84,7 +84,7 @@ func TestPreprocessCommands(t *testing.T) {
 			},
 		},
 		{
-			name:  "block command with @parallel annotation",
+			name:  "block command with @parallel decorator",
 			input: "services: { @parallel: { server; client; database } }",
 			expectedData: func(data *TemplateData) bool {
 				return len(data.Commands) == 1 &&
@@ -95,6 +95,21 @@ func TestPreprocessCommands(t *testing.T) {
 					strings.Contains(data.Commands[0].ShellCommand, "database &") &&
 					strings.Contains(data.Commands[0].ShellCommand, "wait")
 			},
+		},
+		{
+			name:        "unsupported decorator",
+			input:       "test: @unsupported(echo hello);",
+			expectError: true,
+		},
+		{
+			name:        "invalid @parallel usage",
+			input:       "test: @parallel(echo hello);",
+			expectError: true,
+		},
+		{
+			name:        "invalid @sh usage with block",
+			input:       "test: { @sh: { echo hello; echo world } }",
+			expectError: true,
 		},
 	}
 
@@ -158,9 +173,10 @@ func TestSanitizeFunctionName(t *testing.T) {
 
 func TestBuildShellCommand(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    devcmdParser.Command
-		expected string
+		name      string
+		input     devcmdParser.Command
+		expected  string
+		expectErr bool
 	}{
 		{
 			name: "simple command",
@@ -174,39 +190,39 @@ func TestBuildShellCommand(t *testing.T) {
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
-					{Command: "npm install", IsAnnotated: false},
-					{Command: "echo done", IsAnnotated: false},
+					{Command: "npm install", IsDecorated: false},
+					{Command: "echo done", IsDecorated: false},
 				},
 			},
 			expected: "npm install; echo done",
 		},
 		{
-			name: "block command with @sh annotation",
+			name: "block command with @sh decorator",
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
 					{
-						IsAnnotated:    true,
-						Annotation:     "sh",
-						AnnotationType: "function",
-						Command:        "find . -name \"*.tmp\" -exec rm {} \\;",
+						IsDecorated:   true,
+						Decorator:     "sh",
+						DecoratorType: "function",
+						Command:       "find . -name \"*.tmp\" -exec rm {} \\;",
 					},
 				},
 			},
 			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
 		},
 		{
-			name: "block command with @parallel annotation",
+			name: "block command with @parallel decorator",
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
 					{
-						IsAnnotated:    true,
-						Annotation:     "parallel",
-						AnnotationType: "block",
-						AnnotatedBlock: []devcmdParser.BlockStatement{
-							{Command: "server", IsAnnotated: false},
-							{Command: "client", IsAnnotated: false},
+						IsDecorated:   true,
+						Decorator:     "parallel",
+						DecoratorType: "block",
+						DecoratedBlock: []devcmdParser.BlockStatement{
+							{Command: "server", IsDecorated: false},
+							{Command: "client", IsDecorated: false},
 						},
 					},
 				},
@@ -214,30 +230,59 @@ func TestBuildShellCommand(t *testing.T) {
 			expected: "server &; client &; wait",
 		},
 		{
-			name: "mixed block with regular and annotated commands",
+			name: "mixed block with regular and decorated commands",
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
-					{Command: "echo starting", IsAnnotated: false},
+					{Command: "echo starting", IsDecorated: false},
 					{
-						IsAnnotated:    true,
-						Annotation:     "parallel",
-						AnnotationType: "block",
-						AnnotatedBlock: []devcmdParser.BlockStatement{
-							{Command: "task1", IsAnnotated: false},
-							{Command: "task2", IsAnnotated: false},
+						IsDecorated:   true,
+						Decorator:     "parallel",
+						DecoratorType: "block",
+						DecoratedBlock: []devcmdParser.BlockStatement{
+							{Command: "task1", IsDecorated: false},
+							{Command: "task2", IsDecorated: false},
 						},
 					},
-					{Command: "echo done", IsAnnotated: false},
+					{Command: "echo done", IsDecorated: false},
 				},
 			},
 			expected: "echo starting; task1 &; task2 &; wait; echo done",
+		},
+		{
+			name: "block command with unsupported decorator",
+			input: devcmdParser.Command{
+				Name:    "test",
+				Line:    1,
+				IsBlock: true,
+				Block: []devcmdParser.BlockStatement{
+					{
+						IsDecorated:   true,
+						Decorator:     "unsupported",
+						DecoratorType: "function",
+						Command:       "echo hello",
+					},
+				},
+			},
+			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildShellCommand(tt.input)
+			result, err := buildShellCommand(tt.input)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("buildShellCommand() error: %v", err)
+			}
+
 			if result != tt.expected {
 				t.Errorf("buildShellCommand() = %q, want %q", result, tt.expected)
 			}
@@ -245,73 +290,153 @@ func TestBuildShellCommand(t *testing.T) {
 	}
 }
 
-func TestBuildAnnotatedStatement(t *testing.T) {
+func TestBuildDecoratedStatement(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    devcmdParser.BlockStatement
-		expected string
+		name      string
+		input     devcmdParser.BlockStatement
+		expected  string
+		expectErr bool
 	}{
 		{
-			name: "@sh function annotation",
+			name: "@sh function decorator",
 			input: devcmdParser.BlockStatement{
-				IsAnnotated:    true,
-				Annotation:     "sh",
-				AnnotationType: "function",
-				Command:        "find . -name \"*.tmp\" -exec rm {} \\;",
+				IsDecorated:   true,
+				Decorator:     "sh",
+				DecoratorType: "function",
+				Command:       "find . -name \"*.tmp\" -exec rm {} \\;",
 			},
 			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
 		},
 		{
-			name: "@sh simple annotation",
+			name: "@sh simple decorator",
 			input: devcmdParser.BlockStatement{
-				IsAnnotated:    true,
-				Annotation:     "sh",
-				AnnotationType: "simple",
-				Command:        "echo hello",
+				IsDecorated:   true,
+				Decorator:     "sh",
+				DecoratorType: "simple",
+				Command:       "echo hello",
 			},
 			expected: "echo hello",
 		},
 		{
-			name: "@parallel block annotation",
+			name: "@parallel block decorator",
 			input: devcmdParser.BlockStatement{
-				IsAnnotated:    true,
-				Annotation:     "parallel",
-				AnnotationType: "block",
-				AnnotatedBlock: []devcmdParser.BlockStatement{
-					{Command: "server", IsAnnotated: false},
-					{Command: "client", IsAnnotated: false},
-					{Command: "worker", IsAnnotated: false},
+				IsDecorated:   true,
+				Decorator:     "parallel",
+				DecoratorType: "block",
+				DecoratedBlock: []devcmdParser.BlockStatement{
+					{Command: "server", IsDecorated: false},
+					{Command: "client", IsDecorated: false},
+					{Command: "worker", IsDecorated: false},
 				},
 			},
 			expected: "server &; client &; worker &; wait",
 		},
 		{
-			name: "@retry annotation (treated as regular)",
+			name: "unsupported decorator",
 			input: devcmdParser.BlockStatement{
-				IsAnnotated:    true,
-				Annotation:     "retry",
-				AnnotationType: "simple",
-				Command:        "kubectl apply -f deployment.yaml",
+				IsDecorated:   true,
+				Decorator:     "unknown",
+				DecoratorType: "simple",
+				Command:       "echo test",
 			},
-			expected: "kubectl apply -f deployment.yaml",
-		},
-		{
-			name: "unknown annotation (treated as regular)",
-			input: devcmdParser.BlockStatement{
-				IsAnnotated:    true,
-				Annotation:     "unknown",
-				AnnotationType: "simple",
-				Command:        "echo test",
-			},
-			expected: "echo test",
+			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildAnnotatedStatement(tt.input)
+			result, err := buildDecoratedStatement(tt.input, "test", 1)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("buildDecoratedStatement() error: %v", err)
+			}
+
 			if result != tt.expected {
-				t.Errorf("buildAnnotatedStatement() = %q, want %q", result, tt.expected)
+				t.Errorf("buildDecoratedStatement() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateDecorators(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		errorSubstr string
+	}{
+		{
+			name:        "valid @sh decorator",
+			input:       "cleanup: @sh(find . -name \"*.tmp\" -delete);",
+			expectError: false,
+		},
+		{
+			name:        "valid @parallel decorator",
+			input:       "services: { @parallel: { server; client } }",
+			expectError: false,
+		},
+		{
+			name:        "unsupported decorator",
+			input:       "test: @unsupported(echo hello);",
+			expectError: true,
+			errorSubstr: "unsupported decorator '@unsupported'",
+		},
+		{
+			name:        "invalid @parallel usage - function syntax",
+			input:       "test: @parallel(echo hello);",
+			expectError: true,
+			errorSubstr: "@parallel decorator must be used with block syntax",
+		},
+		{
+			name:        "invalid @sh usage - block syntax",
+			input:       "test: { @sh: { echo hello; echo world } }",
+			expectError: true,
+			errorSubstr: "@sh decorator must be used with function or simple syntax",
+		},
+		{
+			name:        "multiple valid decorators",
+			input:       "complex: { @sh(echo start); @parallel: { task1; task2 } }",
+			expectError: false,
+		},
+		{
+			name:        "nested decorator validation",
+			input:       "nested: { @parallel: { @sh(echo task1); @sh(echo task2) } }",
+			expectError: false,
+		},
+		{
+			name:        "nested unsupported decorator",
+			input:       "nested: { @parallel: { @invalid(echo task1); echo task2 } }",
+			expectError: true,
+			errorSubstr: "unsupported decorator '@invalid'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse the input
+			cf, err := devcmdParser.Parse(tt.input, false)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+
+			// Test validation through PreprocessCommands
+			_, err = PreprocessCommands(cf)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorSubstr) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorSubstr, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
 			}
 		})
 	}
@@ -479,7 +604,7 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 			},
 		},
 		{
-			name:  "watch command with @sh annotation",
+			name:  "watch command with @sh decorator",
 			input: "watch cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedInCode: []string{
 				"ProcessRegistry",
@@ -546,7 +671,7 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 	}
 }
 
-func TestGenerateGo_AnnotationHandling(t *testing.T) {
+func TestGenerateGo_DecoratorHandling(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          string
@@ -554,7 +679,7 @@ func TestGenerateGo_AnnotationHandling(t *testing.T) {
 		notInCode      []string
 	}{
 		{
-			name:  "@sh function annotation",
+			name:  "@sh function decorator",
 			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedInCode: []string{
 				"func (c *CLI) runCleanup(args []string)",
@@ -568,7 +693,7 @@ func TestGenerateGo_AnnotationHandling(t *testing.T) {
 			},
 		},
 		{
-			name:  "@parallel block annotation",
+			name:  "@parallel block decorator",
 			input: "services: { @parallel: { server; client; worker } }",
 			expectedInCode: []string{
 				"func (c *CLI) runServices(args []string)",
@@ -582,7 +707,7 @@ func TestGenerateGo_AnnotationHandling(t *testing.T) {
 			},
 		},
 		{
-			name:  "mixed annotations in block",
+			name:  "mixed decorators in block",
 			input: "complex: { echo starting; @parallel: { task1; task2 }; @sh(echo \"done\") }",
 			expectedInCode: []string{
 				"func (c *CLI) runComplex(args []string)",
@@ -598,7 +723,7 @@ func TestGenerateGo_AnnotationHandling(t *testing.T) {
 			},
 		},
 		{
-			name:  "watch command with annotations",
+			name:  "watch command with decorators",
 			input: "watch dev: { echo starting; @parallel: { server; client } }",
 			expectedInCode: []string{
 				"ProcessRegistry",
@@ -651,6 +776,62 @@ func TestGenerateGo_AnnotationHandling(t *testing.T) {
 	}
 }
 
+func TestGenerateGo_DecoratorValidationErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		errorSubstr string
+	}{
+		{
+			name:        "unsupported decorator",
+			input:       "test: @invalid(echo hello);",
+			expectError: true,
+			errorSubstr: "unsupported decorator '@invalid'",
+		},
+		{
+			name:        "invalid @parallel usage",
+			input:       "test: @parallel(echo hello);",
+			expectError: true,
+			errorSubstr: "@parallel decorator must be used with block syntax",
+		},
+		{
+			name:        "invalid @sh block usage",
+			input:       "test: { @sh: { echo hello; echo world } }",
+			expectError: true,
+			errorSubstr: "@sh decorator must be used with function or simple syntax",
+		},
+		{
+			name:        "valid decorators should not error",
+			input:       "test: { @sh(echo hello); @parallel: { task1; task2 } }",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse the input
+			cf, err := devcmdParser.Parse(tt.input, false)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+
+			// Generate Go code (this should trigger validation)
+			_, err = GenerateGo(cf)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorSubstr) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorSubstr, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestGenerateGo_VariableHandling(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -678,7 +859,7 @@ start: go run $(SRC) --port=$(PORT);`,
 			},
 		},
 		{
-			name:  "variables with @sh annotation",
+			name:  "variables with @sh decorator",
 			input: `cleanup: @sh(find . -name "*.tmp" -exec rm {} \\;);`,
 			expectedInCode: []string{
 				"find . -name \"*.tmp\" -exec rm {} \\;",
@@ -691,7 +872,7 @@ start: go run $(SRC) --port=$(PORT);`,
 			},
 		},
 		{
-			name: "variables with @parallel annotation",
+			name: "variables with @parallel decorator",
 			input: `def CMD1 = server --port=8080;
 def CMD2 = client --host=localhost;
 services: { @parallel: { $(CMD1); $(CMD2) } }`,
@@ -882,7 +1063,7 @@ parallel-tasks: {
 		"./build",
 		// Regular commands should work with variables
 		"cd ./src && make",
-		// @sh annotations should be converted (no variables inside)
+		// @sh decorators should be converted (no variables inside)
 		"find . -name \"*.tmp\" -delete",
 		// @parallel should create background processes
 		"echo \"Task 1\" &; echo \"Task 2\" &; echo \"Task 3\" &; wait",

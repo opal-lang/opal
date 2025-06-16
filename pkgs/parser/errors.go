@@ -236,17 +236,17 @@ func checkBlockStatements(statements []BlockStatement, line int, lineContent str
 ) {
 	for i, stmt := range statements {
 		if debug != nil {
-			debug.Log("Checking block statement %d: annotated=%v", i, stmt.IsAnnotated)
+			debug.Log("Checking block statement %d: decorated=%v", i, stmt.IsDecorated)
 		}
 
-		if stmt.IsAnnotated {
-			switch stmt.AnnotationType {
+		if stmt.IsDecorated {
+			switch stmt.DecoratorType {
 			case "function", "simple":
 				if stmt.Command != "" {
 					checkVarReferences(stmt.Command, line, lineContent)
 				}
 			case "block":
-				checkBlockStatements(stmt.AnnotatedBlock, line, lineContent, checkVarReferences, debug)
+				checkBlockStatements(stmt.DecoratedBlock, line, lineContent, checkVarReferences, debug)
 			}
 		} else {
 			if stmt.Command != "" {
