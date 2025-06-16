@@ -5,12 +5,11 @@ import (
 	"strings"
 )
 
-// ValidationError checks if commands and definitions are valid
 type ValidationError struct {
 	Errors []ValidationErrorEntry
+	Debug  *DebugTrace
 }
 
-// ValidationErrorEntry represents a single validation error
 type ValidationErrorEntry struct {
 	Line    int
 	Column  int
@@ -18,7 +17,65 @@ type ValidationErrorEntry struct {
 	Context string
 }
 
-// Error formats all validation errors as a single string
+type DebugTrace struct {
+	Enabled bool
+	Tokens  []string
+	Rules   []string
+	Errors  []string
+}
+
+func (d *DebugTrace) Log(format string, args ...interface{}) {
+	if d != nil {
+		d.Rules = append(d.Rules, fmt.Sprintf(format, args...))
+	}
+}
+
+func (d *DebugTrace) LogToken(token string) {
+	if d != nil {
+		d.Tokens = append(d.Tokens, token)
+	}
+}
+
+func (d *DebugTrace) LogError(format string, args ...interface{}) {
+	if d != nil {
+		d.Errors = append(d.Errors, fmt.Sprintf(format, args...))
+	}
+}
+
+func (d *DebugTrace) HasTrace() bool {
+	return d != nil && (len(d.Tokens) > 0 || len(d.Rules) > 0 || len(d.Errors) > 0)
+}
+
+func (d *DebugTrace) String() string {
+	if !d.HasTrace() {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.WriteString("\n=== DEBUG TRACE ===\n")
+
+	if len(d.Rules) > 0 {
+		builder.WriteString("Rules: ")
+		builder.WriteString(strings.Join(d.Rules, " → "))
+		builder.WriteString("\n")
+	}
+
+	if len(d.Tokens) > 0 {
+		builder.WriteString("Tokens: [")
+		builder.WriteString(strings.Join(d.Tokens, ", "))
+		builder.WriteString("]\n")
+	}
+
+	if len(d.Errors) > 0 {
+		builder.WriteString("Debug Errors: ")
+		builder.WriteString(strings.Join(d.Errors, "; "))
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("==================")
+	return builder.String()
+}
+
 func (e *ValidationError) Error() string {
 	if len(e.Errors) == 0 {
 		return ""
@@ -41,17 +98,22 @@ func (e *ValidationError) Error() string {
 			builder.WriteString(fmt.Sprintf("line %d: %s", err.Line, err.Message))
 		}
 	}
+
+	// Add debug trace if available and enabled
+	if e.Debug != nil && e.Debug.Enabled && e.Debug.HasTrace() {
+		builder.WriteString(e.Debug.String())
+	}
+
 	return builder.String()
 }
 
-// NewValidationError creates a new ValidationError
-func NewValidationError() *ValidationError {
+func NewValidationError(debug *DebugTrace) *ValidationError {
 	return &ValidationError{
 		Errors: []ValidationErrorEntry{},
+		Debug:  debug,
 	}
 }
 
-// Add adds a new error message to the validation error
 func (e *ValidationError) Add(line int, column int, context string, format string, args ...interface{}) {
 	e.Errors = append(e.Errors, ValidationErrorEntry{
 		Line:    line,
@@ -61,7 +123,6 @@ func (e *ValidationError) Add(line int, column int, context string, format strin
 	})
 }
 
-// AddSimple adds a simple error message without context
 func (e *ValidationError) AddSimple(line int, format string, args ...interface{}) {
 	e.Errors = append(e.Errors, ValidationErrorEntry{
 		Line:    line,
@@ -69,22 +130,24 @@ func (e *ValidationError) AddSimple(line int, format string, args ...interface{}
 	})
 }
 
-// HasErrors returns true if there are validation errors
 func (e *ValidationError) HasErrors() bool {
 	return len(e.Errors) > 0
 }
 
-// Validate performs semantic validation on a command file
 func Validate(file *CommandFile) error {
-	validationError := NewValidationError()
+	return ValidateWithDebug(file, nil)
+}
 
-	// Create variable name lookup
+func ValidateWithDebug(file *CommandFile, debug *DebugTrace) error {
+	validationError := NewValidationError(debug)
+
+	// Build variable names map
 	varNames := make(map[string]bool)
 	for _, def := range file.Definitions {
 		varNames[def.Name] = true
 	}
 
-	// 1. Check for matching watch/stop commands
+	// Build command maps for validation
 	watchCmds := make(map[string]int)
 	stopCmds := make(map[string]int)
 	for _, cmd := range file.Commands {
@@ -97,36 +160,36 @@ func Validate(file *CommandFile) error {
 		}
 	}
 
-	// We no longer enforce validation requirements for watch/stop commands
-	// Watch commands don't need matching stop commands (stop is optional)
-	// Stop commands without matching watch commands will be ignored
-
-	// 2. Check for variable references in command text
+	// Variable reference checker function
 	checkVarReferences := func(text string, line int, lineContent string) {
-		// Find all $(var) references in text, but skip escaped sequences
+		if debug != nil {
+			debug.Log("Checking variables in: %s", text)
+		}
+
 		var inVar bool
 		var varName strings.Builder
 
 		for i := 0; i < len(text); i++ {
 			if !inVar {
-				// Check for escaped dollar sign \$ - skip over it
+				// Skip escaped dollar signs
 				if i+1 < len(text) && text[i] == '\\' && text[i+1] == '$' {
-					i += 1 // Skip both '\' and '$', will be incremented by for loop
+					i += 1
 					continue
 				}
 
-				// Look for unescaped variable reference $(
+				// Look for variable start
 				if i+1 < len(text) && text[i] == '$' && text[i+1] == '(' {
 					inVar = true
 					varName.Reset()
-					i++ // Skip the '('
+					i++
 				}
 			} else {
 				if text[i] == ')' {
-					// End of variable reference
 					name := varName.String()
+					if debug != nil {
+						debug.Log("Found variable reference: %s", name)
+					}
 					if !varNames[name] {
-						// Find the position of this variable in the original line
 						varPos := strings.Index(lineContent, "$("+name+")")
 						if varPos >= 0 {
 							validationError.Add(line, varPos, lineContent,
@@ -147,7 +210,7 @@ func Validate(file *CommandFile) error {
 		}
 	}
 
-	// Check variables in commands
+	// Validate variable references in commands
 	for _, cmd := range file.Commands {
 		lineContent := ""
 		if cmd.Line > 0 && cmd.Line <= len(file.Lines) {
@@ -157,9 +220,7 @@ func Validate(file *CommandFile) error {
 		if !cmd.IsBlock {
 			checkVarReferences(cmd.Command, cmd.Line, lineContent)
 		} else {
-			for _, stmt := range cmd.Block {
-				checkVarReferences(stmt.Command, cmd.Line, lineContent)
-			}
+			checkBlockStatements(cmd.Block, cmd.Line, lineContent, checkVarReferences, debug)
 		}
 	}
 
@@ -168,4 +229,29 @@ func Validate(file *CommandFile) error {
 	}
 
 	return nil
+}
+
+func checkBlockStatements(statements []BlockStatement, line int, lineContent string,
+	checkVarReferences func(string, int, string), debug *DebugTrace,
+) {
+	for i, stmt := range statements {
+		if debug != nil {
+			debug.Log("Checking block statement %d: annotated=%v", i, stmt.IsAnnotated)
+		}
+
+		if stmt.IsAnnotated {
+			switch stmt.AnnotationType {
+			case "function", "simple":
+				if stmt.Command != "" {
+					checkVarReferences(stmt.Command, line, lineContent)
+				}
+			case "block":
+				checkBlockStatements(stmt.AnnotatedBlock, line, lineContent, checkVarReferences, debug)
+			}
+		} else {
+			if stmt.Command != "" {
+				checkVarReferences(stmt.Command, line, lineContent)
+			}
+		}
+	}
 }

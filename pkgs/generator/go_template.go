@@ -140,13 +140,13 @@ func processCommandGroup(name string, commands []parser.Command) (TemplateComman
 		templateCmd.WatchCommand = buildShellCommand(*watchCmd)
 		templateCmd.StopCommand = buildShellCommand(*stopCmd)
 		templateCmd.IsBackground = true
-		templateCmd.HelpDescription = fmt.Sprintf("%s start|stop", name)
+		templateCmd.HelpDescription = fmt.Sprintf("%s start|stop|logs", name)
 	} else if watchCmd != nil {
 		// Watch only
 		templateCmd.Type = "watch-only"
 		templateCmd.WatchCommand = buildShellCommand(*watchCmd)
 		templateCmd.IsBackground = true
-		templateCmd.HelpDescription = fmt.Sprintf("%s start", name)
+		templateCmd.HelpDescription = fmt.Sprintf("%s start|stop|logs", name)
 	} else if stopCmd != nil {
 		// Stop only (unusual, but handle it)
 		templateCmd.Type = "stop-only"
@@ -189,17 +189,82 @@ func sanitizeFunctionName(name string) string {
 // buildShellCommand constructs the shell command string from parser command
 func buildShellCommand(cmd parser.Command) string {
 	if cmd.IsBlock {
-		var parts []string
-		for _, stmt := range cmd.Block {
-			part := stmt.Command
-			if stmt.Background {
-				part += " &"
-			}
-			parts = append(parts, part)
-		}
-		return strings.Join(parts, "; ")
+		return buildBlockCommand(cmd.Block)
 	}
 	return cmd.Command
+}
+
+// buildBlockCommand handles block statements with annotation support
+func buildBlockCommand(statements []parser.BlockStatement) string {
+	var parts []string
+
+	for _, stmt := range statements {
+		if stmt.IsAnnotated {
+			part := buildAnnotatedStatement(stmt)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		} else {
+			// Regular command (no annotation)
+			if stmt.Command != "" {
+				parts = append(parts, stmt.Command)
+			}
+		}
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+// buildAnnotatedStatement handles different annotation types
+func buildAnnotatedStatement(stmt parser.BlockStatement) string {
+	switch stmt.Annotation {
+	case "sh":
+		// Shell command - pass through directly (no variable processing)
+		if stmt.AnnotationType == "function" {
+			// @sh(command) - command is in stmt.Command
+			return stmt.Command
+		} else {
+			// @sh:command - command is in stmt.Command
+			return stmt.Command
+		}
+
+	case "parallel":
+		// Parallel execution - convert to background processes with &
+		if stmt.AnnotationType == "block" {
+			// @parallel: { cmd1; cmd2; } -> cmd1 &; cmd2 &; wait
+			var parallelParts []string
+			for _, nestedStmt := range stmt.AnnotatedBlock {
+				if nestedStmt.IsAnnotated {
+					// Handle nested annotations
+					part := buildAnnotatedStatement(nestedStmt)
+					if part != "" {
+						parallelParts = append(parallelParts, part+" &")
+					}
+				} else {
+					// Regular command in parallel block
+					if nestedStmt.Command != "" {
+						parallelParts = append(parallelParts, nestedStmt.Command+" &")
+					}
+				}
+			}
+			// Add wait to synchronize all background processes
+			if len(parallelParts) > 0 {
+				parallelParts = append(parallelParts, "wait")
+			}
+			return strings.Join(parallelParts, "; ")
+		}
+
+	case "retry":
+		// Retry command - for now, just execute normally
+		// TODO: Add retry logic in future
+		return stmt.Command
+
+	default:
+		// Unknown annotation - treat as regular command
+		return stmt.Command
+	}
+
+	return stmt.Command
 }
 
 // Template for generating Go CLI with subcommand structure
@@ -384,12 +449,6 @@ func (c *CLI) Execute() {
 	switch command {
 {{if .HasProcessMgmt}}	case "status":
 		c.showStatus()
-	case "logs":
-		if len(args) == 0 {
-			fmt.Fprintf(os.Stderr, "Usage: %s logs <process-name>\n", os.Args[0])
-			os.Exit(1)
-		}
-		c.showLogs(args[0])
 {{end}}{{range .Commands}}	case "{{.GoCase}}":
 		c.{{.FunctionName}}(args)
 {{end}}	case "help", "--help", "-h":
@@ -405,7 +464,6 @@ func (c *CLI) Execute() {
 func (c *CLI) showHelp() {
 	fmt.Println("Available commands:")
 {{if .HasProcessMgmt}}	fmt.Println("  status              - Show running background processes")
-	fmt.Println("  logs <process>      - Show logs for a background process")
 {{end}}{{range .Commands}}	fmt.Println("  {{.HelpDescription}}")
 {{end}}}
 
@@ -438,11 +496,11 @@ func (c *CLI) showStatus() {
 	}
 }
 
-// showLogs displays logs for a process
-func (c *CLI) showLogs(name string) {
+// showLogsFor displays logs for a specific process
+func (c *CLI) showLogsFor(name string) {
 	proc, exists := c.registry.getProcess(name)
 	if !exists {
-		fmt.Fprintf(os.Stderr, "No process named '%s' found\n", name)
+		fmt.Fprintf(os.Stderr, "No process named '%s' is currently running\n", name)
 		os.Exit(1)
 	}
 
@@ -486,6 +544,7 @@ func (c *CLI) runInBackground(name, command string) error {
 	c.registry.addProcess(name, cmd.Process.Pid, command, logFile)
 
 	fmt.Printf("Started %s in background (PID: %d)\n", name, cmd.Process.Pid)
+	fmt.Printf("To see logs, run: %s %s logs\n", os.Args[0], name)
 
 	// Monitor process in goroutine
 	go func() {
@@ -516,7 +575,7 @@ func (c *CLI) {{.FunctionName}}(args []string) {
 	}
 {{else if eq .Type "watch-stop"}}	// Watch/stop command pair
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop|logs>\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -540,13 +599,15 @@ func (c *CLI) {{.FunctionName}}(args []string) {
 		if err := c.registry.gracefulStop("{{.Name}}"); err != nil {
 			fmt.Fprintf(os.Stderr, "Registry stop failed: %v\n", err)
 		}{{end}}
+	case "logs":
+{{if $.HasProcessMgmt}}		c.showLogsFor("{{.Name}}"){{else}}		fmt.Printf("No background process named '{{.Name}}' to show logs for\n"){{end}}
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start' or 'stop'\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start', 'stop', or 'logs'\n", subcommand)
 		os.Exit(1)
 	}
 {{else if eq .Type "watch-only"}}	// Watch-only command (no custom stop)
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop|logs>\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -564,8 +625,10 @@ func (c *CLI) {{.FunctionName}}(args []string) {
 			fmt.Fprintf(os.Stderr, "Error stopping {{.Name}}: %v\n", err)
 			os.Exit(1)
 		}{{else}}		fmt.Printf("No background process named '{{.Name}}' to stop\n"){{end}}
+	case "logs":
+{{if $.HasProcessMgmt}}		c.showLogsFor("{{.Name}}"){{else}}		fmt.Printf("No background process named '{{.Name}}' to show logs for\n"){{end}}
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start' or 'stop'\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start', 'stop', or 'logs'\n", subcommand)
 		os.Exit(1)
 	}
 {{else if eq .Type "stop-only"}}	// Stop-only command (unusual case)

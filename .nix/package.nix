@@ -8,7 +8,7 @@ pkgs.buildGoModule rec {
   src = lib.cleanSource ./..;
 
   proxyVendor = true;
-  vendorHash = "sha256-HTaNShbRSlO5F0bATS3nwatjXrLceQTpdyENdLmtrOc=";
+  vendorHash = "sha256-ESDEwYUquwYnJBxEiH90LZim4XVgWFeuNBC8n6MKoD0=";
 
   subPackages = [ "cmd/devcmd" ];
 

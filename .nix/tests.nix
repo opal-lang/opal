@@ -46,7 +46,7 @@ let
   };
 
   # Helper function to create test derivations for CLIs
-  mkCLITest = { name, cli, testScript, extraPackages ? [] }: pkgs.runCommand "test-${name}"
+  mkCLITest = { name, cli, testScript, extraPackages ? [ ] }: pkgs.runCommand "test-${name}"
     {
       nativeBuildInputs = [ pkgs.bash cli ] ++ extraPackages;
       meta.description = "Test for ${name} CLI";
@@ -84,7 +84,7 @@ rec {
       '';
     };
 
-    # Test commands with POSIX syntax and parentheses - FIXED shell command substitution
+    # Test commands with POSIX syntax and parentheses - UPDATED with correct shell command substitution
     posixSyntax = mkCLITest {
       name = "posix-syntax";
       cli = devcmdLib.mkDevCLI {
@@ -92,7 +92,7 @@ rec {
         commandsContent = ''
           check-deps: (which go && echo "Go found") || (echo "Go missing" && exit 1);
           validate: test -f go.mod && echo "Go module found" || echo "No go.mod";
-          complex: (cd /tmp && echo "In tmp: \$(pwd)") && echo "Back to: \$(pwd)";
+          complex: @sh((cd /tmp && echo "In tmp: \$(pwd)") && echo "Back to: \$(pwd)");
         '';
       };
 
@@ -190,8 +190,8 @@ rec {
           }
 
           complex: {
-            (echo "Subshell 1" && sleep 0.1) &;
-            (echo "Subshell 2" || echo "Fallback") &;
+            @sh((echo "Subshell 1" && sleep 0.1) &);
+            @sh((echo "Subshell 2" || echo "Fallback") &);
             echo "Main thread"
           }
         '';
@@ -225,7 +225,7 @@ rec {
         name = "error-test";
         commandsContent = ''
           valid: echo "This works";
-          special-chars: echo "Special: !@#\$%^&*()";
+          special-chars: echo "Special: !@#\\\$%^&*()";
           unicode: echo "Hello 世界";
         '';
       };
@@ -278,16 +278,16 @@ rec {
           install: echo "npm install" && echo "Dependencies installed";
           build: {
             echo "Building frontend...";
-            (test -d frontend && cd frontend && npm run build) || echo "No frontend";
+            @sh((test -d frontend && cd frontend && npm run build) || echo "No frontend");
             echo "Building backend...";
-            (test -d backend && cd backend && go build) || echo "No backend"
+            @sh((test -d backend && cd backend && go build) || echo "No backend")
           }
 
           test: {
             echo "Running frontend tests...";
-            (test -d frontend && cd frontend && npm test) || echo "No frontend tests";
+            @sh((test -d frontend && cd frontend && npm test) || echo "No frontend tests");
             echo "Running backend tests...";
-            (test -d backend && cd backend && go test ./...) || echo "No backend tests"
+            @sh((test -d backend && cd backend && go test ./...) || echo "No backend tests")
           }
         '';
       };
@@ -326,27 +326,27 @@ rec {
 
           deps: {
             echo "Managing dependencies...";
-            (test -f go.mod && go mod tidy) || echo "No go.mod";
-            (test -f go.mod && go mod download) || echo "No go.mod";
-            (test -f go.mod && go mod verify) || echo "No go.mod"
+            @sh((test -f go.mod && go mod tidy) || echo "No go.mod");
+            @sh((test -f go.mod && go mod download) || echo "No go.mod");
+            @sh((test -f go.mod && go mod verify) || echo "No go.mod")
           }
 
           build: {
             echo "Building $(BINARY) $(VERSION)...";
-            (test -d ./cmd/$(BINARY) && go build -ldflags="-X main.Version=$(VERSION)" -o $(BINARY) ./cmd/$(BINARY)) || echo "No ./cmd/$(BINARY) directory"
+            @sh((test -d ./cmd/$(BINARY) && go build -ldflags="-X main.Version=$(VERSION)" -o $(BINARY) ./cmd/$(BINARY)) || echo "No ./cmd/$(BINARY) directory")
           }
 
           test: {
             echo "Running tests...";
-            (go test -v ./... 2>/dev/null) || echo "No tests or go.mod";
-            (go test -race ./... 2>/dev/null) || echo "No tests or go.mod"
+            @sh((go test -v ./... 2>/dev/null) || echo "No tests or go.mod");
+            @sh((go test -race ./... 2>/dev/null) || echo "No tests or go.mod")
           }
 
           lint: {
             echo "Running linters...";
-            (which golangci-lint && golangci-lint run) || echo "No linter";
-            (test -f go.mod && go fmt ./...) || echo "No go.mod";
-            (test -f go.mod && go vet ./...) || echo "No go.mod"
+            @sh((which golangci-lint && golangci-lint run) || echo "No linter");
+            @sh((test -f go.mod && go fmt ./...) || echo "No go.mod");
+            @sh((test -f go.mod && go vet ./...) || echo "No go.mod")
           }
         '';
       };
@@ -367,6 +367,40 @@ rec {
         ${testUtils.checkOutput "goproj lint" "Running linters"}
       '';
     };
+
+    # Test shell command substitution patterns
+    shellSubstitution = mkCLITest {
+      name = "shell-substitution";
+      cli = devcmdLib.mkDevCLI {
+        name = "shell-test";
+        commandsContent = ''
+          def LOG_DIR = /tmp/logs;
+          def APP_NAME = myapp;
+
+          # Test escaped shell command substitution
+          timestamp: echo "Current time: \$(date)";
+
+          # Test shell variables
+          user-info: echo "User: \$USER, Home: \$HOME";
+
+          # Test complex shell operations with @sh()
+          backup: @sh(DATE=\$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-\$DATE.tar.gz");
+
+          # Test mixed devcmd variables and shell substitution
+          logrotate: @sh(find $(LOG_DIR) -name "$(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at \$(date)");
+
+          # Test arithmetic expansion
+          calculate: echo "Result: \$((2 + 3 * 4))";
+        '';
+      };
+
+      testScript = ''
+        ${testUtils.checkOutput "shell-test timestamp" "Current time:"}
+        ${testUtils.checkOutput "shell-test user-info" "User:"}
+        ${testUtils.checkOutput "shell-test backup" "Backup created:"}
+        ${testUtils.checkOutput "shell-test calculate" "Result: 14"}
+      '';
+    };
   };
 
   # All individual test derivations
@@ -376,7 +410,7 @@ rec {
     inherit (blockCommandTests) backgroundProcesses;
     inherit (errorHandlingTests) invalidCommands;
     inherit (performanceTests) largeCLI;
-    inherit (realWorldTests) webDevelopment goProject;
+    inherit (realWorldTests) webDevelopment goProject shellSubstitution;
   };
 
   # Test examples from examples.nix

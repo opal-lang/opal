@@ -22,19 +22,22 @@ func main() {
 	// Command line flags
 	var templateFile string
 	var outputFormat string
+	var debug bool
 	flag.StringVar(&templateFile, "template", "", "Custom template file for generation")
 	flag.StringVar(&outputFormat, "format", "go", "Output format: 'go'")
+	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <commands-file>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		fmt.Fprintf(os.Stderr, "  -format string\n")
-		fmt.Fprintf(os.Stderr, "        Output format: 'shell' or 'go' (default \"shell\")\n")
+		fmt.Fprintf(os.Stderr, "        Output format: 'go' (default \"go\")\n")
 		fmt.Fprintf(os.Stderr, "  -template string\n")
 		fmt.Fprintf(os.Stderr, "        Custom template file for generation\n")
+		fmt.Fprintf(os.Stderr, "  -debug\n")
+		fmt.Fprintf(os.Stderr, "        Enable debug output\n")
 		fmt.Fprintf(os.Stderr, "\nFormats:\n")
-		fmt.Fprintf(os.Stderr, "  shell    Generate POSIX shell functions (default)\n")
 		fmt.Fprintf(os.Stderr, "  go       Generate standalone Go CLI executable\n")
 		os.Exit(ExitInvalidArguments)
 	}
@@ -54,8 +57,8 @@ func main() {
 		os.Exit(ExitIOError)
 	}
 
-	// Parse the command definitions
-	commandFile, err := parser.Parse(string(content))
+	// Parse the command definitions with debug flag
+	commandFile, err := parser.Parse(string(content), debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing commands: %v\n", err)
 		os.Exit(ExitParseError)

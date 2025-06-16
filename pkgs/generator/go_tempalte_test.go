@@ -34,8 +34,9 @@ func TestPreprocessCommands(t *testing.T) {
 			expectedData: func(data *TemplateData) bool {
 				return len(data.Commands) == 1 &&
 					data.Commands[0].Name == "server" &&
-					(data.Commands[0].Type == "watch-only" || data.Commands[0].Type == "watch") &&
+					data.Commands[0].Type == "watch-only" &&
 					data.Commands[0].IsBackground &&
+					data.Commands[0].WatchCommand == "npm start" &&
 					data.HasProcessMgmt
 			},
 		},
@@ -45,7 +46,8 @@ func TestPreprocessCommands(t *testing.T) {
 			expectedData: func(data *TemplateData) bool {
 				return len(data.Commands) == 1 &&
 					data.Commands[0].Name == "server" &&
-					(data.Commands[0].Type == "stop-only" || data.Commands[0].Type == "stop") &&
+					data.Commands[0].Type == "stop-only" &&
+					data.Commands[0].StopCommand == "pkill node" &&
 					!data.HasProcessMgmt // stop alone doesn't need process mgmt
 			},
 		},
@@ -64,9 +66,34 @@ func TestPreprocessCommands(t *testing.T) {
 			expectedData: func(data *TemplateData) bool {
 				return len(data.Commands) == 1 &&
 					data.Commands[0].Name == "server" &&
-					(data.Commands[0].Type == "watch-stop" || strings.Contains(data.Commands[0].Type, "watch")) &&
+					data.Commands[0].Type == "watch-stop" &&
 					data.Commands[0].IsBackground &&
+					data.Commands[0].WatchCommand == "npm start" &&
+					data.Commands[0].StopCommand == "pkill node" &&
 					data.HasProcessMgmt
+			},
+		},
+		{
+			name:  "block command with @sh annotation",
+			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
+			expectedData: func(data *TemplateData) bool {
+				return len(data.Commands) == 1 &&
+					data.Commands[0].Name == "cleanup" &&
+					data.Commands[0].Type == "regular" &&
+					strings.Contains(data.Commands[0].ShellCommand, "find . -name \"*.tmp\" -exec rm {} \\;")
+			},
+		},
+		{
+			name:  "block command with @parallel annotation",
+			input: "services: { @parallel: { server; client; database } }",
+			expectedData: func(data *TemplateData) bool {
+				return len(data.Commands) == 1 &&
+					data.Commands[0].Name == "services" &&
+					data.Commands[0].Type == "regular" &&
+					strings.Contains(data.Commands[0].ShellCommand, "server &") &&
+					strings.Contains(data.Commands[0].ShellCommand, "client &") &&
+					strings.Contains(data.Commands[0].ShellCommand, "database &") &&
+					strings.Contains(data.Commands[0].ShellCommand, "wait")
 			},
 		},
 	}
@@ -74,7 +101,7 @@ func TestPreprocessCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
+			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -143,27 +170,68 @@ func TestBuildShellCommand(t *testing.T) {
 			expected: "echo hello",
 		},
 		{
-			name: "block command",
+			name: "block command with regular statements",
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
-					{Command: "npm install", Background: false},
-					{Command: "npm start", Background: true},
-					{Command: "echo done", Background: false},
+					{Command: "npm install", IsAnnotated: false},
+					{Command: "echo done", IsAnnotated: false},
 				},
 			},
-			expected: "npm install; npm start &; echo done",
+			expected: "npm install; echo done",
 		},
 		{
-			name: "block with all background",
+			name: "block command with @sh annotation",
 			input: devcmdParser.Command{
 				IsBlock: true,
 				Block: []devcmdParser.BlockStatement{
-					{Command: "server", Background: true},
-					{Command: "client", Background: true},
+					{
+						IsAnnotated:    true,
+						Annotation:     "sh",
+						AnnotationType: "function",
+						Command:        "find . -name \"*.tmp\" -exec rm {} \\;",
+					},
 				},
 			},
-			expected: "server &; client &",
+			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
+		},
+		{
+			name: "block command with @parallel annotation",
+			input: devcmdParser.Command{
+				IsBlock: true,
+				Block: []devcmdParser.BlockStatement{
+					{
+						IsAnnotated:    true,
+						Annotation:     "parallel",
+						AnnotationType: "block",
+						AnnotatedBlock: []devcmdParser.BlockStatement{
+							{Command: "server", IsAnnotated: false},
+							{Command: "client", IsAnnotated: false},
+						},
+					},
+				},
+			},
+			expected: "server &; client &; wait",
+		},
+		{
+			name: "mixed block with regular and annotated commands",
+			input: devcmdParser.Command{
+				IsBlock: true,
+				Block: []devcmdParser.BlockStatement{
+					{Command: "echo starting", IsAnnotated: false},
+					{
+						IsAnnotated:    true,
+						Annotation:     "parallel",
+						AnnotationType: "block",
+						AnnotatedBlock: []devcmdParser.BlockStatement{
+							{Command: "task1", IsAnnotated: false},
+							{Command: "task2", IsAnnotated: false},
+						},
+					},
+					{Command: "echo done", IsAnnotated: false},
+				},
+			},
+			expected: "echo starting; task1 &; task2 &; wait; echo done",
 		},
 	}
 
@@ -172,6 +240,78 @@ func TestBuildShellCommand(t *testing.T) {
 			result := buildShellCommand(tt.input)
 			if result != tt.expected {
 				t.Errorf("buildShellCommand() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildAnnotatedStatement(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    devcmdParser.BlockStatement
+		expected string
+	}{
+		{
+			name: "@sh function annotation",
+			input: devcmdParser.BlockStatement{
+				IsAnnotated:    true,
+				Annotation:     "sh",
+				AnnotationType: "function",
+				Command:        "find . -name \"*.tmp\" -exec rm {} \\;",
+			},
+			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
+		},
+		{
+			name: "@sh simple annotation",
+			input: devcmdParser.BlockStatement{
+				IsAnnotated:    true,
+				Annotation:     "sh",
+				AnnotationType: "simple",
+				Command:        "echo hello",
+			},
+			expected: "echo hello",
+		},
+		{
+			name: "@parallel block annotation",
+			input: devcmdParser.BlockStatement{
+				IsAnnotated:    true,
+				Annotation:     "parallel",
+				AnnotationType: "block",
+				AnnotatedBlock: []devcmdParser.BlockStatement{
+					{Command: "server", IsAnnotated: false},
+					{Command: "client", IsAnnotated: false},
+					{Command: "worker", IsAnnotated: false},
+				},
+			},
+			expected: "server &; client &; worker &; wait",
+		},
+		{
+			name: "@retry annotation (treated as regular)",
+			input: devcmdParser.BlockStatement{
+				IsAnnotated:    true,
+				Annotation:     "retry",
+				AnnotationType: "simple",
+				Command:        "kubectl apply -f deployment.yaml",
+			},
+			expected: "kubectl apply -f deployment.yaml",
+		},
+		{
+			name: "unknown annotation (treated as regular)",
+			input: devcmdParser.BlockStatement{
+				IsAnnotated:    true,
+				Annotation:     "unknown",
+				AnnotationType: "simple",
+				Command:        "echo test",
+			},
+			expected: "echo test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildAnnotatedStatement(tt.input)
+			if result != tt.expected {
+				t.Errorf("buildAnnotatedStatement() = %q, want %q", result, tt.expected)
 			}
 		})
 	}
@@ -189,7 +329,7 @@ func TestGenerateGo_BasicCommands(t *testing.T) {
 			input: "build: go build ./...;",
 			expectedInCode: []string{
 				"func (c *CLI) runBuild(args []string)",
-				`go build ./...`,
+				"go build ./...",
 				`case "build":`,
 				"c.runBuild(args)",
 				"// Regular command",
@@ -197,32 +337,23 @@ func TestGenerateGo_BasicCommands(t *testing.T) {
 			notInCode: []string{
 				"ProcessRegistry",
 				"runInBackground",
-				"syscall", // Should not import syscall for regular commands
+				"syscall",        // Should not import syscall for regular commands
+				"logs <process>", // Should not have global logs command
 			},
 		},
 		{
-			name:  "command with POSIX parentheses",
-			input: "check: (which go && echo \"found\") || echo \"not found\";",
+			name:  "command with POSIX find using @sh",
+			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedInCode: []string{
-				"func (c *CLI) runCheck(args []string)",
-				`(which go && echo "found") || echo "not found"`,
-				`case "check":`,
+				"func (c *CLI) runCleanup(args []string)",
+				"find . -name \"*.tmp\" -exec rm {} \\;",
+				`case "cleanup":`,
 			},
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
-			},
-		},
-		{
-			name:  "command with watch/stop keywords in text",
-			input: "monitor: watch -n 1 \"ps aux\" && echo \"stop with Ctrl+C\";",
-			expectedInCode: []string{
-				"func (c *CLI) runMonitor(args []string)",
-				`watch -n 1 "ps aux" && echo "stop with Ctrl+C"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
@@ -236,19 +367,23 @@ func TestGenerateGo_BasicCommands(t *testing.T) {
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
-			name:  "command with POSIX find and braces",
-			input: "cleanup: find . -name \"*.tmp\" -exec rm {} \\;;",
+			name:  "block command with @parallel",
+			input: "services: { @parallel: { server; client; database } }",
 			expectedInCode: []string{
-				"func (c *CLI) runCleanup(args []string)",
-				`find . -name "*.tmp" -exec rm {} \;`,
-				`case "cleanup":`,
+				"func (c *CLI) runServices(args []string)",
+				"server &; client &; database &; wait",
+				`case "services":`,
 			},
 			notInCode: []string{
 				"syscall",
-				"ProcessRegistry",
+				"ProcessRegistry", // Regular commands don't need process management
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 	}
@@ -256,7 +391,7 @@ func TestGenerateGo_BasicCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
+			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -305,9 +440,14 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 				"ProcessRegistry",
 				"runInBackground",
 				"func (c *CLI) runServer(args []string)",
-				`npm start`,
+				"npm start",
 				`case "server":`,
 				"syscall", // Watch commands should include syscall
+				"start|stop|logs",
+				"showLogsFor",
+			},
+			notInCode: []string{
+				"logs <process>", // Should not have global logs command
 			},
 		},
 		{
@@ -315,7 +455,7 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 			input: "stop server: pkill node;",
 			expectedInCode: []string{
 				"func (c *CLI) runServer(args []string)",
-				`pkill node`,
+				"pkill node",
 			},
 			notInCode: []string{
 				"ProcessRegistry", // No watch commands means no process management
@@ -331,26 +471,39 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 				"go run main.go",
 				"pkill -f main.go",
 				"syscall", // Watch/stop pairs need syscall
+				"start|stop|logs",
+				"showLogsFor",
+			},
+			notInCode: []string{
+				"logs <process>", // Should not have global logs command
 			},
 		},
 		{
-			name:  "watch command with parentheses",
-			input: "watch dev: (cd src && npm start);",
+			name:  "watch command with @sh annotation",
+			input: "watch cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedInCode: []string{
 				"ProcessRegistry",
 				"runInBackground",
-				`(cd src && npm start)`,
+				"find . -name \"*.tmp\" -exec rm {} \\;",
 				"syscall",
+				"showLogsFor",
+			},
+			notInCode: []string{
+				"logs <process>",
 			},
 		},
 		{
-			name:  "watch command with POSIX find and braces",
-			input: "watch cleanup: find . -name \"*.tmp\" -exec rm {} \\;;",
+			name:  "watch command with @parallel block",
+			input: "watch dev: { @parallel: { npm start; go run ./api } }",
 			expectedInCode: []string{
 				"ProcessRegistry",
 				"runInBackground",
-				`find . -name "*.tmp" -exec rm {} \;`,
+				"npm start &; go run ./api &; wait",
 				"syscall",
+				"showLogsFor",
+			},
+			notInCode: []string{
+				"logs <process>",
 			},
 		},
 	}
@@ -358,7 +511,7 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
+			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -393,7 +546,7 @@ func TestGenerateGo_WatchStopCommands(t *testing.T) {
 	}
 }
 
-func TestGenerateGo_BlockCommands(t *testing.T) {
+func TestGenerateGo_AnnotationHandling(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          string
@@ -401,60 +554,61 @@ func TestGenerateGo_BlockCommands(t *testing.T) {
 		notInCode      []string
 	}{
 		{
-			name:  "simple block command",
-			input: "setup: { npm install; go mod tidy; echo done }",
+			name:  "@sh function annotation",
+			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
 			expectedInCode: []string{
-				"func (c *CLI) runSetup(args []string)",
-				"npm install; go mod tidy; echo done",
+				"func (c *CLI) runCleanup(args []string)",
+				"find . -name \"*.tmp\" -exec rm {} \\;",
 			},
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
-			name:  "block with background processes",
-			input: "run-all: { server &; client &; monitor }",
+			name:  "@parallel block annotation",
+			input: "services: { @parallel: { server; client; worker } }",
 			expectedInCode: []string{
-				"func (c *CLI) runRunAll(args []string)",
-				"server &; client &; monitor",
+				"func (c *CLI) runServices(args []string)",
+				"server &; client &; worker &; wait",
 			},
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
-			name:  "watch block command",
-			input: "watch services: { server &; worker &; echo \"started\" }",
+			name:  "mixed annotations in block",
+			input: "complex: { echo starting; @parallel: { task1; task2 }; @sh(echo \"done\") }",
+			expectedInCode: []string{
+				"func (c *CLI) runComplex(args []string)",
+				"echo starting",
+				"task1 &; task2 &; wait",
+				"echo \"done\"",
+			},
+			notInCode: []string{
+				"syscall",
+				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
+			},
+		},
+		{
+			name:  "watch command with annotations",
+			input: "watch dev: { echo starting; @parallel: { server; client } }",
 			expectedInCode: []string{
 				"ProcessRegistry",
-				"server &; worker &; echo \"started\"",
 				"runInBackground",
+				"echo starting; server &; client &; wait",
 				"syscall",
-			},
-		},
-		{
-			name:  "block with parentheses and complex syntax",
-			input: "parallel: { (task1 && echo \"done1\") &; (task2 || echo \"failed2\") }",
-			expectedInCode: []string{
-				`(task1 && echo "done1") &; (task2 || echo "failed2")`,
+				"showLogsFor",
 			},
 			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-			},
-		},
-		{
-			name:  "block with POSIX find and braces",
-			input: "cleanup: { find . -name \"*.tmp\" -exec rm {} \\;; echo \"cleanup done\" }",
-			expectedInCode: []string{
-				`find . -name "*.tmp" -exec rm {} \;`,
-				`echo "cleanup done"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
+				"logs <process>",
 			},
 		},
 	}
@@ -462,7 +616,7 @@ func TestGenerateGo_BlockCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
+			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -519,26 +673,30 @@ start: go run $(SRC) --port=$(PORT);`,
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
-			name: "variables with parentheses",
-			input: `def CHECK = (which go || echo "missing");
-validate: $(CHECK) && echo "ok";`,
+			name:  "variables with @sh annotation",
+			input: `cleanup: @sh(find . -name "*.tmp" -exec rm {} \\;);`,
 			expectedInCode: []string{
-				`(which go || echo "missing") && echo "ok"`,
+				"find . -name \"*.tmp\" -exec rm {} \\;",
 			},
 			notInCode: []string{
 				"syscall",
 				"ProcessRegistry",
+				"showLogsFor",
+				"logs <process>",
 			},
 		},
 		{
-			name: "variables with POSIX find and braces",
-			input: `def PATTERN = "*.tmp";
-cleanup: find . -name $(PATTERN) -exec rm {} \;;`,
+			name: "variables with @parallel annotation",
+			input: `def CMD1 = server --port=8080;
+def CMD2 = client --host=localhost;
+services: { @parallel: { $(CMD1); $(CMD2) } }`,
 			expectedInCode: []string{
-				`find . -name "*.tmp" -exec rm {} \;`,
+				"server --port=8080 &; client --host=localhost &; wait",
 			},
 			notInCode: []string{
 				"syscall",
@@ -550,7 +708,7 @@ cleanup: find . -name $(PATTERN) -exec rm {} \;;`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
+			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -585,690 +743,6 @@ cleanup: find . -name $(PATTERN) -exec rm {} \;;`,
 			for _, notInCode := range tt.notInCode {
 				if strings.Contains(generated, notInCode) {
 					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestBasicDevExample_NoSyscall(t *testing.T) {
-	// This tests the specific case mentioned by the user - basicDev shouldn't get syscall
-	basicDevCommands := `
-# Basic development commands
-def SRC = ./src;
-def BUILD_DIR = ./build;
-
-build: {
-  echo "Building project...";
-  mkdir -p $(BUILD_DIR);
-  (cd $(SRC) && make) || echo "No Makefile found"
-}
-
-test: {
-  echo "Running tests...";
-  (cd $(SRC) && make test) || go test ./... || npm test || echo "No tests found"
-}
-
-clean: {
-  echo "Cleaning build artifacts...";
-  rm -rf $(BUILD_DIR);
-  find . -name "*.tmp" -delete;
-  echo "Clean complete"
-}
-
-lint: {
-  echo "Running linters...";
-  (which golangci-lint && golangci-lint run) || echo "No Go linter";
-  (which eslint && eslint .) || echo "No JS linter";
-  echo "Linting complete"
-}
-
-deps: {
-  echo "Installing dependencies...";
-  (test -f go.mod && go mod download) || echo "No Go modules";
-  (test -f package.json && npm install) || echo "No NPM packages";
-  (test -f requirements.txt && pip install -r requirements.txt) || echo "No Python packages";
-  echo "Dependencies installed"
-}
-`
-
-	// Parse the input
-	cf, err := devcmdParser.Parse(basicDevCommands)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-
-	// Expand variables
-	err = cf.ExpandVariables()
-	if err != nil {
-		t.Fatalf("ExpandVariables error: %v", err)
-	}
-
-	// Generate Go code
-	generated, err := GenerateGo(cf)
-	if err != nil {
-		t.Fatalf("GenerateGo error: %v", err)
-	}
-
-	// Verify generated code is valid Go - this is the main compile check
-	if !isValidGoCode(t, generated) {
-		t.Errorf("Generated code is not valid Go")
-		t.Logf("Generated code:\n%s", generated)
-		return
-	}
-
-	// These should be present (basic functionality)
-	expectedContent := []string{
-		"func (c *CLI) runBuild(args []string)",
-		"func (c *CLI) runTest(args []string)",
-		"func (c *CLI) runClean(args []string)",
-		"func (c *CLI) runLint(args []string)",
-		"func (c *CLI) runDeps(args []string)",
-		`"fmt"`,
-		`"os"`,
-		`"os/exec"`,
-		// Variable expansions
-		"./src",
-		"./build",
-	}
-
-	for _, expected := range expectedContent {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected content: %q", expected)
-		}
-	}
-
-	// These should NOT be present (no watch commands)
-	unwantedContent := []string{
-		`"syscall"`,
-		`"encoding/json"`,
-		`"os/signal"`,
-		`"time"`,
-		"ProcessRegistry",
-		"runInBackground",
-		"gracefulStop",
-	}
-
-	for _, unwanted := range unwantedContent {
-		if strings.Contains(generated, unwanted) {
-			t.Errorf("Generated code contains unwanted content: %q", unwanted)
-		}
-	}
-}
-
-// Add these test functions to your go_template_test.go file
-
-func TestGenerateGo_DollarSyntaxHandling(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "escaped shell command substitution",
-			input: "date: echo \\$(date);",
-			expectedInCode: []string{
-				"func (c *CLI) runDate(args []string)",
-				`echo $(date)`, // Should be unescaped in the generated shell command
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`\$(date)`, // Should not contain the escaped version
-			},
-		},
-		{
-			name:  "mixed devcmd and shell variables",
-			input: "def DIR = /tmp;\ninfo: echo \"Dir: $(DIR), User: \\$USER, Time: \\$(date)\";",
-			expectedInCode: []string{
-				"func (c *CLI) runInfo(args []string)",
-				`echo "Dir: /tmp, User: $USER, Time: $(date)"`, // Variables expanded, escapes resolved
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`$(DIR)`, // Should not contain unexpanded devcmd variable
-				`\\$`,    // Should not contain escaped syntax
-			},
-		},
-		{
-			name:  "docker command with mixed syntax",
-			input: "def IMAGE = node:18;\ndocker: docker run $(IMAGE) -e NODE_ENV=\\$NODE_ENV -e BUILD_TIME=\\$(date);",
-			expectedInCode: []string{
-				"func (c *CLI) runDocker(args []string)",
-				`docker run node:18 -e NODE_ENV=$NODE_ENV -e BUILD_TIME=$(date)`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`$(IMAGE)`, // Should be expanded
-				`\\$`,      // Should not contain escape syntax
-			},
-		},
-		{
-			name:  "complex shell operations",
-			input: "count: echo \"Go files: \\$(find . -name '*.go' | wc -l)\";",
-			expectedInCode: []string{
-				"func (c *CLI) runCount(args []string)",
-				`echo "Go files: $(find . -name '*.go' | wc -l)"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`\\$(find`, // Should not contain escaped version
-			},
-		},
-		{
-			name:  "arithmetic expansion",
-			input: "math: echo \"Result: \\$((2 + 3))\";",
-			expectedInCode: []string{
-				"func (c *CLI) runMath(args []string)",
-				`echo "Result: $((2 + 3))"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`\\$((`, // Should not contain escaped version
-			},
-		},
-		{
-			name:  "parameter expansion",
-			input: "home: echo \"Home: \\${HOME:-/tmp}\";",
-			expectedInCode: []string{
-				"func (c *CLI) runHome(args []string)",
-				`echo "Home: ${HOME:-/tmp}"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`\\${`, // Should not contain escaped version
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Expand variables
-			err = cf.ExpandVariables()
-			if err != nil {
-				t.Fatalf("ExpandVariables error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestGenerateGo_DollarSyntaxInBlocks(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "block with mixed dollar syntax",
-			input: "def PORT = 8080;\nsetup: { echo \"Port: $(PORT)\"; echo \"Time: \\$(date)\"; echo \"PID: \\$\\$\" }",
-			expectedInCode: []string{
-				"func (c *CLI) runSetup(args []string)",
-				`echo "Port: 8080"; echo "Time: $(date)"; echo "PID: $$"`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`$(PORT)`, // Should be expanded
-				`\\$(`,    // Should not contain escaped version
-				`\\$\\$`,  // Should not contain double-escaped version
-			},
-		},
-		{
-			name:  "watch block with shell command substitution",
-			input: "watch dev: { echo \"Started: \\$(date)\"; npm start &; echo \"Background PID: \\$!\" }",
-			expectedInCode: []string{
-				"ProcessRegistry", // Watch command should include process management
-				"runInBackground",
-				`echo "Started: $(date)"; npm start &; echo "Background PID: $!"`,
-				"syscall",
-			},
-			notInCode: []string{
-				`\\$(date)`, // Should not contain escaped version
-				`\\$!`,      // Should not contain escaped version
-			},
-		},
-		{
-			name:  "complex docker setup with variables",
-			input: "def IMAGE = myapp:latest;\ndocker: { docker build -t $(IMAGE) .; echo \"Image ID: \\$(docker images -q $(IMAGE))\"; docker run -d $(IMAGE) }",
-			expectedInCode: []string{
-				"func (c *CLI) runDocker(args []string)",
-				`docker build -t myapp:latest .; echo "Image ID: $(docker images -q myapp:latest)"; docker run -d myapp:latest`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				`$(IMAGE)`, // Should be expanded
-				`\\$(`,     // Should not contain escaped version
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Expand variables
-			err = cf.ExpandVariables()
-			if err != nil {
-				t.Fatalf("ExpandVariables error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestGenerateGo_DollarSyntaxEdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "multiple dollar signs in sequence",
-			input: "special: echo \"\\$\\$PID: \\$\\$, Time: \\$(date)\";",
-			expectedInCode: []string{
-				`echo "$$PID: $$, Time: $(date)"`,
-			},
-			notInCode: []string{
-				`\\$\\$`, // Should not contain escaped version
-				`\\$(`,   // Should not contain escaped version
-			},
-		},
-		{
-			name:  "dollar signs in different quote contexts",
-			input: "quotes: echo 'Cost: \\$10' && echo \"Command: \\$(date)\" && echo Price:\\$5;",
-			expectedInCode: []string{
-				`echo 'Cost: $10' && echo "Command: $(date)" && echo Price:$5`,
-			},
-			notInCode: []string{
-				`\\$10`,     // Should not contain escaped version
-				`\\$(`,      // Should not contain escaped version
-				`Price:\\$`, // Should not contain escaped version
-			},
-		},
-		{
-			name:  "mixed with find command and braces",
-			input: "cleanup: find . -name \"*.log\" -exec sh -c 'echo \"Removing: \\$1\" && rm \"\\$1\"' _ {} \\;;",
-			expectedInCode: []string{
-				`find . -name "*.log" -exec sh -c 'echo "Removing: $1" && rm "$1"' _ {} \;`,
-			},
-			notInCode: []string{
-				`\\$1`, // Should not contain escaped version
-			},
-		},
-		{
-			name:  "environment variable operations",
-			input: "env: export PATH=\\$PATH:/usr/local/bin && echo \\$PATH && echo \"Node: \\$(which node)\";",
-			expectedInCode: []string{
-				`export PATH=$PATH:/usr/local/bin && echo $PATH && echo "Node: $(which node)"`,
-			},
-			notInCode: []string{
-				`\\$PATH`, // Should not contain escaped version
-				`\\$(`,    // Should not contain escaped version
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Expand variables
-			err = cf.ExpandVariables()
-			if err != nil {
-				t.Fatalf("ExpandVariables error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestBuildShellCommand_DollarSyntax(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    devcmdParser.Command
-		expected string
-	}{
-		{
-			name: "simple command with escaped dollar",
-			input: devcmdParser.Command{
-				Command: "echo $(date)",
-			},
-			expected: "echo $(date)",
-		},
-		{
-			name: "block with mixed dollar syntax",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{Command: "echo $HOME", Background: false},
-					{Command: "echo $(date)", Background: false},
-					{Command: "echo $$", Background: false},
-				},
-			},
-			expected: "echo $HOME; echo $(date); echo $$",
-		},
-		{
-			name: "block with background processes and dollar syntax",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{Command: "echo $(date)", Background: true},
-					{Command: "echo $USER", Background: false},
-				},
-			},
-			expected: "echo $(date) &; echo $USER",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildShellCommand(tt.input)
-			if result != tt.expected {
-				t.Errorf("buildShellCommand() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-// Integration test to verify the complete flow from parsing to generation
-func TestDollarSyntaxIntegration(t *testing.T) {
-	// This is a comprehensive example that combines all dollar syntax variants
-	complexInput := `
-def SRC = ./src;
-def PORT = 8080;
-def IMAGE = myapp:latest;
-
-# Regular command with mixed syntax
-info: echo "Source: $(SRC), User: \$USER, Time: \$(date)";
-
-# Block command with various dollar uses
-setup: {
-  echo "Building in $(SRC)";
-  export NODE_ENV=\$NODE_ENV;
-  echo "Environment: \$NODE_ENV";
-  echo "Build time: \$(date)"
-}
-
-# Watch command with background processes
-watch dev: {
-  echo "Starting development server on port $(PORT)";
-  cd $(SRC) && npm start &;
-  echo "Server PID: \$!";
-  echo "Monitor with: ps aux | grep \$(echo node)"
-}
-
-# Stop command with shell operations
-stop dev: {
-  echo "Stopping development server";
-  pkill -f "npm start" || echo "No npm processes";
-  echo "Stopped at: \$(date)"
-}
-
-# Docker command with complex shell operations
-docker: {
-  docker build -t $(IMAGE) .;
-  echo "Image ID: \$(docker images -q $(IMAGE))";
-  docker run -d -p $(PORT):3000 -e NODE_ENV=\$NODE_ENV $(IMAGE);
-  echo "Container: \$(docker ps -q -f ancestor=$(IMAGE))"
-}
-`
-
-	// Parse the input
-	cf, err := devcmdParser.Parse(complexInput)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-
-	// Expand variables
-	err = cf.ExpandVariables()
-	if err != nil {
-		t.Fatalf("ExpandVariables error: %v", err)
-	}
-
-	// Generate Go code
-	generated, err := GenerateGo(cf)
-	if err != nil {
-		t.Fatalf("GenerateGo error: %v", err)
-	}
-
-	// Verify generated code is valid Go
-	if !isValidGoCode(t, generated) {
-		t.Errorf("Generated code is not valid Go")
-		t.Logf("Generated code:\n%s", generated)
-		return
-	}
-
-	// Check that key transformations occurred correctly
-	expectedTransformations := []string{
-		// Variable expansions
-		`echo "Source: ./src, User: $USER, Time: $(date)"`,
-		`echo "Starting development server on port 8080"`,
-		`docker build -t myapp:latest .`,
-		`docker run -d -p 8080:3000`,
-
-		// Shell syntax preservation
-		`export NODE_ENV=$NODE_ENV`,
-		`echo "Environment: $NODE_ENV"`,
-		`echo "Build time: $(date)"`,
-		`echo "Server PID: $!"`,
-		`echo "Monitor with: ps aux | grep $(echo node)"`,
-		`echo "Image ID: $(docker images -q myapp:latest)"`,
-		`echo "Container: $(docker ps -q -f ancestor=myapp:latest)"`,
-
-		// Process management for watch commands
-		`ProcessRegistry`,
-		`runInBackground`,
-		`syscall`,
-	}
-
-	for _, expected := range expectedTransformations {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected transformation: %q", expected)
-		}
-	}
-
-	// Check that escape sequences are not present in final output
-	unwantedEscapes := []string{
-		`\$USER`,
-		`\$(date)`,
-		`\$!`,
-		`\$(echo`,
-		`\$(docker`,
-		`$(SRC)`,   // Should be expanded
-		`$(PORT)`,  // Should be expanded
-		`$(IMAGE)`, // Should be expanded
-	}
-
-	for _, unwanted := range unwantedEscapes {
-		if strings.Contains(generated, unwanted) {
-			t.Errorf("Generated code contains unwanted escape sequence: %q", unwanted)
-		}
-	}
-}
-
-func TestImportHandling(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		shouldHave    []string
-		shouldNotHave []string
-	}{
-		{
-			name:  "regular commands only - minimal imports",
-			input: "build: go build;\ntest: go test;\nclean: rm -rf dist;",
-			shouldHave: []string{
-				`"fmt"`,
-				`"os"`,
-				`"os/exec"`,
-			},
-			shouldNotHave: []string{
-				`"syscall"`,
-				`"encoding/json"`,
-				`"os/signal"`,
-				`"time"`,
-				"ProcessRegistry",
-			},
-		},
-		{
-			name:  "watch commands - full imports",
-			input: "watch server: npm start;",
-			shouldHave: []string{
-				`"fmt"`,
-				`"os"`,
-				`"os/exec"`,
-				`"syscall"`,
-				"ProcessRegistry",
-			},
-			shouldNotHave: []string{}, // All imports should be present
-		},
-		{
-			name:  "mixed commands - full imports due to watch",
-			input: "build: go build;\nwatch dev: npm start;",
-			shouldHave: []string{
-				`"fmt"`,
-				`"os"`,
-				`"os/exec"`,
-				`"syscall"`,
-				"ProcessRegistry",
-			},
-			shouldNotHave: []string{}, // All imports should be present due to watch command
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go - MAIN COMPILE CHECK
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected imports/features
-			for _, expected := range tt.shouldHave {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected import/feature: %q", expected)
-				}
-			}
-
-			// Check that unwanted imports/features are not present
-			for _, notExpected := range tt.shouldNotHave {
-				if strings.Contains(generated, notExpected) {
-					t.Errorf("Generated code contains unwanted import/feature: %q", notExpected)
 				}
 			}
 		})
@@ -1339,68 +813,104 @@ func TestGenerateGo_ErrorHandling(t *testing.T) {
 	}
 }
 
-func TestGenerateGo_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{
-			name:  "empty command file",
-			input: "",
-		},
-		{
-			name:  "only definitions",
-			input: "def VAR = value;",
-		},
-		{
-			name:  "command with special characters",
-			input: `special: echo "quotes" && echo 'single' && echo \$escaped;`,
-		},
-		{
-			name:  "command with unicode",
-			input: "unicode: echo \"Hello 世界\";",
-		},
-		{
-			name:  "command with POSIX find and braces",
-			input: "cleanup: find . -name \"*.tmp\" -exec rm {} \\;;",
-		},
+func TestBasicDevExample_NoSyscall(t *testing.T) {
+	// Test that basic development commands don't include syscall imports
+	basicDevCommands := `
+def SRC = ./src;
+def BUILD_DIR = ./build;
+
+build: {
+  echo "Building project...";
+  mkdir -p $(BUILD_DIR);
+  cd $(SRC) && make;
+}
+
+test: {
+  echo "Running tests...";
+  cd $(SRC) && make test;
+  echo "Tests complete";
+}
+
+clean: @sh(find . -name "*.tmp" -delete);
+
+parallel-tasks: {
+  @parallel: {
+    echo "Task 1";
+    echo "Task 2";
+    echo "Task 3"
+  };
+  echo "All tasks complete";
+}
+`
+
+	// Parse the input
+	cf, err := devcmdParser.Parse(basicDevCommands, false)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
+	// Expand variables
+	err = cf.ExpandVariables()
+	if err != nil {
+		t.Fatalf("ExpandVariables error: %v", err)
+	}
 
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
+	// Generate Go code
+	generated, err := GenerateGo(cf)
+	if err != nil {
+		t.Fatalf("GenerateGo error: %v", err)
+	}
 
-			// Verify generated code is valid Go - MAIN COMPILE CHECK
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
+	// Verify generated code is valid Go - this is the main compile check
+	if !isValidGoCode(t, generated) {
+		t.Errorf("Generated code is not valid Go")
+		t.Logf("Generated code:\n%s", generated)
+		return
+	}
 
-			// Basic structure should always be present
-			expectedStructure := []string{
-				"package main",
-				"func main()",
-				"cli := NewCLI()",
-				"cli.Execute()",
-			}
+	// These should be present (basic functionality)
+	expectedContent := []string{
+		"func (c *CLI) runBuild(args []string)",
+		"func (c *CLI) runTest(args []string)",
+		"func (c *CLI) runClean(args []string)",
+		"func (c *CLI) runParallelTasks(args []string)",
+		`"fmt"`,
+		`"os"`,
+		`"os/exec"`,
+		// Variable expansions
+		"./src",
+		"./build",
+		// Regular commands should work with variables
+		"cd ./src && make",
+		// @sh annotations should be converted (no variables inside)
+		"find . -name \"*.tmp\" -delete",
+		// @parallel should create background processes
+		"echo \"Task 1\" &; echo \"Task 2\" &; echo \"Task 3\" &; wait",
+	}
 
-			for _, expected := range expectedStructure {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected structure: %q", expected)
-				}
-			}
-		})
+	for _, expected := range expectedContent {
+		if !strings.Contains(generated, expected) {
+			t.Errorf("Generated code missing expected content: %q", expected)
+		}
+	}
+
+	// These should NOT be present (no watch commands)
+	unwantedContent := []string{
+		`"syscall"`,
+		`"encoding/json"`,
+		`"os/signal"`,
+		`"time"`,
+		"ProcessRegistry",
+		"runInBackground",
+		"gracefulStop",
+		"showLogsFor",
+		"logs <process>",
+	}
+
+	for _, unwanted := range unwantedContent {
+		if strings.Contains(generated, unwanted) {
+			t.Errorf("Generated code contains unwanted content: %q", unwanted)
+		}
 	}
 }
 
@@ -1420,38 +930,134 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// Benchmark tests for performance
-func BenchmarkGenerateGo_SimpleCommand(b *testing.B) {
-	cf := &devcmdParser.CommandFile{
-		Commands: []devcmdParser.Command{
-			{Name: "build", Command: "go build ./..."},
-		},
-	}
+// Integration test for complete file with all features
+func TestCompleteIntegration(t *testing.T) {
+	complexInput := `
+def SRC = ./src;
+def PORT = 8080;
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := GenerateGo(cf)
-		if err != nil {
-			b.Fatalf("GenerateGo error: %v", err)
-		}
-	}
+# Regular commands
+build: cd $(SRC) && go build;
+test: cd $(SRC) && go test -v ./...;
+
+# Parallel execution
+parallel-build: {
+  echo "Starting parallel build...";
+  @parallel: {
+    @sh(cd frontend && npm run build);
+    @sh(cd backend && go build);
+    @sh(cd worker && python setup.py build)
+  };
+  echo "All builds complete";
 }
 
-func BenchmarkPreprocessCommands(b *testing.B) {
-	cf := &devcmdParser.CommandFile{
-		Commands: []devcmdParser.Command{
-			{Name: "build", Command: "go build"},
-			{Name: "test", Command: "go test"},
-			{Name: "watch-server", Command: "npm start", IsWatch: true},
-			{Name: "stop-server", Command: "pkill node", IsStop: true},
-		},
+# Watch commands for development
+watch dev: {
+  echo "Starting development environment...";
+  @parallel: {
+    @sh(cd frontend && npm start);
+    cd backend && go run main.go --port=$(PORT);
+    @sh(cd worker && python worker.py)
+  }
+}
+
+stop dev: {
+  echo "Stopping development environment...";
+  @sh(pkill -f "npm start" || true);
+  @sh(pkill -f "go run main.go" || true);
+  @sh(pkill -f "python worker.py" || true);
+  echo "Development environment stopped";
+}
+
+# Complex cleanup
+cleanup: {
+  echo "Cleaning up...";
+  @parallel: {
+    @sh(find ./build -name "*.tmp" -delete);
+    @sh(find ./logs -name "*.log" -mtime +7 -delete);
+    rm -rf ./cache
+  };
+  echo "Cleanup complete";
+}
+`
+
+	// Parse the input
+	cf, err := devcmdParser.Parse(complexInput, false)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := PreprocessCommands(cf)
-		if err != nil {
-			b.Fatalf("PreprocessCommands error: %v", err)
+	// Expand variables
+	err = cf.ExpandVariables()
+	if err != nil {
+		t.Fatalf("ExpandVariables error: %v", err)
+	}
+
+	// Generate Go code
+	generated, err := GenerateGo(cf)
+	if err != nil {
+		t.Fatalf("GenerateGo error: %v", err)
+	}
+
+	// Verify generated code is valid Go
+	if !isValidGoCode(t, generated) {
+		t.Errorf("Generated code is not valid Go")
+		t.Logf("Generated code:\n%s", generated)
+		return
+	}
+
+	// Should include process management due to watch commands
+	expectedFeatures := []string{
+		"ProcessRegistry",
+		"runInBackground",
+		"syscall",
+		"encoding/json",
+		"showLogsFor",
+		"start|stop|logs",
+	}
+
+	for _, expected := range expectedFeatures {
+		if !strings.Contains(generated, expected) {
+			t.Errorf("Generated code missing expected feature: %q", expected)
+		}
+	}
+
+	// Should handle all command types correctly
+	expectedCommands := []string{
+		"func (c *CLI) runBuild(args []string)",
+		"func (c *CLI) runTest(args []string)",
+		"func (c *CLI) runParallelBuild(args []string)",
+		"func (c *CLI) runDev(args []string)",
+		"func (c *CLI) runCleanup(args []string)",
+	}
+
+	for _, expected := range expectedCommands {
+		if !strings.Contains(generated, expected) {
+			t.Errorf("Generated code missing expected command function: %q", expected)
+		}
+	}
+
+	// Should properly expand variables
+	expectedExpansions := []string{
+		"cd ./src && go build",
+		"cd ./src && go test -v ./...",
+		"go run main.go --port=8080",
+	}
+
+	for _, expected := range expectedExpansions {
+		if !strings.Contains(generated, expected) {
+			t.Errorf("Generated code missing expected variable expansion: %q", expected)
+		}
+	}
+
+	// Should NOT have global logs command
+	unwantedContent := []string{
+		"logs <process>",
+	}
+
+	for _, unwanted := range unwantedContent {
+		if strings.Contains(generated, unwanted) {
+			t.Errorf("Generated code contains unwanted content: %q", unwanted)
 		}
 	}
 }

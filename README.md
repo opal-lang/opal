@@ -16,18 +16,22 @@ build: go build -o $(BUILD_DIR)/myapp ./cmd;
 test: go test -v ./...;
 clean: rm -rf $(BUILD_DIR);
 
-# Complex workflows
+# Complex workflows with parallel execution
 watch dev: {
-  echo "Starting development server...";
-  go run ./cmd/server --dev &;
-  npm run watch-assets &;
+  echo "Starting development environment...";
+  @parallel: {
+    go run ./cmd/server --dev;
+    npm run watch-assets
+  };
   echo "Development environment ready"
 }
 
 stop dev: {
   echo "Stopping services...";
-  pkill -f "go run ./cmd/server";
-  pkill -f "npm run watch-assets"
+  @parallel: {
+    @sh(pkill -f "go run ./cmd/server" || true);
+    @sh(pkill -f "npm run watch-assets" || true)
+  }
 }
 
 # Multi-step deployments
@@ -45,13 +49,12 @@ deploy: {
 ```bash
 $ mycli --help
 Available commands:
-  build               - Build the application
-  test                - Run tests
-  clean               - Clean build artifacts
-  dev start|stop      - Development environment
-  deploy              - Deploy to production
-  status              - Show running processes
-  logs <process>      - Show process logs
+  status              - Show running background processes
+  build               - build
+  test                - test
+  clean               - clean
+  dev start|stop|logs - dev start|stop|logs
+  deploy              - deploy
 
 $ mycli build
 $ mycli dev start
@@ -62,6 +65,7 @@ $ mycli deploy
 
 - **Two Integration Modes**: Standalone CLI binaries OR embedded in development shells
 - **Declarative syntax** for defining commands and workflows
+- **Annotation system** for advanced shell operations and parallel execution
 - **Variable substitution** with `$(name)` syntax
 - **Process management** with watch/stop command pairing
 - **Block commands** for multi-step workflows
@@ -99,8 +103,8 @@ load: python scripts/load.py --source $(DATA_DIR);
 **System Administration**
 ```bash
 def LOG_DIR = /var/log/myapp;
-backup: tar -czf backup-\$(date +%Y%m%d).tar.gz $(LOG_DIR);
-cleanup: find $(LOG_DIR) -name "*.log" -mtime +30 -delete;
+backup: @sh(tar -czf backup-$(date +%Y%m%d).tar.gz $(LOG_DIR));
+cleanup: @sh(find $(LOG_DIR) -name "*.log" -mtime +30 -delete);
 monitor: tail -f $(LOG_DIR)/app.log;
 ```
 
@@ -223,14 +227,44 @@ multi-step: {
 
 ```bash
 # Watch commands start background processes
-watch server: python -m http.server 8000 &;
+watch server: python -m http.server 8000;
 
 # Stop commands clean up processes
-stop server: pkill -f "python -m http.server";
+stop server: @sh(pkill -f "python -m http.server" || true);
 
 # Generated CLI automatically creates:
 # mycli server start  (runs watch command)
 # mycli server stop   (runs stop command)
+```
+
+### Annotation System
+
+devcmd provides powerful annotations for advanced operations:
+
+```bash
+# Raw shell commands (for complex POSIX syntax)
+cleanup: @sh(find . -name "*.tmp" -exec rm {} \;);
+
+# Parallel execution
+services: {
+  @parallel: {
+    api-server --port=8080;
+    worker --queue=jobs;
+    monitor --interval=5s
+  };
+  echo "All services started"
+}
+
+# Mixed annotations and regular commands
+deploy: {
+  echo "Starting deployment...";
+  @parallel: {
+    docker build -t frontend ./frontend;
+    docker build -t backend ./backend
+  };
+  @sh(kubectl apply -f k8s/*.yaml);
+  echo "Deployment complete"
+}
 ```
 
 ### Advanced Features
@@ -254,13 +288,9 @@ deploy: kubectl apply \
   -f service.yaml \
   --namespace production;
 
-# Background processes
-parallel-tasks: {
-  task1 &;
-  task2 &;
-  task3 &;
-  wait  # Wait for all background tasks
-}
+# Complex shell operations using @sh()
+backup: @sh(tar -czf backup-$(date +%Y%m%d-%H%M%S).tar.gz ./data);
+find-logs: @sh(find /var/log -name "*.log" -mtime -1 -exec grep "ERROR" {} \;);
 ```
 
 ### Syntax Rules
@@ -269,6 +299,8 @@ parallel-tasks: {
 - Use `$(VAR)` for devcmd variable references
 - Use `\$(command)` for shell command substitution
 - Use `\$VAR` for shell variable references
+- Use `@sh(...)` for complex POSIX shell commands
+- Use `@parallel: { ... }` for concurrent execution
 - Comments start with `#`
 
 ## CLI Features
@@ -298,16 +330,16 @@ Process stopped successfully
 $ mycli --help
 Available commands:
   status              - Show running background processes
-  logs <process>      - Show logs for a background process
-  build               - Build the application
-  test                - Run test suite
-  server start|stop   - Development server
-  deploy              - Deploy to production
+  build               - build
+  test                - test
+  server start|stop|logs - server start|stop|logs
+  deploy              - deploy
 
 $ mycli server
-Usage: mycli server <start|stop>
+Usage: mycli server <start|stop|logs>
   start    Start the development server
   stop     Stop the development server
+  logs     Show logs for the development server
 ```
 
 ## Command Files
@@ -364,7 +396,10 @@ def NODE_ENV = development;
 def API_PORT = 3001;
 def WEB_PORT = 3000;
 
-install: npm ci && cd api && go mod download;
+install: {
+  npm ci;
+  cd api && go mod download
+}
 
 build: {
   echo "Building frontend...";
@@ -377,25 +412,37 @@ watch dev: {
   echo "Starting development environment...";
   echo "Frontend: http://localhost:$(WEB_PORT)";
   echo "API: http://localhost:$(API_PORT)";
-  npm start &;
-  cd api && go run . --port=$(API_PORT) &
+  @parallel: {
+    npm start;
+    @sh(cd api && go run . --port=$(API_PORT))
+  }
 }
 
 stop dev: {
-  pkill -f "npm start";
-  pkill -f "go run"
+  echo "Stopping development environment...";
+  @parallel: {
+    @sh(pkill -f "npm start" || true);
+    @sh(pkill -f "go run" || true)
+  }
 }
 
 test: {
-  npm test;
-  cd api && go test ./...
+  @parallel: {
+    npm test;
+    @sh(cd api && go test ./...)
+  }
 }
 
 deploy: {
   echo "Deploying to production...";
-  docker build -t myapp .;
-  docker push myapp:latest;
-  kubectl set image deployment/myapp myapp=myapp:latest
+  @parallel: {
+    docker build -t myapp-frontend .;
+    @sh(cd api && docker build -t myapp-api .)
+  };
+  docker push myapp-frontend:latest;
+  docker push myapp-api:latest;
+  kubectl set image deployment/frontend frontend=myapp-frontend:latest;
+  kubectl set image deployment/api api=myapp-api:latest
 }
 ```
 
@@ -425,18 +472,38 @@ rollback: {
 }
 
 backup: {
-  DATE=\$(date +%Y%m%d-%H%M%S);
-  kubectl exec deployment/postgres -n $(NAMESPACE) -- \
-    pg_dump myapp > backup-\$DATE.sql;
+  echo "Creating database backup...";
+  @sh(DATE=$(date +%Y%m%d-%H%M%S));
+  @sh(kubectl exec deployment/postgres -n $(NAMESPACE) -- \
+    pg_dump myapp > backup-$DATE.sql);
   echo "Backup saved: backup-\$DATE.sql"
+}
+
+cleanup: {
+  echo "Cleaning up old resources...";
+  @parallel: {
+    @sh(kubectl delete pods --field-selector=status.phase=Succeeded -n $(NAMESPACE));
+    @sh(docker system prune -f);
+    @sh(find ./logs -name "*.log" -mtime +7 -delete)
+  };
+  echo "Cleanup complete"
+}
+
+scale: {
+  echo "Scaling services...";
+  @parallel: {
+    kubectl scale deployment/api --replicas=3 -n $(NAMESPACE);
+    kubectl scale deployment/worker --replicas=5 -n $(NAMESPACE)
+  }
 }
 ```
 
 ## Architecture
 
-- **ANTLR Grammar**: Robust parsing with full POSIX shell support
-- **Go Code Generation**: Template-based CLI generation
+- **ANTLR Grammar**: Robust parsing with annotation support and full POSIX shell compatibility
+- **Go Code Generation**: Template-based CLI generation with annotation processing
 - **Process Management**: Safe background process handling with PID tracking
+- **Annotation System**: Extensible framework for advanced shell operations
 - **Cross-platform**: Single binary works everywhere
 - **No Runtime Dependencies**: Generated CLIs are self-contained
 

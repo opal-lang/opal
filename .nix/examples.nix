@@ -10,7 +10,8 @@
 let
   devcmdLib = import ./lib.nix { inherit pkgs self system lib; };
 
-in rec {
+in
+rec {
   # Simple development commands
   basicDev = devcmdLib.mkDevCLI {
     name = "dev";
@@ -22,33 +23,37 @@ in rec {
       build: {
         echo "Building project...";
         mkdir -p $(BUILD_DIR);
-        (cd $(SRC) && make) || echo "No Makefile found"
+        @sh((cd $(SRC) && make) || echo "No Makefile found")
       }
 
       test: {
         echo "Running tests...";
-        (cd $(SRC) && make test) || go test ./... || npm test || echo "No tests found"
+        @sh((cd $(SRC) && make test) || go test ./... || npm test || echo "No tests found")
       }
 
       clean: {
         echo "Cleaning build artifacts...";
         rm -rf $(BUILD_DIR);
-        find . -name "*.tmp" -delete;
+        @sh(find . -name "*.tmp" -delete);
         echo "Clean complete"
       }
 
       lint: {
         echo "Running linters...";
-        (which golangci-lint && golangci-lint run) || echo "No Go linter";
-        (which eslint && eslint .) || echo "No JS linter";
+        @parallel: {
+          @sh((which golangci-lint && golangci-lint run) || echo "No Go linter");
+          @sh((which eslint && eslint .) || echo "No JS linter")
+        };
         echo "Linting complete"
       }
 
       deps: {
         echo "Installing dependencies...";
-        (test -f go.mod && go mod download) || echo "No Go modules";
-        (test -f package.json && npm install) || echo "No NPM packages";
-        (test -f requirements.txt && pip install -r requirements.txt) || echo "No Python packages";
+        @parallel: {
+          @sh((test -f go.mod && go mod download) || echo "No Go modules");
+          @sh((test -f package.json && npm install) || echo "No NPM packages");
+          @sh((test -f requirements.txt && pip install -r requirements.txt) || echo "No Python packages")
+        };
         echo "Dependencies installed"
       }
     '';
@@ -65,15 +70,19 @@ in rec {
 
       install: {
         echo "Installing all dependencies...";
-        (cd frontend && npm install) || echo "No frontend";
-        (cd backend && go mod download) || echo "No backend";
+        @parallel: {
+          @sh((cd frontend && npm install) || echo "No frontend");
+          @sh((cd backend && go mod download) || echo "No backend")
+        };
         echo "Installation complete"
       }
 
       build: {
         echo "Building all components...";
-        (cd frontend && npm run build) || echo "No frontend build";
-        (cd backend && go build -o ../dist/api ./cmd/api) || echo "No backend build";
+        @parallel: {
+          @sh((cd frontend && npm run build) || echo "No frontend build");
+          @sh((cd backend && go build -o ../dist/api ./cmd/api) || echo "No backend build")
+        };
         echo "Build complete"
       }
 
@@ -81,29 +90,36 @@ in rec {
         echo "Starting development servers...";
         echo "Frontend: http://localhost:$(FRONTEND_PORT)";
         echo "Backend: http://localhost:$(BACKEND_PORT)";
-        (cd frontend && NODE_ENV=$(NODE_ENV) npm start) &;
-        (cd backend && go run ./cmd/api --port=$(BACKEND_PORT)) &;
-        echo "Development servers started. Press Ctrl+C to stop."
+        @parallel: {
+          @sh(cd frontend && NODE_ENV=$(NODE_ENV) npm start);
+          @sh(cd backend && go run ./cmd/api --port=$(BACKEND_PORT))
+        }
       }
 
       stop dev: {
         echo "Stopping development servers...";
-        pkill -f "npm start" || echo "Frontend not running";
-        pkill -f "go run.*api" || echo "Backend not running";
+        @parallel: {
+          @sh(pkill -f "npm start" || echo "Frontend not running");
+          @sh(pkill -f "go run.*api" || echo "Backend not running")
+        };
         echo "Servers stopped"
       }
 
       test: {
         echo "Running all tests...";
-        (cd frontend && npm test) || echo "No frontend tests";
-        (cd backend && go test -v ./...) || echo "No backend tests";
+        @parallel: {
+          @sh((cd frontend && npm test) || echo "No frontend tests");
+          @sh((cd backend && go test -v ./...) || echo "No backend tests")
+        };
         echo "Testing complete"
       }
 
       format: {
         echo "Formatting code...";
-        (cd frontend && npm run format) || echo "No frontend formatter";
-        (cd backend && go fmt ./...) || echo "No backend formatter";
+        @parallel: {
+          @sh((cd frontend && npm run format) || echo "No frontend formatter");
+          @sh((cd backend && go fmt ./...) || echo "No backend formatter")
+        };
         echo "Formatting complete"
       }
 
@@ -111,7 +127,7 @@ in rec {
         echo "Deploying application...";
         webdev build;
         echo "Building Docker image...";
-        (which docker && docker build -t myapp:latest .) || echo "No Docker";
+        @sh((which docker && docker build -t myapp:latest .) || echo "No Docker");
         echo "Deployment ready"
       }
     '';
@@ -153,19 +169,21 @@ in rec {
 
       build-all: {
         echo "Building for multiple platforms...";
-        GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 ./cmd/$(BINARY);
-        GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 ./cmd/$(BINARY);
-        GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-windows-amd64.exe ./cmd/$(BINARY);
+        @parallel: {
+          GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 ./cmd/$(BINARY);
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 ./cmd/$(BINARY);
+          GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-windows-amd64.exe ./cmd/$(BINARY)
+        };
         echo "Multi-platform build complete"
       }
 
       test: {
-        echo "Running tests...";
-        go test -v ./...;
-        echo "Running race tests...";
-        go test -race ./...;
-        echo "Running benchmarks...";
-        go test -bench=. -benchmem ./...;
+        echo "Running comprehensive tests...";
+        @parallel: {
+          go test -v ./...;
+          go test -race ./...;
+          go test -bench=. -benchmem ./...
+        };
         echo "Testing complete"
       }
 
@@ -178,16 +196,18 @@ in rec {
 
       lint: {
         echo "Running linters...";
-        (which golangci-lint && golangci-lint run) || echo "golangci-lint not found";
-        go fmt ./...;
-        go vet ./...;
+        @parallel: {
+          @sh((which golangci-lint && golangci-lint run) || echo "golangci-lint not found");
+          go fmt ./...;
+          go vet ./...
+        };
         echo "Linting complete"
       }
 
       # Use "watch tests" instead of "watch test" to avoid conflict with existing "test" command
       watch tests: {
         echo "Watching for changes and running tests...";
-        (which watchexec && watchexec -e go -- go test ./...) || echo "watchexec not found"
+        @sh((which watchexec && watchexec -e go -- go test ./...) || echo "watchexec not found")
       }
 
       run: {
@@ -244,25 +264,30 @@ in rec {
 
       test: {
         echo "Running tests...";
-        cargo test;
-        echo "Running doc tests...";
-        cargo test --doc;
+        @parallel: {
+          cargo test;
+          cargo test --doc
+        };
         echo "Testing complete"
       }
 
       check: {
         echo "Checking code...";
-        cargo check;
-        cargo clippy -- -D warnings;
-        cargo fmt -- --check;
+        @parallel: {
+          cargo check;
+          cargo clippy -- -D warnings;
+          cargo fmt -- --check
+        };
         echo "Check complete"
       }
 
       fix: {
         echo "Fixing code issues...";
-        cargo fix --allow-dirty;
-        cargo clippy --fix --allow-dirty;
-        cargo fmt;
+        @parallel: {
+          cargo fix --allow-dirty;
+          cargo clippy --fix --allow-dirty;
+          cargo fmt
+        };
         echo "Fixes applied"
       }
 
@@ -274,7 +299,7 @@ in rec {
       # Use "watch develop" for clarity and to distinguish from other dev-related commands
       watch develop: {
         echo "Watching for changes...";
-        (which cargo-watch && cargo watch -x run) || echo "cargo-watch not installed"
+        @sh((which cargo-watch && cargo watch -x run) || echo "cargo-watch not installed")
       }
 
       bench: {
@@ -297,7 +322,7 @@ in rec {
 
       audit: {
         echo "Security audit...";
-        (which cargo-audit && cargo audit) || echo "cargo-audit not installed";
+        @sh((which cargo-audit && cargo audit) || echo "cargo-audit not installed");
         echo "Audit complete"
       }
     '';
@@ -316,14 +341,14 @@ in rec {
         echo "Setting up Python environment...";
         $(PYTHON) -m venv $(VENV);
         $(VENV)/bin/pip install --upgrade pip;
-        (test -f requirements.txt && $(VENV)/bin/pip install -r requirements.txt) || echo "No requirements.txt";
+        @sh((test -f requirements.txt && $(VENV)/bin/pip install -r requirements.txt) || echo "No requirements.txt");
         echo "Environment setup complete"
       }
 
       install: {
         echo "Installing packages...";
         $(VENV)/bin/pip install -r requirements.txt;
-        (test -f requirements-dev.txt && $(VENV)/bin/pip install -r requirements-dev.txt) || echo "No dev requirements";
+        @sh((test -f requirements-dev.txt && $(VENV)/bin/pip install -r requirements-dev.txt) || echo "No dev requirements");
         echo "Installation complete"
       }
 
@@ -340,7 +365,7 @@ in rec {
 
       stop jupyter: {
         echo "Stopping Jupyter...";
-        pkill -f "jupyter" || echo "Jupyter not running"
+        @sh(pkill -f "jupyter" || echo "Jupyter not running")
       }
 
       test: {
@@ -351,29 +376,35 @@ in rec {
 
       lint: {
         echo "Linting code...";
-        $(VENV)/bin/flake8 . || echo "flake8 not installed";
-        $(VENV)/bin/black --check . || echo "black not installed";
+        @parallel: {
+          @sh($(VENV)/bin/flake8 . || echo "flake8 not installed");
+          @sh($(VENV)/bin/black --check . || echo "black not installed")
+        };
         echo "Linting complete"
       }
 
       format: {
         echo "Formatting code...";
-        $(VENV)/bin/black . || echo "black not installed";
-        $(VENV)/bin/isort . || echo "isort not installed";
+        @parallel: {
+          @sh($(VENV)/bin/black . || echo "black not installed");
+          @sh($(VENV)/bin/isort . || echo "isort not installed")
+        };
         echo "Formatting complete"
       }
 
       analyze: {
         echo "Running data analysis...";
-        $(VENV)/bin/python scripts/analyze.py || echo "No analysis script";
+        @sh($(VENV)/bin/python scripts/analyze.py || echo "No analysis script");
         echo "Analysis complete"
       }
 
       clean: {
         echo "Cleaning temporary files...";
-        find . -name "*.pyc" -delete;
-        find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true;
-        find . -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true;
+        @parallel: {
+          @sh(find . -name "*.pyc" -delete);
+          @sh(find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true);
+          @sh(find . -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true)
+        };
         echo "Clean complete"
       }
     '';
@@ -391,67 +422,68 @@ in rec {
 
       plan: {
         echo "Planning infrastructure changes...";
-        (cd $(TERRAFORM_DIR) && terraform plan -var="environment=$(ENVIRONMENT)") || echo "No Terraform";
+        @sh((cd $(TERRAFORM_DIR) && terraform plan -var="environment=$(ENVIRONMENT)") || echo "No Terraform");
         echo "Plan complete"
       }
 
       apply: {
         echo "Applying infrastructure changes...";
-        (cd $(TERRAFORM_DIR) && terraform apply -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform";
+        @sh((cd $(TERRAFORM_DIR) && terraform apply -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform");
         echo "Apply complete"
       }
 
       destroy: {
         echo "Destroying infrastructure...";
         echo "WARNING: This will destroy $(ENVIRONMENT) environment";
-        (cd $(TERRAFORM_DIR) && terraform destroy -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform"
+        @sh((cd $(TERRAFORM_DIR) && terraform destroy -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform")
       }
 
       provision: {
         echo "Provisioning servers...";
-        (cd $(ANSIBLE_DIR) && ansible-playbook -i inventory/$(ENVIRONMENT) site.yml) || echo "No Ansible";
+        @sh((cd $(ANSIBLE_DIR) && ansible-playbook -i inventory/$(ENVIRONMENT) site.yml) || echo "No Ansible");
         echo "Provisioning complete"
       }
 
       deploy: {
         echo "Deploying application to $(ENVIRONMENT)...";
-        (which kubectl && kubectl apply -f k8s/ -n $(KUBE_NAMESPACE)) || echo "No kubectl";
+        @sh((which kubectl && kubectl apply -f k8s/ -n $(KUBE_NAMESPACE)) || echo "No kubectl");
         echo "Deployment complete"
       }
 
       status: {
         echo "Checking infrastructure status...";
-        (which kubectl && kubectl get pods,svc,ing -n $(KUBE_NAMESPACE)) || echo "No kubectl";
+        @sh((which kubectl && kubectl get pods,svc,ing -n $(KUBE_NAMESPACE)) || echo "No kubectl");
         echo "Status check complete"
       }
 
       logs: {
         echo "Fetching application logs...";
-        (which kubectl && kubectl logs -f deployment/myapp -n $(KUBE_NAMESPACE)) || echo "No kubectl"
+        @sh((which kubectl && kubectl logs -f deployment/myapp -n $(KUBE_NAMESPACE)) || echo "No kubectl")
       }
 
       shell: {
         echo "Opening shell in application pod...";
-        (which kubectl && kubectl exec -it deployment/myapp -n $(KUBE_NAMESPACE) -- /bin/sh) || echo "No kubectl"
+        @sh((which kubectl && kubectl exec -it deployment/myapp -n $(KUBE_NAMESPACE) -- /bin/sh) || echo "No kubectl")
       }
 
       backup: {
         echo "Creating backup...";
-        # Shell command substitution requires \$() escaping since devcmd reserves $() for variables
-        DATE=\$(date +%Y%m%d-%H%M%S);
-        echo "Backup timestamp: \$DATE";
-        (which kubectl && kubectl exec deployment/database -n $(KUBE_NAMESPACE) -- pg_dump myapp > backup-\$DATE.sql) || echo "No database"
+        # Shell command substitution requires @sh() for complex operations with variable assignment
+        @sh(DATE=\$(date +%Y%m%d-%H%M%S); echo "Backup timestamp: \$DATE");
+        @sh((which kubectl && kubectl exec deployment/database -n $(KUBE_NAMESPACE) -- pg_dump myapp > backup-\$(date +%Y%m%d-%H%M%S).sql) || echo "No database")
       }
 
       monitor: {
         echo "Opening monitoring dashboard...";
-        (which kubectl && kubectl port-forward svc/grafana 3000:3000 -n monitoring) || echo "No monitoring"
+        @sh((which kubectl && kubectl port-forward svc/grafana 3000:3000 -n monitoring) || echo "No monitoring")
       }
 
       lint: {
         echo "Linting infrastructure code...";
-        (cd $(TERRAFORM_DIR) && terraform fmt -check) || echo "No Terraform";
-        (cd $(ANSIBLE_DIR) && ansible-lint .) || echo "No Ansible";
+        @parallel: {
+          @sh((cd $(TERRAFORM_DIR) && terraform fmt -check) || echo "No Terraform");
+          @sh((cd $(ANSIBLE_DIR) && ansible-lint .) || echo "No Ansible")
+        };
         echo "Linting complete"
       }
     '';
@@ -482,7 +514,7 @@ in rec {
       extraPackages = with pkgs; [ nodejs python3 go git docker ];
       shellHook = ''
         echo "Web development environment loaded"
-        echo "Available: webdev install, webdev watch dev, webdev build, webdev deploy"
+        echo "Available: webdev install, webdev dev start, webdev build, webdev deploy"
       '';
     };
 
@@ -504,15 +536,16 @@ in rec {
       extraPackages = with pkgs; [ python3 python3Packages.pip git ];
       shellHook = ''
         echo "Data science environment loaded"
-        echo "Available: datadev setup, datadev watch jupyter, datadev test, datadev analyze"
+        echo "Available: datadev setup, datadev jupyter start, datadev test, datadev analyze"
       '';
     };
   };
 
   # Test all examples
-  testExamples = pkgs.runCommand "test-all-examples" {
-    nativeBuildInputs = with pkgs; [ bash ] ++ (builtins.attrValues examples);
-  } ''
+  testExamples = pkgs.runCommand "test-all-examples"
+    {
+      nativeBuildInputs = with pkgs; [ bash ] ++ (builtins.attrValues examples);
+    } ''
     mkdir -p $out
 
     echo "Testing all example CLIs..."

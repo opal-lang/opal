@@ -6,10 +6,41 @@ import (
 )
 
 // BlockStatement represents a statement within a block command
-// It captures both the command text and whether it should run in background
+// Supports both regular commands and annotated commands
 type BlockStatement struct {
-	Command    string // The command text to execute
-	Background bool   // Whether the command should run in background (with &)
+	// For regular commands
+	Command string // The command text to execute
+
+	// For annotated commands
+	IsAnnotated    bool             // Whether this is an annotated command
+	Annotation     string           // The annotation name (sh, parallel, retry, etc.)
+	AnnotationType string           // "function", "simple", or "block"
+	AnnotatedBlock []BlockStatement // For block-type annotations like @parallel: { }
+}
+
+// Helper methods for BlockStatement
+func (bs *BlockStatement) IsFunction() bool {
+	return bs.IsAnnotated && bs.AnnotationType == "function"
+}
+
+func (bs *BlockStatement) IsSimpleAnnotation() bool {
+	return bs.IsAnnotated && bs.AnnotationType == "simple"
+}
+
+func (bs *BlockStatement) IsBlockAnnotation() bool {
+	return bs.IsAnnotated && bs.AnnotationType == "block"
+}
+
+func (bs *BlockStatement) GetCommand() string {
+	return bs.Command
+}
+
+func (bs *BlockStatement) GetAnnotation() string {
+	return bs.Annotation
+}
+
+func (bs *BlockStatement) GetNestedBlock() []BlockStatement {
+	return bs.AnnotatedBlock
 }
 
 // Definition represents a variable definition in the command file
@@ -56,9 +87,42 @@ func (cf *CommandFile) ExpandVariables() error {
 			cmd.Command = expanded
 		} else {
 			// Expand variables in block statements
-			for j := range cmd.Block {
-				stmt := &cmd.Block[j]
-				expanded, err := expandVariablesInText(stmt.Command, vars, cmd.Line)
+			if err := cf.expandVariablesInBlockStatements(cmd.Block, vars, cmd.Line); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// expandVariablesInBlockStatements handles variable expansion in block statements
+func (cf *CommandFile) expandVariablesInBlockStatements(statements []BlockStatement, vars map[string]string, line int) error {
+	for i := range statements {
+		stmt := &statements[i]
+
+		if stmt.IsAnnotated {
+			// Handle annotated commands
+			switch stmt.AnnotationType {
+			case "function", "simple":
+				// Expand variables in the command text
+				if stmt.Command != "" {
+					expanded, err := expandVariablesInText(stmt.Command, vars, line)
+					if err != nil {
+						return err
+					}
+					stmt.Command = expanded
+				}
+			case "block":
+				// Recursively expand variables in nested block
+				if err := cf.expandVariablesInBlockStatements(stmt.AnnotatedBlock, vars, line); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Handle regular commands
+			if stmt.Command != "" {
+				expanded, err := expandVariablesInText(stmt.Command, vars, line)
 				if err != nil {
 					return err
 				}
@@ -66,7 +130,6 @@ func (cf *CommandFile) ExpandVariables() error {
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -177,11 +240,17 @@ func expandVariablesInText(text string, vars map[string]string, line int) (strin
 					// Process escape sequences in the variable value as well
 					processedValue, err := processEscapeSequences(value)
 					if err != nil {
-						return "", NewParseError(line, "error processing escapes in variable %s: %v", name, err)
+						return "", &ParseError{
+							Line:    line,
+							Message: fmt.Sprintf("error processing escapes in variable %s: %v", name, err),
+						}
 					}
 					result = append(result, processedValue...)
 				} else {
-					return "", NewParseError(line, "undefined variable: %s", name)
+					return "", &ParseError{
+						Line:    line,
+						Message: fmt.Sprintf("undefined variable: %s", name),
+					}
 				}
 				inVar = false
 				i++
@@ -194,7 +263,10 @@ func expandVariablesInText(text string, vars map[string]string, line int) (strin
 
 	// Check for unclosed variable reference
 	if inVar {
-		return "", NewParseError(line, "unclosed variable reference: $(%s", string(varName))
+		return "", &ParseError{
+			Line:    line,
+			Message: fmt.Sprintf("unclosed variable reference: $(%s", string(varName)),
+		}
 	}
 
 	return string(result), nil

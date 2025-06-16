@@ -93,13 +93,13 @@ jobs:
         run: |
           wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
           echo 'export CLASSPATH="/tmp/antlr.jar:$CLASSPATH"' >> $GITHUB_ENV
-          echo 'alias antlr="java -jar /tmp/antlr.jar"' >> $GITHUB_ENV
 
       - name: Generate ANTLR Parser
         run: |
           echo "📝 Generating ANTLR parser..."
+          rm -rf internal/gen
           mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Download Go dependencies
         run: |
@@ -161,8 +161,9 @@ jobs:
       - name: Generate ANTLR Parser
         run: |
           wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
+          rm -rf internal/gen
           mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Build binary
         env:
@@ -481,8 +482,9 @@ jobs:
       - name: Generate ANTLR Parser
         run: |
           wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
+          rm -rf internal/gen
           mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4
+          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Get version from tag
         id: version

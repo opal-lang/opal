@@ -8,96 +8,93 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 )
 
-//go:generate bash -c "cd ../../grammar && antlr -Dlanguage=Go -package gen -o ../internal/gen devcmd.g4"
+//go:generate bash -c "cd ../../grammar && antlr -Dlanguage=Go -package gen -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4"
 
-// ParseError represents an error that occurred during parsing
 type ParseError struct {
-	Line    int    // The line number where the error occurred
-	Column  int    // The column number where the error occurred
-	Message string // The error message
-	Context string // The line of text where the error occurred
+	Line    int
+	Column  int
+	Message string
+	Context string
+	Debug   *DebugTrace
 }
 
-// Error formats the parse error as a string with visual context
 func (e *ParseError) Error() string {
+	var builder strings.Builder
+
 	if e.Context == "" {
-		return fmt.Sprintf("line %d: %s", e.Line, e.Message)
+		builder.WriteString(fmt.Sprintf("line %d: %s", e.Line, e.Message))
+	} else {
+		pointer := strings.Repeat(" ", e.Column) + "^"
+		builder.WriteString(fmt.Sprintf("line %d: %s\n%s\n%s", e.Line, e.Message, e.Context, pointer))
 	}
 
-	// Create a visual error indicator with arrow pointing to error position
-	pointer := strings.Repeat(" ", e.Column) + "^"
+	// Add debug trace if available and enabled
+	if e.Debug != nil && e.Debug.Enabled && e.Debug.HasTrace() {
+		builder.WriteString(e.Debug.String())
+	}
 
-	return fmt.Sprintf("line %d: %s\n%s\n%s",
-		e.Line,
-		e.Message,
-		e.Context,
-		pointer)
+	return builder.String()
 }
 
-// NewParseError creates a new ParseError without context
-func NewParseError(line int, format string, args ...interface{}) *ParseError {
+func NewParseError(line int, debug *DebugTrace, format string, args ...interface{}) *ParseError {
 	return &ParseError{
 		Line:    line,
 		Message: fmt.Sprintf(format, args...),
+		Debug:   debug,
 	}
 }
 
-// NewDetailedParseError creates a ParseError with context information
-func NewDetailedParseError(line int, column int, context string, format string, args ...interface{}) *ParseError {
+func NewDetailedParseError(line int, column int, context string, debug *DebugTrace, format string, args ...interface{}) *ParseError {
 	return &ParseError{
 		Line:    line,
 		Column:  column,
 		Context: context,
 		Message: fmt.Sprintf(format, args...),
+		Debug:   debug,
 	}
 }
 
-// CommandRegistry manages command names and prevents conflicts
 type CommandRegistry struct {
-	regularCommands map[string]int // name -> line number
-	watchCommands   map[string]int // name -> line number
-	stopCommands    map[string]int // name -> line number
-	lines           []string       // source lines for error reporting
+	regularCommands map[string]int
+	watchCommands   map[string]int
+	stopCommands    map[string]int
+	lines           []string
+	debug           *DebugTrace
 }
 
-// NewCommandRegistry creates a new command registry
-func NewCommandRegistry(lines []string) *CommandRegistry {
+func NewCommandRegistry(lines []string, debug *DebugTrace) *CommandRegistry {
 	return &CommandRegistry{
 		regularCommands: make(map[string]int),
 		watchCommands:   make(map[string]int),
 		stopCommands:    make(map[string]int),
 		lines:           lines,
+		debug:           debug,
 	}
 }
 
-// RegisterCommand registers a command and checks for conflicts
 func (cr *CommandRegistry) RegisterCommand(cmd Command) error {
 	name := cmd.Name
 	line := cmd.Line
 
-	// Get the line content for error reporting
 	var lineContent string
 	if line > 0 && line <= len(cr.lines) {
 		lineContent = cr.lines[line-1]
 	}
 
-	// Find the column position of the command name
 	namePos := strings.Index(lineContent, name)
 	if namePos == -1 {
 		namePos = 0
 	}
 
 	if cmd.IsWatch {
-		// Check for duplicate watch command
 		if existingLine, exists := cr.watchCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"duplicate watch command '%s' (previously defined at line %d)",
 				name, existingLine)
 		}
 
-		// Check for conflict with regular command
 		if existingLine, exists := cr.regularCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"watch command '%s' conflicts with regular command (defined at line %d)",
 				name, existingLine)
 		}
@@ -105,16 +102,14 @@ func (cr *CommandRegistry) RegisterCommand(cmd Command) error {
 		cr.watchCommands[name] = line
 
 	} else if cmd.IsStop {
-		// Check for duplicate stop command
 		if existingLine, exists := cr.stopCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"duplicate stop command '%s' (previously defined at line %d)",
 				name, existingLine)
 		}
 
-		// Check for conflict with regular command
 		if existingLine, exists := cr.regularCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"stop command '%s' conflicts with regular command (defined at line %d)",
 				name, existingLine)
 		}
@@ -122,24 +117,20 @@ func (cr *CommandRegistry) RegisterCommand(cmd Command) error {
 		cr.stopCommands[name] = line
 
 	} else {
-		// Regular command
-		// Check for duplicate regular command
 		if existingLine, exists := cr.regularCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"duplicate command '%s' (previously defined at line %d)",
 				name, existingLine)
 		}
 
-		// Check for conflict with watch command
 		if existingLine, exists := cr.watchCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"regular command '%s' conflicts with watch command (defined at line %d)",
 				name, existingLine)
 		}
 
-		// Check for conflict with stop command
 		if existingLine, exists := cr.stopCommands[name]; exists {
-			return NewDetailedParseError(line, namePos, lineContent,
+			return NewDetailedParseError(line, namePos, lineContent, cr.debug,
 				"regular command '%s' conflicts with stop command (defined at line %d)",
 				name, existingLine)
 		}
@@ -150,100 +141,107 @@ func (cr *CommandRegistry) RegisterCommand(cmd Command) error {
 	return nil
 }
 
-// GetWatchCommands returns all registered watch commands
 func (cr *CommandRegistry) GetWatchCommands() map[string]int {
 	return cr.watchCommands
 }
 
-// GetStopCommands returns all registered stop commands
 func (cr *CommandRegistry) GetStopCommands() map[string]int {
 	return cr.stopCommands
 }
 
-// GetRegularCommands returns all registered regular commands
 func (cr *CommandRegistry) GetRegularCommands() map[string]int {
 	return cr.regularCommands
 }
 
-// ValidateWatchStopPairs validates that watch commands have valid stop counterparts
 func (cr *CommandRegistry) ValidateWatchStopPairs() error {
-	// Note: We don't require every watch to have a stop since stop is optional
-	// We also don't require every stop to have a watch since stop commands can be standalone
-	// This method is kept for future validation rules if needed
-
 	return nil
 }
 
-// Parse parses a command file content into a CommandFile structure
-func Parse(content string) (*CommandFile, error) {
-	// Ensure content has a trailing newline for consistent parsing
+func Parse(content string, debug bool) (*CommandFile, error) {
+	var debugTrace *DebugTrace
+	if debug {
+		debugTrace = &DebugTrace{Enabled: true}
+	}
+
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
 
-	// Split the content into lines for error reporting
 	lines := strings.Split(content, "\n")
+	if debugTrace != nil {
+		debugTrace.Log("Input lines: %d", len(lines))
+	}
 
-	// Create input stream from the content
 	input := antlr.NewInputStream(content)
+	lexer := gen.NewDevcmdLexer(input)
 
-	// Create lexer with error handling
-	lexer := gen.NewdevcmdLexer(input)
 	errorListener := &ErrorCollector{
 		lines: lines,
+		debug: debugTrace,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(errorListener)
 
-	// Create token stream and parser
 	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-	parser := gen.NewdevcmdParser(tokens)
+	parser := gen.NewDevcmdParser(tokens)
 	parser.RemoveErrorListeners()
 	parser.AddErrorListener(errorListener)
 
-	// Parse the input
+	if debugTrace != nil {
+		debugTrace.Log("Starting parse")
+	}
 	tree := parser.Program()
 
-	// Check for syntax errors
 	if errorListener.HasErrors() {
+		if debugTrace != nil {
+			debugTrace.LogError("Syntax errors found: %d", len(errorListener.errors))
+		}
 		return nil, errorListener.Error()
 	}
 
-	// Create a CommandFile to store the parsing results
 	commandFile := &CommandFile{
 		Lines:       lines,
 		Definitions: []Definition{},
 		Commands:    []Command{},
 	}
 
-	// Use visitor to extract commands and definitions
 	visitor := &DevcmdVisitor{
 		commandFile: commandFile,
 		tokenStream: tokens,
 		inputStream: input,
+		debug:       debugTrace,
 	}
 	visitor.Visit(tree)
 
-	// Verify no duplicate definitions
-	if err := validateDefinitions(commandFile.Definitions, lines); err != nil {
+	if debugTrace != nil {
+		debugTrace.Log("Found %d definitions, %d commands", len(commandFile.Definitions), len(commandFile.Commands))
+	}
+
+	if err := validateDefinitions(commandFile.Definitions, lines, debugTrace); err != nil {
+		if debugTrace != nil {
+			debugTrace.LogError("Definition validation failed: %v", err)
+		}
 		return nil, err
 	}
 
-	// Verify command uniqueness and conflicts using the advanced registry
-	if err := validateCommands(commandFile.Commands, lines); err != nil {
+	if err := validateCommands(commandFile.Commands, lines, debugTrace); err != nil {
+		if debugTrace != nil {
+			debugTrace.LogError("Command validation failed: %v", err)
+		}
 		return nil, err
 	}
 
-	// Perform semantic validation of the command file
-	if err := Validate(commandFile); err != nil {
+	if err := ValidateWithDebug(commandFile, debugTrace); err != nil {
+		if debugTrace != nil {
+			debugTrace.LogError("Semantic validation failed: %v", err)
+		}
 		return nil, err
 	}
 
 	return commandFile, nil
 }
 
-// validateDefinitions checks for duplicate variable definitions
-func validateDefinitions(definitions []Definition, lines []string) error {
+func validateDefinitions(definitions []Definition, lines []string, debug *DebugTrace) error {
 	defs := make(map[string]int)
 
 	for _, def := range definitions {
@@ -258,7 +256,7 @@ func validateDefinitions(definitions []Definition, lines []string) error {
 				namePos = 0
 			}
 
-			return NewDetailedParseError(def.Line, namePos, defLine,
+			return NewDetailedParseError(def.Line, namePos, defLine, debug,
 				"duplicate definition of '%s' (previously defined at line %d)",
 				def.Name, line)
 		}
@@ -268,18 +266,15 @@ func validateDefinitions(definitions []Definition, lines []string) error {
 	return nil
 }
 
-// validateCommands performs advanced command validation using the command registry
-func validateCommands(commands []Command, lines []string) error {
-	registry := NewCommandRegistry(lines)
+func validateCommands(commands []Command, lines []string, debug *DebugTrace) error {
+	registry := NewCommandRegistry(lines, debug)
 
-	// Register all commands and check for conflicts
 	for _, cmd := range commands {
 		if err := registry.RegisterCommand(cmd); err != nil {
 			return err
 		}
 	}
 
-	// Validate watch/stop command relationships
 	if err := registry.ValidateWatchStopPairs(); err != nil {
 		return err
 	}
@@ -287,23 +282,20 @@ func validateCommands(commands []Command, lines []string) error {
 	return nil
 }
 
-// ErrorCollector collects syntax errors during parsing
 type ErrorCollector struct {
 	antlr.DefaultErrorListener
 	errors []SyntaxError
-	lines  []string // Store the original source lines
+	lines  []string
+	debug  *DebugTrace
 }
 
-// SyntaxError represents a syntax error with location information
 type SyntaxError struct {
 	Line    int
 	Column  int
 	Message string
 }
 
-// simplifyErrorMessage converts verbose ANTLR messages to user-friendly ones
 func simplifyErrorMessage(msg string) string {
-	// Common ANTLR error patterns and their simplified versions
 	if strings.Contains(msg, "expecting") && strings.Contains(msg, "';'") {
 		return "missing ';'"
 	}
@@ -312,6 +304,9 @@ func simplifyErrorMessage(msg string) string {
 	}
 	if strings.Contains(msg, "missing ':'") {
 		return "missing ':'"
+	}
+	if strings.Contains(msg, "missing ')'") && strings.Contains(msg, "'\\n'") {
+		return "missing ')' at '\\n'"
 	}
 	if strings.Contains(msg, "expecting") && strings.Contains(msg, "'}'") {
 		return "missing '}'"
@@ -323,25 +318,26 @@ func simplifyErrorMessage(msg string) string {
 		return "unexpected input"
 	}
 
-	// Return original message if no pattern matches
 	return msg
 }
 
-// Update your existing SyntaxError method in ErrorCollector to use this:
 func (e *ErrorCollector) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, ex antlr.RecognitionException) {
+	simplified := simplifyErrorMessage(msg)
+	if e.debug != nil {
+		e.debug.LogError("Syntax error at %d:%d - original: %s, simplified: %s", line, column, msg, simplified)
+	}
+
 	e.errors = append(e.errors, SyntaxError{
 		Line:    line,
 		Column:  column,
-		Message: simplifyErrorMessage(msg), // Use the simplified message
+		Message: simplified,
 	})
 }
 
-// HasErrors returns true if syntax errors were found
 func (e *ErrorCollector) HasErrors() bool {
 	return len(e.errors) > 0
 }
 
-// Error returns a ParseError for the first syntax error
 func (e *ErrorCollector) Error() error {
 	if len(e.errors) == 0 {
 		return nil
@@ -349,44 +345,69 @@ func (e *ErrorCollector) Error() error {
 
 	err := e.errors[0]
 
-	// Get the line context if available
 	var context string
 	if err.Line > 0 && err.Line <= len(e.lines) {
 		context = e.lines[err.Line-1]
 	}
 
 	if context != "" {
-		return NewDetailedParseError(err.Line, err.Column, context, "%s", err.Message)
+		return NewDetailedParseError(err.Line, err.Column, context, e.debug, "%s", err.Message)
 	} else {
-		return NewParseError(err.Line, "syntax error at column %d: %s", err.Column, err.Message)
+		return NewParseError(err.Line, e.debug, "syntax error at column %d: %s", err.Column, err.Message)
 	}
 }
 
-// DevcmdVisitor implements the visitor pattern for traversing the parse tree
 type DevcmdVisitor struct {
 	commandFile *CommandFile
 	tokenStream antlr.TokenStream
 	inputStream antlr.CharStream
+	debug       *DebugTrace
 }
 
-// Visit is the entry point for the visitor pattern
 func (v *DevcmdVisitor) Visit(tree antlr.ParseTree) {
 	switch t := tree.(type) {
 	case *gen.ProgramContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting program")
+		}
 		v.visitProgram(t)
 	case *gen.LineContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting line")
+		}
 		v.visitLine(t)
 	case *gen.VariableDefinitionContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting variable definition")
+		}
 		v.visitVariableDefinition(t)
 	case *gen.CommandDefinitionContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting command definition")
+		}
 		v.visitCommandDefinition(t)
+	case *gen.FunctionAnnotContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting function annotation")
+		}
+	case *gen.BlockAnnotContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting block annotation")
+		}
+	case *gen.SimpleAnnotContext:
+		if v.debug != nil {
+			v.debug.Log("Visiting simple annotation")
+		}
 	case antlr.TerminalNode:
-		// Skip terminal nodes silently
+		if v.debug != nil {
+			v.debug.LogToken(t.GetText())
+		}
 	default:
-		// Visit children for other node types
+		if v.debug != nil {
+			v.debug.Log("Visiting unknown node type: %T", t)
+		}
 		for i := 0; i < tree.GetChildCount(); i++ {
 			child := tree.GetChild(i)
-			// Type assertion to convert antlr.Tree to antlr.ParseTree
 			if parseTree, ok := child.(antlr.ParseTree); ok {
 				v.Visit(parseTree)
 			}
@@ -394,30 +415,35 @@ func (v *DevcmdVisitor) Visit(tree antlr.ParseTree) {
 	}
 }
 
-// visitProgram processes the root program node
 func (v *DevcmdVisitor) visitProgram(ctx *gen.ProgramContext) {
 	for _, line := range ctx.AllLine() {
 		v.Visit(line)
 	}
 }
 
-// visitLine processes a line node
 func (v *DevcmdVisitor) visitLine(ctx *gen.LineContext) {
 	if varDef := ctx.VariableDefinition(); varDef != nil {
 		v.Visit(varDef)
 	} else if cmdDef := ctx.CommandDefinition(); cmdDef != nil {
 		v.Visit(cmdDef)
 	}
-	// Skip NEWLINE-only lines
 }
 
-// visitVariableDefinition processes a variable definition
 func (v *DevcmdVisitor) visitVariableDefinition(ctx *gen.VariableDefinitionContext) {
 	name := ctx.NAME().GetText()
-	cmdText := ctx.CommandText()
-	value := v.getOriginalText(cmdText)
+
+	var value string
+	if varValue := ctx.VariableValue(); varValue != nil {
+		if cmdText := varValue.CommandText(); cmdText != nil {
+			value = v.getOriginalText(cmdText)
+		}
+	}
+
 	line := ctx.GetStart().GetLine()
 
+	if v.debug != nil {
+		v.debug.Log("Found definition: %s = %s", name, value)
+	}
 	v.commandFile.Definitions = append(v.commandFile.Definitions, Definition{
 		Name:  name,
 		Value: value,
@@ -425,17 +451,33 @@ func (v *DevcmdVisitor) visitVariableDefinition(ctx *gen.VariableDefinitionConte
 	})
 }
 
-// visitCommandDefinition processes a command definition
 func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext) {
 	name := ctx.NAME().GetText()
 	line := ctx.GetStart().GetLine()
 
-	// Check modifiers
 	isWatch := ctx.WATCH() != nil
 	isStop := ctx.STOP() != nil
 
-	if simpleCmd := ctx.SimpleCommand(); simpleCmd != nil {
-		// Process simple command
+	if v.debug != nil {
+		v.debug.Log("Found command: %s (watch: %v, stop: %v)", name, isWatch, isStop)
+	}
+
+	commandBody := ctx.CommandBody()
+
+	if annotatedCmd := commandBody.AnnotatedCommand(); annotatedCmd != nil {
+		// Handle annotated command at top level
+		annotatedStmt := v.processAnnotatedCommand(annotatedCmd)
+
+		v.commandFile.Commands = append(v.commandFile.Commands, Command{
+			Name:    name,
+			Line:    line,
+			IsWatch: isWatch,
+			IsStop:  isStop,
+			IsBlock: true,
+			Block:   []BlockStatement{annotatedStmt},
+		})
+
+	} else if simpleCmd := commandBody.SimpleCommand(); simpleCmd != nil {
 		cmd := v.processSimpleCommand(simpleCmd.(*gen.SimpleCommandContext))
 
 		v.commandFile.Commands = append(v.commandFile.Commands, Command{
@@ -445,8 +487,8 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 			IsWatch: isWatch,
 			IsStop:  isStop,
 		})
-	} else if blockCmd := ctx.BlockCommand(); blockCmd != nil {
-		// Process block command
+
+	} else if blockCmd := commandBody.BlockCommand(); blockCmd != nil {
 		blockStatements := v.processBlockCommand(blockCmd.(*gen.BlockCommandContext))
 
 		v.commandFile.Commands = append(v.commandFile.Commands, Command{
@@ -460,90 +502,192 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 	}
 }
 
-// processSimpleCommand extracts text from a simple command
 func (v *DevcmdVisitor) processSimpleCommand(ctx *gen.SimpleCommandContext) string {
-	// Get main text
 	cmdText := v.getOriginalText(ctx.CommandText())
-	cmdText = strings.TrimRight(cmdText, " \t") // keep tail blanks only for continuations
+	cmdText = strings.TrimRight(cmdText, " \t")
 
-	// Process continuations
 	var fullText strings.Builder
 	fullText.WriteString(cmdText)
 
 	for _, contLine := range ctx.AllContinuationLine() {
 		contCtx := contLine.(*gen.ContinuationLineContext)
 		contText := v.getOriginalText(contCtx.CommandText())
-		contText = strings.TrimLeft(contText, " \t") // strip leading blanks only
-		fullText.WriteString(" ")                    // Add a single space for continuation
+		contText = strings.TrimLeft(contText, " \t")
+		fullText.WriteString(" ")
 		fullText.WriteString(contText)
 	}
 
 	return fullText.String()
 }
 
-// processBlockCommand extracts statements from a block command
+// Process annotation command (similar to simple command but without semicolon)
+func (v *DevcmdVisitor) processAnnotationCommand(ctx *gen.AnnotationCommandContext) string {
+	cmdText := v.getOriginalText(ctx.CommandText())
+	cmdText = strings.TrimRight(cmdText, " \t")
+
+	var fullText strings.Builder
+	fullText.WriteString(cmdText)
+
+	for _, contLine := range ctx.AllContinuationLine() {
+		contCtx := contLine.(*gen.ContinuationLineContext)
+		contText := v.getOriginalText(contCtx.CommandText())
+		contText = strings.TrimLeft(contText, " \t")
+		fullText.WriteString(" ")
+		fullText.WriteString(contText)
+	}
+
+	return fullText.String()
+}
+
 func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []BlockStatement {
 	var statements []BlockStatement
 
 	blockStmts := ctx.BlockStatements()
 	if blockStmts == nil {
+		if v.debug != nil {
+			v.debug.Log("Empty block")
+		}
 		return statements
 	}
 
 	nonEmptyStmts := blockStmts.(*gen.BlockStatementsContext).NonEmptyBlockStatements()
 	if nonEmptyStmts == nil {
-		return statements // Empty block
+		if v.debug != nil {
+			v.debug.Log("Block with no non-empty statements")
+		}
+		return statements
 	}
 
-	// Process each statement
 	nonEmptyCtx := nonEmptyStmts.(*gen.NonEmptyBlockStatementsContext)
 	allBlockStmts := nonEmptyCtx.AllBlockStatement()
 
-	for _, stmt := range allBlockStmts {
+	if v.debug != nil {
+		v.debug.Log("Processing %d block statements", len(allBlockStmts))
+	}
+
+	for i, stmt := range allBlockStmts {
 		stmtCtx := stmt.(*gen.BlockStatementContext)
 
-		// Get the command text and check for background indicator
-		command, isBackground := v.getCommandTextWithBackground(stmtCtx)
+		if annotatedCmd := stmtCtx.AnnotatedCommand(); annotatedCmd != nil {
+			if v.debug != nil {
+				v.debug.Log("Block statement %d: annotated command", i)
+			}
+			annotatedStmt := v.processAnnotatedCommand(annotatedCmd)
+			statements = append(statements, annotatedStmt)
+		} else {
+			if v.debug != nil {
+				v.debug.Log("Block statement %d: regular command", i)
+			}
+			cmdText := v.getOriginalText(stmtCtx.CommandText())
+			cmdText = strings.TrimSpace(cmdText)
 
-		statements = append(statements, BlockStatement{
-			Command:    command,
-			Background: isBackground,
-		})
+			// Skip empty statements (fixes block counting issues)
+			if cmdText == "" {
+				if v.debug != nil {
+					v.debug.Log("Skipping empty statement %d", i)
+				}
+				continue
+			}
+
+			var fullText strings.Builder
+			fullText.WriteString(cmdText)
+
+			for _, contLine := range stmtCtx.AllContinuationLine() {
+				contCtx := contLine.(*gen.ContinuationLineContext)
+				contText := v.getOriginalText(contCtx.CommandText())
+				contText = strings.TrimLeft(contText, " \t")
+				fullText.WriteString(" ")
+				fullText.WriteString(contText)
+			}
+
+			statements = append(statements, BlockStatement{
+				Command:     fullText.String(),
+				IsAnnotated: false,
+			})
+		}
 	}
 
 	return statements
 }
 
-// getCommandTextWithBackground extracts command text and determines if it's a background command
-// Uses a more robust approach that handles grammar parsing issues
-func (v *DevcmdVisitor) getCommandTextWithBackground(ctx *gen.BlockStatementContext) (string, bool) {
-	// Get the original text for the entire block statement
-	start := ctx.GetStart().GetStart()
-	stop := ctx.GetStop().GetStop()
+func (v *DevcmdVisitor) processAnnotatedCommand(ctx antlr.ParserRuleContext) BlockStatement {
+	switch annotCtx := ctx.(type) {
+	case *gen.FunctionAnnotContext:
+		// Extract annotation name from AT_NAME_LPAREN token
+		atNameLParen := annotCtx.AT_NAME_LPAREN().GetText()
+		// Remove @ and ( to get the annotation name
+		annotation := strings.TrimSuffix(strings.TrimPrefix(atNameLParen, "@"), "(")
 
-	if start < 0 || stop < 0 || start > stop {
-		return "", false
+		// For function annotations like @sh(...), we need to get the exact text
+		// between the parentheses, preserving all formatting
+		var content string
+
+		// The AT_NAME_LPAREN token includes the @name( part
+		// The RPAREN token is the closing )
+		// We need everything in between
+
+		openParenToken := annotCtx.AT_NAME_LPAREN().GetSymbol()
+		closeParenToken := annotCtx.RPAREN().GetSymbol()
+
+		// Get positions
+		contentStart := openParenToken.GetStop() + 1  // After the (
+		contentStop := closeParenToken.GetStart() - 1 // Before the )
+
+		if contentStop >= contentStart {
+			// Get the raw text, which preserves spaces, newlines, backslashes, etc.
+			content = v.inputStream.GetText(contentStart, contentStop)
+		}
+
+		if v.debug != nil {
+			v.debug.Log("Function annotation: %s(%s)", annotation, content)
+		}
+		return BlockStatement{
+			IsAnnotated:    true,
+			Annotation:     annotation,
+			AnnotationType: "function",
+			Command:        content,
+		}
+
+	case *gen.BlockAnnotContext:
+		annotation := annotCtx.Annotation().GetText()
+		blockCmd := annotCtx.BlockCommand().(*gen.BlockCommandContext)
+		blockStatements := v.processBlockCommand(blockCmd)
+		if v.debug != nil {
+			v.debug.Log("Block annotation: %s with %d statements", annotation, len(blockStatements))
+		}
+		return BlockStatement{
+			IsAnnotated:    true,
+			Annotation:     annotation,
+			AnnotationType: "block",
+			AnnotatedBlock: blockStatements,
+		}
+
+	case *gen.SimpleAnnotContext:
+		annotation := annotCtx.Annotation().GetText()
+		// Updated to use AnnotationCommand instead of SimpleCommand
+		annotCmd := annotCtx.AnnotationCommand().(*gen.AnnotationCommandContext)
+		commandText := v.processAnnotationCommand(annotCmd)
+		if v.debug != nil {
+			v.debug.Log("Simple annotation: %s:%s", annotation, commandText)
+		}
+		return BlockStatement{
+			IsAnnotated:    true,
+			Annotation:     annotation,
+			AnnotationType: "simple",
+			Command:        commandText,
+		}
+
+	default:
+		if v.debug != nil {
+			v.debug.LogError("Unknown annotation context type: %T", ctx)
+		}
+		return BlockStatement{
+			IsAnnotated: false,
+			Command:     "",
+		}
 	}
-
-	// Extract the full text of the statement
-	fullText := v.inputStream.GetText(start, stop)
-	fullText = strings.TrimSpace(fullText)
-
-	// Check if the statement ends with &
-	isBackground := strings.HasSuffix(fullText, "&")
-
-	// If it's a background command, remove the & and any trailing whitespace
-	command := fullText
-	if isBackground {
-		command = strings.TrimSuffix(command, "&")
-		command = strings.TrimRight(command, " \t")
-	}
-
-	return command, isBackground
 }
 
-// getOriginalText extracts the original source text for a rule context
-// This function handles BACKSLASH SEMICOLON sequences specially for command text
 func (v *DevcmdVisitor) getOriginalText(ctx antlr.ParserRuleContext) string {
 	if ctx == nil {
 		return ""
@@ -557,16 +701,7 @@ func (v *DevcmdVisitor) getOriginalText(ctx antlr.ParserRuleContext) string {
 	}
 
 	text := v.inputStream.GetText(start, stop)
-
-	// For command text contexts, handle special cases
-	if _, ok := ctx.(*gen.CommandTextContext); ok {
-		// Handle the conversion from \\; (input) to \; (output)
-		// The grammar should now parse \\; as BACKSLASH SEMICOLON sequence
-		text = strings.ReplaceAll(text, "\\\\;", "\\;")
-		text = strings.TrimLeft(text, " \t")
-	} else {
-		text = strings.TrimLeft(text, " \t")
-	}
+	text = strings.TrimLeft(text, " \t")
 
 	return text
 }

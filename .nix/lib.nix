@@ -194,26 +194,26 @@ rec {
         {
           nativeBuildInputs = [ devcmdBin pkgs.go ];
         } ''
-            # --------------------------------------------
-            # Go needs a writable cache dir; /homeless-shelter is read-only.
-            export HOME=$TMPDIR                 # satisfies other tools
-            export GOCACHE=$TMPDIR/go-build     # tell Go where to cache
-            # --------------------------------------------
+        # --------------------------------------------
+        # Go needs a writable cache dir; /homeless-shelter is read-only.
+        export HOME=$TMPDIR                 # satisfies other tools
+        export GOCACHE=$TMPDIR/go-build     # tell Go where to cache
+        # --------------------------------------------
 
-            mkdir -p "$GOCACHE" "$out"
+        mkdir -p "$GOCACHE" "$out"
 
-            echo "Generating Go CLI from devcmd file..."
-            ${devcmdBin}/bin/devcmd ${templateArgs} ${commandsSrc} > "$out/main.go"
+        echo "Generating Go CLI from devcmd file..."
+        ${devcmdBin}/bin/devcmd ${templateArgs} ${commandsSrc} > "$out/main.go"
 
-            cat > "$out/go.mod" <<EOF
-            module ${name}
-            go 1.21
-            EOF
+        cat > "$out/go.mod" <<EOF
+        module ${name}
+        go 1.21
+        EOF
 
-            echo "Validating generated Go code..."
-            ${pkgs.go}/bin/go mod tidy  -C "$out"
-            ${pkgs.go}/bin/go build -C "$out" -o /dev/null ./...
-            echo "✅ Generated Go code is valid"
+        echo "Validating generated Go code..."
+        ${pkgs.go}/bin/go mod tidy  -C "$out"
+        ${pkgs.go}/bin/go build -C "$out" -o /dev/null ./...
+        echo "✅ Generated Go code is valid"
       '';
 
     in
