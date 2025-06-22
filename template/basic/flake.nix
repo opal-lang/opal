@@ -8,42 +8,26 @@
 
   outputs = { self, nixpkgs, devcmd }:
     let
-      system = "x86_64-linux"; # or your system
+      system = "x86_64-linux"; # Change to your system
       pkgs = nixpkgs.legacyPackages.${system};
 
-      # Generate CLI from commands.devcmd
+      # Generate CLI from commands.cli
       projectCLI = devcmd.lib.mkDevCLI {
-        inherit pkgs system;
         name = "myproject";
-        commandsFile = ./commands.devcmd;
-        # Optional: add preprocessing
-        # preProcess = text: "# Auto-generated\n" + text;
+        commandsFile = ./commands.cli;
       };
 
     in
     {
       # Make the CLI available as a package
-      packages.${system} = {
-        default = projectCLI;
-        cli = projectCLI;
-      };
+      packages.${system}.default = projectCLI;
 
       # Development shell with the CLI available
-      devShells.${system}.default = devcmd.lib.mkDevShell {
-        inherit pkgs;
-        name = "myproject-dev";
-        cli = projectCLI;
-        extraPackages = with pkgs; [
-          # Add your development tools here
-          git
-          curl
-          # nodejs
-          # go
-          # python3
-        ];
+      devShells.${system}.default = pkgs.mkShell {
+        buildInputs = [ projectCLI ];
         shellHook = ''
-          echo "Welcome to MyProject development environment!"
-          echo "Available commands: myproject --help"
+          echo "🚀 Welcome to MyProject!"
+          echo "Try: myproject --help"
         '';
       };
 

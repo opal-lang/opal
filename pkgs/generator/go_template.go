@@ -39,6 +39,72 @@ type TemplateCommand struct {
 	HelpDescription string // Description for help text
 }
 
+// TemplateRegistry holds all template components
+type TemplateRegistry struct {
+	templates map[string]string
+}
+
+// NewTemplateRegistry creates a new template registry with all components
+func NewTemplateRegistry() *TemplateRegistry {
+	registry := &TemplateRegistry{
+		templates: make(map[string]string),
+	}
+	registry.registerComponents()
+	return registry
+}
+
+// registerComponents registers all template components
+func (tr *TemplateRegistry) registerComponents() {
+	// Core templates
+	tr.templates["package"] = packageTemplate
+	tr.templates["imports"] = importsTemplate
+	tr.templates["process-types"] = processTypesTemplate
+	tr.templates["process-registry"] = processRegistryTemplate
+	tr.templates["cli-struct"] = cliStructTemplate
+	tr.templates["main-function"] = mainFunctionTemplate
+
+	// Command templates
+	tr.templates["command-switch"] = commandSwitchTemplate
+	tr.templates["help-function"] = helpFunctionTemplate
+	tr.templates["status-function"] = statusFunctionTemplate
+	tr.templates["command-functions"] = commandFunctionsTemplate
+
+	// Command type implementations
+	tr.templates["regular-command"] = regularCommandTemplate
+	tr.templates["watch-stop-command"] = watchStopCommandTemplate
+	tr.templates["watch-only-command"] = watchOnlyCommandTemplate
+	tr.templates["stop-only-command"] = stopOnlyCommandTemplate
+
+	// Process management templates
+	tr.templates["process-mgmt-functions"] = processMgmtFunctionsTemplate
+}
+
+// GetTemplate returns a specific template component
+func (tr *TemplateRegistry) GetTemplate(name string) (string, bool) {
+	tmpl, exists := tr.templates[name]
+	return tmpl, exists
+}
+
+// GetMasterTemplate returns the master template that composes all components
+func (tr *TemplateRegistry) GetMasterTemplate() string {
+	return masterTemplate
+}
+
+// GetAllTemplates returns all template components as a single string
+func (tr *TemplateRegistry) GetAllTemplates() string {
+	var parts []string
+
+	// Add all component templates
+	for _, tmpl := range tr.templates {
+		parts = append(parts, tmpl)
+	}
+
+	// Add master template
+	parts = append(parts, tr.GetMasterTemplate())
+
+	return strings.Join(parts, "\n")
+}
+
 // PreprocessCommands converts parser commands into template-ready data
 func PreprocessCommands(cf *parser.CommandFile) (*TemplateData, error) {
 	if cf == nil {
@@ -64,6 +130,7 @@ func PreprocessCommands(cf *parser.CommandFile) (*TemplateData, error) {
 
 	// Determine what features we need
 	hasWatchCommands := false
+	hasRegularCommands := len(cf.Commands) > 0
 	for _, cmd := range cf.Commands {
 		if cmd.IsWatch {
 			hasWatchCommands = true
@@ -73,23 +140,32 @@ func PreprocessCommands(cf *parser.CommandFile) (*TemplateData, error) {
 	data.HasProcessMgmt = hasWatchCommands
 
 	// Set up minimal imports - only include what we actually need
-	data.Imports = []string{
-		"fmt",
-		"os",
-		"os/exec",
-	}
-
-	if hasWatchCommands {
-		additionalImports := []string{
-			"encoding/json",
-			"io",
-			"os/signal",
-			"path/filepath",
-			"strings",
-			"syscall",
-			"time",
+	if hasRegularCommands {
+		data.Imports = []string{
+			"fmt",
+			"os",
 		}
-		data.Imports = append(data.Imports, additionalImports...)
+
+		// Only add os/exec if we have actual commands
+		if len(cf.Commands) > 0 {
+			data.Imports = append(data.Imports, "os/exec")
+		}
+
+		if hasWatchCommands {
+			additionalImports := []string{
+				"encoding/json",
+				"io",
+				"os/signal",
+				"path/filepath",
+				"strings",
+				"syscall",
+				"time",
+			}
+			data.Imports = append(data.Imports, additionalImports...)
+		}
+	} else {
+		// Minimal imports for empty command files
+		data.Imports = []string{"fmt", "os"}
 	}
 
 	// Sort imports for consistent output
@@ -355,398 +431,7 @@ func buildDecoratedStatement(stmt parser.BlockStatement, cmdName string, cmdLine
 	return stmt.Command, nil
 }
 
-// Template for generating Go CLI with subcommand structure
-const cleanGoTemplate = `package {{.PackageName}}
-
-import (
-{{range .Imports}}	"{{.}}"
-{{end}})
-
-{{if .HasProcessMgmt}}
-// ProcessInfo represents a managed background process
-type ProcessInfo struct {
-	Name      string    ` + "`json:\"name\"`" + `
-	PID       int       ` + "`json:\"pid\"`" + `
-	Command   string    ` + "`json:\"command\"`" + `
-	StartTime time.Time ` + "`json:\"start_time\"`" + `
-	LogFile   string    ` + "`json:\"log_file\"`" + `
-	Status    string    ` + "`json:\"status\"`" + `
-}
-
-// ProcessRegistry manages background processes
-type ProcessRegistry struct {
-	dir       string
-	processes map[string]*ProcessInfo
-}
-
-// NewProcessRegistry creates a new process registry
-func NewProcessRegistry() *ProcessRegistry {
-	dir := ".devcmd"
-	os.MkdirAll(dir, 0755)
-
-	pr := &ProcessRegistry{
-		dir:       dir,
-		processes: make(map[string]*ProcessInfo),
-	}
-	pr.loadProcesses()
-	return pr
-}
-
-// loadProcesses loads existing processes from registry file
-func (pr *ProcessRegistry) loadProcesses() {
-	registryFile := filepath.Join(pr.dir, "registry.json")
-	data, err := os.ReadFile(registryFile)
-	if err != nil {
-		return // File doesn't exist or can't be read
-	}
-
-	var processes map[string]*ProcessInfo
-	if err := json.Unmarshal(data, &processes); err != nil {
-		return
-	}
-
-	// Verify processes are still running
-	for name, proc := range processes {
-		if pr.isProcessRunning(proc.PID) {
-			proc.Status = "running"
-			pr.processes[name] = proc
-		}
-	}
-	pr.saveProcesses()
-}
-
-// saveProcesses saves current processes to registry file
-func (pr *ProcessRegistry) saveProcesses() {
-	registryFile := filepath.Join(pr.dir, "registry.json")
-	data, err := json.MarshalIndent(pr.processes, "", "  ")
-	if err != nil {
-		return
-	}
-	os.WriteFile(registryFile, data, 0644)
-}
-
-// isProcessRunning checks if a process is still running
-func (pr *ProcessRegistry) isProcessRunning(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
-}
-
-// addProcess adds a process to the registry
-func (pr *ProcessRegistry) addProcess(name string, pid int, command string, logFile string) {
-	pr.processes[name] = &ProcessInfo{
-		Name:      name,
-		PID:       pid,
-		Command:   command,
-		StartTime: time.Now(),
-		LogFile:   logFile,
-		Status:    "running",
-	}
-	pr.saveProcesses()
-}
-
-// removeProcess removes a process from the registry
-func (pr *ProcessRegistry) removeProcess(name string) {
-	delete(pr.processes, name)
-	pr.saveProcesses()
-}
-
-// getProcess gets a process by name
-func (pr *ProcessRegistry) getProcess(name string) (*ProcessInfo, bool) {
-	proc, exists := pr.processes[name]
-	return proc, exists
-}
-
-// listProcesses returns all processes
-func (pr *ProcessRegistry) listProcesses() []*ProcessInfo {
-	var procs []*ProcessInfo
-	for _, proc := range pr.processes {
-		procs = append(procs, proc)
-	}
-	return procs
-}
-
-// gracefulStop attempts to stop a process gracefully
-func (pr *ProcessRegistry) gracefulStop(name string) error {
-	proc, exists := pr.getProcess(name)
-	if !exists {
-		return fmt.Errorf("no process named '%s' found", name)
-	}
-
-	// Try to terminate gracefully
-	process, err := os.FindProcess(proc.PID)
-	if err != nil {
-		pr.removeProcess(name)
-		return fmt.Errorf("process not found: %v", err)
-	}
-
-	fmt.Printf("Stopping process %s (PID: %d)...\n", name, proc.PID)
-
-	// Send SIGTERM
-	process.Signal(syscall.SIGTERM)
-
-	// Wait up to 5 seconds for graceful shutdown
-	timeout := time.After(5 * time.Second)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			// Force kill
-			fmt.Printf("Force killing process %s...\n", name)
-			process.Signal(syscall.SIGKILL)
-			pr.removeProcess(name)
-			return nil
-		case <-ticker.C:
-			if !pr.isProcessRunning(proc.PID) {
-				fmt.Printf("Process %s stopped successfully\n", name)
-				pr.removeProcess(name)
-				return nil
-			}
-		}
-	}
-}
-{{end}}
-
-// CLI represents the command line interface
-type CLI struct {
-{{if .HasProcessMgmt}}	registry *ProcessRegistry{{end}}
-}
-
-// NewCLI creates a new CLI instance
-func NewCLI() *CLI {
-	return &CLI{
-{{if .HasProcessMgmt}}		registry: NewProcessRegistry(),{{end}}
-	}
-}
-
-// Execute runs the CLI with given arguments
-func (c *CLI) Execute() {
-	if len(os.Args) < 2 {
-		c.showHelp()
-		return
-	}
-
-	command := os.Args[1]
-	args := os.Args[2:]
-
-	switch command {
-{{if .HasProcessMgmt}}	case "status":
-		c.showStatus()
-{{end}}{{range .Commands}}	case "{{.GoCase}}":
-		c.{{.FunctionName}}(args)
-{{end}}	case "help", "--help", "-h":
-		c.showHelp()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-		c.showHelp()
-		os.Exit(1)
-	}
-}
-
-// showHelp displays available commands
-func (c *CLI) showHelp() {
-	fmt.Println("Available commands:")
-{{if .HasProcessMgmt}}	fmt.Println("  status              - Show running background processes")
-{{end}}{{range .Commands}}	fmt.Println("  {{.HelpDescription}}")
-{{end}}}
-
-{{if .HasProcessMgmt}}
-// showStatus displays running processes
-func (c *CLI) showStatus() {
-	processes := c.registry.listProcesses()
-	if len(processes) == 0 {
-		fmt.Println("No background processes running")
-		return
-	}
-
-	fmt.Printf("%-15s %-8s %-10s %-20s %s\n", "NAME", "PID", "STATUS", "STARTED", "COMMAND")
-	fmt.Println(strings.Repeat("-", 80))
-
-	for _, proc := range processes {
-		// Verify process is still running
-		if !c.registry.isProcessRunning(proc.PID) {
-			proc.Status = "stopped"
-		}
-
-		startTime := proc.StartTime.Format("15:04:05")
-		command := proc.Command
-		if len(command) > 30 {
-			command = command[:27] + "..."
-		}
-
-		fmt.Printf("%-15s %-8d %-10s %-20s %s\n",
-			proc.Name, proc.PID, proc.Status, startTime, command)
-	}
-}
-
-// showLogsFor displays logs for a specific process
-func (c *CLI) showLogsFor(name string) {
-	proc, exists := c.registry.getProcess(name)
-	if !exists {
-		fmt.Fprintf(os.Stderr, "No process named '%s' is currently running\n", name)
-		os.Exit(1)
-	}
-
-	if _, err := os.Stat(proc.LogFile); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Log file not found: %s\n", proc.LogFile)
-		os.Exit(1)
-	}
-
-	// Stream log file
-	file, err := os.Open(proc.LogFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
-		os.Exit(1)
-	}
-	defer file.Close()
-
-	io.Copy(os.Stdout, file)
-}
-
-// runInBackground starts a command in background with logging
-func (c *CLI) runInBackground(name, command string) error {
-	logFile := filepath.Join(c.registry.dir, name+".log")
-
-	// Create or truncate log file
-	logFileHandle, err := os.Create(logFile)
-	if err != nil {
-		return fmt.Errorf("failed to create log file: %v", err)
-	}
-
-	// Start command
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Stdout = logFileHandle
-	cmd.Stderr = logFileHandle
-
-	if err := cmd.Start(); err != nil {
-		logFileHandle.Close()
-		return fmt.Errorf("failed to start command: %v", err)
-	}
-
-	// Register process
-	c.registry.addProcess(name, cmd.Process.Pid, command, logFile)
-
-	fmt.Printf("Started %s in background (PID: %d)\n", name, cmd.Process.Pid)
-	fmt.Printf("To see logs, run: %s %s logs\n", os.Args[0], name)
-
-	// Monitor process in goroutine
-	go func() {
-		defer logFileHandle.Close()
-		cmd.Wait()
-		c.registry.removeProcess(name)
-	}()
-
-	return nil
-}
-{{end}}
-
-// Command implementations
-{{range .Commands}}
-func (c *CLI) {{.FunctionName}}(args []string) {
-{{if eq .Type "regular"}}	// Regular command
-	cmd := exec.Command("sh", "-c", ` + "`{{.ShellCommand}}`" + `)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Run(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitError.ExitCode())
-		}
-		fmt.Fprintf(os.Stderr, "Command failed: %v\n", err)
-		os.Exit(1)
-	}
-{{else if eq .Type "watch-stop"}}	// Watch/stop command pair
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop|logs>\n", os.Args[0])
-		os.Exit(1)
-	}
-
-	subcommand := args[0]
-	switch subcommand {
-	case "start":
-		command := ` + "`{{.WatchCommand}}`" + `
-		if err := c.runInBackground("{{.Name}}", command); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting {{.Name}}: %v\n", err)
-			os.Exit(1)
-		}
-	case "stop":
-		// Run custom stop command
-		cmd := exec.Command("sh", "-c", ` + "`{{.StopCommand}}`" + `)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Stop command failed: %v\n", err)
-		}
-{{if $.HasProcessMgmt}}		// Also stop via process registry
-		if err := c.registry.gracefulStop("{{.Name}}"); err != nil {
-			fmt.Fprintf(os.Stderr, "Registry stop failed: %v\n", err)
-		}{{end}}
-	case "logs":
-{{if $.HasProcessMgmt}}		c.showLogsFor("{{.Name}}"){{else}}		fmt.Printf("No background process named '{{.Name}}' to show logs for\n"){{end}}
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start', 'stop', or 'logs'\n", subcommand)
-		os.Exit(1)
-	}
-{{else if eq .Type "watch-only"}}	// Watch-only command (no custom stop)
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: %s {{.Name}} <start|stop|logs>\n", os.Args[0])
-		os.Exit(1)
-	}
-
-	subcommand := args[0]
-	switch subcommand {
-	case "start":
-		command := ` + "`{{.WatchCommand}}`" + `
-		if err := c.runInBackground("{{.Name}}", command); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting {{.Name}}: %v\n", err)
-			os.Exit(1)
-		}
-	case "stop":
-{{if $.HasProcessMgmt}}		// Use generic process management for stopping
-		if err := c.registry.gracefulStop("{{.Name}}"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error stopping {{.Name}}: %v\n", err)
-			os.Exit(1)
-		}{{else}}		fmt.Printf("No background process named '{{.Name}}' to stop\n"){{end}}
-	case "logs":
-{{if $.HasProcessMgmt}}		c.showLogsFor("{{.Name}}"){{else}}		fmt.Printf("No background process named '{{.Name}}' to show logs for\n"){{end}}
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s. Use 'start', 'stop', or 'logs'\n", subcommand)
-		os.Exit(1)
-	}
-{{else if eq .Type "stop-only"}}	// Stop-only command (unusual case)
-	// Run stop command
-	cmd := exec.Command("sh", "-c", ` + "`{{.StopCommand}}`" + `)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Stop command failed: %v\n", err)
-	}
-{{end}}}
-{{end}}
-
-func main() {
-	cli := NewCLI()
-{{if .HasProcessMgmt}}
-	// Handle interrupt signals gracefully
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		fmt.Println("\nShutting down...")
-		os.Exit(0)
-	}()
-{{end}}
-	cli.Execute()
-}
-`
-
-// GenerateGo creates a Go CLI from a CommandFile using the new preprocessing approach
+// GenerateGo creates a Go CLI from a CommandFile using the composable template system
 func GenerateGo(cf *parser.CommandFile) (string, error) {
 	// Preprocess the command file into template-ready data
 	data, err := PreprocessCommands(cf)
@@ -754,14 +439,18 @@ func GenerateGo(cf *parser.CommandFile) (string, error) {
 		return "", fmt.Errorf("failed to preprocess commands: %w", err)
 	}
 
+	// Create template registry and get all templates
+	registry := NewTemplateRegistry()
+	allTemplates := registry.GetAllTemplates()
+
 	// Parse and execute template
-	tmpl, err := template.New("go-cli").Parse(cleanGoTemplate)
+	tmpl, err := template.New("go-cli").Parse(allTemplates)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
 
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
+	err = tmpl.ExecuteTemplate(&buf, "main", data)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
@@ -788,6 +477,56 @@ func GenerateGoWithTemplate(cf *parser.CommandFile, templateStr string) (string,
 
 	// Parse and execute custom template
 	tmpl, err := template.New("custom").Parse(templateStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// GetTemplateComponent returns a specific template component by name
+func GetTemplateComponent(name string) (string, error) {
+	registry := NewTemplateRegistry()
+	template, exists := registry.GetTemplate(name)
+	if !exists {
+		return "", fmt.Errorf("template component '%s' not found", name)
+	}
+	return template, nil
+}
+
+// GenerateComponentGo generates Go code using only specific template components
+func GenerateComponentGo(cf *parser.CommandFile, componentNames []string) (string, error) {
+	// Preprocess the command file into template-ready data
+	data, err := PreprocessCommands(cf)
+	if err != nil {
+		return "", fmt.Errorf("failed to preprocess commands: %w", err)
+	}
+
+	registry := NewTemplateRegistry()
+	var templateParts []string
+
+	// Collect requested components
+	for _, name := range componentNames {
+		component, exists := registry.GetTemplate(name)
+		if !exists {
+			return "", fmt.Errorf("template component '%s' not found", name)
+		}
+		templateParts = append(templateParts, component)
+	}
+
+	// Add a simple execution template
+	templateParts = append(templateParts, "{{template \"package\" .}}\n{{template \"imports\" .}}")
+
+	allTemplates := strings.Join(templateParts, "\n")
+
+	// Parse and execute template
+	tmpl, err := template.New("component-cli").Parse(allTemplates)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}

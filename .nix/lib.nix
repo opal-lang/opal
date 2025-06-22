@@ -1,16 +1,12 @@
 # Library functions for generating CLI packages from devcmd files
-{ pkgs, self, system, lib }:
+{ pkgs, self, lib }:
 
 rec {
   # Generate shell commands from devcmd/cli files - main library function
   mkDevCommands =
     {
-      # Required
-      pkgs
-    , system ? builtins.currentSystem
-
       # Content sources (in order of priority)
-    , commandsFile ? null      # Explicit path to .cli/.devcmd file
+      commandsFile ? null      # Explicit path to .cli/.devcmd file
     , commandsContent ? null   # Inline content as string
     , commands ? null          # Alias for commandsContent (backward compatibility)
 
@@ -69,8 +65,8 @@ rec {
       # Write processed content to store for the parser
       commandsSrc = pkgs.writeText "commands-content" processedContent;
 
-      # Get devcmd parser binary
-      parserBin = self.packages.${system}.default;
+      # Get devcmd parser binary (automatically uses pkgs.system)
+      parserBin = self.packages.${pkgs.system}.default;
 
       # Handle template file path safely
       templatePath =
@@ -107,11 +103,12 @@ rec {
         else if autoDetectContent != null then "from auto-detected file"
         else "no commands found";
 
-      # Debug information (fixed or operator)
+      # Debug information
       debugInfo = lib.optionalString debug ''
         echo "🔍 Debug: Commands source = ${sourceType}"
         echo "🔍 Debug: Parser bin = ${toString parserBin}"
         echo "🔍 Debug: Template = ${if templatePath != null then toString templatePath else "none"}"
+        echo "🔍 Debug: System = ${pkgs.system}"
       '';
 
     in
@@ -131,13 +128,14 @@ rec {
       processed = processedContent;
       generated = generatedHook;
       parser = parsedShellCode;
+      system = pkgs.system;
     };
 
   # Generate a CLI package from devcmd commands (for standalone binaries)
   mkDevCLI =
     {
-      # Package name for the generated CLI
-      name ? "devcmd-cli"
+      # Package name (also used as binary name - follows Nix conventions)
+      name
 
       # Content sources (same as mkDevCommands)
     , commandsFile ? null
@@ -183,8 +181,8 @@ rec {
       processedContent = preProcess finalContent;
       commandsSrc = pkgs.writeText "${name}-commands.cli" processedContent;
 
-      # Get devcmd binary
-      devcmdBin = self.packages.${system}.default;
+      # Get devcmd binary (automatically uses pkgs.system)
+      devcmdBin = self.packages.${pkgs.system}.default;
 
       # Template arguments
       templateArgs = lib.optionalString (templateFile != null) "--template ${toString templateFile}";
@@ -232,13 +230,6 @@ rec {
         "-X main.BuildTime=1970-01-01T00:00:00Z"
       ];
 
-      # Rename binary to match package name
-      postInstall = ''
-        if [ "$pname" != "$(basename $out/bin/*)" ]; then
-          mv $out/bin/* $out/bin/${name}
-        fi
-      '';
-
       meta = {
         description = "Generated CLI from devcmd: ${name}";
         license = lib.licenses.mit;
@@ -275,6 +266,36 @@ rec {
       '';
     };
 
+  # Simplified convenience functions for common patterns
+
+  # Quick CLI generation with minimal config
+  quickCLI = name: commandsFile: mkDevCLI {
+    inherit name commandsFile;
+  };
+
+  # Quick shell hook generation
+  quickCommands = commandsFile: mkDevCommands {
+    inherit commandsFile;
+  };
+
+  # Auto-detect and generate from local commands.cli
+  autoDevCommands = args: mkDevCommands ({
+    # Auto-detect commands.cli in current directory
+    commandsFile =
+      if builtins.pathExists ./commands.cli
+      then ./commands.cli
+      else null;
+  } // args);
+
+  autoCLI = name: mkDevCLI {
+    inherit name;
+    # Auto-detect commands.cli in current directory
+    commandsFile =
+      if builtins.pathExists ./commands.cli
+      then ./commands.cli
+      else null;
+  };
+
   # Utility functions for common patterns
   utils = {
     # Common pre-processors
@@ -288,6 +309,16 @@ rec {
         lib.concatStringsSep "\n"
           (lib.filter (line: !lib.hasPrefix "#" (lib.trim line))
             (lib.splitString "\n" content));
+
+      # Add project-specific variables
+      addProjectVars = projectName: version: content:
+        ''
+          # Auto-generated project variables
+          def PROJECT_NAME = ${projectName};
+          def PROJECT_VERSION = ${version};
+          def BUILD_TIME = $(date -u +%Y-%m-%dT%H:%M:%SZ);
+
+        '' + content;
     };
 
     # Common post-processors
@@ -302,6 +333,24 @@ rec {
           [ "function " ]
           [ "function timed_" ]
           shellCode;
+
+      # Add project banner
+      addBanner = projectName: shellCode:
+        ''
+          echo "🚀 ${projectName} Development Environment"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+        '' + shellCode;
     };
+
+    # System detection helpers (now use pkgs.system)
+    isLinux = lib.hasPrefix "x86_64-linux" pkgs.system || lib.hasPrefix "aarch64-linux" pkgs.system;
+    isDarwin = lib.hasPrefix "x86_64-darwin" pkgs.system || lib.hasPrefix "aarch64-darwin" pkgs.system;
+
+    # Platform-specific command variations
+    platformCmd = linuxCmd: darwinCmd:
+      if utils.isLinux then linuxCmd
+      else if utils.isDarwin then darwinCmd
+      else linuxCmd; # default to linux
   };
 }

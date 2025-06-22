@@ -5,10 +5,10 @@
 #   - $(VAR) = devcmd variable reference
 #   - \$(command) = shell command substitution (escaped)
 #   - \$VAR = shell variable reference (escaped)
-{ pkgs, lib, self, system }:
+{ pkgs, lib, self }:
 
 let
-  devcmdLib = import ./lib.nix { inherit pkgs self system lib; };
+  devcmdLib = import ./lib.nix { inherit pkgs self lib; };
 
 in
 rec {

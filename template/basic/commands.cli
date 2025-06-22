@@ -1,84 +1,31 @@
-# Basic development commands template
-# Customize these commands for your project
-#
-# Syntax reminder:
-#   - $(VAR) = devcmd variable reference
-#   - \$(command) = shell command substitution (escaped)
-#   - \$VAR = shell variable reference (escaped)
-#   - @sh(...) = wrapper for complex shell operations
+# Basic development commands
+# Edit this file to customize your project's CLI
 
-def SRC = ./src;
-def BUILD_DIR = ./build;
 def PROJECT_NAME = myproject;
 
 # Build the project
 build: {
   echo "Building $(PROJECT_NAME)...";
-  mkdir -p $(BUILD_DIR);
-  @sh((cd $(SRC) && make) || echo "No Makefile found");
+  echo "Add your build commands here";
+  # Example: go build ./...
+  # Example: npm run build
   echo "Build complete"
 }
 
 # Run tests
 test: {
   echo "Running tests...";
-  @sh((cd $(SRC) && make test) || go test ./... || npm test || echo "No tests found");
+  echo "Add your test commands here";
+  # Example: go test ./...
+  # Example: npm test
   echo "Tests complete"
 }
 
 # Clean build artifacts
 clean: {
   echo "Cleaning build artifacts...";
-  rm -rf $(BUILD_DIR);
-  @sh(find . -name "*.tmp" -delete 2>/dev/null || true);
+  echo "Add your clean commands here";
+  # Example: rm -rf build/
+  # Example: go clean
   echo "Clean complete"
 }
-
-# Install dependencies
-deps: {
-  echo "Installing dependencies...";
-  @parallel: {
-    @sh((test -f go.mod && go mod download) || echo "No Go modules");
-    @sh((test -f package.json && npm install) || echo "No NPM packages");
-    @sh((test -f requirements.txt && pip install -r requirements.txt) || echo "No Python packages")
-  };
-  echo "Dependencies installed"
-}
-
-# Format code
-format: {
-  echo "Formatting code...";
-  @parallel: {
-    @sh((which gofmt && find $(SRC) -name "*.go" -exec gofmt -w {} \;) || echo "No Go files");
-    @sh((which prettier && prettier --write $(SRC)) || echo "No Prettier");
-    @sh((which black && black $(SRC)) || echo "No Black formatter")
-  };
-  echo "Formatting complete"
-}
-
-# Run linters
-lint: {
-  echo "Running linters...";
-  @parallel: {
-    @sh((which golangci-lint && golangci-lint run) || echo "No Go linter");
-    @sh((which eslint && eslint $(SRC)) || echo "No JS linter");
-    @sh((which flake8 && flake8 $(SRC)) || echo "No Python linter")
-  };
-  echo "Linting complete"
-}
-
-# Development server or watch mode
-watch dev: {
-  echo "Starting development mode...";
-  echo "Started at: \$(date)";
-  @parallel: {
-    @sh((cd $(SRC) && npm start) || echo "No npm start");
-    @sh((cd $(SRC) && python -m http.server 8000) || echo "No Python server")
-  }
-}
-
-# Stop development processes
-stop dev: {
-  echo "Stopping development processes...";
-  @parallel: {
-    @sh(pkill -f

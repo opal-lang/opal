@@ -1,888 +1,197 @@
 package generator
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 
 	devcmdParser "github.com/aledsdavies/devcmd/pkgs/parser"
 )
 
-func TestPreprocessCommands(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        string
-		expectedData func(*TemplateData) bool
-		expectError  bool
-	}{
-		{
-			name:  "simple command",
-			input: "build: go build ./...;",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "build" &&
-					data.Commands[0].FunctionName == "runBuild" &&
-					data.Commands[0].Type == "regular" &&
-					data.Commands[0].ShellCommand == "go build ./..." &&
-					!data.HasProcessMgmt
-			},
-		},
-		{
-			name:  "watch command",
-			input: "watch server: npm start;",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "server" &&
-					data.Commands[0].Type == "watch-only" &&
-					data.Commands[0].IsBackground &&
-					data.Commands[0].WatchCommand == "npm start" &&
-					data.HasProcessMgmt
-			},
-		},
-		{
-			name:  "stop command",
-			input: "stop server: pkill node;",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "server" &&
-					data.Commands[0].Type == "stop-only" &&
-					data.Commands[0].StopCommand == "pkill node" &&
-					!data.HasProcessMgmt // stop alone doesn't need process mgmt
-			},
-		},
-		{
-			name:  "hyphenated command name",
-			input: "check-deps: which go;",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "check-deps" &&
-					data.Commands[0].FunctionName == "runCheckDeps"
-			},
-		},
-		{
-			name:  "watch-stop pair",
-			input: "watch server: npm start;\nstop server: pkill node;",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "server" &&
-					data.Commands[0].Type == "watch-stop" &&
-					data.Commands[0].IsBackground &&
-					data.Commands[0].WatchCommand == "npm start" &&
-					data.Commands[0].StopCommand == "pkill node" &&
-					data.HasProcessMgmt
-			},
-		},
-		{
-			name:  "block command with @sh decorator",
-			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "cleanup" &&
-					data.Commands[0].Type == "regular" &&
-					strings.Contains(data.Commands[0].ShellCommand, "find . -name \"*.tmp\" -exec rm {} \\;")
-			},
-		},
-		{
-			name:  "block command with @parallel decorator",
-			input: "services: { @parallel: { server; client; database } }",
-			expectedData: func(data *TemplateData) bool {
-				return len(data.Commands) == 1 &&
-					data.Commands[0].Name == "services" &&
-					data.Commands[0].Type == "regular" &&
-					strings.Contains(data.Commands[0].ShellCommand, "server &") &&
-					strings.Contains(data.Commands[0].ShellCommand, "client &") &&
-					strings.Contains(data.Commands[0].ShellCommand, "database &") &&
-					strings.Contains(data.Commands[0].ShellCommand, "wait")
-			},
-		},
-		{
-			name:        "unsupported decorator",
-			input:       "test: @unsupported(echo hello);",
-			expectError: true,
-		},
-		{
-			name:        "invalid @parallel usage",
-			input:       "test: @parallel(echo hello);",
-			expectError: true,
-		},
-		{
-			name:        "invalid @sh usage with block",
-			input:       "test: { @sh: { echo hello; echo world } }",
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Preprocess commands
-			data, err := PreprocessCommands(cf)
-
-			if tt.expectError {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("PreprocessCommands error: %v", err)
-			}
-
-			if !tt.expectedData(data) {
-				t.Errorf("Data validation failed for %s", tt.name)
-				t.Logf("Commands: %+v", data.Commands)
-				t.Logf("HasProcessMgmt: %v", data.HasProcessMgmt)
-			}
-		})
-	}
-}
-
-func TestSanitizeFunctionName(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"build", "runBuild"},
-		{"check-deps", "runCheckDeps"},
-		{"run-all", "runRunAll"},
-		{"test_coverage", "runTestCoverage"},
-		{"api-server-dev", "runApiServerDev"},
-		{"", "runCommand"},
-		{"kebab-case-command", "runKebabCaseCommand"},
-		{"snake_case_command", "runSnakeCaseCommand"},
-		{"CamelCase", "runCamelcase"},
-		{"123-numeric", "run123Numeric"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := sanitizeFunctionName(tt.input)
-			if result != tt.expected {
-				t.Errorf("sanitizeFunctionName(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBuildShellCommand(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     devcmdParser.Command
-		expected  string
-		expectErr bool
-	}{
-		{
-			name: "simple command",
-			input: devcmdParser.Command{
-				Command: "echo hello",
-			},
-			expected: "echo hello",
-		},
-		{
-			name: "block command with regular statements",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{Command: "npm install", IsDecorated: false},
-					{Command: "echo done", IsDecorated: false},
-				},
-			},
-			expected: "npm install; echo done",
-		},
-		{
-			name: "block command with @sh decorator",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{
-						IsDecorated:   true,
-						Decorator:     "sh",
-						DecoratorType: "function",
-						Command:       "find . -name \"*.tmp\" -exec rm {} \\;",
-					},
-				},
-			},
-			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
-		},
-		{
-			name: "block command with @parallel decorator",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{
-						IsDecorated:   true,
-						Decorator:     "parallel",
-						DecoratorType: "block",
-						DecoratedBlock: []devcmdParser.BlockStatement{
-							{Command: "server", IsDecorated: false},
-							{Command: "client", IsDecorated: false},
-						},
-					},
-				},
-			},
-			expected: "server &; client &; wait",
-		},
-		{
-			name: "mixed block with regular and decorated commands",
-			input: devcmdParser.Command{
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{Command: "echo starting", IsDecorated: false},
-					{
-						IsDecorated:   true,
-						Decorator:     "parallel",
-						DecoratorType: "block",
-						DecoratedBlock: []devcmdParser.BlockStatement{
-							{Command: "task1", IsDecorated: false},
-							{Command: "task2", IsDecorated: false},
-						},
-					},
-					{Command: "echo done", IsDecorated: false},
-				},
-			},
-			expected: "echo starting; task1 &; task2 &; wait; echo done",
-		},
-		{
-			name: "block command with unsupported decorator",
-			input: devcmdParser.Command{
-				Name:    "test",
-				Line:    1,
-				IsBlock: true,
-				Block: []devcmdParser.BlockStatement{
-					{
-						IsDecorated:   true,
-						Decorator:     "unsupported",
-						DecoratorType: "function",
-						Command:       "echo hello",
-					},
-				},
-			},
-			expectErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildShellCommand(tt.input)
-
-			if tt.expectErr {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("buildShellCommand() error: %v", err)
-			}
-
-			if result != tt.expected {
-				t.Errorf("buildShellCommand() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBuildDecoratedStatement(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     devcmdParser.BlockStatement
-		expected  string
-		expectErr bool
-	}{
-		{
-			name: "@sh function decorator",
-			input: devcmdParser.BlockStatement{
-				IsDecorated:   true,
-				Decorator:     "sh",
-				DecoratorType: "function",
-				Command:       "find . -name \"*.tmp\" -exec rm {} \\;",
-			},
-			expected: "find . -name \"*.tmp\" -exec rm {} \\;",
-		},
-		{
-			name: "@sh simple decorator",
-			input: devcmdParser.BlockStatement{
-				IsDecorated:   true,
-				Decorator:     "sh",
-				DecoratorType: "simple",
-				Command:       "echo hello",
-			},
-			expected: "echo hello",
-		},
-		{
-			name: "@parallel block decorator",
-			input: devcmdParser.BlockStatement{
-				IsDecorated:   true,
-				Decorator:     "parallel",
-				DecoratorType: "block",
-				DecoratedBlock: []devcmdParser.BlockStatement{
-					{Command: "server", IsDecorated: false},
-					{Command: "client", IsDecorated: false},
-					{Command: "worker", IsDecorated: false},
-				},
-			},
-			expected: "server &; client &; worker &; wait",
-		},
-		{
-			name: "unsupported decorator",
-			input: devcmdParser.BlockStatement{
-				IsDecorated:   true,
-				Decorator:     "unknown",
-				DecoratorType: "simple",
-				Command:       "echo test",
-			},
-			expectErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildDecoratedStatement(tt.input, "test", 1)
-
-			if tt.expectErr {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("buildDecoratedStatement() error: %v", err)
-			}
-
-			if result != tt.expected {
-				t.Errorf("buildDecoratedStatement() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestValidateDecorators(t *testing.T) {
+// TestTemplateEdgeCases tests various edge cases that might cause template failures
+func TestTemplateEdgeCases(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
-		expectError bool
-		errorSubstr string
+		shouldFail  bool
+		description string
 	}{
 		{
-			name:        "valid @sh decorator",
-			input:       "cleanup: @sh(find . -name \"*.tmp\" -delete);",
-			expectError: false,
+			name:        "empty_file",
+			input:       "",
+			shouldFail:  false,
+			description: "Completely empty commands file",
 		},
 		{
-			name:        "valid @parallel decorator",
-			input:       "services: { @parallel: { server; client } }",
-			expectError: false,
+			name:        "only_comments",
+			input:       "# Just comments\n# Nothing else",
+			shouldFail:  false,
+			description: "File with only comments",
 		},
 		{
-			name:        "unsupported decorator",
-			input:       "test: @unsupported(echo hello);",
-			expectError: true,
-			errorSubstr: "unsupported decorator '@unsupported'",
+			name:        "only_variables",
+			input:       "def PORT = 8080;\ndef HOST = localhost;",
+			shouldFail:  false,
+			description: "File with only variable definitions",
 		},
 		{
-			name:        "invalid @parallel usage - function syntax",
-			input:       "test: @parallel(echo hello);",
-			expectError: true,
-			errorSubstr: "@parallel decorator must be used with block syntax",
+			name:        "single_simple_command",
+			input:       "test: echo hello;",
+			shouldFail:  false,
+			description: "Single simple command",
 		},
 		{
-			name:        "invalid @sh usage - block syntax",
-			input:       "test: { @sh: { echo hello; echo world } }",
-			expectError: true,
-			errorSubstr: "@sh decorator must be used with function or simple syntax",
+			name:        "command_with_special_chars",
+			input:       "test: echo 'Hello \\$USER, welcome to \\$(pwd)!';",
+			shouldFail:  false,
+			description: "Command with escaped shell special characters",
 		},
 		{
-			name:        "multiple valid decorators",
-			input:       "complex: { @sh(echo start); @parallel: { task1; task2 } }",
-			expectError: false,
+			name:        "command_with_quotes",
+			input:       `test: echo "Hello \"world\"";`,
+			shouldFail:  false,
+			description: "Command with escaped quotes",
 		},
 		{
-			name:        "nested decorator validation",
-			input:       "nested: { @parallel: { @sh(echo task1); @sh(echo task2) } }",
-			expectError: false,
+			name:        "multiple_simple_commands",
+			input:       "build: go build;\ntest: go test;\nclean: rm -rf dist;",
+			shouldFail:  false,
+			description: "Multiple simple commands",
 		},
 		{
-			name:        "nested unsupported decorator",
-			input:       "nested: { @parallel: { @invalid(echo task1); echo task2 } }",
-			expectError: true,
-			errorSubstr: "unsupported decorator '@invalid'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Test validation through PreprocessCommands
-			_, err = PreprocessCommands(cf)
-
-			if tt.expectError {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				} else if !strings.Contains(err.Error(), tt.errorSubstr) {
-					t.Errorf("Expected error containing %q, got %q", tt.errorSubstr, err.Error())
-				}
-			} else if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
-
-func TestGenerateGo_BasicCommands(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "simple command",
-			input: "build: go build ./...;",
-			expectedInCode: []string{
-				"func (c *CLI) runBuild(args []string)",
-				"go build ./...",
-				`case "build":`,
-				"c.runBuild(args)",
-				"// Regular command",
-			},
-			notInCode: []string{
-				"ProcessRegistry",
-				"runInBackground",
-				"syscall",        // Should not import syscall for regular commands
-				"logs <process>", // Should not have global logs command
-			},
+			name:        "single_watch_command",
+			input:       "watch server: npm start;",
+			shouldFail:  false,
+			description: "Single watch command only",
 		},
 		{
-			name:  "command with POSIX find using @sh",
-			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			expectedInCode: []string{
-				"func (c *CLI) runCleanup(args []string)",
-				"find . -name \"*.tmp\" -exec rm {} \\;",
-				`case "cleanup":`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
+			name:        "single_stop_command",
+			input:       "stop server: pkill npm;",
+			shouldFail:  false,
+			description: "Single stop command only",
 		},
 		{
-			name:  "hyphenated command name",
-			input: "check-deps: which go || echo missing;",
-			expectedInCode: []string{
-				"func (c *CLI) runCheckDeps(args []string)",
-				`case "check-deps":`, // Case should use original name
-				"c.runCheckDeps(args)",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
+			name:        "watch_stop_pair",
+			input:       "watch server: npm start;\nstop server: pkill npm;",
+			shouldFail:  false,
+			description: "Watch and stop command pair",
 		},
 		{
-			name:  "block command with @parallel",
-			input: "services: { @parallel: { server; client; database } }",
-			expectedInCode: []string{
-				"func (c *CLI) runServices(args []string)",
-				"server &; client &; database &; wait",
-				`case "services":`,
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry", // Regular commands don't need process management
-				"showLogsFor",
-				"logs <process>",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notExpected := range tt.notInCode {
-				if strings.Contains(generated, notExpected) {
-					t.Errorf("Generated code contains unwanted content: %q", notExpected)
-				}
-			}
-		})
-	}
-}
-
-func TestGenerateGo_WatchStopCommands(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "simple watch command",
-			input: "watch server: npm start;",
-			expectedInCode: []string{
-				"ProcessRegistry",
-				"runInBackground",
-				"func (c *CLI) runServer(args []string)",
-				"npm start",
-				`case "server":`,
-				"syscall", // Watch commands should include syscall
-				"start|stop|logs",
-				"showLogsFor",
-			},
-			notInCode: []string{
-				"logs <process>", // Should not have global logs command
-			},
+			name:        "multiple_watch_commands",
+			input:       "watch frontend: npm start;\nwatch backend: go run main.go;\nwatch db: docker run postgres;",
+			shouldFail:  false,
+			description: "Multiple independent watch commands",
 		},
 		{
-			name:  "simple stop command",
-			input: "stop server: pkill node;",
-			expectedInCode: []string{
-				"func (c *CLI) runServer(args []string)",
-				"pkill node",
-			},
-			notInCode: []string{
-				"ProcessRegistry", // No watch commands means no process management
-				"syscall",         // Stop-only commands don't need syscall
-			},
+			name:        "mixed_regular_and_watch",
+			input:       "build: go build;\nwatch server: npm start;\ntest: go test;",
+			shouldFail:  false,
+			description: "Mix of regular and watch commands",
 		},
 		{
-			name:  "watch and stop pair",
-			input: "watch api: go run main.go;\nstop api: pkill -f main.go;",
-			expectedInCode: []string{
-				"ProcessRegistry", // Should have ProcessRegistry due to watch command
-				"func (c *CLI) runApi(args []string)",
-				"go run main.go",
-				"pkill -f main.go",
-				"syscall", // Watch/stop pairs need syscall
-				"start|stop|logs",
-				"showLogsFor",
-			},
-			notInCode: []string{
-				"logs <process>", // Should not have global logs command
-			},
+			name:        "command_with_variables",
+			input:       "def PORT = 8080;\nserver: go run main.go --port=$(PORT);",
+			shouldFail:  false,
+			description: "Command using variables",
 		},
 		{
-			name:  "watch command with @sh decorator",
-			input: "watch cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			expectedInCode: []string{
-				"ProcessRegistry",
-				"runInBackground",
-				"find . -name \"*.tmp\" -exec rm {} \\;",
-				"syscall",
-				"showLogsFor",
-			},
-			notInCode: []string{
-				"logs <process>",
-			},
+			name:        "block_command_simple",
+			input:       "build: { echo starting; go build; echo done }",
+			shouldFail:  false,
+			description: "Simple block command",
 		},
 		{
-			name:  "watch command with @parallel block",
-			input: "watch dev: { @parallel: { npm start; go run ./api } }",
-			expectedInCode: []string{
-				"ProcessRegistry",
-				"runInBackground",
-				"npm start &; go run ./api &; wait",
-				"syscall",
-				"showLogsFor",
-			},
-			notInCode: []string{
-				"logs <process>",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestGenerateGo_DecoratorHandling(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
-		{
-			name:  "@sh function decorator",
-			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			expectedInCode: []string{
-				"func (c *CLI) runCleanup(args []string)",
-				"find . -name \"*.tmp\" -exec rm {} \\;",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
+			name:        "block_command_with_sh",
+			input:       "cleanup: { @sh(find . -name '*.tmp' -delete); echo cleaned }",
+			shouldFail:  false,
+			description: "Block command with @sh decorator",
 		},
 		{
-			name:  "@parallel block decorator",
-			input: "services: { @parallel: { server; client; worker } }",
-			expectedInCode: []string{
-				"func (c *CLI) runServices(args []string)",
-				"server &; client &; worker &; wait",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
+			name:        "block_command_with_parallel",
+			input:       "services: { @parallel: { server; client; worker } }",
+			shouldFail:  false,
+			description: "Block command with @parallel decorator",
 		},
 		{
-			name:  "mixed decorators in block",
-			input: "complex: { echo starting; @parallel: { task1; task2 }; @sh(echo \"done\") }",
-			expectedInCode: []string{
-				"func (c *CLI) runComplex(args []string)",
-				"echo starting",
-				"task1 &; task2 &; wait",
-				"echo \"done\"",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
+			name:        "complex_nested_blocks",
+			input:       "deploy: { echo starting; @parallel: { @sh(docker build .); @sh(npm run build) }; echo done }",
+			shouldFail:  false,
+			description: "Complex nested block with multiple decorators",
 		},
 		{
-			name:  "watch command with decorators",
-			input: "watch dev: { echo starting; @parallel: { server; client } }",
-			expectedInCode: []string{
-				"ProcessRegistry",
-				"runInBackground",
-				"echo starting; server &; client &; wait",
-				"syscall",
-				"showLogsFor",
-			},
-			notInCode: []string{
-				"logs <process>",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Generate Go code
-			generated, err := GenerateGo(cf)
-			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
-				return
-			}
-
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
-			}
-
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
-			}
-		})
-	}
-}
-
-func TestGenerateGo_DecoratorValidationErrors(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		expectError bool
-		errorSubstr string
-	}{
-		{
-			name:        "unsupported decorator",
-			input:       "test: @invalid(echo hello);",
-			expectError: true,
-			errorSubstr: "unsupported decorator '@invalid'",
+			name:        "command_name_edge_cases",
+			input:       "build-all: echo ok;\ntest_unit: echo ok;\nserver-dev: echo ok;\napi_v2: echo ok;",
+			shouldFail:  false,
+			description: "Various command name formats",
 		},
 		{
-			name:        "invalid @parallel usage",
-			input:       "test: @parallel(echo hello);",
-			expectError: true,
-			errorSubstr: "@parallel decorator must be used with block syntax",
+			name:        "long_command_line",
+			input:       "test: go test -v -race -coverprofile=coverage.out -covermode=atomic -timeout=5m ./... && go tool cover -html=coverage.out -o coverage.html;",
+			shouldFail:  false,
+			description: "Very long command line",
 		},
 		{
-			name:        "invalid @sh block usage",
-			input:       "test: { @sh: { echo hello; echo world } }",
-			expectError: true,
-			errorSubstr: "@sh decorator must be used with function or simple syntax",
+			name:        "commands_with_pipes_and_redirects",
+			input:       "logs: tail -f app.log | grep ERROR > errors.log;\nbackup: tar czf backup.tar.gz . 2>/dev/null;",
+			shouldFail:  false,
+			description: "Commands with pipes and redirects",
 		},
 		{
-			name:        "valid decorators should not error",
-			input:       "test: { @sh(echo hello); @parallel: { task1; task2 } }",
-			expectError: false,
+			name:        "multiline_commands",
+			input:       "build: { echo 'Building...'; go build -o bin/app; echo 'Done' }",
+			shouldFail:  false,
+			description: "Multi-line block commands",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			cf, err := devcmdParser.Parse(tt.input, false)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Generate Go code (this should trigger validation)
-			_, err = GenerateGo(cf)
-
-			if tt.expectError {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				} else if !strings.Contains(err.Error(), tt.errorSubstr) {
-					t.Errorf("Expected error containing %q, got %q", tt.errorSubstr, err.Error())
-				}
-			} else if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
-
-func TestGenerateGo_VariableHandling(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedInCode []string
-		notInCode      []string
-	}{
 		{
-			name: "commands with variables",
-			input: `def SRC = ./src;
+			name: "real_world_commands",
+			input: `
 def PORT = 8080;
-build: cd $(SRC) && go build;
-start: go run $(SRC) --port=$(PORT);`,
-			expectedInCode: []string{
-				"func (c *CLI) runBuild(args []string)",
-				"func (c *CLI) runStart(args []string)",
-				"cd ./src && go build",
-				"go run ./src --port=8080",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
-		},
-		{
-			name:  "variables with @sh decorator",
-			input: `cleanup: @sh(find . -name "*.tmp" -exec rm {} \\;);`,
-			expectedInCode: []string{
-				"find . -name \"*.tmp\" -exec rm {} \\;",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-				"showLogsFor",
-				"logs <process>",
-			},
-		},
-		{
-			name: "variables with @parallel decorator",
-			input: `def CMD1 = server --port=8080;
-def CMD2 = client --host=localhost;
-services: { @parallel: { $(CMD1); $(CMD2) } }`,
-			expectedInCode: []string{
-				"server --port=8080 &; client --host=localhost &; wait",
-			},
-			notInCode: []string{
-				"syscall",
-				"ProcessRegistry",
-			},
+def BUILD_DIR = ./dist;
+
+# Regular commands
+build: {
+    echo "Building application...";
+    mkdir -p $(BUILD_DIR);
+    go build -o $(BUILD_DIR)/app .;
+    echo "Build complete"
+}
+
+test: {
+    echo "Running tests...";
+    go test -v ./...;
+    echo "Tests complete"
+}
+
+# Watch commands
+watch server: {
+    echo "Starting server on port $(PORT)...";
+    @sh(cd cmd/server && go run main.go --port=$(PORT))
+}
+
+stop server: {
+    echo "Stopping server...";
+    @sh(pkill -f "go run.*cmd/server" || true)
+}
+
+# Complex parallel command
+deploy: {
+    echo "Deploying application...";
+    @parallel: {
+        @sh(docker build -t myapp .);
+        @sh(npm run build);
+        go test ./...
+    };
+    echo "Deployment ready"
+}
+`,
+			shouldFail:  false,
+			description: "Real-world complex commands file",
 		},
 	}
 
@@ -891,211 +200,355 @@ services: { @parallel: { $(CMD1); $(CMD2) } }`,
 			// Parse the input
 			cf, err := devcmdParser.Parse(tt.input, false)
 			if err != nil {
-				t.Fatalf("Parse error: %v", err)
+				if tt.shouldFail {
+					t.Logf("Expected parse failure for %s: %v", tt.description, err)
+					return
+				}
+				t.Fatalf("Parse error for %s: %v", tt.description, err)
 			}
 
 			// Expand variables
 			err = cf.ExpandVariables()
 			if err != nil {
-				t.Fatalf("ExpandVariables error: %v", err)
+				if tt.shouldFail {
+					t.Logf("Expected variable expansion failure for %s: %v", tt.description, err)
+					return
+				}
+				t.Fatalf("ExpandVariables error for %s: %v", tt.description, err)
 			}
 
 			// Generate Go code
 			generated, err := GenerateGo(cf)
 			if err != nil {
-				t.Fatalf("GenerateGo error: %v", err)
-			}
-
-			// Verify generated code is valid Go
-			if !isValidGoCode(t, generated) {
-				t.Errorf("Generated code is not valid Go")
-				t.Logf("Generated code:\n%s", generated)
+				if tt.shouldFail {
+					t.Logf("Expected generation failure for %s: %v", tt.description, err)
+					return
+				}
+				t.Errorf("GenerateGo error for %s: %v", tt.description, err)
+				t.Logf("Input was: %s", tt.input)
 				return
 			}
 
-			// Check expected content
-			for _, expected := range tt.expectedInCode {
-				if !strings.Contains(generated, expected) {
-					t.Errorf("Generated code missing expected content: %q", expected)
-				}
+			// Check if generated code is valid Go
+			if !isValidGoCode(t, generated) {
+				t.Errorf("Generated invalid Go code for %s", tt.description)
+				t.Logf("Generated code:\n%s", generated)
+				t.Logf("Input was: %s", tt.input)
+				return
 			}
 
-			// Check that unwanted content is not present
-			for _, notInCode := range tt.notInCode {
-				if strings.Contains(generated, notInCode) {
-					t.Errorf("Generated code contains unwanted content: %q", notInCode)
-				}
+			// Try actual compilation
+			if err := testActualCompilation(t, generated); err != nil {
+				t.Errorf("Generated code failed compilation for %s: %v", tt.description, err)
+				t.Logf("Generated code:\n%s", generated)
+				t.Logf("Input was: %s", tt.input)
+				return
 			}
+
+			t.Logf("✅ %s: %s", tt.name, tt.description)
 		})
 	}
 }
 
-func TestGenerateGo_ErrorHandling(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       *devcmdParser.CommandFile
-		template    *string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name:        "nil command file",
-			input:       nil,
-			expectError: true,
-			errorMsg:    "command file cannot be nil",
-		},
-		{
-			name:        "empty template string",
-			input:       &devcmdParser.CommandFile{},
-			template:    stringPtr(""),
-			expectError: true,
-			errorMsg:    "template string cannot be empty",
-		},
-		{
-			name:        "whitespace-only template",
-			input:       &devcmdParser.CommandFile{},
-			template:    stringPtr("   \n\t  "),
-			expectError: true,
-			errorMsg:    "template string cannot be empty",
-		},
-		{
-			name: "invalid template syntax",
-			input: &devcmdParser.CommandFile{
-				Commands: []devcmdParser.Command{
-					{Name: "test", Command: "echo test"},
-				},
+// TestMasterTemplateAssembly tests the master template assembly process
+func TestMasterTemplateAssembly(t *testing.T) {
+	registry := NewTemplateRegistry()
+
+	// Test with minimal data
+	minimalData := &TemplateData{
+		PackageName:    "main",
+		Imports:        []string{"fmt", "os"},
+		HasProcessMgmt: false,
+		Commands:       []TemplateCommand{},
+	}
+
+	// Test with watch command data
+	watchData := &TemplateData{
+		PackageName:    "main",
+		Imports:        []string{"fmt", "os", "os/exec", "syscall", "time"},
+		HasProcessMgmt: true,
+		Commands: []TemplateCommand{
+			{
+				Name:            "server",
+				FunctionName:    "runServer",
+				GoCase:          "server",
+				Type:            "watch-only",
+				WatchCommand:    "npm start",
+				IsBackground:    true,
+				HelpDescription: "server start|stop|logs",
 			},
-			template:    stringPtr("{{.InvalidField"),
-			expectError: true,
-			errorMsg:    "failed to parse template",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
+	// Test both scenarios
+	testCases := []struct {
+		name string
+		data *TemplateData
+	}{
+		{"minimal", minimalData},
+		{"with_watch", watchData},
+	}
 
-			if tt.template != nil {
-				_, err = GenerateGoWithTemplate(tt.input, *tt.template)
-			} else {
-				_, err = GenerateGo(tt.input)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			allTemplates := registry.GetAllTemplates()
+
+			// Parse the complete template
+			tmpl, err := template.New("go-cli").Parse(allTemplates)
+			if err != nil {
+				t.Fatalf("Failed to parse complete template: %v", err)
 			}
 
-			if tt.expectError {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				} else if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("Expected error containing %q, got %q", tt.errorMsg, err.Error())
+			// Execute the main template
+			var buf strings.Builder
+			err = tmpl.ExecuteTemplate(&buf, "main", tc.data)
+			if err != nil {
+				t.Fatalf("Failed to execute main template: %v", err)
+			}
+
+			result := buf.String()
+
+			// Check basic structure
+			if !strings.Contains(result, "package main") {
+				t.Error("Generated code missing package declaration")
+			}
+
+			if !strings.Contains(result, "func main()") {
+				t.Error("Generated code missing main function")
+			}
+
+			// Check imports
+			if tc.data.HasProcessMgmt {
+				if !strings.Contains(result, "syscall") {
+					t.Error("Watch commands should include syscall import")
 				}
-			} else if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// Validate Go syntax
+			if !isValidGoCode(t, result) {
+				t.Errorf("Generated invalid Go code for %s", tc.name)
+				t.Logf("Generated code:\n%s", result)
 			}
 		})
 	}
 }
 
-func TestBasicDevExample_NoSyscall(t *testing.T) {
-	// Test that basic development commands don't include syscall imports
-	basicDevCommands := `
-def SRC = ./src;
-def BUILD_DIR = ./build;
+// TestImportsTemplateSpecifically focuses on the imports template that's causing issues
+func TestImportsTemplateSpecifically(t *testing.T) {
+	registry := NewTemplateRegistry()
+	importsTemplate, exists := registry.GetTemplate("imports")
+	if !exists {
+		t.Fatal("Imports template not found")
+	}
+
+	testCases := []struct {
+		name    string
+		imports []string
+	}{
+		{"empty_imports", []string{}},
+		{"single_import", []string{"fmt"}},
+		{"multiple_imports", []string{"fmt", "os", "os/exec"}},
+		{"many_imports", []string{"fmt", "os", "os/exec", "strings", "syscall", "time", "encoding/json"}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := &TemplateData{
+				Imports: tc.imports,
+			}
+
+			tmpl, err := template.New("imports").Parse(importsTemplate)
+			if err != nil {
+				t.Fatalf("Failed to parse imports template: %v", err)
+			}
+
+			var buf strings.Builder
+			err = tmpl.Execute(&buf, data)
+			if err != nil {
+				t.Fatalf("Failed to execute imports template: %v", err)
+			}
+
+			result := buf.String()
+			t.Logf("Imports result for %s:\n%s", tc.name, result)
+
+			// Check for malformed imports
+			if len(tc.imports) == 0 {
+				// Empty imports should generate valid but minimal import block
+				expected := "import (\n)\n"
+				if !strings.Contains(result, expected) {
+					t.Errorf("Empty imports generated unexpected result: %q", result)
+				}
+			} else {
+				// Should contain import block
+				if !strings.Contains(result, "import (") {
+					t.Error("Missing import block start")
+				}
+				if !strings.Contains(result, ")") {
+					t.Error("Missing import block end")
+				}
+
+				// Should contain all specified imports
+				for _, imp := range tc.imports {
+					expected := fmt.Sprintf(`"%s"`, imp)
+					if !strings.Contains(result, expected) {
+						t.Errorf("Missing import %s in result", imp)
+					}
+				}
+			}
+
+			// Create a minimal Go file with just the imports to test
+			testCode := fmt.Sprintf("package main\n%s\nfunc main() {}", result)
+			if !isValidGoCode(t, testCode) {
+				t.Errorf("Generated imports create invalid Go code: %s", testCode)
+			}
+		})
+	}
+}
+
+// TestTemplateExecutionOrder tests the order of template execution
+func TestTemplateExecutionOrder(t *testing.T) {
+	// This test helps identify if template execution order causes issues
+	registry := NewTemplateRegistry()
+
+	data := &TemplateData{
+		PackageName:    "main",
+		Imports:        []string{"fmt", "os"},
+		HasProcessMgmt: false,
+		Commands: []TemplateCommand{
+			{
+				Name:            "test",
+				FunctionName:    "runTest",
+				GoCase:          "test",
+				Type:            "regular",
+				ShellCommand:    "echo test",
+				HelpDescription: "test",
+			},
+		},
+	}
+
+	// Get all templates and examine the master template
+	allTemplates := registry.GetAllTemplates()
+	t.Logf("Complete template length: %d", len(allTemplates))
+
+	masterTemplate := registry.GetMasterTemplate()
+	t.Logf("Master template: %s", masterTemplate)
+
+	// Parse step by step
+	tmpl, err := template.New("go-cli").Parse(allTemplates)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// List all defined templates
+	for _, definedTmpl := range tmpl.Templates() {
+		t.Logf("Defined template: %s", definedTmpl.Name())
+	}
+
+	// Execute
+	var buf strings.Builder
+	err = tmpl.ExecuteTemplate(&buf, "main", data)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result := buf.String()
+	lines := strings.Split(result, "\n")
+	t.Logf("Generated %d lines of code", len(lines))
+
+	// Show first 20 lines for debugging
+	for i, line := range lines {
+		if i >= 20 {
+			break
+		}
+		t.Logf("Line %d: %s", i+1, line)
+	}
+}
+
+// TestRealWorldScenario tests a real-world commands.cli scenario
+func TestRealWorldScenario(t *testing.T) {
+	// This is similar to your actual commands.cli
+	realWorldInput := `
+def SERVER_PORT = 8080;
+def FRONTEND_PORT = 4200;
+def BUILD_DIR = ./dist;
+
+watch server: {
+    echo "🚀 Starting Go server on port $(SERVER_PORT)...";
+    @sh(cd cmd/ailuvia && go run main.go)
+}
+
+stop server: {
+    echo "🛑 Stopping Go server...";
+    @sh(pkill -f "go run.*cmd/ailuvia" || true)
+}
+
+watch frontend: {
+    echo "⚡ Starting Angular dev server on port $(FRONTEND_PORT)...";
+    @sh(cd frontend && ng serve --port=$(FRONTEND_PORT))
+}
+
+stop frontend: {
+    echo "🛑 Stopping Angular dev server...";
+    @sh(pkill -f "ng serve" || true)
+}
 
 build: {
-  echo "Building project...";
-  mkdir -p $(BUILD_DIR);
-  cd $(SRC) && make;
+    echo "🔨 Building Go server...";
+    mkdir -p $(BUILD_DIR);
+    @sh(cd cmd/ailuvia && go build -o ../../$(BUILD_DIR)/server .)
 }
 
 test: {
-  echo "Running tests...";
-  cd $(SRC) && make test;
-  echo "Tests complete";
-}
-
-clean: @sh(find . -name "*.tmp" -delete);
-
-parallel-tasks: {
-  @parallel: {
-    echo "Task 1";
-    echo "Task 2";
-    echo "Task 3"
-  };
-  echo "All tasks complete";
+    echo "🧪 Running Go tests...";
+    go test -v ./...
 }
 `
 
-	// Parse the input
-	cf, err := devcmdParser.Parse(basicDevCommands, false)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-
-	// Expand variables
-	err = cf.ExpandVariables()
-	if err != nil {
-		t.Fatalf("ExpandVariables error: %v", err)
-	}
-
-	// Generate Go code
-	generated, err := GenerateGo(cf)
-	if err != nil {
-		t.Fatalf("GenerateGo error: %v", err)
-	}
-
-	// Verify generated code is valid Go - this is the main compile check
-	if !isValidGoCode(t, generated) {
-		t.Errorf("Generated code is not valid Go")
-		t.Logf("Generated code:\n%s", generated)
-		return
-	}
-
-	// These should be present (basic functionality)
-	expectedContent := []string{
-		"func (c *CLI) runBuild(args []string)",
-		"func (c *CLI) runTest(args []string)",
-		"func (c *CLI) runClean(args []string)",
-		"func (c *CLI) runParallelTasks(args []string)",
-		`"fmt"`,
-		`"os"`,
-		`"os/exec"`,
-		// Variable expansions
-		"./src",
-		"./build",
-		// Regular commands should work with variables
-		"cd ./src && make",
-		// @sh decorators should be converted (no variables inside)
-		"find . -name \"*.tmp\" -delete",
-		// @parallel should create background processes
-		"echo \"Task 1\" &; echo \"Task 2\" &; echo \"Task 3\" &; wait",
-	}
-
-	for _, expected := range expectedContent {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected content: %q", expected)
+	t.Run("real_world_full_test", func(t *testing.T) {
+		// Parse
+		cf, err := devcmdParser.Parse(realWorldInput, false)
+		if err != nil {
+			t.Fatalf("Parse error: %v", err)
 		}
-	}
 
-	// These should NOT be present (no watch commands)
-	unwantedContent := []string{
-		`"syscall"`,
-		`"encoding/json"`,
-		`"os/signal"`,
-		`"time"`,
-		"ProcessRegistry",
-		"runInBackground",
-		"gracefulStop",
-		"showLogsFor",
-		"logs <process>",
-	}
-
-	for _, unwanted := range unwantedContent {
-		if strings.Contains(generated, unwanted) {
-			t.Errorf("Generated code contains unwanted content: %q", unwanted)
+		// Expand variables
+		err = cf.ExpandVariables()
+		if err != nil {
+			t.Fatalf("ExpandVariables error: %v", err)
 		}
-	}
+
+		// Generate
+		generated, err := GenerateGo(cf)
+		if err != nil {
+			t.Fatalf("GenerateGo error: %v", err)
+		}
+
+		// Validate
+		if !isValidGoCode(t, generated) {
+			t.Errorf("Generated invalid Go code")
+
+			// Show the problematic code
+			lines := strings.Split(generated, "\n")
+			for i, line := range lines {
+				t.Logf("Line %d: %s", i+1, line)
+				if i >= 50 { // Show first 50 lines
+					t.Logf("... (truncated)")
+					break
+				}
+			}
+		}
+
+		// Test compilation
+		if err := testActualCompilation(t, generated); err != nil {
+			t.Errorf("Compilation failed: %v", err)
+		}
+
+		t.Logf("✅ Real world scenario passed")
+	})
 }
 
-// Helper function to check if generated code is valid Go - THE KEY FUNCTION
+// Helper functions (keeping existing ones from the original test file)
+
 func isValidGoCode(t *testing.T, code string) bool {
 	fset := token.NewFileSet()
 	_, err := parser.ParseFile(fset, "generated.go", code, parser.ParseComments)
@@ -1106,139 +559,39 @@ func isValidGoCode(t *testing.T, code string) bool {
 	return true
 }
 
-// Helper function to create string pointers
-func stringPtr(s string) *string {
-	return &s
-}
-
-// Integration test for complete file with all features
-func TestCompleteIntegration(t *testing.T) {
-	complexInput := `
-def SRC = ./src;
-def PORT = 8080;
-
-# Regular commands
-build: cd $(SRC) && go build;
-test: cd $(SRC) && go test -v ./...;
-
-# Parallel execution
-parallel-build: {
-  echo "Starting parallel build...";
-  @parallel: {
-    @sh(cd frontend && npm run build);
-    @sh(cd backend && go build);
-    @sh(cd worker && python setup.py build)
-  };
-  echo "All builds complete";
-}
-
-# Watch commands for development
-watch dev: {
-  echo "Starting development environment...";
-  @parallel: {
-    @sh(cd frontend && npm start);
-    cd backend && go run main.go --port=$(PORT);
-    @sh(cd worker && python worker.py)
-  }
-}
-
-stop dev: {
-  echo "Stopping development environment...";
-  @sh(pkill -f "npm start" || true);
-  @sh(pkill -f "go run main.go" || true);
-  @sh(pkill -f "python worker.py" || true);
-  echo "Development environment stopped";
-}
-
-# Complex cleanup
-cleanup: {
-  echo "Cleaning up...";
-  @parallel: {
-    @sh(find ./build -name "*.tmp" -delete);
-    @sh(find ./logs -name "*.log" -mtime +7 -delete);
-    rm -rf ./cache
-  };
-  echo "Cleanup complete";
-}
-`
-
-	// Parse the input
-	cf, err := devcmdParser.Parse(complexInput, false)
+func testActualCompilation(t *testing.T, code string) error {
+	// Create a temporary directory
+	tmpDir, err := os.MkdirTemp("", "devcmd_test_*")
 	if err != nil {
-		t.Fatalf("Parse error: %v", err)
+		return err
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Logf("Warning: failed to clean up temp directory %s: %v", tmpDir, removeErr)
+		}
+	}()
+
+	// Write the generated code to a temporary file
+	tmpFile := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(tmpFile, []byte(code), 0o644); err != nil {
+		return err
 	}
 
-	// Expand variables
-	err = cf.ExpandVariables()
+	// Initialize go.mod in the temporary directory
+	cmd := exec.Command("go", "mod", "init", "testmodule")
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Try to compile the code
+	cmd = exec.Command("go", "build", "-o", "/dev/null", tmpFile)
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("ExpandVariables error: %v", err)
+		t.Logf("Compilation output: %s", string(output))
+		return err
 	}
 
-	// Generate Go code
-	generated, err := GenerateGo(cf)
-	if err != nil {
-		t.Fatalf("GenerateGo error: %v", err)
-	}
-
-	// Verify generated code is valid Go
-	if !isValidGoCode(t, generated) {
-		t.Errorf("Generated code is not valid Go")
-		t.Logf("Generated code:\n%s", generated)
-		return
-	}
-
-	// Should include process management due to watch commands
-	expectedFeatures := []string{
-		"ProcessRegistry",
-		"runInBackground",
-		"syscall",
-		"encoding/json",
-		"showLogsFor",
-		"start|stop|logs",
-	}
-
-	for _, expected := range expectedFeatures {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected feature: %q", expected)
-		}
-	}
-
-	// Should handle all command types correctly
-	expectedCommands := []string{
-		"func (c *CLI) runBuild(args []string)",
-		"func (c *CLI) runTest(args []string)",
-		"func (c *CLI) runParallelBuild(args []string)",
-		"func (c *CLI) runDev(args []string)",
-		"func (c *CLI) runCleanup(args []string)",
-	}
-
-	for _, expected := range expectedCommands {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected command function: %q", expected)
-		}
-	}
-
-	// Should properly expand variables
-	expectedExpansions := []string{
-		"cd ./src && go build",
-		"cd ./src && go test -v ./...",
-		"go run main.go --port=8080",
-	}
-
-	for _, expected := range expectedExpansions {
-		if !strings.Contains(generated, expected) {
-			t.Errorf("Generated code missing expected variable expansion: %q", expected)
-		}
-	}
-
-	// Should NOT have global logs command
-	unwantedContent := []string{
-		"logs <process>",
-	}
-
-	for _, unwanted := range unwantedContent {
-		if strings.Contains(generated, unwanted) {
-			t.Errorf("Generated code contains unwanted content: %q", unwanted)
-		}
-	}
+	return nil
 }

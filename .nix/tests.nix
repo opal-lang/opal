@@ -1,8 +1,8 @@
 # Test scenarios for devcmd library and generated CLIs
-{ pkgs, lib, self, system }:
+{ pkgs, lib, self }:
 
 let
-  devcmdLib = import ./lib.nix { inherit pkgs self system lib; };
+  devcmdLib = import ./lib.nix { inherit pkgs self lib; };
 
   # Common test utilities
   testUtils = {
@@ -84,7 +84,7 @@ rec {
       '';
     };
 
-    # Test commands with POSIX syntax and parentheses - UPDATED with correct shell command substitution
+    # Test commands with POSIX syntax and parentheses
     posixSyntax = mkCLITest {
       name = "posix-syntax";
       cli = devcmdLib.mkDevCLI {
@@ -96,12 +96,10 @@ rec {
         '';
       };
 
-      # Add which command (usually in util-linux or coreutils)
       extraPackages = with pkgs; [ which go ];
 
       testScript = ''
         ${testUtils.simpleTest "posix-test --help"}
-        # Test that parentheses are preserved in commands
         OUTPUT=$(posix-test check-deps 2>&1 || true)
         if echo "$OUTPUT" | grep -q "Go found\|Go missing"; then
           echo "✅ Parentheses syntax working"
@@ -128,13 +126,11 @@ rec {
         '';
       };
 
-      # Add nodejs and which for the CHECK_CMD variable
       extraPackages = with pkgs; [ nodejs which ];
 
       testScript = ''
         ${testUtils.checkOutput "variables-test build" "Building in ./src"}
         ${testUtils.checkOutput "variables-test serve" "port 8080"}
-        # Test complex variable expansion
         variables-test check &>/dev/null || echo "Complex variable test completed"
       '';
     };
@@ -159,11 +155,9 @@ rec {
         '';
       };
 
-      # Add python3 for the http server command
       extraPackages = with pkgs; [ python3 ];
 
       testScript = ''
-        # Check that process management commands exist
         ${testUtils.checkOutput "process-test --help" "status"}
         ${testUtils.simpleTest "process-test status"}
       '';
@@ -198,7 +192,6 @@ rec {
       };
 
       testScript = ''
-        # Test sequential block
         OUTPUT=$(block-test setup 2>&1)
         if echo "$OUTPUT" | grep -q "Step 1" && echo "$OUTPUT" | grep -q "Step 2" && echo "$OUTPUT" | grep -q "Step 3"; then
           echo "✅ Sequential block test passed"
@@ -208,10 +201,7 @@ rec {
           exit 1
         fi
 
-        # Test parallel block
         ${testUtils.checkOutput "block-test parallel" "Task"}
-
-        # Test complex block
         ${testUtils.checkOutput "block-test complex" "Main thread"}
       '';
     };
@@ -250,7 +240,6 @@ rec {
       };
 
       testScript = ''
-        # Test that CLI with many commands works
         HELP_LINES=$(large-test --help | wc -l)
         if [ "$HELP_LINES" -gt 10 ]; then
           echo "✅ Help output has reasonable length: $HELP_LINES lines"
@@ -292,18 +281,15 @@ rec {
         '';
       };
 
-      # Add nodejs and go for npm and go commands
       extraPackages = with pkgs; [ nodejs go ];
 
       testScript = ''
-        # Check all expected commands exist
         ${testUtils.checkOutput "webdev --help" "install"}
         ${testUtils.checkOutput "webdev --help" "build"}
         ${testUtils.checkOutput "webdev --help" "test"}
 
         ${testUtils.checkOutput "webdev install" "Dependencies installed"}
 
-        # Test build command
         OUTPUT=$(webdev build 2>&1)
         if echo "$OUTPUT" | grep -q "Building frontend" && echo "$OUTPUT" | grep -q "Building backend"; then
           echo "✅ Build command test passed"
@@ -351,16 +337,13 @@ rec {
         '';
       };
 
-      # Add go for go commands
       extraPackages = with pkgs; [ go ];
 
       testScript = ''
-        # Check Go commands exist
         ${testUtils.checkOutput "goproj --help" "build"}
         ${testUtils.checkOutput "goproj --help" "test"}
         ${testUtils.checkOutput "goproj --help" "lint"}
 
-        # Test that commands work even without Go project structure
         ${testUtils.checkOutput "goproj deps" "Managing dependencies"}
         ${testUtils.checkOutput "goproj build" "Building myapp"}
         ${testUtils.checkOutput "goproj test" "Running tests"}
@@ -377,19 +360,10 @@ rec {
           def LOG_DIR = /tmp/logs;
           def APP_NAME = myapp;
 
-          # Test escaped shell command substitution
           timestamp: echo "Current time: \$(date)";
-
-          # Test shell variables
           user-info: echo "User: \$USER, Home: \$HOME";
-
-          # Test complex shell operations with @sh()
           backup: @sh(DATE=\$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-\$DATE.tar.gz");
-
-          # Test mixed devcmd variables and shell substitution
           logrotate: @sh(find $(LOG_DIR) -name "$(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at \$(date)");
-
-          # Test arithmetic expansion
           calculate: echo "Result: \$((2 + 3 * 4))";
         '';
       };
@@ -422,7 +396,6 @@ rec {
     mkdir -p $out
     echo "🧪 Testing example CLIs..."
 
-    # Import examples
     ${lib.optionalString (builtins.pathExists ./.nix/examples.nix) ''
       echo "Examples file exists, testing would go here"
       echo "In a real scenario, we'd test each example CLI"
@@ -441,7 +414,6 @@ rec {
     mkdir -p $out
     echo "🧪 Running all devcmd tests..."
 
-    # Run each test and collect results
     FAILED_TESTS=""
     PASSED_TESTS=""
 
