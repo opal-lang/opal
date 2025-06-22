@@ -8,8 +8,7 @@
  * - Simple commands: build: go build -o bin/app ./cmd;
  * - Block workflows: deploy: { build; test; kubectl apply -f k8s/ }
  * - Process management: watch dev / stop dev command pairs
- * - Decorators: @timeout(30s), @retry(3), @parallel
- * - Variable expansion: $(PORT), shell variables $USER
+ * - Decorators: @timeout(30s), @retry(3), @parallel, @var(PORT)
  * - Line continuations: command \
  *                        --flag value;
  * - Shell features: pipes, redirections, background processes (&)
@@ -72,24 +71,47 @@ commandBody
 
 // Decorated command with labels for visitor compatibility
 decoratedCommand
-    : AT_NAME_LPAREN decoratorContent RPAREN SEMICOLON?    #functionDecorator
-    | AT decorator COLON blockCommand                      #blockDecorator
-    | AT decorator COLON decoratorCommand                  #simpleDecorator
+    : functionDecorator    #functionDecoratorLabel
+    | blockDecorator       #blockDecoratorLabel
+    | simpleDecorator      #simpleDecoratorLabel
     ;
+
+// UPDATED: Function decorator using separate tokens
+functionDecorator : AT NAME LPAREN decoratorContent RPAREN SEMICOLON? ;
+
+// Block decorator: @name: { ... }
+blockDecorator : AT decorator COLON blockCommand ;
+
+// Simple decorator: @name: command
+simpleDecorator : AT decorator COLON decoratorCommand ;
 
 // Decorator name (kept for compatibility)
 decorator : NAME ;
 
-// Content inside @name(...) - handle nested parentheses and newlines
+// Content inside @name(...) - handle nested parentheses, @var() decorators, and newlines
 decoratorContent : decoratorElement* ;
 
 // Elements that can appear in decorator content
-// This handles nested parentheses by recursively parsing them
-// Also allows newlines and all other content
+// Enhanced to handle nested @var() decorators as proper structures
 decoratorElement
-    : LPAREN decoratorContent RPAREN         // Nested parentheses
-    | NEWLINE                                // Allow newlines
-    | ~(LPAREN | RPAREN | NEWLINE)+         // Any sequence of non-paren, non-newline tokens
+    : nestedDecorator                     // @var(NAME) etc. - parsed as decorators
+    | LPAREN decoratorContent RPAREN     // Nested parentheses
+    | NEWLINE                            // Allow newlines
+    | decoratorTextElement               // Any other content as text
+    ;
+
+// Nested decorator within another decorator (e.g., @var inside @sh)
+// UPDATED: Use AT NAME LPAREN as separate tokens
+nestedDecorator : AT NAME LPAREN decoratorContent RPAREN ;
+
+// Text elements that can appear in decorator content
+decoratorTextElement
+    : NAME | NUMBER | STRING | SINGLE_STRING | PATH_CONTENT
+    | AMPERSAND | PIPE | LT | GT | COLON | EQUALS | BACKSLASH
+    | DOT | COMMA | SLASH | DASH | STAR | PLUS | QUESTION | EXCLAIM
+    | PERCENT | CARET | TILDE | UNDERSCORE | LBRACKET | RBRACKET
+    | LBRACE | RBRACE | DOLLAR | HASH | DOUBLEQUOTE
+    | SEMICOLON | WATCH | STOP | DEF | CONTENT
     ;
 
 /**
@@ -134,54 +156,56 @@ continuationLine : BACKSLASH NEWLINE commandText ;
 /**
  * COMMAND TEXT PARSING
  * Flexible parsing of shell-like command content
+ * Enhanced to support inline @var() decorators
  */
 
 // Command text - sequence of content elements
 commandText : commandTextElement* ;
 
 // Individual elements that can appear in command text
+// Enhanced to include inline decorators like @var(NAME)
 commandTextElement
-    : VAR_REF           // $(VAR) - devcmd variable
-    | SHELL_VAR         // $VAR - shell variable
-    | ESCAPED_DOLLAR    // \$ - literal dollar
-    | ESCAPED_SEMICOLON // \; - literal semicolon
-    | ESCAPED_BRACE     // \{ or \} - literal braces
-    | NAME              // Identifiers
-    | NUMBER            // Numeric literals
-    | STRING            // Double quoted strings
-    | SINGLE_STRING     // Single quoted strings
-    | PATH_CONTENT      // Path-like content (./src, *.tmp, etc.)
-    | LPAREN            // ( - shell subshells, grouping
-    | RPAREN            // ) - shell subshells, grouping
-    | LBRACE            // { - shell brace expansion
-    | RBRACE            // } - shell brace expansion
-    | LBRACKET          // [ - shell tests
-    | RBRACKET          // ] - shell tests
-    | AMPERSAND         // & - shell background processes
-    | PIPE              // | - shell pipes
-    | LT                // < - shell input redirection
-    | GT                // > - shell output redirection
-    | COLON             // : - allowed in commands
-    | EQUALS            // = - allowed in commands
-    | BACKSLASH         // \ - shell escaping
-    | DOT               // . - paths, decimals
-    | COMMA             // , - lists
-    | SLASH             // / - paths
-    | DASH              // - - command options
-    | STAR              // * - globs
-    | PLUS              // + - expressions
-    | QUESTION          // ? - patterns
-    | EXCLAIM           // ! - negation
-    | PERCENT           // % - modulo
-    | CARET             // ^ - patterns
-    | TILDE             // ~ - home dir
-    | UNDERSCORE        // _ - identifiers
-    | DOLLAR            // $ - when not part of variable ref
-    | HASH              // # - when not comment
-    | DOUBLEQUOTE       // " - when not in string
-    | AT                // @ - when not decorator start
-    | WATCH             // Allow keywords in command text
-    | STOP              // Allow keywords in command text
-    | DEF               // Allow keywords in command text
-    | CONTENT           // General content
+    : inlineDecorator       // @var(NAME) etc. - parsed as decorators in command text
+    | NAME                  // Identifiers
+    | NUMBER                // Numeric literals
+    | STRING                // Double quoted strings
+    | SINGLE_STRING         // Single quoted strings
+    | PATH_CONTENT          // Path-like content (./src, *.tmp, etc.)
+    | LPAREN                // ( - shell subshells, grouping
+    | RPAREN                // ) - shell subshells, grouping
+    | LBRACE                // { - shell brace expansion
+    | RBRACE                // } - shell brace expansion
+    | LBRACKET              // [ - shell tests
+    | RBRACKET              // ] - shell tests
+    | AMPERSAND             // & - shell background processes
+    | PIPE                  // | - shell pipes
+    | LT                    // < - shell input redirection
+    | GT                    // > - shell output redirection
+    | COLON                 // : - allowed in commands
+    | EQUALS                // = - allowed in commands
+    | BACKSLASH             // \ - shell escaping
+    | DOT                   // . - paths, decimals
+    | COMMA                 // , - lists
+    | SLASH                 // / - paths
+    | DASH                  // - - command options
+    | STAR                  // * - globs
+    | PLUS                  // + - expressions
+    | QUESTION              // ? - patterns
+    | EXCLAIM               // ! - negation
+    | PERCENT               // % - modulo
+    | CARET                 // ^ - patterns
+    | TILDE                 // ~ - home dir
+    | UNDERSCORE            // _ - identifiers
+    | DOLLAR                // $ - shell variables and command substitution
+    | HASH                  // # - when not comment
+    | DOUBLEQUOTE           // " - when not in string
+    | AT                    // @ - when not decorator start
+    | WATCH                 // Allow keywords in command text
+    | STOP                  // Allow keywords in command text
+    | DEF                   // Allow keywords in command text
+    | CONTENT               // General content
     ;
+
+// Inline decorator in command text (e.g., go run @var(MAIN_FILE))
+// UPDATED: Use AT NAME LPAREN as separate tokens
+inlineDecorator : AT NAME LPAREN decoratorContent RPAREN ;

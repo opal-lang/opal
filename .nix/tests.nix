@@ -92,7 +92,7 @@ rec {
         commandsContent = ''
           check-deps: (which go && echo "Go found") || (echo "Go missing" && exit 1);
           validate: test -f go.mod && echo "Go module found" || echo "No go.mod";
-          complex: @sh((cd /tmp && echo "In tmp: \$(pwd)") && echo "Back to: \$(pwd)");
+          complex: @sh((cd /tmp && echo "In tmp: $(pwd)") && echo "Back to: $(pwd)");
         '';
       };
 
@@ -120,9 +120,9 @@ rec {
           def PORT = 8080;
           def CHECK_CMD = which node || echo "missing";
 
-          build: mkdir -p $(SRC) && cd $(SRC) && echo "Building in $(SRC)";
-          serve: echo "Starting server on port $(PORT)";
-          check: $(CHECK_CMD) && echo "Dependencies OK";
+          build: mkdir -p @var(SRC) && cd @var(SRC) && echo "Building in @var(SRC)";
+          serve: echo "Starting server on port @var(PORT)";
+          check: @sh(@var(CHECK_CMD) && echo "Dependencies OK");
         '';
       };
 
@@ -143,7 +143,7 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "process-test";
         commandsContent = ''
-          watch demo: python3 -m http.server 9999 &;
+          watch demo: python3 -m http.server 9999;
           stop demo: pkill -f "python3 -m http.server 9999";
 
           watch multi: {
@@ -178,9 +178,11 @@ rec {
           }
 
           parallel: {
-            echo "Task 1" &;
-            echo "Task 2" &;
-            echo "Task 3"
+            @parallel: {
+              echo "Task 1";
+              echo "Task 2";
+              echo "Task 3"
+            }
           }
 
           complex: {
@@ -215,7 +217,7 @@ rec {
         name = "error-test";
         commandsContent = ''
           valid: echo "This works";
-          special-chars: echo "Special: !@#\\\$%^&*()";
+          special-chars: echo "Special: !@#\$%^&*()";
           unicode: echo "Hello 世界";
         '';
       };
@@ -318,8 +320,8 @@ rec {
           }
 
           build: {
-            echo "Building $(BINARY) $(VERSION)...";
-            @sh((test -d ./cmd/$(BINARY) && go build -ldflags="-X main.Version=$(VERSION)" -o $(BINARY) ./cmd/$(BINARY)) || echo "No ./cmd/$(BINARY) directory")
+            echo "Building @var(BINARY) @var(VERSION)...";
+            @sh((test -d ./cmd/@var(BINARY) && go build -ldflags="-X main.Version=@var(VERSION)" -o @var(BINARY) ./cmd/@var(BINARY)) || echo "No ./cmd/@var(BINARY) directory")
           }
 
           test: {
@@ -360,11 +362,11 @@ rec {
           def LOG_DIR = /tmp/logs;
           def APP_NAME = myapp;
 
-          timestamp: echo "Current time: \$(date)";
-          user-info: echo "User: \$USER, Home: \$HOME";
-          backup: @sh(DATE=\$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-\$DATE.tar.gz");
-          logrotate: @sh(find $(LOG_DIR) -name "$(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at \$(date)");
-          calculate: echo "Result: \$((2 + 3 * 4))";
+          timestamp: echo "Current time: $(date)";
+          user-info: echo "User: $USER, Home: $HOME";
+          backup: @sh(DATE=$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-$DATE.tar.gz");
+          logrotate: @sh(find @var(LOG_DIR) -name "@var(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at $(date)");
+          calculate: echo "Result: $((2 + 3 * 4))";
         '';
       };
 

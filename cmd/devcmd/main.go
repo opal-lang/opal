@@ -23,6 +23,7 @@ func main() {
 	var templateFile string
 	var outputFormat string
 	var debug bool
+
 	flag.StringVar(&templateFile, "template", "", "Custom template file for generation")
 	flag.StringVar(&outputFormat, "format", "go", "Output format: 'go'")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
@@ -61,13 +62,6 @@ func main() {
 	commandFile, err := parser.Parse(string(content), debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing commands: %v\n", err)
-		os.Exit(ExitParseError)
-	}
-
-	// Expand variable references
-	err = commandFile.ExpandVariables()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error expanding variables: %v\n", err)
 		os.Exit(ExitParseError)
 	}
 

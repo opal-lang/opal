@@ -6,1409 +6,832 @@ import (
 	"testing"
 )
 
-// Helper function to dump block structure for debugging
-func dumpBlockStructure(t *testing.T, name string, cmd Command) {
-	t.Logf("=== BLOCK STRUCTURE DUMP for %s ===", name)
-	t.Logf("Command: %s, IsBlock: %v, Block size: %d", cmd.Name, cmd.IsBlock, len(cmd.Block))
-	for i, stmt := range cmd.Block {
-		t.Logf("  [%d] IsDecorated: %v", i, stmt.IsDecorated)
-		if stmt.IsDecorated {
-			t.Logf("      Decorator: %s, Type: %s", stmt.Decorator, stmt.DecoratorType)
-			t.Logf("      Command: %q", stmt.Command)
-			if len(stmt.DecoratedBlock) > 0 {
-				t.Logf("      DecoratedBlock size: %d", len(stmt.DecoratedBlock))
-				for j, nested := range stmt.DecoratedBlock {
-					t.Logf("        [%d] Command: %q", j, nested.Command)
+// Test helper types for cleaner test definitions
+type ExpectedCommand struct {
+	Name     string
+	IsWatch  bool
+	IsStop   bool
+	IsBlock  bool
+	Command  string
+	Elements []ExpectedElement
+	Block    []ExpectedBlockStatement
+}
+
+type ExpectedBlockStatement struct {
+	IsDecorated   bool
+	Decorator     string
+	DecoratorType string
+	Command       string
+	Elements      []ExpectedElement
+}
+
+type ExpectedElement struct {
+	Type string // "text" or "decorator"
+	Text string // for text elements
+
+	// For decorator elements
+	DecoratorName string
+	DecoratorType string // "function", "simple", "block"
+	Args          []ExpectedElement
+}
+
+type ExpectedDefinition struct {
+	Name  string
+	Value string
+}
+
+type TestCase struct {
+	Name        string
+	Input       string
+	WantErr     bool
+	ErrorSubstr string
+	Expected    struct {
+		Definitions []ExpectedDefinition
+		Commands    []ExpectedCommand
+	}
+}
+
+// Helper functions for creating expected elements
+func Text(text string) ExpectedElement {
+	return ExpectedElement{
+		Type: "text",
+		Text: text,
+	}
+}
+
+func Var(name string) ExpectedElement {
+	return ExpectedElement{
+		Type:          "decorator",
+		DecoratorName: "var",
+		DecoratorType: "function",
+		Args:          []ExpectedElement{Text(name)},
+	}
+}
+
+func Decorator(name, dtype string, args ...ExpectedElement) ExpectedElement {
+	return ExpectedElement{
+		Type:          "decorator",
+		DecoratorName: name,
+		DecoratorType: dtype,
+		Args:          args,
+	}
+}
+
+func SimpleCommand(name, command string, elements ...ExpectedElement) ExpectedCommand {
+	return ExpectedCommand{
+		Name:     name,
+		Command:  command,
+		Elements: elements,
+	}
+}
+
+func WatchCommand(name, command string, elements ...ExpectedElement) ExpectedCommand {
+	return ExpectedCommand{
+		Name:     name,
+		IsWatch:  true,
+		Command:  command,
+		Elements: elements,
+	}
+}
+
+func StopCommand(name, command string, elements ...ExpectedElement) ExpectedCommand {
+	return ExpectedCommand{
+		Name:     name,
+		IsStop:   true,
+		Command:  command,
+		Elements: elements,
+	}
+}
+
+func BlockCommand(name string, statements ...ExpectedBlockStatement) ExpectedCommand {
+	return ExpectedCommand{
+		Name:    name,
+		IsBlock: true,
+		Block:   statements,
+	}
+}
+
+func WatchBlockCommand(name string, statements ...ExpectedBlockStatement) ExpectedCommand {
+	return ExpectedCommand{
+		Name:    name,
+		IsWatch: true,
+		IsBlock: true,
+		Block:   statements,
+	}
+}
+
+func Statement(command string, elements ...ExpectedElement) ExpectedBlockStatement {
+	return ExpectedBlockStatement{
+		Command:  command,
+		Elements: elements,
+	}
+}
+
+func DecoratedStatement(decorator, decoratorType, command string, elements ...ExpectedElement) ExpectedBlockStatement {
+	return ExpectedBlockStatement{
+		IsDecorated:   true,
+		Decorator:     decorator,
+		DecoratorType: decoratorType,
+		Command:       command,
+		Elements:      elements,
+	}
+}
+
+// For block decorators, we expect the elements to contain the decorator
+func BlockDecoratedStatement(decorator, decoratorType, command string) ExpectedBlockStatement {
+	return ExpectedBlockStatement{
+		IsDecorated:   true,
+		Decorator:     decorator,
+		DecoratorType: decoratorType,
+		Command:       command,
+		Elements:      []ExpectedElement{Decorator(decorator, decoratorType)},
+	}
+}
+
+func Def(name, value string) ExpectedDefinition {
+	return ExpectedDefinition{Name: name, Value: value}
+}
+
+// Helper function to format elements for diff output
+func formatElements(elements []CommandElement) string {
+	var parts []string
+	for i, elem := range elements {
+		if elem.IsDecorator() {
+			decorator := elem.(*DecoratorElement)
+			if len(decorator.Args) == 0 {
+				parts = append(parts, fmt.Sprintf("[%d] DECORATOR: @%s()", i, decorator.Name))
+			} else {
+				argStrs := make([]string, len(decorator.Args))
+				for j, arg := range decorator.Args {
+					argStrs[j] = arg.String()
 				}
+				parts = append(parts, fmt.Sprintf("[%d] DECORATOR: @%s(%s)", i, decorator.Name, strings.Join(argStrs, "")))
 			}
 		} else {
-			t.Logf("      Command: %q", stmt.Command)
+			parts = append(parts, fmt.Sprintf("[%d] TEXT: %q", i, elem.String()))
 		}
 	}
-	t.Logf("=== END DUMP ===")
+	return strings.Join(parts, "\n")
 }
 
-func TestBasicParsing(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		wantCommand string
-		wantName    string
-		wantErr     bool
-	}{
-		{
-			name:        "simple command",
-			input:       "build: echo hello;",
-			wantCommand: "echo hello",
-			wantName:    "build",
-			wantErr:     false,
-		},
-		{
-			name:        "command with arguments",
-			input:       "test: go test -v ./...;",
-			wantCommand: "go test -v ./...",
-			wantName:    "test",
-			wantErr:     false,
-		},
-		{
-			name:        "command with special characters",
-			input:       "run: echo 'Hello, World!';",
-			wantCommand: "echo 'Hello, World!'",
-			wantName:    "run",
-			wantErr:     false,
-		},
-		{
-			name:        "command with empty content",
-			input:       "noop: ;",
-			wantCommand: "",
-			wantName:    "noop",
-			wantErr:     false,
-		},
-		{
-			name:        "command with trailing space",
-			input:       "build: make all   ;",
-			wantCommand: "make all",
-			wantName:    "build",
-			wantErr:     false,
-		},
-		// New edge cases for parentheses and POSIX syntax
-		{
-			name:        "command with parentheses - simple subshell",
-			input:       "check: (echo test);",
-			wantCommand: "(echo test)",
-			wantName:    "check",
-			wantErr:     false,
-		},
-		{
-			name:        "command with parentheses - complex POSIX",
-			input:       "validate: (echo \"Go not installed\" && exit 1);",
-			wantCommand: "(echo \"Go not installed\" && exit 1)",
-			wantName:    "validate",
-			wantErr:     false,
-		},
-		{
-			name:        "command with conditional and parentheses",
-			input:       "setup: which go || (echo \"Go not installed\" && exit 1);",
-			wantCommand: "which go || (echo \"Go not installed\" && exit 1)",
-			wantName:    "setup",
-			wantErr:     false,
-		},
-		{
-			name:        "command with nested parentheses",
-			input:       "complex: (cd src && (make clean || echo \"already clean\"));",
-			wantCommand: "(cd src && (make clean || echo \"already clean\"))",
-			wantName:    "complex",
-			wantErr:     false,
-		},
-		// Test that 'watch' and 'stop' can appear in command text
-		{
-			name:        "command containing watch keyword",
-			input:       "monitor: echo \"watching files\" && watch -n 1 ls;",
-			wantCommand: "echo \"watching files\" && watch -n 1 ls",
-			wantName:    "monitor",
-			wantErr:     false,
-		},
-		{
-			name:        "command containing stop keyword",
-			input:       "halt: echo \"stopping service\" && systemctl stop nginx;",
-			wantCommand: "echo \"stopping service\" && systemctl stop nginx",
-			wantName:    "halt",
-			wantErr:     false,
-		},
-		{
-			name:        "command with both watch and stop in text",
-			input:       "manage: watch -n 5 \"systemctl status app || systemctl stop app\";",
-			wantCommand: "watch -n 5 \"systemctl status app || systemctl stop app\"",
-			wantName:    "manage",
-			wantErr:     false,
-		},
-		// Test POSIX shell commands with braces using @sh() wrapper
-		{
-			name:        "find command with braces using @sh()",
-			input:       "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			wantCommand: "find . -name \"*.tmp\" -exec rm {} \\;",
-			wantName:    "cleanup",
-			wantErr:     false,
-		},
-		// Simplified test case for complex find
-		{
-			name:        "find with escaped semicolon using @sh()",
-			input:       "clean: @sh(find . -name \"*.log\" -exec rm {} \\;);",
-			wantCommand: "find . -name \"*.log\" -exec rm {} \\;",
-			wantName:    "clean",
-			wantErr:     false,
-		},
-		{
-			name:        "test command with braces",
-			input:       "check-files: test -f {} && echo \"File exists\" || echo \"Missing\";",
-			wantCommand: "test -f {} && echo \"File exists\" || echo \"Missing\"",
-			wantName:    "check-files",
-			wantErr:     false,
-		},
-		{
-			name:        "double parentheses in @sh() decorator",
-			input:       "setup: @sh((cd src && make) || echo \"failed\");",
-			wantCommand: "(cd src && make) || echo \"failed\"",
-			wantName:    "setup",
-			wantErr:     false,
-		},
-		{
-			name:        "nested parentheses in @sh() decorator",
-			input:       "complex: @sh((test -f config && (source config && run)) || default);",
-			wantCommand: "(test -f config && (source config && run)) || default",
-			wantName:    "complex",
-			wantErr:     false,
-		},
-		{
-			name:        "variable with double parentheses in @sh()",
-			input:       "def SRC = ./src;\ncheck: @sh((cd $(SRC) && make) || echo \"No Makefile found\");",
-			wantCommand: "(cd $(SRC) && make) || echo \"No Makefile found\"",
-			wantName:    "check",
-			wantErr:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true)
-
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Ensure we have exactly one command
-			if len(result.Commands) != 1 {
-				t.Fatalf("Expected 1 command, got %d", len(result.Commands))
-			}
-
-			// Check command properties
-			cmd := result.Commands[0]
-			if cmd.Name != tt.wantName {
-				t.Errorf("Command name = %q, want %q", cmd.Name, tt.wantName)
-			}
-
-			// For @sh() function decorators, check the decorator command
-			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
-				decoratedStmt := cmd.Block[0]
-				if decoratedStmt.Command != tt.wantCommand {
-					t.Errorf("Decorated command = %q, want %q", decoratedStmt.Command, tt.wantCommand)
+func formatExpectedElements(elements []ExpectedElement) string {
+	var parts []string
+	for i, elem := range elements {
+		if elem.Type == "decorator" {
+			if len(elem.Args) == 0 {
+				parts = append(parts, fmt.Sprintf("[%d] DECORATOR: @%s()", i, elem.DecoratorName))
+			} else {
+				var argStrs []string
+				for _, arg := range elem.Args {
+					if arg.Type == "decorator" {
+						argStrs = append(argStrs, fmt.Sprintf("@%s(%s)", arg.DecoratorName, arg.Text))
+					} else {
+						argStrs = append(argStrs, arg.Text)
+					}
 				}
-			} else if cmd.Command != tt.wantCommand {
-				t.Errorf("Command text = %q, want %q", cmd.Command, tt.wantCommand)
+				parts = append(parts, fmt.Sprintf("[%d] DECORATOR: @%s(%s)", i, elem.DecoratorName, strings.Join(argStrs, "")))
 			}
-		})
+		} else {
+			parts = append(parts, fmt.Sprintf("[%d] TEXT: %q", i, elem.Text))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Enhanced diff output for elements
+func showElementsDiff(t *testing.T, actual []CommandElement, expected []ExpectedElement, path string) {
+	if len(actual) != len(expected) {
+		t.Errorf("%s: expected %d elements, got %d", path, len(expected), len(actual))
+		t.Errorf("EXPECTED:\n%s", formatExpectedElements(expected))
+		t.Errorf("ACTUAL:\n%s", formatElements(actual))
+		return
+	}
+
+	// If counts match, check individual elements
+	verifyElements(t, actual, expected, path)
+}
+
+// Verification functions
+func verifyElements(t *testing.T, actual []CommandElement, expected []ExpectedElement, path string) {
+	for i, expectedElem := range expected {
+		if i >= len(actual) {
+			t.Errorf("%s[%d]: missing element, expected %s", path, i, expectedElem.Type)
+			continue
+		}
+
+		actualElem := actual[i]
+		elemPath := fmt.Sprintf("%s[%d]", path, i)
+
+		switch expectedElem.Type {
+		case "text":
+			if actualElem.IsDecorator() {
+				t.Errorf("%s: expected text %q, got decorator %s", elemPath, expectedElem.Text, actualElem.String())
+				continue
+			}
+
+			textElem, ok := actualElem.(*TextElement)
+			if !ok {
+				t.Errorf("%s: expected TextElement, got %T", elemPath, actualElem)
+				continue
+			}
+
+			if textElem.Text != expectedElem.Text {
+				t.Errorf("%s: expected text %q, got %q", elemPath, expectedElem.Text, textElem.Text)
+			}
+
+		case "decorator":
+			if !actualElem.IsDecorator() {
+				t.Errorf("%s: expected decorator %s, got text %q", elemPath, expectedElem.DecoratorName, actualElem.String())
+				continue
+			}
+
+			decorator, ok := actualElem.(*DecoratorElement)
+			if !ok {
+				t.Errorf("%s: expected DecoratorElement, got %T", elemPath, actualElem)
+				continue
+			}
+
+			if decorator.Name != expectedElem.DecoratorName {
+				t.Errorf("%s: expected decorator name %q, got %q", elemPath, expectedElem.DecoratorName, decorator.Name)
+			}
+
+			if decorator.Type != expectedElem.DecoratorType {
+				t.Errorf("%s: expected decorator type %q, got %q", elemPath, expectedElem.DecoratorType, decorator.Type)
+			}
+
+			// Recursively verify decorator arguments with diff
+			if len(expectedElem.Args) > 0 || len(decorator.Args) > 0 {
+				showElementsDiff(t, decorator.Args, expectedElem.Args, fmt.Sprintf("%s.Args", elemPath))
+			}
+
+		default:
+			t.Errorf("%s: unknown expected element type %q", elemPath, expectedElem.Type)
+		}
 	}
 }
 
-func TestDefinitions(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantName  string
-		wantValue string
-		wantErr   bool
-	}{
+func verifyCommand(t *testing.T, actual Command, expected ExpectedCommand, index int) {
+	prefix := fmt.Sprintf("Command[%d]", index)
+
+	if actual.Name != expected.Name {
+		t.Errorf("%s: expected name %q, got %q", prefix, expected.Name, actual.Name)
+	}
+
+	if actual.IsWatch != expected.IsWatch {
+		t.Errorf("%s: expected IsWatch %v, got %v", prefix, expected.IsWatch, actual.IsWatch)
+	}
+
+	if actual.IsStop != expected.IsStop {
+		t.Errorf("%s: expected IsStop %v, got %v", prefix, expected.IsStop, actual.IsStop)
+	}
+
+	if actual.IsBlock != expected.IsBlock {
+		t.Errorf("%s: expected IsBlock %v, got %v", prefix, expected.IsBlock, actual.IsBlock)
+	}
+
+	if !expected.IsBlock {
+		// Simple command verification
+		if actual.Command != expected.Command {
+			t.Errorf("%s: expected command %q, got %q", prefix, expected.Command, actual.Command)
+		}
+
+		if len(expected.Elements) > 0 || len(actual.Elements) > 0 {
+			showElementsDiff(t, actual.Elements, expected.Elements, fmt.Sprintf("%s.Elements", prefix))
+		}
+	} else {
+		// Block command verification
+		if len(actual.Block) != len(expected.Block) {
+			t.Errorf("%s: expected %d block statements, got %d", prefix, len(expected.Block), len(actual.Block))
+			return
+		}
+
+		for i, expectedStmt := range expected.Block {
+			actualStmt := actual.Block[i]
+			stmtPrefix := fmt.Sprintf("%s.Block[%d]", prefix, i)
+
+			if actualStmt.IsDecorated != expectedStmt.IsDecorated {
+				t.Errorf("%s: expected IsDecorated %v, got %v", stmtPrefix, expectedStmt.IsDecorated, actualStmt.IsDecorated)
+			}
+
+			if expectedStmt.IsDecorated {
+				if actualStmt.Decorator != expectedStmt.Decorator {
+					t.Errorf("%s: expected decorator %q, got %q", stmtPrefix, expectedStmt.Decorator, actualStmt.Decorator)
+				}
+
+				if actualStmt.DecoratorType != expectedStmt.DecoratorType {
+					t.Errorf("%s: expected decorator type %q, got %q", stmtPrefix, expectedStmt.DecoratorType, actualStmt.DecoratorType)
+				}
+			}
+
+			if actualStmt.Command != expectedStmt.Command {
+				t.Errorf("%s: expected command %q, got %q", stmtPrefix, expectedStmt.Command, actualStmt.Command)
+			}
+
+			if len(expectedStmt.Elements) > 0 || len(actualStmt.Elements) > 0 {
+				showElementsDiff(t, actualStmt.Elements, expectedStmt.Elements, fmt.Sprintf("%s.Elements", stmtPrefix))
+			}
+		}
+	}
+}
+
+func verifyDefinition(t *testing.T, actual Definition, expected ExpectedDefinition, index int) {
+	prefix := fmt.Sprintf("Definition[%d]", index)
+
+	if actual.Name != expected.Name {
+		t.Errorf("%s: expected name %q, got %q", prefix, expected.Name, actual.Name)
+	}
+
+	if actual.Value != expected.Value {
+		t.Errorf("%s: expected value %q, got %q", prefix, expected.Value, actual.Value)
+	}
+}
+
+func runTestCase(t *testing.T, tc TestCase) {
+	t.Run(tc.Name, func(t *testing.T) {
+		// Using debug=false for typical test runs unless a specific test needs it
+		result, err := Parse(tc.Input, false)
+
+		// Check error expectations
+		if tc.WantErr {
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if tc.ErrorSubstr != "" && !strings.Contains(err.Error(), tc.ErrorSubstr) {
+				t.Errorf("expected error containing %q, got %q", tc.ErrorSubstr, err.Error())
+			}
+			return
+		}
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify definitions
+		if len(result.Definitions) != len(tc.Expected.Definitions) {
+			t.Errorf("expected %d definitions, got %d", len(tc.Expected.Definitions), len(result.Definitions))
+		} else {
+			for i, expectedDef := range tc.Expected.Definitions {
+				verifyDefinition(t, result.Definitions[i], expectedDef, i)
+			}
+		}
+
+		// Verify commands
+		if len(result.Commands) != len(tc.Expected.Commands) {
+			t.Errorf("expected %d commands, got %d", len(tc.Expected.Commands), len(result.Commands))
+		} else {
+			for i, expectedCmd := range tc.Expected.Commands {
+				verifyCommand(t, result.Commands[i], expectedCmd, i)
+			}
+		}
+	})
+}
+
+// Main test functions with updated expectations for the new parser
+func TestBasicCommands(t *testing.T) {
+	testCases := []TestCase{
 		{
-			name:      "simple definition",
-			input:     "def SRC = ./src;",
-			wantName:  "SRC",
-			wantValue: "./src",
-			wantErr:   false,
+			Name:  "simple command",
+			Input: "build: echo hello;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "echo hello", Text("echo hello")),
+				},
+			},
 		},
 		{
-			name:      "definition with complex value",
-			input:     "def CMD = go test -v ./...;",
-			wantName:  "CMD",
-			wantValue: "go test -v ./...",
-			wantErr:   false,
+			Name:  "command with special characters",
+			Input: "run: echo 'Hello, World!';",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("run", "echo 'Hello, World!'", Text("echo 'Hello, World!'")),
+				},
+			},
 		},
 		{
-			name:      "definition with special chars",
-			input:     "def PATH = /usr/local/bin:$PATH;",
-			wantName:  "PATH",
-			wantValue: "/usr/local/bin:$PATH",
-			wantErr:   false,
+			Name:  "empty command",
+			Input: "noop: ;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("noop", ""),
+				},
+			},
 		},
 		{
-			name:      "definition with quotes",
-			input:     `def MSG = "Hello, World!";`,
-			wantName:  "MSG",
-			wantValue: `"Hello, World!"`,
-			wantErr:   false,
-		},
-		{
-			name:      "definition with empty value",
-			input:     "def EMPTY = ;",
-			wantName:  "EMPTY",
-			wantValue: "",
-			wantErr:   false,
-		},
-		{
-			name:      "definition with integer",
-			input:     "def PORT = 8080;",
-			wantName:  "PORT",
-			wantValue: "8080",
-			wantErr:   false,
-		},
-		{
-			name:      "definition with decimal",
-			input:     "def VERSION = 1.5;",
-			wantName:  "VERSION",
-			wantValue: "1.5",
-			wantErr:   false,
-		},
-		{
-			name:      "definition with dot-leading decimal",
-			input:     "def FACTOR = .75;",
-			wantName:  "FACTOR",
-			wantValue: ".75",
-			wantErr:   false,
-		},
-		{
-			name:      "definition with number in mixed value",
-			input:     "def TIMEOUT = 30s;",
-			wantName:  "TIMEOUT",
-			wantValue: "30s",
-			wantErr:   false,
-		},
-		// New edge cases for parentheses in definitions
-		{
-			name:      "definition with parentheses",
-			input:     "def CHECK_CMD = (which go && echo \"found\");",
-			wantName:  "CHECK_CMD",
-			wantValue: "(which go && echo \"found\")",
-			wantErr:   false,
-		},
-		{
-			name:      "definition with watch/stop keywords",
-			input:     "def MONITOR = watch -n 1 \"ps aux | grep myapp\";",
-			wantName:  "MONITOR",
-			wantValue: "watch -n 1 \"ps aux | grep myapp\"",
-			wantErr:   false,
-		},
-		// Simplified definition test to avoid decorator in definitions
-		{
-			name:      "definition with find command text",
-			input:     "def FIND_CMD = find . -name \"*.tmp\" -delete;",
-			wantName:  "FIND_CMD",
-			wantValue: "find . -name \"*.tmp\" -delete",
-			wantErr:   false,
+			Name:  "command with parentheses",
+			Input: "check: (echo test);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("check", "(echo test)", Text("(echo test)")),
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true)
+	for _, tc := range testCases {
+		runTestCase(t, tc)
+	}
+}
 
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
+func TestVarDecorators(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "simple @var() reference",
+			Input: "build: cd @var(SRC);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "cd @var(SRC)", Text("cd "), Var("SRC")),
+				},
+			},
+		},
+		{
+			Name:  "multiple @var() references",
+			Input: "deploy: docker build -t @var(IMAGE):@var(TAG);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("deploy", "docker build -t @var(IMAGE):@var(TAG)",
+						Text("docker build -t "), Var("IMAGE"), Text(":"), Var("TAG")),
+				},
+			},
+		},
+		{
+			Name:  "@var() in quoted string",
+			Input: "echo: echo \"Building @var(PROJECT) version @var(VERSION)\";",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("echo", "echo \"Building @var(PROJECT) version @var(VERSION)\"",
+						Text("echo \"Building "), Var("PROJECT"), Text(" version "), Var("VERSION"), Text("\"")),
+				},
+			},
+		},
+		{
+			Name:  "mixed @var() and shell variables",
+			Input: "info: echo \"Project: @var(NAME), User: $USER\";",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("info", "echo \"Project: @var(NAME), User: $USER\"",
+						Text("echo \"Project: "), Var("NAME"), Text(", User: $USER\"")),
+				},
+			},
+		},
+	}
 
-			if tt.wantErr {
-				return
-			}
+	for _, tc := range testCases {
+		runTestCase(t, tc)
+	}
+}
 
-			// Ensure we have exactly one definition
-			if len(result.Definitions) != 1 {
-				t.Fatalf("Expected 1 definition, got %d", len(result.Definitions))
-			}
+func TestNestedDecorators(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "@sh() with @var()",
+			Input: "build: @sh(cd @var(SRC));",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("build",
+						DecoratedStatement("sh", "function", "cd @var(SRC)",
+							Decorator("sh", "function", Text("cd "), Var("SRC")))),
+				},
+			},
+		},
+		{
+			Name:  "@sh() with multiple @var()",
+			Input: "server: @sh(go run @var(MAIN_FILE) --port=@var(PORT));",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("server",
+						DecoratedStatement("sh", "function", "go run @var(MAIN_FILE) --port=@var(PORT)",
+							Decorator("sh", "function",
+								Text("go run "),
+								Var("MAIN_FILE"),
+								Text(" --port="),
+								Var("PORT")))),
+				},
+			},
+		},
+		{
+			Name:  "complex @sh() with parentheses and @var()",
+			Input: "check: @sh((cd @var(SRC) && make) || echo \"failed\");",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("check",
+						DecoratedStatement("sh", "function", "(cd @var(SRC) && make) || echo \"failed\"",
+							Decorator("sh", "function",
+								Text("(cd "), Var("SRC"),
+								Text(" && make) || echo \"failed\"")))),
+				},
+			},
+		},
+	}
 
-			// Check definition properties
-			def := result.Definitions[0]
-			if def.Name != tt.wantName {
-				t.Errorf("Definition name = %q, want %q", def.Name, tt.wantName)
-			}
-
-			if def.Value != tt.wantValue {
-				t.Errorf("Definition value = %q, want %q", def.Value, tt.wantValue)
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }
 
 func TestBlockCommands(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		wantName      string
-		wantBlockSize int
-		wantCommands  []string
-		wantErr       bool
-	}{
+	testCases := []TestCase{
 		{
-			name:          "empty block",
-			input:         "setup: { }",
-			wantName:      "setup",
-			wantBlockSize: 0,
-			wantCommands:  []string{},
-			wantErr:       false,
+			Name:  "empty block",
+			Input: "setup: { }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("setup"),
+				},
+			},
 		},
 		{
-			name:          "single statement block",
-			input:         "setup: { npm install }",
-			wantName:      "setup",
-			wantBlockSize: 1,
-			wantCommands:  []string{"npm install"},
-			wantErr:       false,
+			Name:  "single statement block",
+			Input: "setup: { npm install }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("setup", Statement("npm install", Text("npm install"))),
+				},
+			},
 		},
 		{
-			name:          "multiple statements",
-			input:         "setup: { npm install; go mod tidy; echo done }",
-			wantName:      "setup",
-			wantBlockSize: 3,
-			wantCommands:  []string{"npm install", "go mod tidy", "echo done"},
-			wantErr:       false,
+			Name:  "multiple statements",
+			Input: "setup: { npm install; go mod tidy; echo done }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("setup",
+						Statement("npm install", Text("npm install")),
+						Statement("go mod tidy", Text("go mod tidy")),
+						Statement("echo done", Text("echo done"))),
+				},
+			},
 		},
 		{
-			name:          "multiline block",
-			input:         "setup: {\n  npm install;\n  go mod tidy;\n  echo done\n}",
-			wantName:      "setup",
-			wantBlockSize: 3,
-			wantCommands:  []string{"npm install", "go mod tidy", "echo done"},
-			wantErr:       false,
-		},
-		// New edge cases for parentheses in block commands
-		{
-			name:          "block with parentheses in commands",
-			input:         "check: { (which go || echo \"not found\"); echo \"done\" }",
-			wantName:      "check",
-			wantBlockSize: 2,
-			wantCommands:  []string{"(which go || echo \"not found\")", "echo \"done\""},
-			wantErr:       false,
+			Name:  "block with @var() references",
+			Input: "build: { cd @var(SRC); make @var(TARGET) }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("build",
+						Statement("cd @var(SRC)", Text("cd "), Var("SRC")),
+						Statement("make @var(TARGET)", Text("make "), Var("TARGET"))),
+				},
+			},
 		},
 		{
-			name:          "block with watch/stop keywords in command text",
-			input:         "services: { watch -n 1 \"ps aux\"; echo \"stop when ready\" }",
-			wantName:      "services",
-			wantBlockSize: 2,
-			wantCommands:  []string{"watch -n 1 \"ps aux\"", "echo \"stop when ready\""},
-			wantErr:       false,
-		},
-		// Updated to use @sh() for POSIX braces in block commands
-		{
-			name:          "block with find commands using @sh()",
-			input:         "cleanup: { @sh(find . -name \"*.tmp\" -exec rm {} \\;); echo \"cleanup done\" }",
-			wantName:      "cleanup",
-			wantBlockSize: 2,
-			wantCommands:  []string{"find . -name \"*.tmp\" -exec rm {} \\;", "echo \"cleanup done\""},
-			wantErr:       false,
-		},
-		// Test @parallel: decorator for concurrent execution
-		{
-			name:          "block with parallel decorator",
-			input:         "services: { @parallel: { server; client; database } }",
-			wantName:      "services",
-			wantBlockSize: 1,
-			wantCommands:  []string{""},
-			wantErr:       false,
+			Name:  "block with decorators",
+			Input: "services: { @parallel: { server; client } }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("services",
+						BlockDecoratedStatement("parallel", "block", "")),
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true)
-
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Ensure we have exactly one command
-			if len(result.Commands) != 1 {
-				t.Fatalf("Expected 1 command, got %d", len(result.Commands))
-			}
-
-			// Check command properties
-			cmd := result.Commands[0]
-			if cmd.Name != tt.wantName {
-				t.Errorf("Command name = %q, want %q", cmd.Name, tt.wantName)
-			}
-
-			if !cmd.IsBlock {
-				t.Errorf("Expected IsBlock to be true")
-			}
-
-			if len(cmd.Block) != tt.wantBlockSize {
-				// Dump block structure for debugging when test fails
-				dumpBlockStructure(t, tt.name, cmd)
-				t.Fatalf("Block size = %d, want %d", len(cmd.Block), tt.wantBlockSize)
-			}
-
-			// Check each statement in the block
-			for i := 0; i < tt.wantBlockSize; i++ {
-				if i >= len(cmd.Block) {
-					t.Fatalf("Missing block statement %d", i)
-				}
-
-				stmt := cmd.Block[i]
-				expectedCommand := tt.wantCommands[i]
-
-				// Handle decorated commands (like @sh() and @parallel:)
-				if stmt.IsDecorated {
-					if stmt.DecoratorType == "function" && expectedCommand != "" {
-						if stmt.Command != expectedCommand {
-							t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
-						}
-					}
-					// For block decorators like @parallel:, don't check command text
-				} else {
-					if stmt.Command != expectedCommand {
-						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
-					}
-				}
-			}
-		})
-	}
-}
-
-// Test for @ decorator syntax
-func TestDecoratedCommands(t *testing.T) {
-	tests := []struct {
-		name               string
-		input              string
-		wantBlockSize      int
-		wantDecorators     []string
-		wantDecoratorTypes []string
-		wantCommands       []string
-		wantErr            bool
-	}{
-		{
-			name:               "function decorator",
-			input:              "cleanup: { @sh(find . -name \"*.tmp\" -exec rm {} \\;) }",
-			wantBlockSize:      1,
-			wantDecorators:     []string{"sh"},
-			wantDecoratorTypes: []string{"function"},
-			wantCommands:       []string{"find . -name \"*.tmp\" -exec rm {} \\;"},
-			wantErr:            false,
-		},
-		{
-			name:               "simple decorator",
-			input:              "deploy: { @retry: docker push myapp:latest }",
-			wantBlockSize:      1,
-			wantDecorators:     []string{"retry"},
-			wantDecoratorTypes: []string{"simple"},
-			wantCommands:       []string{"docker push myapp:latest"},
-			wantErr:            false,
-		},
-		{
-			name:               "block decorator",
-			input:              "services: { @parallel: { server; client; database } }",
-			wantBlockSize:      1,
-			wantDecorators:     []string{"parallel"},
-			wantDecoratorTypes: []string{"block"},
-			wantCommands:       []string{""},
-			wantErr:            false,
-		},
-		{
-			name:               "mixed decorators and regular commands",
-			input:              "complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",
-			wantBlockSize:      4,
-			wantDecorators:     []string{"", "parallel", "retry", ""},
-			wantDecoratorTypes: []string{"", "block", "simple", ""},
-			wantCommands:       []string{"echo \"starting\"", "", "flaky-command", "echo \"done\""},
-			wantErr:            false,
-		},
-		{
-			name:               "function decorator with simple content",
-			input:              "check: { @sh(test -f config.json) }",
-			wantBlockSize:      1,
-			wantDecorators:     []string{"sh"},
-			wantDecoratorTypes: []string{"function"},
-			wantCommands:       []string{"test -f config.json"},
-			wantErr:            false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true)
-
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Find the command with a block
-			var cmd *Command
-			for i := range result.Commands {
-				if result.Commands[i].IsBlock {
-					cmd = &result.Commands[i]
-					break
-				}
-			}
-
-			if cmd == nil {
-				t.Fatalf("No block command found")
-			}
-
-			if len(cmd.Block) != tt.wantBlockSize {
-				// Dump block structure for debugging when test fails
-				dumpBlockStructure(t, tt.name, *cmd)
-				t.Fatalf("Block size = %d, want %d", len(cmd.Block), tt.wantBlockSize)
-			}
-
-			// Check each statement in the block
-			for i := 0; i < tt.wantBlockSize; i++ {
-				stmt := cmd.Block[i]
-
-				expectedDecorator := tt.wantDecorators[i]
-				expectedType := tt.wantDecoratorTypes[i]
-				expectedCommand := tt.wantCommands[i]
-
-				if expectedDecorator == "" {
-					// Regular command
-					if stmt.IsDecorated {
-						t.Errorf("Block[%d] should not be decorated", i)
-					}
-					if stmt.Command != expectedCommand {
-						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
-					}
-				} else {
-					// Decorated command
-					if !stmt.IsDecorated {
-						t.Errorf("Block[%d] should be decorated", i)
-					}
-					if stmt.Decorator != expectedDecorator {
-						t.Errorf("Block[%d].Decorator = %q, want %q", i, stmt.Decorator, expectedDecorator)
-					}
-					if stmt.DecoratorType != expectedType {
-						t.Errorf("Block[%d].DecoratorType = %q, want %q", i, stmt.DecoratorType, expectedType)
-					}
-					if expectedType != "block" && stmt.Command != expectedCommand {
-						t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
-					}
-				}
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }
 
 func TestWatchStopCommands(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantName  string
-		wantWatch bool
-		wantStop  bool
-		wantText  string
-		wantBlock bool
-		wantErr   bool
-	}{
+	testCases := []TestCase{
 		{
-			name:      "simple watch command",
-			input:     "watch server: npm start;",
-			wantName:  "server",
-			wantWatch: true,
-			wantStop:  false,
-			wantText:  "npm start",
-			wantBlock: false,
-			wantErr:   false,
+			Name:  "simple watch command",
+			Input: "watch server: npm start;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					WatchCommand("server", "npm start", Text("npm start")),
+				},
+			},
 		},
 		{
-			name:      "simple stop command",
-			input:     "stop server: pkill node;",
-			wantName:  "server",
-			wantWatch: false,
-			wantStop:  true,
-			wantText:  "pkill node",
-			wantBlock: false,
-			wantErr:   false,
+			Name:  "simple stop command",
+			Input: "stop server: pkill node;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					StopCommand("server", "pkill node", Text("pkill node")),
+				},
+			},
 		},
 		{
-			name:      "watch command with block",
-			input:     "watch dev: {\nnpm start;\ngo run main.go\n}",
-			wantName:  "dev",
-			wantWatch: true,
-			wantStop:  false,
-			wantText:  "",
-			wantBlock: true,
-			wantErr:   false,
+			Name:  "watch command with @var()",
+			Input: "watch server: go run @var(MAIN_FILE) --port=@var(PORT);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					WatchCommand("server", "go run @var(MAIN_FILE) --port=@var(PORT)",
+						Text("go run "), Var("MAIN_FILE"), Text(" --port="), Var("PORT")),
+				},
+			},
 		},
 		{
-			name:      "stop command with block",
-			input:     "stop dev: {\npkill node;\npkill go\n}",
-			wantName:  "dev",
-			wantWatch: false,
-			wantStop:  true,
-			wantText:  "",
-			wantBlock: true,
-			wantErr:   false,
-		},
-		// New edge cases for parentheses in watch/stop commands
-		{
-			name:      "watch command with parentheses",
-			input:     "watch api: (cd api && npm start);",
-			wantName:  "api",
-			wantWatch: true,
-			wantStop:  false,
-			wantText:  "(cd api && npm start)",
-			wantBlock: false,
-			wantErr:   false,
-		},
-		{
-			name:      "stop command with complex parentheses",
-			input:     "stop services: (pkill -f \"node.*server\" || echo \"no node processes\");",
-			wantName:  "services",
-			wantWatch: false,
-			wantStop:  true,
-			wantText:  "(pkill -f \"node.*server\" || echo \"no node processes\")",
-			wantBlock: false,
-			wantErr:   false,
-		},
-		{
-			name:      "watch block with parentheses and keywords",
-			input:     "watch monitor: {\n(watch -n 1 \"ps aux\");\necho \"stop monitoring with Ctrl+C\"\n}",
-			wantName:  "monitor",
-			wantWatch: true,
-			wantStop:  false,
-			wantText:  "",
-			wantBlock: true,
-			wantErr:   false,
-		},
-		// Updated to use @sh() for POSIX braces in watch/stop commands
-		{
-			name:      "watch command with find and braces using @sh()",
-			input:     "watch cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			wantName:  "cleanup",
-			wantWatch: true,
-			wantStop:  false,
-			wantText:  "find . -name \"*.tmp\" -exec rm {} \\;",
-			wantBlock: true, // @sh() creates a block command
-			wantErr:   false,
-		},
-		{
-			name:      "stop command with test and braces",
-			input:     "stop validator: test -f {} && rm {} || echo \"file not found\";",
-			wantName:  "validator",
-			wantWatch: false,
-			wantStop:  true,
-			wantText:  "test -f {} && rm {} || echo \"file not found\"",
-			wantBlock: false,
-			wantErr:   false,
+			Name:  "watch block command",
+			Input: "watch dev: { npm start; go run main.go }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					WatchBlockCommand("dev",
+						Statement("npm start", Text("npm start")),
+						Statement("go run main.go", Text("go run main.go"))),
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true)
-
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Ensure we have exactly one command
-			if len(result.Commands) != 1 {
-				t.Fatalf("Expected 1 command, got %d", len(result.Commands))
-			}
-
-			// Check command properties
-			cmd := result.Commands[0]
-			if cmd.Name != tt.wantName {
-				t.Errorf("Command name = %q, want %q", cmd.Name, tt.wantName)
-			}
-
-			if cmd.IsWatch != tt.wantWatch {
-				t.Errorf("IsWatch = %v, want %v", cmd.IsWatch, tt.wantWatch)
-			}
-
-			if cmd.IsStop != tt.wantStop {
-				t.Errorf("IsStop = %v, want %v", cmd.IsStop, tt.wantStop)
-			}
-
-			if cmd.IsBlock != tt.wantBlock {
-				t.Errorf("IsBlock = %v, want %v", cmd.IsBlock, tt.wantBlock)
-			}
-
-			// For simple commands, check the command text
-			if !tt.wantBlock && cmd.Command != tt.wantText {
-				t.Errorf("Command text = %q, want %q", cmd.Command, tt.wantText)
-			}
-
-			// For @sh() function decorators in blocks, check the decorator command
-			if tt.wantBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
-				decoratedStmt := cmd.Block[0]
-				if decoratedStmt.Command != tt.wantText {
-					t.Errorf("Decorated command = %q, want %q", decoratedStmt.Command, tt.wantText)
-				}
-			}
-		})
-	}
-}
-
-func TestVariableReferences(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        string
-		wantExpanded string
-		wantErr      bool
-	}{
-		{
-			name:         "simple variable reference",
-			input:        "def SRC = ./src;\nbuild: cd $(SRC) && make;",
-			wantExpanded: "cd ./src && make",
-			wantErr:      false,
-		},
-		{
-			name:         "multiple variable references",
-			input:        "def SRC = ./src;\ndef BIN = ./bin;\nbuild: cp $(SRC)/main $(BIN)/app;",
-			wantExpanded: "cp ./src/main ./bin/app",
-			wantErr:      false,
-		},
-		{
-			name:         "variable in block command",
-			input:        "def SRC = ./src;\nsetup: { cd $(SRC); make all }",
-			wantExpanded: "cd ./src", // Check just first statement
-			wantErr:      false,
-		},
-		{
-			name:         "escaped dollar sign",
-			input:        "def PATH = /bin;\necho: echo \\$PATH is $(PATH);",
-			wantExpanded: "echo $PATH is /bin",
-			wantErr:      false,
-		},
-		{
-			name:         "undefined variable",
-			input:        "build: echo $(UNDEFINED);",
-			wantExpanded: "",
-			wantErr:      true, // Should fail during ExpandVariables
-		},
-		// New edge cases for parentheses with variables
-		{
-			name:         "variable with parentheses in value",
-			input:        "def CHECK = (which go || echo \"not found\");\nvalidate: $(CHECK);",
-			wantExpanded: "(which go || echo \"not found\")",
-			wantErr:      false,
-		},
-		{
-			name:         "variable in parentheses expression",
-			input:        "def CMD = make clean;\nbuild: ($(CMD) && echo \"cleaned\") || echo \"failed\";",
-			wantExpanded: "(make clean && echo \"cleaned\") || echo \"failed\"",
-			wantErr:      false,
-		},
-		// Simplified variable test to avoid complex parsing
-		{
-			name:         "variable with find command",
-			input:        "def PATTERN = \"*.tmp\";\ncleanup: find . -name $(PATTERN) -delete;",
-			wantExpanded: "find . -name \"*.tmp\" -delete",
-			wantErr:      false,
-		},
-		{
-			name:         "variable with escaped characters",
-			input:        "def MSG = \"Cost: \\$50\";\necho: echo $(MSG);",
-			wantExpanded: "echo \"Cost: $50\"",
-			wantErr:      false,
-		},
-		{
-			name:         "variable with test braces",
-			input:        "def FILE = config.json;\ncheck: test -f $(FILE) && echo \"found {}\" || echo \"not found\";",
-			wantExpanded: "test -f config.json && echo \"found {}\" || echo \"not found\"",
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
-			if err != nil {
-				if !tt.wantErr {
-					t.Fatalf("Parse() error = %v", err)
-				}
-				return
-			}
-
-			// Try to expand variables
-			err = result.ExpandVariables()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ExpandVariables() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Check the expanded command
-			if len(result.Commands) == 0 {
-				t.Fatalf("No commands found")
-			}
-
-			cmd := result.Commands[0]
-			var expandedText string
-
-			if cmd.IsBlock {
-				if len(cmd.Block) == 0 {
-					t.Fatalf("No block statements found")
-				}
-				// Handle @sh() function decorators
-				if cmd.Block[0].IsDecorated && cmd.Block[0].DecoratorType == "function" {
-					expandedText = cmd.Block[0].Command
-				} else {
-					expandedText = cmd.Block[0].Command
-				}
-			} else {
-				expandedText = cmd.Command
-			}
-
-			if expandedText != tt.wantExpanded {
-				t.Errorf("Expanded text = %q, want %q", expandedText, tt.wantExpanded)
-			}
-		})
-	}
-}
-
-func TestDollarSyntaxHandling(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        string
-		wantExpanded string
-		wantErr      bool
-	}{
-		{
-			name:         "escaped shell command substitution - simple",
-			input:        "date: echo \\$(date);",
-			wantExpanded: "echo $(date)",
-			wantErr:      false,
-		},
-		{
-			name:         "escaped shell command substitution - complex",
-			input:        "info: echo \"Current time: \\$(date '+%Y-%m-%d %H:%M:%S')\";",
-			wantExpanded: "echo \"Current time: $(date '+%Y-%m-%d %H:%M:%S')\"",
-			wantErr:      false,
-		},
-		{
-			name:         "escaped devcmd variable reference",
-			input:        "def SRC = ./src;\necho: echo \"Variable syntax: \\$(SRC)\";",
-			wantExpanded: "echo \"Variable syntax: $(SRC)\"",
-			wantErr:      false,
-		},
-		{
-			name:         "mixed escaped and real variable references",
-			input:        "def DIR = /tmp;\ncmd: echo \"Real: $(DIR), Escaped: \\$(whoami)\";",
-			wantExpanded: "echo \"Real: /tmp, Escaped: $(whoami)\"",
-			wantErr:      false,
-		},
-		{
-			name:         "escaped shell variable vs devcmd variable",
-			input:        "def PATH = mypath;\ncmd: echo \"Devcmd: $(PATH), Shell: \\$PATH\";",
-			wantExpanded: "echo \"Devcmd: mypath, Shell: $PATH\"",
-			wantErr:      false,
-		},
-		{
-			name:         "nested shell command substitution - escaped",
-			input:        "complex: echo \\$(echo \\$(date));",
-			wantExpanded: "echo $(echo $(date))",
-			wantErr:      false,
-		},
-		{
-			name:         "shell command substitution with pipes",
-			input:        "pipeline: echo \\$(ps aux | grep node | wc -l);",
-			wantExpanded: "echo $(ps aux | grep node | wc -l)",
-			wantErr:      false,
-		},
-		{
-			name:         "arithmetic expansion - escaped",
-			input:        "math: echo \\$((2 + 3));",
-			wantExpanded: "echo $((2 + 3))",
-			wantErr:      false,
-		},
-		{
-			name:         "parameter expansion - escaped",
-			input:        "param: echo \\${HOME}/bin;",
-			wantExpanded: "echo ${HOME}/bin",
-			wantErr:      false,
-		},
-		{
-			name:         "complex mixed case",
-			input:        "def SRC = ./src;\ncomplex: cd $(SRC) && echo \\$(pwd) && echo \\$USER;",
-			wantExpanded: "cd ./src && echo $(pwd) && echo $USER",
-			wantErr:      false,
-		},
-		{
-			name:         "dockerfile-like syntax",
-			input:        "def IMAGE = myapp;\nbuild: docker build -t $(IMAGE) . && echo \\$(docker images | grep $(IMAGE));",
-			wantExpanded: "docker build -t myapp . && echo $(docker images | grep myapp)",
-			wantErr:      false,
-		},
-		{
-			name:         "escaped dollar in quotes",
-			input:        "quote: echo \"Price: \\$10\" && echo \\$(date);",
-			wantExpanded: "echo \"Price: $10\" && echo $(date)",
-			wantErr:      false,
-		},
-		{
-			name:         "multiple escapes in sequence",
-			input:        "multi: echo \\$HOME \\$(whoami) \\$((1+1));",
-			wantExpanded: "echo $HOME $(whoami) $((1+1))",
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
-			if err != nil {
-				if !tt.wantErr {
-					t.Fatalf("Parse() error = %v", err)
-				}
-				return
-			}
-
-			// Try to expand variables
-			err = result.ExpandVariables()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ExpandVariables() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Check the expanded command
-			if len(result.Commands) == 0 {
-				t.Fatalf("No commands found")
-			}
-
-			cmd := result.Commands[0]
-			var expandedText string
-
-			if cmd.IsBlock {
-				if len(cmd.Block) == 0 {
-					t.Fatalf("No block statements found")
-				}
-				expandedText = cmd.Block[0].Command
-			} else {
-				expandedText = cmd.Command
-			}
-
-			if expandedText != tt.wantExpanded {
-				t.Errorf("Expanded text = %q, want %q", expandedText, tt.wantExpanded)
-			}
-		})
-	}
-}
-
-func TestDollarSyntaxInBlocks(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		wantBlockSize int
-		wantCommands  []string
-		wantErr       bool
-	}{
-		{
-			name:          "block with mixed dollar syntax",
-			input:         "def PORT = 8080;\nsetup: { echo \"Starting on port $(PORT)\"; echo \\$(date); echo \"PID: \\$\\$\" }",
-			wantBlockSize: 3,
-			wantCommands:  []string{"echo \"Starting on port 8080\"", "echo $(date)", "echo \"PID: $$\""},
-			wantErr:       false,
-		},
-		{
-			name:          "watch block with shell command substitution and parallel",
-			input:         "watch dev: { echo \"Started at \\$(date)\"; @parallel: { npm start; go run ./cmd/api } }",
-			wantBlockSize: 2,
-			wantCommands:  []string{"echo \"Started at $(date)\"", ""},
-			wantErr:       false,
-		},
-		{
-			name:          "block with environment variable handling",
-			input:         "def APP = myapp;\nenv: { export APP_NAME=$(APP); echo \\$APP_NAME; echo \\$(printenv APP_NAME) }",
-			wantBlockSize: 3,
-			wantCommands:  []string{"export APP_NAME=myapp", "echo $APP_NAME", "echo $(printenv APP_NAME)"},
-			wantErr:       false,
-		},
-		{
-			name:          "block with docker commands",
-			input:         "def IMAGE = node:18;\ndocker: { docker run -d --name myapp $(IMAGE); echo \"Container ID: \\$(docker ps -q -f name=myapp)\" }",
-			wantBlockSize: 2,
-			wantCommands:  []string{"docker run -d --name myapp node:18", "echo \"Container ID: $(docker ps -q -f name=myapp)\""},
-			wantErr:       false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
-			if err != nil {
-				if !tt.wantErr {
-					t.Fatalf("Parse() error = %v", err)
-				}
-				return
-			}
-
-			// Expand variables
-			err = result.ExpandVariables()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ExpandVariables() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Find the command with a block
-			var cmd *Command
-			for i := range result.Commands {
-				if result.Commands[i].IsBlock {
-					cmd = &result.Commands[i]
-					break
-				}
-			}
-
-			if cmd == nil {
-				t.Fatalf("No block command found")
-			}
-
-			if len(cmd.Block) != tt.wantBlockSize {
-				// Dump block structure for debugging when test fails
-				dumpBlockStructure(t, tt.name, *cmd)
-				t.Fatalf("Block size = %d, want %d", len(cmd.Block), tt.wantBlockSize)
-			}
-
-			// Check each statement in the block - handle decorators specially
-			for i := 0; i < tt.wantBlockSize; i++ {
-				if i >= len(cmd.Block) {
-					t.Fatalf("Missing block statement %d", i)
-				}
-
-				stmt := cmd.Block[i]
-				expectedCommand := tt.wantCommands[i]
-
-				if stmt.IsDecorated && expectedCommand == "" {
-					// This is a decorated command like @parallel: - don't check Command text
-					continue
-				}
-
-				if stmt.Command != expectedCommand {
-					t.Errorf("Block[%d].Command = %q, want %q", i, stmt.Command, expectedCommand)
-				}
-			}
-		})
-	}
-}
-
-func TestDollarSyntaxErrorCases(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		wantErrSubstr string
-	}{
-		{
-			name:          "undefined variable with escaped syntax mix",
-			input:         "test: echo $(UNDEFINED) \\$(date);",
-			wantErrSubstr: "undefined variable",
-		},
-		{
-			name:          "malformed escaped syntax should still parse",
-			input:         "test: echo \\$(;", // Incomplete but should parse the escape
-			wantErrSubstr: "",                 // Should not error on parsing, just produce the literal
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
-
-			// Check if we should have a parsing error
-			if tt.wantErrSubstr != "" {
-				if err == nil {
-					t.Fatalf("Expected parsing error containing %q, got nil", tt.wantErrSubstr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErrSubstr) {
-					t.Errorf("Error = %q, want substring %q", err.Error(), tt.wantErrSubstr)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("Unexpected parse error: %v", err)
-			}
-
-			// Try to expand variables - this is where semantic errors occur
-			err = result.ExpandVariables()
-
-			if tt.wantErrSubstr != "" {
-				if err == nil {
-					t.Fatalf("Expected error containing %q, got nil", tt.wantErrSubstr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErrSubstr) {
-					t.Errorf("Error = %q, want substring %q", err.Error(), tt.wantErrSubstr)
-				}
-			} else if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
-
-func TestDollarSyntaxWithContinuations(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        string
-		wantExpanded string
-		wantErr      bool
-	}{
-		{
-			name:         "escaped dollar with continuation",
-			input:        "def DIR = /home;\ncmd: echo $(DIR) \\\n&& echo \\$(pwd);",
-			wantExpanded: "echo /home && echo $(pwd)",
-			wantErr:      false,
-		},
-		{
-			name:         "complex shell substitution with continuation",
-			input:        "complex: echo \\$(find . -name \"*.go\" \\\n| wc -l);",
-			wantExpanded: "echo $(find . -name \"*.go\" | wc -l)",
-			wantErr:      false,
-		},
-		{
-			name:         "mixed syntax across continuation lines",
-			input:        "def SRC = ./src;\nmulti: cd $(SRC) \\\n&& echo \\$(pwd) \\\n&& echo \"Done\";",
-			wantExpanded: "cd ./src && echo $(pwd) && echo \"Done\"",
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
-			if err != nil {
-				if !tt.wantErr {
-					t.Fatalf("Parse() error = %v", err)
-				}
-				return
-			}
-
-			// Expand variables
-			err = result.ExpandVariables()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ExpandVariables() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Find the command (skip definitions)
-			var cmd *Command
-			for i := range result.Commands {
-				if result.Commands[i].Name != "" && !strings.HasPrefix(result.Commands[i].Name, "def") {
-					cmd = &result.Commands[i]
-					break
-				}
-			}
-
-			if cmd == nil {
-				t.Fatalf("Command not found in result")
-			}
-
-			if cmd.Command != tt.wantExpanded {
-				t.Errorf("Command text = %q, want %q", cmd.Command, tt.wantExpanded)
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }
 
 func TestContinuationLines(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		wantCommand string
-		wantErr     bool
-	}{
+	testCases := []TestCase{
 		{
-			name:        "simple continuation",
-			input:       "build: echo hello \\\nworld;",
-			wantCommand: "echo hello world",
-			wantErr:     false,
+			Name:  "simple continuation",
+			Input: "build: echo hello \\\nworld;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "echo hello world", Text("echo hello world")),
+				},
+			},
 		},
 		{
-			name:        "multiple continuations",
-			input:       "build: echo hello \\\nworld \\\nuniverse;",
-			wantCommand: "echo hello world universe",
-			wantErr:     false,
-		},
-		{
-			name:        "continuation with variables",
-			input:       "def DIR = src;\nbuild: cd $(DIR) \\\n&& make;",
-			wantCommand: "cd $(DIR) && make",
-			wantErr:     false,
-		},
-		{
-			name:        "continuation with indentation",
-			input:       "build: echo hello \\\n    world;",
-			wantCommand: "echo hello world",
-			wantErr:     false,
-		},
-		// New edge cases for continuations with parentheses
-		{
-			name:        "continuation with parentheses",
-			input:       "check: (which go \\\n|| echo \"not found\");",
-			wantCommand: "(which go || echo \"not found\")",
-			wantErr:     false,
-		},
-		{
-			name:        "complex continuation with parentheses",
-			input:       "setup: (cd src && \\\nmake clean) \\\n|| echo \"failed\";",
-			wantCommand: "(cd src && make clean) || echo \"failed\"",
-			wantErr:     false,
-		},
-		// Simplified continuation tests to avoid complex parsing issues
-		{
-			name:        "continuation with find command using @sh()",
-			input:       "cleanup: @sh(find . -name \"*.tmp\" \\\n-delete);",
-			wantCommand: "find . -name \"*.tmp\" \\\n-delete",
-			wantErr:     false,
-		},
-		{
-			name:        "simple continuation with @sh()",
-			input:       "batch: @sh(find . -name \"*.log\" \\\n-delete);",
-			wantCommand: "find . -name \"*.log\" \\\n-delete",
-			wantErr:     false,
+			Name:  "continuation with @var()",
+			Input: "build: cd @var(DIR) \\\n&& make;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "cd @var(DIR) && make", Text("cd "), Var("DIR"), Text(" && make")),
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse the input
-			result, err := Parse(tt.input, true)
+	for _, tc := range testCases {
+		runTestCase(t, tc)
+	}
+}
 
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tt.wantErr)
-			}
+func TestDefinitions(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "simple definition",
+			Input: "def SRC = ./src;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("SRC", "./src"),
+				},
+			},
+		},
+		{
+			Name:  "definition with complex value",
+			Input: "def CMD = go test -v ./...;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("CMD", "go test -v ./..."),
+				},
+			},
+		},
+		{
+			Name:  "empty definition",
+			Input: "def EMPTY = ;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("EMPTY", ""),
+				},
+			},
+		},
+		{
+			Name:  "multiple definitions",
+			Input: "def SRC = ./src;\ndef BIN = ./bin;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("SRC", "./src"),
+					Def("BIN", "./bin"),
+				},
+			},
+		},
+	}
 
-			if tt.wantErr {
-				return
-			}
-
-			// Find the actual command (might not be the first one in some tests)
-			var cmd *Command
-			for i := range result.Commands {
-				if strings.Contains(result.Commands[i].Command, "echo") ||
-					strings.Contains(result.Commands[i].Command, "cd") ||
-					strings.HasPrefix(result.Commands[i].Command, "(") ||
-					result.Commands[i].IsBlock {
-					cmd = &result.Commands[i]
-					break
-				}
-			}
-
-			if cmd == nil {
-				t.Fatalf("Command not found in result")
-			}
-
-			var actualCommand string
-			// Handle @sh() function decorators in blocks
-			if cmd.IsBlock && len(cmd.Block) == 1 && cmd.Block[0].IsDecorated {
-				actualCommand = cmd.Block[0].Command
-			} else {
-				actualCommand = cmd.Command
-			}
-
-			// Check the command text
-			if actualCommand != tt.wantCommand {
-				t.Errorf("Command text = %q, want %q", actualCommand, tt.wantCommand)
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }
 
 func TestErrorHandling(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr string
-	}{
+	testCases := []TestCase{
 		{
-			name:    "duplicate command",
-			input:   "build: echo hello;\nbuild: echo world;",
-			wantErr: "duplicate command",
+			Name:        "duplicate command",
+			Input:       "build: echo hello;\nbuild: echo world;",
+			WantErr:     true,
+			ErrorSubstr: "duplicate command",
 		},
 		{
-			name:    "duplicate definition",
-			input:   "def VAR = value1;\ndef VAR = value2;",
-			wantErr: "duplicate definition",
+			Name:        "duplicate definition",
+			Input:       "def VAR = value1;\ndef VAR = value2;",
+			WantErr:     true,
+			ErrorSubstr: "duplicate definition",
 		},
 		{
-			name:    "syntax error in command",
-			input:   "build echo hello;", // Missing colon
-			wantErr: "missing ':'",       // Updated to match actual error
+			Name:        "syntax error in command",
+			Input:       "build echo hello;", // Missing colon
+			WantErr:     true,
+			ErrorSubstr: "missing ':'",
 		},
 		{
-			name:    "bad variable expansion",
-			input:   "build: echo $(missingVar);",
-			wantErr: "undefined variable",
-		},
-		{
-			name:    "missing semicolon in definition",
-			input:   "def VAR = value\nbuild: echo hello;",
-			wantErr: "missing ';'", // Updated to match actual error
-		},
-		{
-			name:    "missing semicolon in simple command",
-			input:   "build: echo hello\ntest: echo world;",
-			wantErr: "missing ';'", // New test for semicolon requirement
+			Name:        "missing semicolon in definition",
+			Input:       "def VAR = value\nbuild: echo hello;",
+			WantErr:     true,
+			ErrorSubstr: "missing ';'",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse and possibly expand variables
-			result, gotErr := Parse(tt.input, true)
-
-			// If no syntax error, try expanding variables to catch semantic errors
-			if gotErr == nil && strings.Contains(tt.input, "$(") {
-				gotErr = result.ExpandVariables()
-			}
-
-			// We expect an error
-			if gotErr == nil {
-				t.Fatalf("got nil error, want error containing %q", tt.wantErr)
-			}
-
-			// Check that the error contains the expected substring
-			got := gotErr.Error()
-			if !strings.Contains(got, tt.wantErr) {
-				t.Errorf("got error %q, want error containing %q", got, tt.wantErr)
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }
 
 func TestCompleteFile(t *testing.T) {
 	input := `
-	# Development commands
+# Development commands
 def SRC = ./src;
 def BIN = ./bin;
 
 # Build commands
-build: cd $(SRC) && make all;
+build: cd @var(SRC) && make all;
 
 # Run commands with parallel execution
 watch server: {
-  cd $(SRC);
+  cd @var(SRC);
   @parallel: {
     ./server --port=8080;
     ./worker --queue=jobs
@@ -1417,311 +840,267 @@ watch server: {
 
 stop server: pkill -f "server|worker";
 
-# Complex commands with parentheses and keywords
-check-deps: (which go && echo "Go found") || (echo "Go missing" && exit 1);
-
-monitor: {
-  watch -n 1 "ps aux | grep server";
-  echo "Use stop server to halt processes";
-}
-
 # POSIX shell commands with braces using @sh()
 cleanup: @sh(find . -name "*.tmp" -exec rm {} \;);
-
-# Parallel execution with decorators
-batch-clean: {
-  @parallel: {
-    @sh(find /tmp -name "*.log" -exec rm {} \;);
-    @sh(find /var -name "*.tmp" -exec rm {} \;)
-  };
-  echo "Cleanup complete";
-}
 `
 
-	result, err := Parse(input, true)
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
+	tc := TestCase{
+		Name:  "complete file",
+		Input: input,
+		Expected: struct {
+			Definitions []ExpectedDefinition
+			Commands    []ExpectedCommand
+		}{
+			Definitions: []ExpectedDefinition{
+				Def("SRC", "./src"),
+				Def("BIN", "./bin"),
+			},
+			Commands: []ExpectedCommand{
+				SimpleCommand("build", "cd @var(SRC) && make all",
+					Text("cd "), Var("SRC"), Text(" && make all")),
+				WatchBlockCommand("server",
+					Statement("cd @var(SRC)", Text("cd "), Var("SRC")),
+					BlockDecoratedStatement("parallel", "block", "")),
+				StopCommand("server", "pkill -f \"server|worker\"",
+					Text("pkill -f \"server|worker\"")),
+				BlockCommand("cleanup",
+					DecoratedStatement("sh", "function", "find . -name \"*.tmp\" -exec rm {} \\;",
+						Decorator("sh", "function",
+							Text("find . -name \"*.tmp\" -exec rm {} \\;")))),
+			},
+		},
 	}
 
-	// Verify definitions
-	if len(result.Definitions) != 2 {
-		t.Errorf("Expected 2 definitions, got %d", len(result.Definitions))
-	} else {
-		defNames := map[string]string{
-			result.Definitions[0].Name: result.Definitions[0].Value,
-			result.Definitions[1].Name: result.Definitions[1].Value,
-		}
-
-		if defNames["SRC"] != "./src" {
-			t.Errorf("Definition SRC = %q, want %q", defNames["SRC"], "./src")
-		}
-
-		if defNames["BIN"] != "./bin" {
-			t.Errorf("Definition BIN = %q, want %q", defNames["BIN"], "./bin")
-		}
-	}
-
-	// Verify commands - we expect 7 commands: build, watch server, stop server, check-deps, monitor, cleanup, batch-clean
-	if len(result.Commands) != 7 {
-		t.Errorf("Expected 7 commands, got %d", len(result.Commands))
-	} else {
-		// Find commands by type since we can have both watch and stop with same name
-		var buildCmd *Command
-		var watchServerCmd *Command
-		var stopServerCmd *Command
-		var checkDepsCmd *Command
-		var monitorCmd *Command
-		var cleanupCmd *Command
-		var batchCleanCmd *Command
-
-		for i := range result.Commands {
-			cmd := &result.Commands[i]
-			switch {
-			case cmd.Name == "build" && !cmd.IsWatch && !cmd.IsStop:
-				buildCmd = cmd
-			case cmd.Name == "server" && cmd.IsWatch:
-				watchServerCmd = cmd
-			case cmd.Name == "server" && cmd.IsStop:
-				stopServerCmd = cmd
-			case cmd.Name == "check-deps":
-				checkDepsCmd = cmd
-			case cmd.Name == "monitor":
-				monitorCmd = cmd
-			case cmd.Name == "cleanup":
-				cleanupCmd = cmd
-			case cmd.Name == "batch-clean":
-				batchCleanCmd = cmd
-			}
-		}
-
-		// Check build command
-		if buildCmd == nil {
-			t.Errorf("Missing 'build' command")
-		} else if buildCmd.Command != "cd $(SRC) && make all" {
-			t.Errorf("build command = %q, want %q", buildCmd.Command, "cd $(SRC) && make all")
-		}
-
-		// Check watch server command
-		if watchServerCmd == nil {
-			t.Errorf("Missing 'watch server' command")
-		} else {
-			if !watchServerCmd.IsWatch {
-				t.Errorf("Expected server command to be a watch command")
-			}
-
-			if !watchServerCmd.IsBlock {
-				t.Errorf("Expected server command to be a block command")
-			}
-
-			if len(watchServerCmd.Block) != 2 {
-				t.Errorf("Expected 2 block statements in server command, got %d", len(watchServerCmd.Block))
-			} else {
-				// First statement should be cd command
-				firstStmt := watchServerCmd.Block[0]
-				if firstStmt.Command != "cd $(SRC)" {
-					t.Errorf("Expected first statement to be 'cd $(SRC)', got: %q", firstStmt.Command)
-				}
-
-				// Second statement should be @parallel: decorator
-				secondStmt := watchServerCmd.Block[1]
-				if !secondStmt.IsDecorated || secondStmt.Decorator != "parallel" {
-					t.Errorf("Expected second statement to be @parallel: decorator, got: %+v", secondStmt)
-				}
-			}
-		}
-
-		// Check stop server command
-		if stopServerCmd == nil {
-			t.Errorf("Missing 'stop server' command")
-		} else {
-			if !stopServerCmd.IsStop {
-				t.Errorf("Expected stop server command to be a stop command")
-			}
-
-			if stopServerCmd.IsBlock {
-				t.Errorf("Expected stop server command to be a simple command, not a block")
-			}
-		}
-
-		// Check check-deps command (contains parentheses)
-		if checkDepsCmd == nil {
-			t.Errorf("Missing 'check-deps' command")
-		} else {
-			expectedCmd := "(which go && echo \"Go found\") || (echo \"Go missing\" && exit 1)"
-			if checkDepsCmd.Command != expectedCmd {
-				t.Errorf("check-deps command = %q, want %q", checkDepsCmd.Command, expectedCmd)
-			}
-		}
-
-		// Check monitor command (contains watch/stop keywords in text)
-		if monitorCmd == nil {
-			t.Errorf("Missing 'monitor' command")
-		} else {
-			if !monitorCmd.IsBlock {
-				t.Errorf("Expected monitor command to be a block command")
-			}
-
-			if len(monitorCmd.Block) != 2 {
-				t.Errorf("Expected 2 block statements in monitor command, got %d", len(monitorCmd.Block))
-			} else {
-				// First statement should contain 'watch' keyword
-				firstStmt := monitorCmd.Block[0].Command
-				if !strings.Contains(firstStmt, "watch -n 1") {
-					t.Errorf("Expected first statement to contain 'watch -n 1', got: %q", firstStmt)
-				}
-
-				// Second statement should contain 'stop' keyword
-				secondStmt := monitorCmd.Block[1].Command
-				if !strings.Contains(secondStmt, "stop server") {
-					t.Errorf("Expected second statement to contain 'stop server', got: %q", secondStmt)
-				}
-			}
-		}
-
-		// Check cleanup command (contains POSIX braces using @sh())
-		if cleanupCmd == nil {
-			t.Errorf("Missing 'cleanup' command")
-		} else {
-			if !cleanupCmd.IsBlock {
-				t.Errorf("Expected cleanup command to be a block (for @sh decorator)")
-			}
-
-			if len(cleanupCmd.Block) != 1 {
-				t.Errorf("Expected 1 block statement in cleanup command, got %d", len(cleanupCmd.Block))
-			} else {
-				stmt := cleanupCmd.Block[0]
-				if !stmt.IsDecorated || stmt.Decorator != "sh" {
-					t.Errorf("Expected @sh decorator, got: %+v", stmt)
-				}
-
-				expectedCmd := "find . -name \"*.tmp\" -exec rm {} \\;"
-				if stmt.Command != expectedCmd {
-					t.Errorf("cleanup command = %q, want %q", stmt.Command, expectedCmd)
-				}
-			}
-		}
-
-		// Check batch-clean command (contains @parallel: decorator)
-		if batchCleanCmd == nil {
-			t.Errorf("Missing 'batch-clean' command")
-		} else {
-			if !batchCleanCmd.IsBlock {
-				t.Errorf("Expected batch-clean command to be a block command")
-			}
-
-			if len(batchCleanCmd.Block) != 2 {
-				t.Errorf("Expected 2 block statements in batch-clean command, got %d", len(batchCleanCmd.Block))
-			} else {
-				// First statement should be @parallel: decorator
-				firstStmt := batchCleanCmd.Block[0]
-				if !firstStmt.IsDecorated || firstStmt.Decorator != "parallel" {
-					t.Errorf("Expected first statement to be @parallel: decorator, got: %+v", firstStmt)
-				}
-
-				// Second statement should be echo command
-				secondStmt := batchCleanCmd.Block[1]
-				if secondStmt.Command != "echo \"Cleanup complete\"" {
-					t.Errorf("Expected second statement to be echo command, got: %q", secondStmt.Command)
-				}
-			}
-		}
-
-		// Verify variable expansion
-		err = result.ExpandVariables()
-		if err != nil {
-			t.Fatalf("ExpandVariables() error = %v", err)
-		}
-
-		// Check that variables were expanded in the build command
-		if buildCmd != nil && buildCmd.Command != "cd ./src && make all" {
-			t.Errorf("Expanded build command = %q, want %q", buildCmd.Command, "cd ./src && make all")
-		}
-	}
+	runTestCase(t, tc)
 }
 
-// Helper test to demonstrate debug functionality
-func TestDebugFunctionality(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		debug bool
-	}{
+// Additional comprehensive test cases from original file with semantic expectations
+func TestAdvancedScenarios(t *testing.T) {
+	testCases := []TestCase{
 		{
-			name:  "simple command without debug",
-			input: "build: echo hello;",
-			debug: false,
+			Name:  "command with escaped semicolon in @sh()",
+			Input: "clean: @sh(find . -name \"*.log\" -exec rm {} \\;);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("clean",
+						DecoratedStatement("sh", "function", "find . -name \"*.log\" -exec rm {} \\;",
+							Decorator("sh", "function",
+								Text("find . -name \"*.log\" -exec rm {} \\;")))),
+				},
+			},
 		},
 		{
-			name:  "simple command with debug",
-			input: "build: echo hello;",
-			debug: true,
+			Name:  "command with nested parentheses in @sh()",
+			Input: "complex: @sh((test -f config && (source config && run)) || default);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("complex",
+						DecoratedStatement("sh", "function", "(test -f config && (source config && run)) || default",
+							Decorator("sh", "function",
+								Text("(test -f config && (source config && run)) || default")))),
+				},
+			},
 		},
 		{
-			name:  "complex command with debug using @sh()",
-			input: "cleanup: @sh(find . -name \"*.tmp\" -exec rm {} \\;);",
-			debug: true,
+			Name:  "test command with braces (not @sh)",
+			Input: "check-files: test -f {} && echo \"File exists\" || echo \"Missing\";",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("check-files", "test -f {} && echo \"File exists\" || echo \"Missing\"",
+						Text("test -f {} && echo \"File exists\" || echo \"Missing\"")),
+				},
+			},
 		},
 		{
-			name:  "block command with decorators and debug",
-			input: "services: { @parallel: { server; client }; echo \"done\" }",
-			debug: true,
+			Name:  "command containing watch/stop keywords",
+			Input: "manage: watch -n 5 \"systemctl status app || systemctl stop app\";",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("manage", "watch -n 5 \"systemctl status app || systemctl stop app\"",
+						Text("watch -n 5 \"systemctl status app || systemctl stop app\"")),
+				},
+			},
+		},
+		{
+			Name:  "simple decorator",
+			Input: "deploy: { @retry: docker push myapp:latest }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("deploy",
+						DecoratedStatement("retry", "simple", "docker push myapp:latest",
+							Text("docker push myapp:latest"))),
+				},
+			},
+		},
+		{
+			Name:  "mixed decorators and regular commands",
+			Input: "complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("complex",
+						Statement("echo \"starting\"", Text("echo \"starting\"")),
+						BlockDecoratedStatement("parallel", "block", ""),
+						DecoratedStatement("retry", "simple", "flaky-command",
+							Text("flaky-command")),
+						Statement("echo \"done\"", Text("echo \"done\""))),
+				},
+			},
+		},
+		{
+			Name:  "multiline block",
+			Input: "setup: {\n  npm install;\n  go mod tidy;\n  echo done\n}",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("setup",
+						Statement("npm install", Text("npm install")),
+						Statement("go mod tidy", Text("go mod tidy")),
+						Statement("echo done", Text("echo done"))),
+				},
+			},
+		},
+		{
+			Name:  "watch block with parentheses and keywords",
+			Input: "watch monitor: {\n(watch -n 1 \"ps aux\");\necho \"stop monitoring with Ctrl+C\"\n}",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					WatchBlockCommand("monitor",
+						Statement("(watch -n 1 \"ps aux\")",
+							Text("(watch -n 1 \"ps aux\")")),
+						Statement("echo \"stop monitoring with Ctrl+C\"",
+							Text("echo \"stop monitoring with Ctrl+C\""))),
+				},
+			},
+		},
+		{
+			Name:  "definition with parentheses",
+			Input: "def CHECK_CMD = (which go && echo \"found\");",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("CHECK_CMD", "(which go && echo \"found\")"),
+				},
+			},
+		},
+		{
+			Name:  "definition with numbers and decimals",
+			Input: "def VERSION = 1.5;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("VERSION", "1.5"),
+				},
+			},
+		},
+		{
+			Name:  "definition with special characters",
+			Input: "def PATH = /usr/local/bin:$PATH;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Definitions: []ExpectedDefinition{
+					Def("PATH", "/usr/local/bin:$PATH"),
+				},
+			},
+		},
+		{
+			Name:  "multiple continuations",
+			Input: "build: echo hello \\\nworld \\\nuniverse;",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "echo hello world universe",
+						Text("echo hello world universe")),
+				},
+			},
+		},
+		{
+			Name:  "continuation with parentheses",
+			Input: "check: (which go \\\n|| echo \"not found\");",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("check", "(which go || echo \"not found\")",
+						Text("(which go || echo \"not found\")")),
+				},
+			},
+		},
+		{
+			Name:  "complex continuation with parentheses",
+			Input: "setup: (cd src && \\\nmake clean) \\\n|| echo \"failed\";",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("setup", "(cd src && make clean) || echo \"failed\"",
+						Text("(cd src && make clean) || echo \"failed\"")),
+				},
+			},
+		},
+		{
+			Name:  "continuation with @sh()",
+			Input: "cleanup: @sh(find . -name \"*.tmp\" \\\n-delete);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					BlockCommand("cleanup",
+						DecoratedStatement("sh", "function", "find . -name \"*.tmp\" \\\n-delete",
+							Decorator("sh", "function",
+								Text("find . -name \"*.tmp\" \\\n-delete")))),
+				},
+			},
+		},
+		{
+			Name:  "@var() with complex names",
+			Input: "build: make @var(BUILD_TARGET_RELEASE) @var(EXTRA_FLAGS);",
+			Expected: struct {
+				Definitions []ExpectedDefinition
+				Commands    []ExpectedCommand
+			}{
+				Commands: []ExpectedCommand{
+					SimpleCommand("build", "make @var(BUILD_TARGET_RELEASE) @var(EXTRA_FLAGS)",
+						Text("make "), Var("BUILD_TARGET_RELEASE"), Text(" "), Var("EXTRA_FLAGS")),
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := Parse(tt.input, true) // Always use debug now
-			if err != nil {
-				// With debug enabled, errors will include debug trace
-				if tt.debug && !strings.Contains(err.Error(), "DEBUG TRACE") {
-					// When debug is enabled, we might expect trace data, but it's not always present
-					// This is acceptable behavior, so we don't need to check for it
-					t.Fatalf("Parse() error = %v", err)
-				}
-				t.Fatalf("Parse() error = %v", err)
-			}
-
-			if len(result.Commands) == 0 {
-				t.Fatalf("No commands found")
-			}
-
-			// Just verify basic parsing worked
-			cmd := result.Commands[0]
-			if cmd.Name == "" {
-				t.Errorf("Command name is empty")
-			}
-
-			// Only dump structure on failures or when debug flag is true
-			if tt.debug && cmd.IsBlock {
-				dumpBlockStructure(t, tt.name, cmd)
-			}
-		})
-	}
-}
-
-// Test specifically for understanding decorator parsing
-func TestDecoratorParsing(t *testing.T) {
-	testCases := []string{
-		"services: { @parallel: { server; client; database } }",
-		"complex: { echo \"starting\"; @parallel: { task1; task2 }; @retry: flaky-command; echo \"done\" }",
-		"watch dev: { echo \"Started at \\$(date)\"; @parallel: { npm start; go run ./cmd/api } }",
-	}
-
-	for i, input := range testCases {
-		t.Run(fmt.Sprintf("case_%d", i), func(t *testing.T) {
-			result, err := Parse(input, true)
-			if err != nil {
-				t.Fatalf("Parse error: %v", err)
-			}
-
-			// Just verify parsing worked - dump only on failure
-			if len(result.Commands) == 0 || !result.Commands[0].IsBlock {
-				t.Logf("Input: %s", input)
-				if len(result.Commands) > 0 && result.Commands[0].IsBlock {
-					dumpBlockStructure(t, fmt.Sprintf("case_%d", i), result.Commands[0])
-				}
-				t.Fatalf("Expected block command, got: %+v", result.Commands)
-			}
-		})
+	for _, tc := range testCases {
+		runTestCase(t, tc)
 	}
 }

@@ -25,6 +25,15 @@ type DevcmdParserListener interface {
 	// EnterCommandBody is called when entering the commandBody production.
 	EnterCommandBody(c *CommandBodyContext)
 
+	// EnterFunctionDecoratorLabel is called when entering the functionDecoratorLabel production.
+	EnterFunctionDecoratorLabel(c *FunctionDecoratorLabelContext)
+
+	// EnterBlockDecoratorLabel is called when entering the blockDecoratorLabel production.
+	EnterBlockDecoratorLabel(c *BlockDecoratorLabelContext)
+
+	// EnterSimpleDecoratorLabel is called when entering the simpleDecoratorLabel production.
+	EnterSimpleDecoratorLabel(c *SimpleDecoratorLabelContext)
+
 	// EnterFunctionDecorator is called when entering the functionDecorator production.
 	EnterFunctionDecorator(c *FunctionDecoratorContext)
 
@@ -42,6 +51,12 @@ type DevcmdParserListener interface {
 
 	// EnterDecoratorElement is called when entering the decoratorElement production.
 	EnterDecoratorElement(c *DecoratorElementContext)
+
+	// EnterNestedDecorator is called when entering the nestedDecorator production.
+	EnterNestedDecorator(c *NestedDecoratorContext)
+
+	// EnterDecoratorTextElement is called when entering the decoratorTextElement production.
+	EnterDecoratorTextElement(c *DecoratorTextElementContext)
 
 	// EnterSimpleCommand is called when entering the simpleCommand production.
 	EnterSimpleCommand(c *SimpleCommandContext)
@@ -70,6 +85,9 @@ type DevcmdParserListener interface {
 	// EnterCommandTextElement is called when entering the commandTextElement production.
 	EnterCommandTextElement(c *CommandTextElementContext)
 
+	// EnterInlineDecorator is called when entering the inlineDecorator production.
+	EnterInlineDecorator(c *InlineDecoratorContext)
+
 	// ExitProgram is called when exiting the program production.
 	ExitProgram(c *ProgramContext)
 
@@ -88,6 +106,15 @@ type DevcmdParserListener interface {
 	// ExitCommandBody is called when exiting the commandBody production.
 	ExitCommandBody(c *CommandBodyContext)
 
+	// ExitFunctionDecoratorLabel is called when exiting the functionDecoratorLabel production.
+	ExitFunctionDecoratorLabel(c *FunctionDecoratorLabelContext)
+
+	// ExitBlockDecoratorLabel is called when exiting the blockDecoratorLabel production.
+	ExitBlockDecoratorLabel(c *BlockDecoratorLabelContext)
+
+	// ExitSimpleDecoratorLabel is called when exiting the simpleDecoratorLabel production.
+	ExitSimpleDecoratorLabel(c *SimpleDecoratorLabelContext)
+
 	// ExitFunctionDecorator is called when exiting the functionDecorator production.
 	ExitFunctionDecorator(c *FunctionDecoratorContext)
 
@@ -105,6 +132,12 @@ type DevcmdParserListener interface {
 
 	// ExitDecoratorElement is called when exiting the decoratorElement production.
 	ExitDecoratorElement(c *DecoratorElementContext)
+
+	// ExitNestedDecorator is called when exiting the nestedDecorator production.
+	ExitNestedDecorator(c *NestedDecoratorContext)
+
+	// ExitDecoratorTextElement is called when exiting the decoratorTextElement production.
+	ExitDecoratorTextElement(c *DecoratorTextElementContext)
 
 	// ExitSimpleCommand is called when exiting the simpleCommand production.
 	ExitSimpleCommand(c *SimpleCommandContext)
@@ -132,4 +165,7 @@ type DevcmdParserListener interface {
 
 	// ExitCommandTextElement is called when exiting the commandTextElement production.
 	ExitCommandTextElement(c *CommandTextElementContext)
+
+	// ExitInlineDecorator is called when exiting the inlineDecorator production.
+	ExitInlineDecorator(c *InlineDecoratorContext)
 }

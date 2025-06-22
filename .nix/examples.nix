@@ -1,10 +1,9 @@
 # Example devcmd configurations and generated CLIs
 #
-# Note: In devcmd syntax, shell command substitution must be escaped as \$()
-# since devcmd reserves $() for its own variable references:
-#   - $(VAR) = devcmd variable reference
-#   - \$(command) = shell command substitution (escaped)
-#   - \$VAR = shell variable reference (escaped)
+# With @var() syntax, there's no conflict with shell variables:
+#   - @var(NAME) = devcmd variable reference
+#   - $(command) = shell command substitution (no escaping needed)
+#   - $VAR = shell variable reference (no escaping needed)
 { pkgs, lib, self }:
 
 let
@@ -22,18 +21,18 @@ rec {
 
       build: {
         echo "Building project...";
-        mkdir -p $(BUILD_DIR);
-        @sh((cd $(SRC) && make) || echo "No Makefile found")
+        mkdir -p @var(BUILD_DIR);
+        @sh((cd @var(SRC) && make) || echo "No Makefile found")
       }
 
       test: {
         echo "Running tests...";
-        @sh((cd $(SRC) && make test) || go test ./... || npm test || echo "No tests found")
+        @sh((cd @var(SRC) && make test) || go test ./... || npm test || echo "No tests found")
       }
 
       clean: {
         echo "Cleaning build artifacts...";
-        rm -rf $(BUILD_DIR);
+        rm -rf @var(BUILD_DIR);
         @sh(find . -name "*.tmp" -delete);
         echo "Clean complete"
       }
@@ -88,11 +87,11 @@ rec {
 
       watch dev: {
         echo "Starting development servers...";
-        echo "Frontend: http://localhost:$(FRONTEND_PORT)";
-        echo "Backend: http://localhost:$(BACKEND_PORT)";
+        echo "Frontend: http://localhost:@var(FRONTEND_PORT)";
+        echo "Backend: http://localhost:@var(BACKEND_PORT)";
         @parallel: {
-          @sh(cd frontend && NODE_ENV=$(NODE_ENV) npm start);
-          @sh(cd backend && go run ./cmd/api --port=$(BACKEND_PORT))
+          @sh(cd frontend && NODE_ENV=@var(NODE_ENV) npm start);
+          @sh(cd backend && go run ./cmd/api --port=@var(BACKEND_PORT))
         }
       }
 
@@ -133,23 +132,23 @@ rec {
     '';
   };
 
-  # Go project with comprehensive tooling - demonstrates shell escaping patterns
+  # Go project with comprehensive tooling - demonstrates shell command substitution
   goProject = devcmdLib.mkDevCLI {
     name = "godev";
     commandsContent = ''
       # Go project development
       def MODULE = github.com/example/myproject;
       def BINARY = myproject;
-      # Shell command substitution must be escaped as \$() since devcmd uses $() for variables
-      def VERSION = \$(git describe --tags --always 2>/dev/null || echo "dev");
-      def LDFLAGS = -s -w -X main.Version=$(VERSION) -X main.BuildTime=\$(date -u +%Y-%m-%dT%H:%M:%SZ);
+      # Shell command substitution uses regular $() syntax
+      def VERSION = $(git describe --tags --always 2>/dev/null || echo "dev");
+      def LDFLAGS = -s -w -X main.Version=@var(VERSION) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ);
 
       init: {
         echo "Initializing Go project...";
-        go mod init $(MODULE);
-        echo "module $(MODULE)" > go.mod;
+        go mod init @var(MODULE);
+        echo "module @var(MODULE)" > go.mod;
         echo "go 1.21" >> go.mod;
-        mkdir -p cmd/$(BINARY) pkg internal;
+        mkdir -p cmd/@var(BINARY) pkg internal;
         echo "Project initialized"
       }
 
@@ -162,17 +161,17 @@ rec {
       }
 
       build: {
-        echo "Building $(BINARY) $(VERSION)...";
-        CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY) ./cmd/$(BINARY);
-        echo "Binary built: bin/$(BINARY)"
+        echo "Building @var(BINARY) @var(VERSION)...";
+        CGO_ENABLED=0 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY) ./cmd/@var(BINARY);
+        echo "Binary built: bin/@var(BINARY)"
       }
 
       build-all: {
         echo "Building for multiple platforms...";
         @parallel: {
-          GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 ./cmd/$(BINARY);
-          GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 ./cmd/$(BINARY);
-          GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o bin/$(BINARY)-windows-amd64.exe ./cmd/$(BINARY)
+          GOOS=linux GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-linux-amd64 ./cmd/@var(BINARY);
+          GOOS=darwin GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-darwin-amd64 ./cmd/@var(BINARY);
+          GOOS=windows GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-windows-amd64.exe ./cmd/@var(BINARY)
         };
         echo "Multi-platform build complete"
       }
@@ -211,27 +210,27 @@ rec {
       }
 
       run: {
-        echo "Running $(BINARY)...";
-        go run ./cmd/$(BINARY)
+        echo "Running @var(BINARY)...";
+        go run ./cmd/@var(BINARY)
       }
 
       debug: {
         echo "Running with debug info...";
-        go run -race ./cmd/$(BINARY) --debug
+        go run -race ./cmd/@var(BINARY) --debug
       }
 
       profile: {
         echo "Building with profiling...";
-        go build -o bin/$(BINARY)-profile ./cmd/$(BINARY);
-        echo "Run with: ./bin/$(BINARY)-profile -cpuprofile=cpu.prof -memprofile=mem.prof"
+        go build -o bin/@var(BINARY)-profile ./cmd/@var(BINARY);
+        echo "Run with: ./bin/@var(BINARY)-profile -cpuprofile=cpu.prof -memprofile=mem.prof"
       }
 
       release: {
-        echo "Creating release $(VERSION)...";
+        echo "Creating release @var(VERSION)...";
         godev lint;
         godev test;
         godev build-all;
-        echo "Release $(VERSION) ready"
+        echo "Release @var(VERSION) ready"
       }
     '';
   };
@@ -246,7 +245,7 @@ rec {
 
       init: {
         echo "Initializing Rust project...";
-        cargo init --name $(CRATE_NAME);
+        cargo init --name @var(CRATE_NAME);
         echo "Project initialized"
       }
 
@@ -339,28 +338,28 @@ rec {
 
       setup: {
         echo "Setting up Python environment...";
-        $(PYTHON) -m venv $(VENV);
-        $(VENV)/bin/pip install --upgrade pip;
-        @sh((test -f requirements.txt && $(VENV)/bin/pip install -r requirements.txt) || echo "No requirements.txt");
+        @var(PYTHON) -m venv @var(VENV);
+        @var(VENV)/bin/pip install --upgrade pip;
+        @sh((test -f requirements.txt && @var(VENV)/bin/pip install -r requirements.txt) || echo "No requirements.txt");
         echo "Environment setup complete"
       }
 
       install: {
         echo "Installing packages...";
-        $(VENV)/bin/pip install -r requirements.txt;
-        @sh((test -f requirements-dev.txt && $(VENV)/bin/pip install -r requirements-dev.txt) || echo "No dev requirements");
+        @var(VENV)/bin/pip install -r requirements.txt;
+        @sh((test -f requirements-dev.txt && @var(VENV)/bin/pip install -r requirements-dev.txt) || echo "No dev requirements");
         echo "Installation complete"
       }
 
       freeze: {
         echo "Freezing requirements...";
-        $(VENV)/bin/pip freeze > requirements.txt;
+        @var(VENV)/bin/pip freeze > requirements.txt;
         echo "Requirements frozen"
       }
 
       watch jupyter: {
-        echo "Starting Jupyter Lab on port $(JUPYTER_PORT)...";
-        $(VENV)/bin/jupyter lab --port=$(JUPYTER_PORT) --no-browser
+        echo "Starting Jupyter Lab on port @var(JUPYTER_PORT)...";
+        @var(VENV)/bin/jupyter lab --port=@var(JUPYTER_PORT) --no-browser
       }
 
       stop jupyter: {
@@ -370,15 +369,15 @@ rec {
 
       test: {
         echo "Running tests...";
-        $(VENV)/bin/pytest -v;
+        @var(VENV)/bin/pytest -v;
         echo "Testing complete"
       }
 
       lint: {
         echo "Linting code...";
         @parallel: {
-          @sh($(VENV)/bin/flake8 . || echo "flake8 not installed");
-          @sh($(VENV)/bin/black --check . || echo "black not installed")
+          @sh(@var(VENV)/bin/flake8 . || echo "flake8 not installed");
+          @sh(@var(VENV)/bin/black --check . || echo "black not installed")
         };
         echo "Linting complete"
       }
@@ -386,15 +385,15 @@ rec {
       format: {
         echo "Formatting code...";
         @parallel: {
-          @sh($(VENV)/bin/black . || echo "black not installed");
-          @sh($(VENV)/bin/isort . || echo "isort not installed")
+          @sh(@var(VENV)/bin/black . || echo "black not installed");
+          @sh(@var(VENV)/bin/isort . || echo "isort not installed")
         };
         echo "Formatting complete"
       }
 
       analyze: {
         echo "Running data analysis...";
-        @sh($(VENV)/bin/python scripts/analyze.py || echo "No analysis script");
+        @sh(@var(VENV)/bin/python scripts/analyze.py || echo "No analysis script");
         echo "Analysis complete"
       }
 
@@ -418,59 +417,59 @@ rec {
       def ENVIRONMENT = development;
       def TERRAFORM_DIR = ./terraform;
       def ANSIBLE_DIR = ./ansible;
-      def KUBE_NAMESPACE = myapp-$(ENVIRONMENT);
+      def KUBE_NAMESPACE = myapp-@var(ENVIRONMENT);
 
       plan: {
         echo "Planning infrastructure changes...";
-        @sh((cd $(TERRAFORM_DIR) && terraform plan -var="environment=$(ENVIRONMENT)") || echo "No Terraform");
+        @sh((cd @var(TERRAFORM_DIR) && terraform plan -var="environment=@var(ENVIRONMENT)") || echo "No Terraform");
         echo "Plan complete"
       }
 
       apply: {
         echo "Applying infrastructure changes...";
-        @sh((cd $(TERRAFORM_DIR) && terraform apply -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform");
+        @sh((cd @var(TERRAFORM_DIR) && terraform apply -var="environment=@var(ENVIRONMENT)" -auto-approve) || echo "No Terraform");
         echo "Apply complete"
       }
 
       destroy: {
         echo "Destroying infrastructure...";
-        echo "WARNING: This will destroy $(ENVIRONMENT) environment";
-        @sh((cd $(TERRAFORM_DIR) && terraform destroy -var="environment=$(ENVIRONMENT)" -auto-approve) || echo "No Terraform")
+        echo "WARNING: This will destroy @var(ENVIRONMENT) environment";
+        @sh((cd @var(TERRAFORM_DIR) && terraform destroy -var="environment=@var(ENVIRONMENT)" -auto-approve) || echo "No Terraform")
       }
 
       provision: {
         echo "Provisioning servers...";
-        @sh((cd $(ANSIBLE_DIR) && ansible-playbook -i inventory/$(ENVIRONMENT) site.yml) || echo "No Ansible");
+        @sh((cd @var(ANSIBLE_DIR) && ansible-playbook -i inventory/@var(ENVIRONMENT) site.yml) || echo "No Ansible");
         echo "Provisioning complete"
       }
 
       deploy: {
-        echo "Deploying application to $(ENVIRONMENT)...";
-        @sh((which kubectl && kubectl apply -f k8s/ -n $(KUBE_NAMESPACE)) || echo "No kubectl");
+        echo "Deploying application to @var(ENVIRONMENT)...";
+        @sh((which kubectl && kubectl apply -f k8s/ -n @var(KUBE_NAMESPACE)) || echo "No kubectl");
         echo "Deployment complete"
       }
 
       status: {
         echo "Checking infrastructure status...";
-        @sh((which kubectl && kubectl get pods,svc,ing -n $(KUBE_NAMESPACE)) || echo "No kubectl");
+        @sh((which kubectl && kubectl get pods,svc,ing -n @var(KUBE_NAMESPACE)) || echo "No kubectl");
         echo "Status check complete"
       }
 
       logs: {
         echo "Fetching application logs...";
-        @sh((which kubectl && kubectl logs -f deployment/myapp -n $(KUBE_NAMESPACE)) || echo "No kubectl")
+        @sh((which kubectl && kubectl logs -f deployment/myapp -n @var(KUBE_NAMESPACE)) || echo "No kubectl")
       }
 
       shell: {
         echo "Opening shell in application pod...";
-        @sh((which kubectl && kubectl exec -it deployment/myapp -n $(KUBE_NAMESPACE) -- /bin/sh) || echo "No kubectl")
+        @sh((which kubectl && kubectl exec -it deployment/myapp -n @var(KUBE_NAMESPACE) -- /bin/sh) || echo "No kubectl")
       }
 
       backup: {
         echo "Creating backup...";
-        # Shell command substitution requires @sh() for complex operations with variable assignment
-        @sh(DATE=\$(date +%Y%m%d-%H%M%S); echo "Backup timestamp: \$DATE");
-        @sh((which kubectl && kubectl exec deployment/database -n $(KUBE_NAMESPACE) -- pg_dump myapp > backup-\$(date +%Y%m%d-%H%M%S).sql) || echo "No database")
+        # Shell command substitution uses regular $() syntax in @sh()
+        @sh(DATE=$(date +%Y%m%d-%H%M%S); echo "Backup timestamp: $DATE");
+        @sh((which kubectl && kubectl exec deployment/database -n @var(KUBE_NAMESPACE) -- pg_dump myapp > backup-$(date +%Y%m%d-%H%M%S).sql) || echo "No database")
       }
 
       monitor: {
@@ -481,8 +480,8 @@ rec {
       lint: {
         echo "Linting infrastructure code...";
         @parallel: {
-          @sh((cd $(TERRAFORM_DIR) && terraform fmt -check) || echo "No Terraform");
-          @sh((cd $(ANSIBLE_DIR) && ansible-lint .) || echo "No Ansible")
+          @sh((cd @var(TERRAFORM_DIR) && terraform fmt -check) || echo "No Terraform");
+          @sh((cd @var(ANSIBLE_DIR) && ansible-lint .) || echo "No Ansible")
         };
         echo "Linting complete"
       }

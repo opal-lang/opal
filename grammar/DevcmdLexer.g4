@@ -11,8 +11,7 @@
  * - Simple commands: build: go build ./cmd;
  * - Block commands: deploy: { build; test; kubectl apply -f k8s/ }
  * - Process management: watch/stop command pairs
- * - Decorators: @name(...) for command metadata and processing
- * - Variable expansion: $(VAR) and shell variables $VAR
+ * - Decorators: @name(...) for command metadata, processing, and variables
  * - Shell command syntax: pipes, redirections, background processes
  */
 lexer grammar DevcmdLexer;
@@ -22,11 +21,11 @@ DEF : 'def' ;
 WATCH : 'watch' ;
 STOP : 'stop' ;
 
-// Special decorator pattern - captures @name( as a single token
-// This allows the parser to recognize decorator functions
-AT_NAME_LPAREN : '@' [A-Za-z] [A-Za-z0-9_-]* '(' ;
+// REMOVED: Special decorator pattern - let parser handle @name( as separate tokens
+// We now handle @name( as AT NAME LPAREN in the parser
+// AT_NAME_LPAREN : '@' [A-Za-z] [A-Za-z0-9_-]* '(' ;
 
-// Regular decorator start - for @name: syntax
+// Regular decorator start - for @name: syntax and single @
 AT : '@' ;
 
 // Structural operators and delimiters
@@ -42,18 +41,6 @@ AMPERSAND : '&' ;
 PIPE : '|' ;
 LT : '<' ;
 GT : '>' ;
-
-// Variable references - highest priority after keywords
-// $(VAR) - devcmd variable expansion
-VAR_REF : '$(' [A-Za-z][A-Za-z0-9_-]* ')' ;
-
-// Shell variable reference - $VAR
-SHELL_VAR : '$' [A-Za-z_][A-Za-z0-9_]* ;
-
-// Escape sequences
-ESCAPED_DOLLAR : '\\$' ;
-ESCAPED_SEMICOLON : '\\;' ;
-ESCAPED_BRACE : '\\{' | '\\}' ;
 
 // String literals
 STRING : '"' (~["\\\r\n] | '\\' .)* '"' ;
@@ -84,6 +71,10 @@ RBRACKET : ']' ;
 DOLLAR : '$' ;
 HASH : '#' ;
 DOUBLEQUOTE : '"' ;
+
+// General content - catch-all for other characters in commands
+// This needs to be carefully ordered to not conflict with other tokens
+CONTENT : ~[ \t\r\n@{}();:"'#] ;
 
 // Whitespace and comments
 COMMENT : '#' ~[\r\n]* -> channel(HIDDEN) ;

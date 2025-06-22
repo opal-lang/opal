@@ -5,8 +5,6 @@ pkgs.mkShell {
   name = "devcmd-dev";
 
   buildInputs = with pkgs; [
-
-
     # Core Go development
     go
     gopls
@@ -37,7 +35,11 @@ pkgs.mkShell {
       echo ""
       echo "Tools: Go $(go version | cut -d' ' -f3), Just, ANTLR"
       echo ""
-
+      echo "Syntax notes:"
+      echo "  @var(NAME) - devcmd variable expansion"
+      echo "  $(cmd)     - shell command substitution (no escaping needed)"
+      echo "  $VAR       - shell variable reference (no escaping needed)"
+      echo ""
 
     # Make zsh available
     export SHELL = ${pkgs.zsh}/bin/zsh

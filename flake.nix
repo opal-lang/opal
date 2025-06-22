@@ -114,9 +114,12 @@
                 echo "  nix build .#test-go                  # Go project tests"
                 echo ""
                 echo "Library usage examples:"
-                echo "  devcmdLib.mkDevCLI { name = \"mycli\"; commandsContent = \"...\"; }"
+                echo '  devcmdLib.mkDevCLI { name = "mycli"; commandsContent = "build: echo hello;"; }'
                 echo "  devcmdLib.quickCLI \"mycli\" ./commands.cli"
                 echo "  devcmdLib.autoCLI \"mycli\"  # Auto-detects commands.cli"
+                echo ""
+                echo "Variable syntax: @var(NAME) expands to variable value"
+                echo "Decorators: @sh(cmd), @parallel: { cmd1; cmd2 }"
               '';
             };
 
@@ -141,6 +144,9 @@
                 echo ""
                 echo "# Test convenience functions"
                 echo 'nix eval --expr "(import ./.nix/lib.nix { pkgs = import <nixpkgs> {}; self = null; lib = (import <nixpkgs> {}).lib; }).quickCLI \"test\" null"'
+                echo ""
+                echo "Variable syntax: Use @var(NAME) for variable expansion"
+                echo "Example: def PORT = 8080; serve: python -m http.server @var(PORT);"
               '';
             };
           };
@@ -284,12 +290,12 @@
       templates = {
         default = {
           path = ./template/basic;
-          description = "Basic project with devcmd CLI (simplified interface)";
+          description = "Basic project with devcmd CLI (using @var() syntax for variables)";
         };
 
         basic = {
           path = ./template/basic;
-          description = "Basic development commands template";
+          description = "Basic development commands template with @var() variable expansion";
         };
 
       };

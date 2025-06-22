@@ -30,9 +30,10 @@ go build -o mycli main.go
 
 - Simple declarative syntax for command definitions
 - Generates standalone CLI binaries (no runtime dependencies)
-- Variable substitution with `$(VAR)` syntax
+- Variable substitution with `@var(NAME)` syntax
 - Block commands for multi-step workflows
-- Background process management
+- Background process management with watch/stop commands
+- Decorator support for shell commands and parallel execution
 - Nix integration for development environments
 
 ## Command Syntax
@@ -45,9 +46,9 @@ def SRC = ./src;
 def BUILD_DIR = ./build;
 
 # Simple commands
-build: cd $(SRC) && make;
+build: cd @var(SRC) && make;
 test: go test ./...;
-clean: rm -rf $(BUILD_DIR);
+clean: rm -rf @var(BUILD_DIR);
 
 # Multi-step commands
 setup: {
@@ -62,12 +63,13 @@ setup: {
 
 ```bash
 # Background processes
-watch dev: npm start &;
+watch dev: npm start;
 stop dev: pkill -f "npm start";
 
 # The CLI automatically creates:
 # mycli dev start  (runs watch command)
 # mycli dev stop   (runs stop command)
+# mycli dev logs   (shows process logs)
 # mycli status     (shows running processes)
 ```
 
@@ -84,11 +86,15 @@ deploy: {
   kubectl apply -f k8s/
 }
 
-# Complex shell operations
+# Shell commands with @sh() decorator
 backup: @sh(tar -czf backup-$(date +%Y%m%d).tar.gz ./data);
 
-# Shell command substitution (escaped)
-timestamp: echo "Built at: \$(date)";
+# Variable expansion in decorators
+serve: @sh(python -m http.server @var(PORT));
+
+# Shell command substitution and variables work normally
+timestamp: echo "Built at: $(date)";
+user: echo "Current user: $USER";
 ```
 
 ## Installation & Usage
@@ -214,7 +220,7 @@ $ mycli status
 NAME            PID      STATUS     STARTED
 server          12345    running    14:32:15
 
-$ mycli logs server
+$ mycli dev logs
 [14:32:15] Starting server...
 
 $ mycli dev stop
@@ -267,15 +273,16 @@ myproject build
 # All commands end with semicolon
 build: echo "Building...";
 
-# Variables with $(VAR) syntax
+# Variables with @var(NAME) syntax
 def PORT = 8080;
-serve: python -m http.server $(PORT);
+serve: python -m http.server @var(PORT);
 
-# Shell command substitution (escaped)
-timestamp: echo "Time: \$(date)";
+# Variables in decorators
+start: @sh(./server --port=@var(PORT));
 
-# Shell variables (escaped)
-user: echo "User: \$USER";
+# Shell command substitution and variables work normally
+timestamp: echo "Time: $(date)";
+user: echo "User: $USER";
 
 # Block commands
 setup: {
@@ -292,8 +299,38 @@ services: {
   }
 }
 
-# Complex shell with @sh()
+# Watch/stop process pairs
+watch server: @sh(./server --port=@var(PORT));
+stop server: pkill -f "./server";
+
+# Shell commands with @sh() decorator
 backup: @sh(tar -czf backup-$(date +%Y%m%d).tar.gz .);
+```
+
+## Decorators
+
+### @var(NAME)
+Expands to the value of the defined variable:
+```bash
+def API_URL = https://api.example.com;
+test: curl @var(API_URL)/health;
+```
+
+### @sh(command)
+Wraps command for shell execution:
+```bash
+backup: @sh(find . -name "*.log" -exec rm {} \;);
+```
+
+### @parallel: { ... }
+Runs commands in parallel:
+```bash
+build-all: {
+  @parallel: {
+    go build ./cmd/server;
+    go build ./cmd/client
+  }
+}
 ```
 
 ## Status

@@ -141,87 +141,8 @@ func Validate(file *CommandFile) error {
 func ValidateWithDebug(file *CommandFile, debug *DebugTrace) error {
 	validationError := NewValidationError(debug)
 
-	// Build variable names map
-	varNames := make(map[string]bool)
-	for _, def := range file.Definitions {
-		varNames[def.Name] = true
-	}
-
-	// Build command maps for validation
-	watchCmds := make(map[string]int)
-	stopCmds := make(map[string]int)
-	for _, cmd := range file.Commands {
-		name := strings.TrimPrefix(cmd.Name, ".")
-		if cmd.IsWatch {
-			watchCmds[name] = cmd.Line
-		}
-		if cmd.IsStop {
-			stopCmds[name] = cmd.Line
-		}
-	}
-
-	// Variable reference checker function
-	checkVarReferences := func(text string, line int, lineContent string) {
-		if debug != nil {
-			debug.Log("Checking variables in: %s", text)
-		}
-
-		var inVar bool
-		var varName strings.Builder
-
-		for i := 0; i < len(text); i++ {
-			if !inVar {
-				// Skip escaped dollar signs
-				if i+1 < len(text) && text[i] == '\\' && text[i+1] == '$' {
-					i += 1
-					continue
-				}
-
-				// Look for variable start
-				if i+1 < len(text) && text[i] == '$' && text[i+1] == '(' {
-					inVar = true
-					varName.Reset()
-					i++
-				}
-			} else {
-				if text[i] == ')' {
-					name := varName.String()
-					if debug != nil {
-						debug.Log("Found variable reference: %s", name)
-					}
-					if !varNames[name] {
-						varPos := strings.Index(lineContent, "$("+name+")")
-						if varPos >= 0 {
-							validationError.Add(line, varPos, lineContent,
-								"undefined variable '%s'", name)
-						} else {
-							validationError.AddSimple(line, "undefined variable '%s'", name)
-						}
-					}
-					inVar = false
-				} else {
-					varName.WriteByte(text[i])
-				}
-			}
-		}
-
-		if inVar {
-			validationError.AddSimple(line, "unclosed variable reference at line %d", line)
-		}
-	}
-
-	// Validate variable references in commands
-	for _, cmd := range file.Commands {
-		lineContent := ""
-		if cmd.Line > 0 && cmd.Line <= len(file.Lines) {
-			lineContent = file.Lines[cmd.Line-1]
-		}
-
-		if !cmd.IsBlock {
-			checkVarReferences(cmd.Command, cmd.Line, lineContent)
-		} else {
-			checkBlockStatements(cmd.Block, cmd.Line, lineContent, checkVarReferences, debug)
-		}
+	if debug != nil {
+		debug.Log("Validation complete - no variable reference checks needed")
 	}
 
 	if validationError.HasErrors() {
@@ -229,29 +150,4 @@ func ValidateWithDebug(file *CommandFile, debug *DebugTrace) error {
 	}
 
 	return nil
-}
-
-func checkBlockStatements(statements []BlockStatement, line int, lineContent string,
-	checkVarReferences func(string, int, string), debug *DebugTrace,
-) {
-	for i, stmt := range statements {
-		if debug != nil {
-			debug.Log("Checking block statement %d: decorated=%v", i, stmt.IsDecorated)
-		}
-
-		if stmt.IsDecorated {
-			switch stmt.DecoratorType {
-			case "function", "simple":
-				if stmt.Command != "" {
-					checkVarReferences(stmt.Command, line, lineContent)
-				}
-			case "block":
-				checkBlockStatements(stmt.DecoratedBlock, line, lineContent, checkVarReferences, debug)
-			}
-		} else {
-			if stmt.Command != "" {
-				checkVarReferences(stmt.Command, line, lineContent)
-			}
-		}
-	}
 }

@@ -56,6 +56,24 @@ func (s *BaseDevcmdParserListener) EnterCommandBody(ctx *CommandBodyContext) {}
 // ExitCommandBody is called when production commandBody is exited.
 func (s *BaseDevcmdParserListener) ExitCommandBody(ctx *CommandBodyContext) {}
 
+// EnterFunctionDecoratorLabel is called when production functionDecoratorLabel is entered.
+func (s *BaseDevcmdParserListener) EnterFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) {}
+
+// ExitFunctionDecoratorLabel is called when production functionDecoratorLabel is exited.
+func (s *BaseDevcmdParserListener) ExitFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) {}
+
+// EnterBlockDecoratorLabel is called when production blockDecoratorLabel is entered.
+func (s *BaseDevcmdParserListener) EnterBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) {}
+
+// ExitBlockDecoratorLabel is called when production blockDecoratorLabel is exited.
+func (s *BaseDevcmdParserListener) ExitBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) {}
+
+// EnterSimpleDecoratorLabel is called when production simpleDecoratorLabel is entered.
+func (s *BaseDevcmdParserListener) EnterSimpleDecoratorLabel(ctx *SimpleDecoratorLabelContext) {}
+
+// ExitSimpleDecoratorLabel is called when production simpleDecoratorLabel is exited.
+func (s *BaseDevcmdParserListener) ExitSimpleDecoratorLabel(ctx *SimpleDecoratorLabelContext) {}
+
 // EnterFunctionDecorator is called when production functionDecorator is entered.
 func (s *BaseDevcmdParserListener) EnterFunctionDecorator(ctx *FunctionDecoratorContext) {}
 
@@ -91,6 +109,18 @@ func (s *BaseDevcmdParserListener) EnterDecoratorElement(ctx *DecoratorElementCo
 
 // ExitDecoratorElement is called when production decoratorElement is exited.
 func (s *BaseDevcmdParserListener) ExitDecoratorElement(ctx *DecoratorElementContext) {}
+
+// EnterNestedDecorator is called when production nestedDecorator is entered.
+func (s *BaseDevcmdParserListener) EnterNestedDecorator(ctx *NestedDecoratorContext) {}
+
+// ExitNestedDecorator is called when production nestedDecorator is exited.
+func (s *BaseDevcmdParserListener) ExitNestedDecorator(ctx *NestedDecoratorContext) {}
+
+// EnterDecoratorTextElement is called when production decoratorTextElement is entered.
+func (s *BaseDevcmdParserListener) EnterDecoratorTextElement(ctx *DecoratorTextElementContext) {}
+
+// ExitDecoratorTextElement is called when production decoratorTextElement is exited.
+func (s *BaseDevcmdParserListener) ExitDecoratorTextElement(ctx *DecoratorTextElementContext) {}
 
 // EnterSimpleCommand is called when production simpleCommand is entered.
 func (s *BaseDevcmdParserListener) EnterSimpleCommand(ctx *SimpleCommandContext) {}
@@ -146,3 +176,9 @@ func (s *BaseDevcmdParserListener) EnterCommandTextElement(ctx *CommandTextEleme
 
 // ExitCommandTextElement is called when production commandTextElement is exited.
 func (s *BaseDevcmdParserListener) ExitCommandTextElement(ctx *CommandTextElementContext) {}
+
+// EnterInlineDecorator is called when production inlineDecorator is entered.
+func (s *BaseDevcmdParserListener) EnterInlineDecorator(ctx *InlineDecoratorContext) {}
+
+// ExitInlineDecorator is called when production inlineDecorator is exited.
+func (s *BaseDevcmdParserListener) ExitInlineDecorator(ctx *InlineDecoratorContext) {}

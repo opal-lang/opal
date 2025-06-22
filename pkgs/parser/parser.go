@@ -469,23 +469,31 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 		decoratedStmt := v.processDecoratedCommand(decoratedCmd)
 
 		v.commandFile.Commands = append(v.commandFile.Commands, Command{
-			Name:    name,
-			Line:    line,
-			IsWatch: isWatch,
-			IsStop:  isStop,
-			IsBlock: true,
-			Block:   []BlockStatement{decoratedStmt},
+			Name:     name,
+			Line:     line,
+			IsWatch:  isWatch,
+			IsStop:   isStop,
+			IsBlock:  true,
+			Block:    []BlockStatement{decoratedStmt},
+			Elements: decoratedStmt.Elements,
 		})
 
 	} else if simpleCmd := commandBody.SimpleCommand(); simpleCmd != nil {
 		cmd := v.processSimpleCommand(simpleCmd.(*gen.SimpleCommandContext))
 
+		// Use semantic parsing for structured elements
+		var elements []CommandElement
+		if cmd != "" {
+			elements = v.parseCommandString(cmd)
+		}
+
 		v.commandFile.Commands = append(v.commandFile.Commands, Command{
-			Name:    name,
-			Command: cmd,
-			Line:    line,
-			IsWatch: isWatch,
-			IsStop:  isStop,
+			Name:     name,
+			Command:  cmd,
+			Line:     line,
+			IsWatch:  isWatch,
+			IsStop:   isStop,
+			Elements: elements,
 		})
 
 	} else if blockCmd := commandBody.BlockCommand(); blockCmd != nil {
@@ -503,40 +511,40 @@ func (v *DevcmdVisitor) visitCommandDefinition(ctx *gen.CommandDefinitionContext
 }
 
 func (v *DevcmdVisitor) processSimpleCommand(ctx *gen.SimpleCommandContext) string {
+	var parts []string
+
+	// Process main command text
 	cmdText := v.getOriginalText(ctx.CommandText())
 	cmdText = strings.TrimRight(cmdText, " \t")
+	parts = append(parts, cmdText)
 
-	var fullText strings.Builder
-	fullText.WriteString(cmdText)
-
+	// Process continuation lines - join with space
 	for _, contLine := range ctx.AllContinuationLine() {
 		contCtx := contLine.(*gen.ContinuationLineContext)
 		contText := v.getOriginalText(contCtx.CommandText())
 		contText = strings.TrimLeft(contText, " \t")
-		fullText.WriteString(" ")
-		fullText.WriteString(contText)
+		parts = append(parts, contText)
 	}
 
-	return fullText.String()
+	return strings.Join(parts, " ")
 }
 
 // Process decorator command (similar to simple command but without semicolon)
 func (v *DevcmdVisitor) processDecoratorCommand(ctx *gen.DecoratorCommandContext) string {
+	var parts []string
+
 	cmdText := v.getOriginalText(ctx.CommandText())
 	cmdText = strings.TrimRight(cmdText, " \t")
-
-	var fullText strings.Builder
-	fullText.WriteString(cmdText)
+	parts = append(parts, cmdText)
 
 	for _, contLine := range ctx.AllContinuationLine() {
 		contCtx := contLine.(*gen.ContinuationLineContext)
 		contText := v.getOriginalText(contCtx.CommandText())
 		contText = strings.TrimLeft(contText, " \t")
-		fullText.WriteString(" ")
-		fullText.WriteString(contText)
+		parts = append(parts, contText)
 	}
 
-	return fullText.String()
+	return strings.Join(parts, " ")
 }
 
 func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []BlockStatement {
@@ -578,31 +586,44 @@ func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []Bloc
 			if v.debug != nil {
 				v.debug.Log("Block statement %d: regular command", i)
 			}
+
+			var parts []string
+
 			cmdText := v.getOriginalText(stmtCtx.CommandText())
 			cmdText = strings.TrimSpace(cmdText)
+			if cmdText != "" {
+				parts = append(parts, cmdText)
+			}
 
-			// Skip empty statements (fixes block counting issues)
-			if cmdText == "" {
+			for _, contLine := range stmtCtx.AllContinuationLine() {
+				contCtx := contLine.(*gen.ContinuationLineContext)
+				contText := v.getOriginalText(contCtx.CommandText())
+				contText = strings.TrimLeft(contText, " \t")
+				if contText != "" {
+					parts = append(parts, contText)
+				}
+			}
+
+			commandText := strings.Join(parts, " ")
+
+			// Skip empty statements
+			if commandText == "" {
 				if v.debug != nil {
 					v.debug.Log("Skipping empty statement %d", i)
 				}
 				continue
 			}
 
-			var fullText strings.Builder
-			fullText.WriteString(cmdText)
-
-			for _, contLine := range stmtCtx.AllContinuationLine() {
-				contCtx := contLine.(*gen.ContinuationLineContext)
-				contText := v.getOriginalText(contCtx.CommandText())
-				contText = strings.TrimLeft(contText, " \t")
-				fullText.WriteString(" ")
-				fullText.WriteString(contText)
+			// Use semantic parsing for structured elements
+			var elements []CommandElement
+			if commandText != "" {
+				elements = v.parseCommandString(commandText)
 			}
 
 			statements = append(statements, BlockStatement{
-				Command:     fullText.String(),
+				Command:     commandText,
 				IsDecorated: false,
+				Elements:    elements,
 			})
 		}
 	}
@@ -612,80 +633,240 @@ func (v *DevcmdVisitor) processBlockCommand(ctx *gen.BlockCommandContext) []Bloc
 
 func (v *DevcmdVisitor) processDecoratedCommand(ctx antlr.ParserRuleContext) BlockStatement {
 	switch decorCtx := ctx.(type) {
+	case *gen.FunctionDecoratorLabelContext:
+		// Handle the labeled context from the grammar
+		functionCtx := decorCtx.FunctionDecorator().(*gen.FunctionDecoratorContext)
+		return v.processFunctionDecorator(functionCtx)
+
+	case *gen.BlockDecoratorLabelContext:
+		// Handle the labeled context from the grammar
+		blockCtx := decorCtx.BlockDecorator().(*gen.BlockDecoratorContext)
+		return v.processBlockDecorator(blockCtx)
+
+	case *gen.SimpleDecoratorLabelContext:
+		// Handle the labeled context from the grammar
+		simpleCtx := decorCtx.SimpleDecorator().(*gen.SimpleDecoratorContext)
+		return v.processSimpleDecorator(simpleCtx)
+
 	case *gen.FunctionDecoratorContext:
-		// Extract decorator name from AT_NAME_LPAREN token
-		atNameLParen := decorCtx.AT_NAME_LPAREN().GetText()
-		// Remove @ and ( to get the decorator name
-		decorator := strings.TrimSuffix(strings.TrimPrefix(atNameLParen, "@"), "(")
-
-		// For function decorators like @sh(...), we need to get the exact text
-		// between the parentheses, preserving all formatting
-		var content string
-
-		// The AT_NAME_LPAREN token includes the @name( part
-		// The RPAREN token is the closing )
-		// We need everything in between
-
-		openParenToken := decorCtx.AT_NAME_LPAREN().GetSymbol()
-		closeParenToken := decorCtx.RPAREN().GetSymbol()
-
-		// Get positions
-		contentStart := openParenToken.GetStop() + 1  // After the (
-		contentStop := closeParenToken.GetStart() - 1 // Before the )
-
-		if contentStop >= contentStart {
-			// Get the raw text, which preserves spaces, newlines, backslashes, etc.
-			content = v.inputStream.GetText(contentStart, contentStop)
-		}
-
-		if v.debug != nil {
-			v.debug.Log("Function decorator: %s(%s)", decorator, content)
-		}
-		return BlockStatement{
-			IsDecorated:   true,
-			Decorator:     decorator,
-			DecoratorType: "function",
-			Command:       content,
-		}
+		return v.processFunctionDecorator(decorCtx)
 
 	case *gen.BlockDecoratorContext:
-		decorator := decorCtx.Decorator().GetText()
-		blockCmd := decorCtx.BlockCommand().(*gen.BlockCommandContext)
-		blockStatements := v.processBlockCommand(blockCmd)
-		if v.debug != nil {
-			v.debug.Log("Block decorator: %s with %d statements", decorator, len(blockStatements))
-		}
-		return BlockStatement{
-			IsDecorated:    true,
-			Decorator:      decorator,
-			DecoratorType:  "block",
-			DecoratedBlock: blockStatements,
-		}
+		return v.processBlockDecorator(decorCtx)
 
 	case *gen.SimpleDecoratorContext:
-		decorator := decorCtx.Decorator().GetText()
-		// Updated to use DecoratorCommand instead of SimpleCommand
-		decorCmd := decorCtx.DecoratorCommand().(*gen.DecoratorCommandContext)
-		commandText := v.processDecoratorCommand(decorCmd)
-		if v.debug != nil {
-			v.debug.Log("Simple decorator: %s:%s", decorator, commandText)
-		}
-		return BlockStatement{
-			IsDecorated:   true,
-			Decorator:     decorator,
-			DecoratorType: "simple",
-			Command:       commandText,
-		}
+		return v.processSimpleDecorator(decorCtx)
 
 	default:
 		if v.debug != nil {
 			v.debug.LogError("Unknown decorator context type: %T", ctx)
 		}
 		return BlockStatement{
+			Elements:    []CommandElement{},
 			IsDecorated: false,
 			Command:     "",
 		}
 	}
+}
+
+func (v *DevcmdVisitor) processFunctionDecorator(decorCtx *gen.FunctionDecoratorContext) BlockStatement {
+	decorator := decorCtx.NAME().GetText()
+
+	// Get the exact text between the parentheses
+	var content string
+	openParenToken := decorCtx.LPAREN().GetSymbol()
+	closeParenToken := decorCtx.RPAREN().GetSymbol()
+
+	contentStart := openParenToken.GetStop() + 1  // After the (
+	contentStop := closeParenToken.GetStart() - 1 // Before the )
+
+	if contentStop >= contentStart {
+		content = v.inputStream.GetText(contentStart, contentStop)
+	}
+
+	// Use semantic parsing to handle @var() correctly
+	var elements []CommandElement
+	if content != "" {
+		elements = v.parseCommandString(content)
+	}
+
+	if v.debug != nil {
+		v.debug.Log("Function decorator: %s(%s)", decorator, content)
+	}
+
+	decoratorElem := &DecoratorElement{
+		Name: decorator,
+		Type: "function",
+		Args: elements,
+	}
+
+	return BlockStatement{
+		Elements:      []CommandElement{decoratorElem},
+		IsDecorated:   true,
+		Decorator:     decorator,
+		DecoratorType: "function",
+		Command:       content,
+	}
+}
+
+func (v *DevcmdVisitor) processBlockDecorator(decorCtx *gen.BlockDecoratorContext) BlockStatement {
+	decorator := decorCtx.Decorator().GetText()
+	blockCmd := decorCtx.BlockCommand().(*gen.BlockCommandContext)
+	blockStatements := v.processBlockCommand(blockCmd)
+
+	if v.debug != nil {
+		v.debug.Log("Block decorator: %s with %d statements", decorator, len(blockStatements))
+	}
+
+	decoratorElem := &DecoratorElement{
+		Name:  decorator,
+		Type:  "block",
+		Block: blockStatements,
+	}
+
+	return BlockStatement{
+		Elements:       []CommandElement{decoratorElem},
+		IsDecorated:    true,
+		Decorator:      decorator,
+		DecoratorType:  "block",
+		DecoratedBlock: blockStatements,
+	}
+}
+
+func (v *DevcmdVisitor) processSimpleDecorator(decorCtx *gen.SimpleDecoratorContext) BlockStatement {
+	decorator := decorCtx.Decorator().GetText()
+	decorCmd := decorCtx.DecoratorCommand().(*gen.DecoratorCommandContext)
+	commandText := v.processDecoratorCommand(decorCmd)
+
+	// Use semantic parsing for structured elements
+	var elements []CommandElement
+	if commandText != "" {
+		elements = v.parseCommandString(commandText)
+	}
+
+	if v.debug != nil {
+		v.debug.Log("Simple decorator: %s:%s", decorator, commandText)
+	}
+
+	return BlockStatement{
+		Elements:      elements, // Store the command elements, not the decorator
+		IsDecorated:   true,
+		Decorator:     decorator,
+		DecoratorType: "simple",
+		Command:       commandText,
+	}
+}
+
+// parseCommandString with simplified tokenization - preserves spaces and structure.
+func (v *DevcmdVisitor) parseCommandString(text string) []CommandElement {
+	var elements []CommandElement
+	i := 0
+
+	for i < len(text) {
+		// Find the next decorator
+		nextDecoratorIndex := strings.Index(text[i:], "@")
+
+		// If no more decorators, the rest of the string is one text element
+		if nextDecoratorIndex == -1 {
+			if len(text[i:]) > 0 {
+				elements = append(elements, NewTextElement(text[i:]))
+			}
+			break
+		}
+
+		fullDecoratorIndex := i + nextDecoratorIndex
+
+		// Try to parse it as a decorator
+		decorator, consumed := v.parseDecorator(text[fullDecoratorIndex:])
+
+		if decorator != nil {
+			// Add the text before the decorator
+			if fullDecoratorIndex > i {
+				elements = append(elements, NewTextElement(text[i:fullDecoratorIndex]))
+			}
+			// Add the decorator itself
+			elements = append(elements, decorator)
+			// Move past the decorator
+			i = fullDecoratorIndex + consumed
+		} else {
+			// It's not a valid decorator (e.g., just an '@' symbol), so treat it as text and continue searching.
+			// Add text up to and including the current '@' as a single text element.
+			textBeforeAndAt := text[i : fullDecoratorIndex+1]
+			elements = append(elements, NewTextElement(textBeforeAndAt))
+			i = fullDecoratorIndex + 1
+		}
+	}
+	return elements
+}
+
+// parseDecorator parses a decorator pattern starting with @
+func (v *DevcmdVisitor) parseDecorator(text string) (*DecoratorElement, int) {
+	if len(text) < 2 || text[0] != '@' {
+		return nil, 0
+	}
+
+	// Find decorator name
+	nameStart := 1
+	nameEnd := nameStart
+	for nameEnd < len(text) && (isLetter(text[nameEnd]) || isDigit(text[nameEnd]) || text[nameEnd] == '_') {
+		nameEnd++
+	}
+
+	if nameEnd == nameStart {
+		return nil, 0 // No valid name
+	}
+
+	name := text[nameStart:nameEnd]
+
+	// Check for opening parenthesis
+	if nameEnd >= len(text) || text[nameEnd] != '(' {
+		return nil, 0 // Not a function decorator
+	}
+
+	// Find matching closing parenthesis
+	parenLevel := 1
+	contentStart := nameEnd + 1
+	i := contentStart
+
+	for i < len(text) && parenLevel > 0 {
+		switch text[i] {
+		case '(':
+			parenLevel++
+		case ')':
+			parenLevel--
+		}
+		i++
+	}
+
+	if parenLevel != 0 {
+		return nil, 0 // Unmatched parentheses
+	}
+
+	contentEnd := i - 1 // Before the closing )
+	content := text[contentStart:contentEnd]
+
+	// Parse the content recursively
+	var args []CommandElement
+	if content != "" {
+		args = v.parseCommandString(content)
+	}
+
+	decorator := &DecoratorElement{
+		Name: name,
+		Type: "function",
+		Args: args,
+	}
+
+	return decorator, i // Total length including @name(...)
+}
+
+// Helper functions
+func isLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func isDigit(c byte) bool {
+	return c >= '0' && c <= '9'
 }
 
 func (v *DevcmdVisitor) getOriginalText(ctx antlr.ParserRuleContext) string {
@@ -704,4 +885,11 @@ func (v *DevcmdVisitor) getOriginalText(ctx antlr.ParserRuleContext) string {
 	text = strings.TrimLeft(text, " \t")
 
 	return text
+}
+
+// NewTextElement creates a TextElement
+func NewTextElement(text string) *TextElement {
+	return &TextElement{
+		Text: text,
+	}
 }
