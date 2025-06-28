@@ -79,7 +79,7 @@ stop dev: pkill -f "npm start";
 # Parallel execution
 deploy: {
   echo "Building and deploying...";
-  @parallel: {
+  @parallel {
     docker build -t frontend ./frontend;
     docker build -t backend ./backend
   };
@@ -293,7 +293,7 @@ setup: {
 
 # Parallel execution
 services: {
-  @parallel: {
+  @parallel {
     service1 --start;
     service2 --start
   }
@@ -322,11 +322,11 @@ Wraps command for shell execution:
 backup: @sh(find . -name "*.log" -exec rm {} \;);
 ```
 
-### @parallel: { ... }
-Runs commands in parallel:
+### @parallel { ... }
+Runs commands in parallel
 ```bash
 build-all: {
-  @parallel: {
+  @parallel {
     go build ./cmd/server;
     go build ./cmd/client
   }

@@ -31,20 +31,11 @@ type DevcmdParserListener interface {
 	// EnterBlockDecoratorLabel is called when entering the blockDecoratorLabel production.
 	EnterBlockDecoratorLabel(c *BlockDecoratorLabelContext)
 
-	// EnterSimpleDecoratorLabel is called when entering the simpleDecoratorLabel production.
-	EnterSimpleDecoratorLabel(c *SimpleDecoratorLabelContext)
-
 	// EnterFunctionDecorator is called when entering the functionDecorator production.
 	EnterFunctionDecorator(c *FunctionDecoratorContext)
 
 	// EnterBlockDecorator is called when entering the blockDecorator production.
 	EnterBlockDecorator(c *BlockDecoratorContext)
-
-	// EnterSimpleDecorator is called when entering the simpleDecorator production.
-	EnterSimpleDecorator(c *SimpleDecoratorContext)
-
-	// EnterDecorator is called when entering the decorator production.
-	EnterDecorator(c *DecoratorContext)
 
 	// EnterDecoratorContent is called when entering the decoratorContent production.
 	EnterDecoratorContent(c *DecoratorContentContext)
@@ -60,9 +51,6 @@ type DevcmdParserListener interface {
 
 	// EnterSimpleCommand is called when entering the simpleCommand production.
 	EnterSimpleCommand(c *SimpleCommandContext)
-
-	// EnterDecoratorCommand is called when entering the decoratorCommand production.
-	EnterDecoratorCommand(c *DecoratorCommandContext)
 
 	// EnterBlockCommand is called when entering the blockCommand production.
 	EnterBlockCommand(c *BlockCommandContext)
@@ -112,20 +100,11 @@ type DevcmdParserListener interface {
 	// ExitBlockDecoratorLabel is called when exiting the blockDecoratorLabel production.
 	ExitBlockDecoratorLabel(c *BlockDecoratorLabelContext)
 
-	// ExitSimpleDecoratorLabel is called when exiting the simpleDecoratorLabel production.
-	ExitSimpleDecoratorLabel(c *SimpleDecoratorLabelContext)
-
 	// ExitFunctionDecorator is called when exiting the functionDecorator production.
 	ExitFunctionDecorator(c *FunctionDecoratorContext)
 
 	// ExitBlockDecorator is called when exiting the blockDecorator production.
 	ExitBlockDecorator(c *BlockDecoratorContext)
-
-	// ExitSimpleDecorator is called when exiting the simpleDecorator production.
-	ExitSimpleDecorator(c *SimpleDecoratorContext)
-
-	// ExitDecorator is called when exiting the decorator production.
-	ExitDecorator(c *DecoratorContext)
 
 	// ExitDecoratorContent is called when exiting the decoratorContent production.
 	ExitDecoratorContent(c *DecoratorContentContext)
@@ -141,9 +120,6 @@ type DevcmdParserListener interface {
 
 	// ExitSimpleCommand is called when exiting the simpleCommand production.
 	ExitSimpleCommand(c *SimpleCommandContext)
-
-	// ExitDecoratorCommand is called when exiting the decoratorCommand production.
-	ExitDecoratorCommand(c *DecoratorCommandContext)
 
 	// ExitBlockCommand is called when exiting the blockCommand production.
 	ExitBlockCommand(c *BlockCommandContext)

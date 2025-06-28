@@ -19,16 +19,18 @@ rec {
     }:
 
     let
-      # Helper function to read a file safely at evaluation time
-      safeReadFile = path:
-        if builtins.pathExists path
-        then builtins.readFile path
-        else null;
+      # Helper function to safely detect files in flake context
+      # In flakes, we need to be more careful about path detection
+      flakeSafePathExists = path:
+        if builtins.hasAttr "path" (builtins.functionArgs (import path)) then false
+        else builtins.pathExists path;
 
-      # Get content from commandsFile if provided
+      # Try to get content from explicit file
       fileContent =
-        if commandsFile != null
-        then safeReadFile commandsFile
+        if commandsFile != null then
+          if builtins.pathExists (toString commandsFile) then
+            builtins.readFile commandsFile
+          else null
         else null;
 
       # Use either commandsContent or commands for inline content
@@ -37,19 +39,34 @@ rec {
         else if commands != null then commands
         else null;
 
-      # Try to find a commands file in common locations
+      # Auto-detect commands file with improved flake-safe detection
+      # Default to commands.cli as the primary filename
       autoDetectContent =
         let
-          # Try to detect commands file in various common locations
-          paths = [
-            # New .cli extension (preferred)
-            ./commands.cli
-            ./commands
+          # Try different file locations in order of preference
+          candidatePaths = [
+            ./commands.cli # Primary default filename
+            ./commands # Legacy filename
+            ./devcmd.cli # Alternative naming
+            ./.devcmd # Hidden file variant
           ];
-          existingPath = lib.findFirst (p: builtins.pathExists p) null paths;
+
+          # Find first existing file
+          findExistingFile = paths:
+            if paths == [ ] then null
+            else
+              let
+                head = builtins.head paths;
+                tail = builtins.tail paths;
+              in
+              # Use toString to normalize path for safer checking
+              if builtins.pathExists (toString head) then head
+              else findExistingFile tail;
+
+          foundPath = findExistingFile candidatePaths;
         in
-        if existingPath != null
-        then builtins.readFile existingPath
+        if foundPath != null then
+          builtins.readFile foundPath
         else null;
 
       # Determine what content to use (in order of priority)
@@ -57,7 +74,7 @@ rec {
         if fileContent != null then fileContent
         else if inlineContent != null then inlineContent
         else if autoDetectContent != null then autoDetectContent
-        else "# No commands defined";
+        else throw "No commands content found for CLI generation. Expected one of: commands.cli, commands, devcmd.cli, or inline content.";
 
       # Process the content through preProcess function
       processedContent = preProcess finalContent;
@@ -66,11 +83,13 @@ rec {
       commandsSrc = pkgs.writeText "commands-content" processedContent;
 
       # Get devcmd parser binary (automatically uses pkgs.system)
-      parserBin = self.packages.${pkgs.system}.default;
+      parserBin =
+        if self != null then self.packages.${pkgs.system}.default
+        else throw "Self reference required for CLI generation. Use explicit commandsContent if building standalone.";
 
       # Handle template file path safely
       templatePath =
-        if templateFile != null && builtins.pathExists templateFile
+        if templateFile != null && builtins.pathExists (toString templateFile)
         then toString templateFile
         else null;
 
@@ -100,7 +119,7 @@ rec {
       sourceType =
         if fileContent != null then "from file ${toString commandsFile}"
         else if inlineContent != null then "from inline content"
-        else if autoDetectContent != null then "from auto-detected file"
+        else if autoDetectContent != null then "from auto-detected commands.cli"
         else "no commands found";
 
       # Debug information
@@ -150,14 +169,14 @@ rec {
     }:
 
     let
-      # Use the same content resolution logic as mkDevCommands
-      safeReadFile = path:
-        if builtins.pathExists path
-        then builtins.readFile path
+      # Use the same content resolution logic as mkDevCommands but with better error handling
+      tryReadFile = path:
+        if builtins.pathExists (toString path) then
+          builtins.readFile path
         else null;
 
       fileContent =
-        if commandsFile != null then safeReadFile commandsFile
+        if commandsFile != null then tryReadFile commandsFile
         else null;
 
       inlineContent =
@@ -165,24 +184,37 @@ rec {
         else if commands != null then commands
         else null;
 
+      # Auto-detect with commands.cli as default
       autoDetectContent =
         let
-          paths = [ ./commands.cli ./commands ];
-          existingPath = lib.findFirst (p: builtins.pathExists p) null paths;
+          candidates = [
+            ./commands.cli # Primary default
+            ./.commands.cli # Hidden
+          ];
+
+          findFirst = paths:
+            if paths == [ ] then null
+            else
+              let candidate = builtins.head paths;
+              in
+              if builtins.pathExists (toString candidate) then tryReadFile candidate
+              else findFirst (builtins.tail paths);
         in
-        if existingPath != null then builtins.readFile existingPath else null;
+        findFirst candidates;
 
       finalContent =
         if fileContent != null then fileContent
         else if inlineContent != null then inlineContent
         else if autoDetectContent != null then autoDetectContent
-        else throw "No commands content found for CLI generation";
+        else throw "No commands content found for CLI '${name}'. Expected commands.cli file or explicit content.";
 
       processedContent = preProcess finalContent;
       commandsSrc = pkgs.writeText "${name}-commands.cli" processedContent;
 
-      # Get devcmd binary (automatically uses pkgs.system)
-      devcmdBin = self.packages.${pkgs.system}.default;
+      # Get devcmd binary with better error handling
+      devcmdBin =
+        if self != null then self.packages.${pkgs.system}.default
+        else throw "Self reference required for CLI generation. Cannot build '${name}' without devcmd parser.";
 
       # Template arguments
       templateArgs = lib.optionalString (templateFile != null) "--template ${toString templateFile}";
@@ -192,15 +224,13 @@ rec {
         {
           nativeBuildInputs = [ devcmdBin pkgs.go ];
         } ''
-        # --------------------------------------------
-        # Go needs a writable cache dir; /homeless-shelter is read-only.
-        export HOME=$TMPDIR                 # satisfies other tools
-        export GOCACHE=$TMPDIR/go-build     # tell Go where to cache
-        # --------------------------------------------
+        # Go needs a writable cache dir
+        export HOME=$TMPDIR
+        export GOCACHE=$TMPDIR/go-build
 
         mkdir -p "$GOCACHE" "$out"
 
-        echo "Generating Go CLI from devcmd file..."
+        echo "Generating Go CLI from commands.cli..."
         ${devcmdBin}/bin/devcmd ${templateArgs} ${commandsSrc} > "$out/main.go"
 
         cat > "$out/go.mod" <<EOF
@@ -209,7 +239,7 @@ rec {
         EOF
 
         echo "Validating generated Go code..."
-        ${pkgs.go}/bin/go mod tidy  -C "$out"
+        ${pkgs.go}/bin/go mod tidy -C "$out"
         ${pkgs.go}/bin/go build -C "$out" -o /dev/null ./...
         echo "✅ Generated Go code is valid"
       '';
@@ -278,22 +308,15 @@ rec {
     inherit commandsFile;
   };
 
-  # Auto-detect and generate from local commands.cli
+  # Auto-detect and generate from local commands.cli (default behavior)
   autoDevCommands = args: mkDevCommands ({
-    # Auto-detect commands.cli in current directory
-    commandsFile =
-      if builtins.pathExists ./commands.cli
-      then ./commands.cli
-      else null;
+    # Will auto-detect commands.cli by default
   } // args);
 
+  # Auto-detect CLI with commands.cli as default filename
   autoCLI = name: mkDevCLI {
     inherit name;
-    # Auto-detect commands.cli in current directory
-    commandsFile =
-      if builtins.pathExists ./commands.cli
-      then ./commands.cli
-      else null;
+    # Auto-detection will find commands.cli by default
   };
 
   # Utility functions for common patterns

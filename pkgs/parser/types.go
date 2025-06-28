@@ -27,11 +27,10 @@ func (t *TextElement) IsDecorator() bool {
 
 // DecoratorElement represents a decorator like @var(SRC) or @sh(...)
 type DecoratorElement struct {
-	Name    string           // "var", "sh", "parallel", etc.
-	Type    string           // "function", "simple", "block"
-	Args    []CommandElement // For function decorators: contents of @name(...)
-	Block   []BlockStatement // For block decorators: @name: { ... }
-	Command []CommandElement // For simple decorators: @name: command
+	Name  string           // "var", "sh", "parallel", etc.
+	Type  string           // "function" or "block"
+	Args  []CommandElement // For function decorators: contents of @name(...)
+	Block []BlockStatement // For block decorators: @name { ... }
 }
 
 func (d *DecoratorElement) String() string {
@@ -42,15 +41,9 @@ func (d *DecoratorElement) String() string {
 			argStrs = append(argStrs, arg.String())
 		}
 		return fmt.Sprintf("@%s(%s)", d.Name, strings.Join(argStrs, ""))
-	case "simple":
-		var cmdStrs []string
-		for _, cmd := range d.Command {
-			cmdStrs = append(cmdStrs, cmd.String())
-		}
-		return fmt.Sprintf("@%s: %s", d.Name, strings.Join(cmdStrs, ""))
 	case "block":
 		// Block representation would be more complex
-		return fmt.Sprintf("@%s: { ... }", d.Name)
+		return fmt.Sprintf("@%s { ... }", d.Name)
 	default:
 		return fmt.Sprintf("@%s", d.Name)
 	}
@@ -70,17 +63,13 @@ type BlockStatement struct {
 	Command        string           // Flattened command text (for compatibility)
 	IsDecorated    bool             // Whether this is a decorated command
 	Decorator      string           // The decorator name
-	DecoratorType  string           // "function", "simple", or "block"
+	DecoratorType  string           // "function" or "block"
 	DecoratedBlock []BlockStatement // For block-type decorators
 }
 
 // Helper methods for BlockStatement (updated for new structure)
 func (bs *BlockStatement) IsFunction() bool {
 	return bs.IsDecorated && bs.DecoratorType == "function"
-}
-
-func (bs *BlockStatement) IsSimpleDecorator() bool {
-	return bs.IsDecorated && bs.DecoratorType == "simple"
 }
 
 func (bs *BlockStatement) IsBlockDecorator() bool {

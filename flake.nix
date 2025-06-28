@@ -58,9 +58,10 @@
             test-shell = tests.allTestDerivations.shellSubstitution;
           };
 
-          # Development shells including example shells from examples.nix
+          # Development shells
           devShells = {
-            default = import ./.nix/development.nix { inherit pkgs; };
+            # Main development shell with generated CLI
+            default = import ./.nix/development.nix { inherit pkgs self; };
 
             # Example development shells
             basic = examples.shells.basicShell;

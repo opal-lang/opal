@@ -39,7 +39,7 @@ rec {
 
       lint: {
         echo "Running linters...";
-        @parallel: {
+        @parallel {
           @sh((which golangci-lint && golangci-lint run) || echo "No Go linter");
           @sh((which eslint && eslint .) || echo "No JS linter")
         };
@@ -48,7 +48,7 @@ rec {
 
       deps: {
         echo "Installing dependencies...";
-        @parallel: {
+        @parallel {
           @sh((test -f go.mod && go mod download) || echo "No Go modules");
           @sh((test -f package.json && npm install) || echo "No NPM packages");
           @sh((test -f requirements.txt && pip install -r requirements.txt) || echo "No Python packages")
@@ -69,7 +69,7 @@ rec {
 
       install: {
         echo "Installing all dependencies...";
-        @parallel: {
+        @parallel {
           @sh((cd frontend && npm install) || echo "No frontend");
           @sh((cd backend && go mod download) || echo "No backend")
         };
@@ -78,7 +78,7 @@ rec {
 
       build: {
         echo "Building all components...";
-        @parallel: {
+        @parallel {
           @sh((cd frontend && npm run build) || echo "No frontend build");
           @sh((cd backend && go build -o ../dist/api ./cmd/api) || echo "No backend build")
         };
@@ -89,7 +89,7 @@ rec {
         echo "Starting development servers...";
         echo "Frontend: http://localhost:@var(FRONTEND_PORT)";
         echo "Backend: http://localhost:@var(BACKEND_PORT)";
-        @parallel: {
+        @parallel {
           @sh(cd frontend && NODE_ENV=@var(NODE_ENV) npm start);
           @sh(cd backend && go run ./cmd/api --port=@var(BACKEND_PORT))
         }
@@ -97,7 +97,7 @@ rec {
 
       stop dev: {
         echo "Stopping development servers...";
-        @parallel: {
+        @parallel {
           @sh(pkill -f "npm start" || echo "Frontend not running");
           @sh(pkill -f "go run.*api" || echo "Backend not running")
         };
@@ -106,7 +106,7 @@ rec {
 
       test: {
         echo "Running all tests...";
-        @parallel: {
+        @parallel {
           @sh((cd frontend && npm test) || echo "No frontend tests");
           @sh((cd backend && go test -v ./...) || echo "No backend tests")
         };
@@ -115,7 +115,7 @@ rec {
 
       format: {
         echo "Formatting code...";
-        @parallel: {
+        @parallel {
           @sh((cd frontend && npm run format) || echo "No frontend formatter");
           @sh((cd backend && go fmt ./...) || echo "No backend formatter")
         };
@@ -168,7 +168,7 @@ rec {
 
       build-all: {
         echo "Building for multiple platforms...";
-        @parallel: {
+        @parallel {
           GOOS=linux GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-linux-amd64 ./cmd/@var(BINARY);
           GOOS=darwin GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-darwin-amd64 ./cmd/@var(BINARY);
           GOOS=windows GOARCH=amd64 go build -ldflags="@var(LDFLAGS)" -o bin/@var(BINARY)-windows-amd64.exe ./cmd/@var(BINARY)
@@ -178,7 +178,7 @@ rec {
 
       test: {
         echo "Running comprehensive tests...";
-        @parallel: {
+        @parallel {
           go test -v ./...;
           go test -race ./...;
           go test -bench=. -benchmem ./...
@@ -195,7 +195,7 @@ rec {
 
       lint: {
         echo "Running linters...";
-        @parallel: {
+        @parallel {
           @sh((which golangci-lint && golangci-lint run) || echo "golangci-lint not found");
           go fmt ./...;
           go vet ./...
@@ -263,7 +263,7 @@ rec {
 
       test: {
         echo "Running tests...";
-        @parallel: {
+        @parallel {
           cargo test;
           cargo test --doc
         };
@@ -272,7 +272,7 @@ rec {
 
       check: {
         echo "Checking code...";
-        @parallel: {
+        @parallel {
           cargo check;
           cargo clippy -- -D warnings;
           cargo fmt -- --check
@@ -282,7 +282,7 @@ rec {
 
       fix: {
         echo "Fixing code issues...";
-        @parallel: {
+        @parallel {
           cargo fix --allow-dirty;
           cargo clippy --fix --allow-dirty;
           cargo fmt
@@ -375,7 +375,7 @@ rec {
 
       lint: {
         echo "Linting code...";
-        @parallel: {
+        @parallel {
           @sh(@var(VENV)/bin/flake8 . || echo "flake8 not installed");
           @sh(@var(VENV)/bin/black --check . || echo "black not installed")
         };
@@ -384,7 +384,7 @@ rec {
 
       format: {
         echo "Formatting code...";
-        @parallel: {
+        @parallel {
           @sh(@var(VENV)/bin/black . || echo "black not installed");
           @sh(@var(VENV)/bin/isort . || echo "isort not installed")
         };
@@ -399,7 +399,7 @@ rec {
 
       clean: {
         echo "Cleaning temporary files...";
-        @parallel: {
+        @parallel {
           @sh(find . -name "*.pyc" -delete);
           @sh(find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true);
           @sh(find . -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true)
@@ -479,7 +479,7 @@ rec {
 
       lint: {
         echo "Linting infrastructure code...";
-        @parallel: {
+        @parallel {
           @sh((cd @var(TERRAFORM_DIR) && terraform fmt -check) || echo "No Terraform");
           @sh((cd @var(ANSIBLE_DIR) && ansible-lint .) || echo "No Ansible")
         };

@@ -1,6 +1,6 @@
 package generator
 
-// Improved template component definitions with better whitespace control and formatting
+// Updated template component definitions with proper shell command escaping
 
 const packageTemplate = `{{define "package"}}package {{.PackageName}}{{end}}`
 
@@ -186,7 +186,7 @@ const commandSwitchTemplate = `{{define "command-switch"}}
 // Execute runs the CLI with given arguments
 func (c *CLI) Execute() {
 	if len(os.Args) < 2 {
-		c.showHelp()
+		{{if not .HasUserDefinedHelp}}c.showHelp(){{else}}fmt.Fprintf(os.Stderr, "Usage: %s <command>\nRun '%s help' for available commands.\n", os.Args[0], os.Args[0]){{end}}
 		return
 	}
 
@@ -203,27 +203,31 @@ func (c *CLI) Execute() {
 	case "{{.GoCase}}":
 		c.{{.FunctionName}}(args)
 {{- end}}
+{{- if not .HasUserDefinedHelp}}
 	case "help", "--help", "-h":
 		c.showHelp()
+{{- end}}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-		c.showHelp()
+		{{if not .HasUserDefinedHelp}}c.showHelp(){{else}}fmt.Fprintf(os.Stderr, "Run '%s help' for available commands.\n", os.Args[0]){{end}}
 		os.Exit(1)
 	}
 {{- else}}
 	switch command {
+{{- if not .HasUserDefinedHelp}}
 	case "help", "--help", "-h":
 		c.showHelp()
+{{- end}}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-		c.showHelp()
+		{{if not .HasUserDefinedHelp}}c.showHelp(){{else}}fmt.Fprintf(os.Stderr, "Run '%s help' for available commands.\n", os.Args[0]){{end}}
 		os.Exit(1)
 	}
 {{- end}}
 }
 {{end}}`
 
-const helpFunctionTemplate = `{{define "help-function"}}
+const helpFunctionTemplate = `{{define "help-function"}}{{if not .HasUserDefinedHelp}}
 // showHelp displays available commands
 func (c *CLI) showHelp() {
 	fmt.Println("Available commands:")
@@ -234,7 +238,7 @@ func (c *CLI) showHelp() {
 	fmt.Println("  {{.HelpDescription}}")
 {{- end}}
 }
-{{end}}`
+{{- end}}{{end}}`
 
 const statusFunctionTemplate = `{{define "status-function"}}{{if .HasProcessMgmt}}
 // showStatus displays running processes
@@ -340,7 +344,7 @@ func (c *CLI) {{.FunctionName}}(args []string) {
 
 const regularCommandTemplate = `{{define "regular-command"}}
 	// Regular command
-	cmd := exec.Command("sh", "-c", ` + "`{{.ShellCommand}}`" + `)
+	cmd := exec.Command("sh", "-c", {{printf "%q" .ShellCommand}})
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -364,14 +368,14 @@ const watchStopCommandTemplate = `{{define "watch-stop-command"}}
 	subcommand := args[0]
 	switch subcommand {
 	case "start":
-		command := ` + "`{{.WatchCommand}}`" + `
+		command := {{printf "%q" .WatchCommand}}
 		if err := c.runInBackground("{{.Name}}", command); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting {{.Name}}: %v\n", err)
 			os.Exit(1)
 		}
 	case "stop":
 		// Run custom stop command
-		cmd := exec.Command("sh", "-c", ` + "`{{.StopCommand}}`" + `)
+		cmd := exec.Command("sh", "-c", {{printf "%q" .StopCommand}})
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -399,7 +403,7 @@ const watchOnlyCommandTemplate = `{{define "watch-only-command"}}
 	subcommand := args[0]
 	switch subcommand {
 	case "start":
-		command := ` + "`{{.WatchCommand}}`" + `
+		command := {{printf "%q" .WatchCommand}}
 		if err := c.runInBackground("{{.Name}}", command); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting {{.Name}}: %v\n", err)
 			os.Exit(1)
@@ -421,12 +425,105 @@ const watchOnlyCommandTemplate = `{{define "watch-only-command"}}
 const stopOnlyCommandTemplate = `{{define "stop-only-command"}}
 	// Stop-only command (unusual case)
 	// Run stop command
-	cmd := exec.Command("sh", "-c", ` + "`{{.StopCommand}}`" + `)
+	cmd := exec.Command("sh", "-c", {{printf "%q" .StopCommand}})
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Stop command failed: %v\n", err)
 	}
+{{- end}}`
+
+// Updated parallel command template using standard library with proper command escaping
+const parallelCommandTemplate = `{{define "parallel-command"}}
+	// Parallel command execution using standard library goroutines
+	{
+		var wg sync.WaitGroup
+		errChan := make(chan error, {{len .ParallelCommands}})
+
+		{{range .ParallelCommands}}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmd := exec.Command("sh", "-c", {{printf "%q" .}})
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				errChan <- fmt.Errorf("command failed: %v", err)
+				return
+			}
+		}()
+		{{end}}
+
+		// Wait for all goroutines to complete
+		go func() {
+			wg.Wait()
+			close(errChan)
+		}()
+
+		// Check for errors
+		for err := range errChan {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Parallel execution failed: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+{{- end}}`
+
+// Updated mixed command template with proper command escaping for multiple parallel segments
+const mixedCommandTemplate = `{{define "mixed-command"}}
+	// Mixed command with both parallel and sequential execution
+	{{range $index, $segment := .CommandSegments}}
+	{{if .IsParallel}}
+	// Parallel segment using standard library
+	{
+		var wg sync.WaitGroup
+		errChan := make(chan error, {{len .Commands}})
+
+		{{range .Commands}}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmd := exec.Command("sh", "-c", {{printf "%q" .}})
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				errChan <- fmt.Errorf("command failed: %v", err)
+				return
+			}
+		}()
+		{{end}}
+
+		go func() {
+			wg.Wait()
+			close(errChan)
+		}()
+
+		for err := range errChan {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Parallel execution failed: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+	{{else}}
+	// Sequential command
+	{
+		cmd := exec.Command("sh", "-c", {{printf "%q" .Command}})
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+
+		if err := cmd.Run(); err != nil {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitError.ExitCode())
+			}
+			fmt.Fprintf(os.Stderr, "Command failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	{{end}}
+	{{end}}
 {{- end}}`
 
 const mainFunctionTemplate = `{{define "main-function"}}
@@ -462,4 +559,4 @@ const masterTemplate = `{{define "main"}}{{template "package" .}}
 {{template "command-functions" .}}
 {{template "main-function" .}}{{end}}
 
-{{define "command-impl"}}{{if eq .Type "regular"}}{{template "regular-command" .}}{{else if eq .Type "watch-stop"}}{{template "watch-stop-command" .}}{{else if eq .Type "watch-only"}}{{template "watch-only-command" .}}{{else if eq .Type "stop-only"}}{{template "stop-only-command" .}}{{end}}{{end}}`
+	{{define "command-impl"}}{{if eq .Type "regular"}}{{template "regular-command" .}}{{else if eq .Type "watch-stop"}}{{template "watch-stop-command" .}}{{else if eq .Type "watch-only"}}{{template "watch-only-command" .}}{{else if eq .Type "stop-only"}}{{template "stop-only-command" .}}{{else if eq .Type "parallel"}}{{template "parallel-command" .}}{{else if eq .Type "mixed"}}{{template "mixed-command" .}}{{end}}{{end}}`

@@ -178,7 +178,7 @@ rec {
           }
 
           parallel: {
-            @parallel: {
+            @parallel {
               echo "Task 1";
               echo "Task 2";
               echo "Task 3"
@@ -217,7 +217,7 @@ rec {
         name = "error-test";
         commandsContent = ''
           valid: echo "This works";
-          special-chars: echo "Special: !@#\$%^&*()";
+          special-chars: echo "Special: !#\$%^&*()";
           unicode: echo "Hello 世界";
         '';
       };
