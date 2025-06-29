@@ -25,26 +25,17 @@ type DevcmdParserListener interface {
 	// EnterCommandBody is called when entering the commandBody production.
 	EnterCommandBody(c *CommandBodyContext)
 
-	// EnterFunctionDecoratorLabel is called when entering the functionDecoratorLabel production.
-	EnterFunctionDecoratorLabel(c *FunctionDecoratorLabelContext)
+	// EnterDecorator is called when entering the decorator production.
+	EnterDecorator(c *DecoratorContext)
 
-	// EnterBlockDecoratorLabel is called when entering the blockDecoratorLabel production.
-	EnterBlockDecoratorLabel(c *BlockDecoratorLabelContext)
-
-	// EnterFunctionDecorator is called when entering the functionDecorator production.
-	EnterFunctionDecorator(c *FunctionDecoratorContext)
-
-	// EnterBlockDecorator is called when entering the blockDecorator production.
-	EnterBlockDecorator(c *BlockDecoratorContext)
+	// EnterDecoratedCommand is called when entering the decoratedCommand production.
+	EnterDecoratedCommand(c *DecoratedCommandContext)
 
 	// EnterDecoratorContent is called when entering the decoratorContent production.
 	EnterDecoratorContent(c *DecoratorContentContext)
 
 	// EnterDecoratorElement is called when entering the decoratorElement production.
 	EnterDecoratorElement(c *DecoratorElementContext)
-
-	// EnterNestedDecorator is called when entering the nestedDecorator production.
-	EnterNestedDecorator(c *NestedDecoratorContext)
 
 	// EnterDecoratorTextElement is called when entering the decoratorTextElement production.
 	EnterDecoratorTextElement(c *DecoratorTextElementContext)
@@ -73,9 +64,6 @@ type DevcmdParserListener interface {
 	// EnterCommandTextElement is called when entering the commandTextElement production.
 	EnterCommandTextElement(c *CommandTextElementContext)
 
-	// EnterInlineDecorator is called when entering the inlineDecorator production.
-	EnterInlineDecorator(c *InlineDecoratorContext)
-
 	// ExitProgram is called when exiting the program production.
 	ExitProgram(c *ProgramContext)
 
@@ -94,26 +82,17 @@ type DevcmdParserListener interface {
 	// ExitCommandBody is called when exiting the commandBody production.
 	ExitCommandBody(c *CommandBodyContext)
 
-	// ExitFunctionDecoratorLabel is called when exiting the functionDecoratorLabel production.
-	ExitFunctionDecoratorLabel(c *FunctionDecoratorLabelContext)
+	// ExitDecorator is called when exiting the decorator production.
+	ExitDecorator(c *DecoratorContext)
 
-	// ExitBlockDecoratorLabel is called when exiting the blockDecoratorLabel production.
-	ExitBlockDecoratorLabel(c *BlockDecoratorLabelContext)
-
-	// ExitFunctionDecorator is called when exiting the functionDecorator production.
-	ExitFunctionDecorator(c *FunctionDecoratorContext)
-
-	// ExitBlockDecorator is called when exiting the blockDecorator production.
-	ExitBlockDecorator(c *BlockDecoratorContext)
+	// ExitDecoratedCommand is called when exiting the decoratedCommand production.
+	ExitDecoratedCommand(c *DecoratedCommandContext)
 
 	// ExitDecoratorContent is called when exiting the decoratorContent production.
 	ExitDecoratorContent(c *DecoratorContentContext)
 
 	// ExitDecoratorElement is called when exiting the decoratorElement production.
 	ExitDecoratorElement(c *DecoratorElementContext)
-
-	// ExitNestedDecorator is called when exiting the nestedDecorator production.
-	ExitNestedDecorator(c *NestedDecoratorContext)
 
 	// ExitDecoratorTextElement is called when exiting the decoratorTextElement production.
 	ExitDecoratorTextElement(c *DecoratorTextElementContext)
@@ -141,7 +120,4 @@ type DevcmdParserListener interface {
 
 	// ExitCommandTextElement is called when exiting the commandTextElement production.
 	ExitCommandTextElement(c *CommandTextElementContext)
-
-	// ExitInlineDecorator is called when exiting the inlineDecorator production.
-	ExitInlineDecorator(c *InlineDecoratorContext)
 }

@@ -56,29 +56,17 @@ func (s *BaseDevcmdParserListener) EnterCommandBody(ctx *CommandBodyContext) {}
 // ExitCommandBody is called when production commandBody is exited.
 func (s *BaseDevcmdParserListener) ExitCommandBody(ctx *CommandBodyContext) {}
 
-// EnterFunctionDecoratorLabel is called when production functionDecoratorLabel is entered.
-func (s *BaseDevcmdParserListener) EnterFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) {}
+// EnterDecorator is called when production decorator is entered.
+func (s *BaseDevcmdParserListener) EnterDecorator(ctx *DecoratorContext) {}
 
-// ExitFunctionDecoratorLabel is called when production functionDecoratorLabel is exited.
-func (s *BaseDevcmdParserListener) ExitFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) {}
+// ExitDecorator is called when production decorator is exited.
+func (s *BaseDevcmdParserListener) ExitDecorator(ctx *DecoratorContext) {}
 
-// EnterBlockDecoratorLabel is called when production blockDecoratorLabel is entered.
-func (s *BaseDevcmdParserListener) EnterBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) {}
+// EnterDecoratedCommand is called when production decoratedCommand is entered.
+func (s *BaseDevcmdParserListener) EnterDecoratedCommand(ctx *DecoratedCommandContext) {}
 
-// ExitBlockDecoratorLabel is called when production blockDecoratorLabel is exited.
-func (s *BaseDevcmdParserListener) ExitBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) {}
-
-// EnterFunctionDecorator is called when production functionDecorator is entered.
-func (s *BaseDevcmdParserListener) EnterFunctionDecorator(ctx *FunctionDecoratorContext) {}
-
-// ExitFunctionDecorator is called when production functionDecorator is exited.
-func (s *BaseDevcmdParserListener) ExitFunctionDecorator(ctx *FunctionDecoratorContext) {}
-
-// EnterBlockDecorator is called when production blockDecorator is entered.
-func (s *BaseDevcmdParserListener) EnterBlockDecorator(ctx *BlockDecoratorContext) {}
-
-// ExitBlockDecorator is called when production blockDecorator is exited.
-func (s *BaseDevcmdParserListener) ExitBlockDecorator(ctx *BlockDecoratorContext) {}
+// ExitDecoratedCommand is called when production decoratedCommand is exited.
+func (s *BaseDevcmdParserListener) ExitDecoratedCommand(ctx *DecoratedCommandContext) {}
 
 // EnterDecoratorContent is called when production decoratorContent is entered.
 func (s *BaseDevcmdParserListener) EnterDecoratorContent(ctx *DecoratorContentContext) {}
@@ -91,12 +79,6 @@ func (s *BaseDevcmdParserListener) EnterDecoratorElement(ctx *DecoratorElementCo
 
 // ExitDecoratorElement is called when production decoratorElement is exited.
 func (s *BaseDevcmdParserListener) ExitDecoratorElement(ctx *DecoratorElementContext) {}
-
-// EnterNestedDecorator is called when production nestedDecorator is entered.
-func (s *BaseDevcmdParserListener) EnterNestedDecorator(ctx *NestedDecoratorContext) {}
-
-// ExitNestedDecorator is called when production nestedDecorator is exited.
-func (s *BaseDevcmdParserListener) ExitNestedDecorator(ctx *NestedDecoratorContext) {}
 
 // EnterDecoratorTextElement is called when production decoratorTextElement is entered.
 func (s *BaseDevcmdParserListener) EnterDecoratorTextElement(ctx *DecoratorTextElementContext) {}
@@ -152,9 +134,3 @@ func (s *BaseDevcmdParserListener) EnterCommandTextElement(ctx *CommandTextEleme
 
 // ExitCommandTextElement is called when production commandTextElement is exited.
 func (s *BaseDevcmdParserListener) ExitCommandTextElement(ctx *CommandTextElementContext) {}
-
-// EnterInlineDecorator is called when production inlineDecorator is entered.
-func (s *BaseDevcmdParserListener) EnterInlineDecorator(ctx *InlineDecoratorContext) {}
-
-// ExitInlineDecorator is called when production inlineDecorator is exited.
-func (s *BaseDevcmdParserListener) ExitInlineDecorator(ctx *InlineDecoratorContext) {}

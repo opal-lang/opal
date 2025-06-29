@@ -25,26 +25,17 @@ type DevcmdParserVisitor interface {
 	// Visit a parse tree produced by DevcmdParser#commandBody.
 	VisitCommandBody(ctx *CommandBodyContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#functionDecoratorLabel.
-	VisitFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decorator.
+	VisitDecorator(ctx *DecoratorContext) interface{}
 
-	// Visit a parse tree produced by DevcmdParser#blockDecoratorLabel.
-	VisitBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) interface{}
-
-	// Visit a parse tree produced by DevcmdParser#functionDecorator.
-	VisitFunctionDecorator(ctx *FunctionDecoratorContext) interface{}
-
-	// Visit a parse tree produced by DevcmdParser#blockDecorator.
-	VisitBlockDecorator(ctx *BlockDecoratorContext) interface{}
+	// Visit a parse tree produced by DevcmdParser#decoratedCommand.
+	VisitDecoratedCommand(ctx *DecoratedCommandContext) interface{}
 
 	// Visit a parse tree produced by DevcmdParser#decoratorContent.
 	VisitDecoratorContent(ctx *DecoratorContentContext) interface{}
 
 	// Visit a parse tree produced by DevcmdParser#decoratorElement.
 	VisitDecoratorElement(ctx *DecoratorElementContext) interface{}
-
-	// Visit a parse tree produced by DevcmdParser#nestedDecorator.
-	VisitNestedDecorator(ctx *NestedDecoratorContext) interface{}
 
 	// Visit a parse tree produced by DevcmdParser#decoratorTextElement.
 	VisitDecoratorTextElement(ctx *DecoratorTextElementContext) interface{}
@@ -72,7 +63,4 @@ type DevcmdParserVisitor interface {
 
 	// Visit a parse tree produced by DevcmdParser#commandTextElement.
 	VisitCommandTextElement(ctx *CommandTextElementContext) interface{}
-
-	// Visit a parse tree produced by DevcmdParser#inlineDecorator.
-	VisitInlineDecorator(ctx *InlineDecoratorContext) interface{}
 }

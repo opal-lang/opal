@@ -8,7 +8,7 @@
  * - Simple commands: build: go build -o bin/app ./cmd;
  * - Block workflows: deploy: { build; test; kubectl apply -f k8s/ }
  * - Process management: watch dev / stop dev command pairs
- * - Decorators: @timeout(30s), @retry(3), @parallel(), @var(PORT)
+ * - Decorators: @timeout(30s), @retry(3), @parallel(), @var(PORT), @timeout(30s) { ... }
  * - Line continuations: command \
  *                        --flag value;
  * - Shell features: pipes, redirections, background processes (&)
@@ -61,31 +61,29 @@ commandDefinition : (WATCH | STOP)? NAME COLON commandBody ;
 
 // Command body - multiple alternatives for different command types
 commandBody
-    : decoratedCommand     // @name(...) or @name { ... }
+    : decoratedCommand     // @name(...) or @name { ... } or @name(...) { ... }
     | blockCommand         // { ... }
     | simpleCommand        // command;
     ;
 
 /**
- * DECORATOR SYNTAX
- * Two forms:
- * 1. Function: @name(...) - parser handles nested parentheses and newlines
- * 2. Block: @name { ... }
+ * UNIFIED DECORATOR SYNTAX
+ * Three forms:
+ * 1. Function: @name(...) - for parameterized decorators
+ * 2. Block: @name { ... } - for decorating a block of commands
+ * 3. Function + Block: @name(...) { ... } - parameterized decorator with block
  *
  * Decorators use semantic validation: start with letter, allow hyphens/underscores, can end with numbers
  */
 
-// Decorated command with labels for visitor compatibility
-decoratedCommand
-    : functionDecorator    #functionDecoratorLabel
-    | blockDecorator       #blockDecoratorLabel
+// Unified decorator with all three forms
+decorator
+    : AT NAME LPAREN decoratorContent RPAREN blockCommand?  // @name(...) or @name(...) { ... }
+    | AT NAME blockCommand                                   // @name { ... }
     ;
 
-// Function decorator using NAME token - must end with semicolon
-functionDecorator : AT NAME LPAREN decoratorContent RPAREN SEMICOLON ;
-
-// Block decorator: @name { ... }
-blockDecorator : AT NAME blockCommand ;
+// Decorated command - uses unified decorator
+decoratedCommand : decorator SEMICOLON? ;
 
 // Content inside @name(...) - handle nested parentheses, @var() decorators, and newlines
 decoratorContent : decoratorElement* ;
@@ -93,14 +91,11 @@ decoratorContent : decoratorElement* ;
 // Elements that can appear in decorator content
 // Enhanced to handle nested @var() decorators as proper structures
 decoratorElement
-    : nestedDecorator                     // @var(NAME) etc. - parsed as decorators
+    : decorator                           // Nested decorators (e.g., @var inside @sh)
     | LPAREN decoratorContent RPAREN     // Nested parentheses
     | NEWLINE                            // Allow newlines
     | decoratorTextElement               // Any other content as text
     ;
-
-// Nested decorator within another decorator (e.g., @var inside @sh)
-nestedDecorator : AT NAME LPAREN decoratorContent RPAREN ;
 
 // Text elements that can appear in decorator content
 decoratorTextElement
@@ -109,7 +104,7 @@ decoratorTextElement
     | DOT | COMMA | SLASH | DASH | STAR | PLUS | QUESTION | EXCLAIM
     | PERCENT | CARET | TILDE | UNDERSCORE | LBRACKET | RBRACKET
     | LBRACE | RBRACE | DOLLAR | HASH | DOUBLEQUOTE | BACKTICK
-    | SEMICOLON | WATCH | STOP | DEF
+    | SEMICOLON | WATCH | STOP | DEF | AT
     ;
 
 /**
@@ -136,8 +131,7 @@ nonEmptyBlockStatements
 
 // Individual statement within a block
 blockStatement
-    : functionDecorator                   // Function decorators with semicolons
-    | blockDecorator                      // Block decorators (no semicolon)
+    : decorator                           // Any decorator form (no semicolon for block decorators)
     | commandText continuationLine*       // Regular commands (no semicolon in blocks)
     ;
 
@@ -159,10 +153,10 @@ continuationLine : BACKSLASH NEWLINE commandText ;
 commandText : commandTextElement* ;
 
 // Individual elements that can appear in command text
-// Enhanced to include inline decorators like @var(NAME)
+// Enhanced to include unified decorators in command text
 commandTextElement
-    : inlineDecorator       // @var(NAME) etc. - parsed as decorators in command text
-    | NAME                  // All identifiers (commands, variables, decorators)
+    : decorator             // Unified decorator (@var(NAME), @timeout(30s), etc.)
+    | NAME                  // All identifiers (commands, variables, etc.)
     | NUMBER                // Numeric literals
     | STRING                // Double quoted strings
     | SINGLE_STRING         // Single quoted strings
@@ -196,11 +190,8 @@ commandTextElement
     | HASH                  // # - when not comment
     | DOUBLEQUOTE           // " - when not in string
     | BACKTICK              // ` - backtick command substitution
-    | AT                    // @ - when not decorator start
+    | AT                    // @ - when not decorator start (emails, SSH, etc.)
     | WATCH                 // Allow keywords in command text
     | STOP                  // Allow keywords in command text
     | DEF                   // Allow keywords in command text
     ;
-
-// Inline decorator in command text (e.g., go run @var(MAIN_FILE))
-inlineDecorator : AT NAME LPAREN decoratorContent RPAREN ;

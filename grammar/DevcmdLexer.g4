@@ -44,7 +44,7 @@ DEF : 'def' ;
 WATCH : 'watch' ;
 STOP : 'stop' ;
 
-// Regular decorator start - for @name: syntax and single @
+// Simple @ token - let the parser handle the logic
 AT : '@' ;
 
 // Structural operators and delimiters
@@ -61,25 +61,16 @@ BACKSLASH : '\\' ;
 STRING : '"' (~["\\\r\n] | '\\' .)* '"' ;
 SINGLE_STRING : '\'' (~['\\\r\n] | '\\' .)* '\'' ;
 
-// Semantic token definitions with specific naming conventions
-// Note: We use a single NAME token and handle semantic validation in the parser
-// This avoids lexer ambiguity issues while maintaining semantic correctness
-
-// NAME: General identifier token that covers all naming patterns
-// - Commands: build, nix-build, docker-compose-up, deploy-v2
-// - Decorators: var, sh, parallel, retry-on-fail, wait-for
-// - Variables: SRC, BUILD_DIR, NODE_ENV, PORT_8080, MY_VAR
+// NAME: General identifier token
 NAME : [A-Za-z] [A-Za-z0-9_-]* ;
 
 // NUMBER: Numeric literals including decimals
 NUMBER : '-'? [0-9]+ ('.' [0-9]+)? ;
 
 // Path-like content (handles things like ./src, *.tmp, etc.)
-// More specific pattern to avoid conflicts with names
 PATH_CONTENT : [./~] [A-Za-z0-9._/*-]+ ;
 
 // Shell operators and special characters as individual tokens
-// Reordered to put more specific tokens first
 AMPERSAND : '&' ;
 PIPE : '|' ;
 LT : '<' ;
@@ -104,7 +95,6 @@ DOUBLEQUOTE : '"' ;
 BACKTICK : '`' ;
 
 // Whitespace and comments - must be at the end
-// Support # comments that start at beginning of line or after whitespace only
 COMMENT : {p.isCommentLine()}? [ \t]* '#' ~[\r\n]* -> channel(HIDDEN) ;
 
 NEWLINE : '\r'? '\n' ;

@@ -31,19 +31,11 @@ func (v *BaseDevcmdParserVisitor) VisitCommandBody(ctx *CommandBodyContext) inte
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseDevcmdParserVisitor) VisitFunctionDecoratorLabel(ctx *FunctionDecoratorLabelContext) interface{} {
+func (v *BaseDevcmdParserVisitor) VisitDecorator(ctx *DecoratorContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BaseDevcmdParserVisitor) VisitBlockDecoratorLabel(ctx *BlockDecoratorLabelContext) interface{} {
-	return v.VisitChildren(ctx)
-}
-
-func (v *BaseDevcmdParserVisitor) VisitFunctionDecorator(ctx *FunctionDecoratorContext) interface{} {
-	return v.VisitChildren(ctx)
-}
-
-func (v *BaseDevcmdParserVisitor) VisitBlockDecorator(ctx *BlockDecoratorContext) interface{} {
+func (v *BaseDevcmdParserVisitor) VisitDecoratedCommand(ctx *DecoratedCommandContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
@@ -52,10 +44,6 @@ func (v *BaseDevcmdParserVisitor) VisitDecoratorContent(ctx *DecoratorContentCon
 }
 
 func (v *BaseDevcmdParserVisitor) VisitDecoratorElement(ctx *DecoratorElementContext) interface{} {
-	return v.VisitChildren(ctx)
-}
-
-func (v *BaseDevcmdParserVisitor) VisitNestedDecorator(ctx *NestedDecoratorContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
@@ -92,9 +80,5 @@ func (v *BaseDevcmdParserVisitor) VisitCommandText(ctx *CommandTextContext) inte
 }
 
 func (v *BaseDevcmdParserVisitor) VisitCommandTextElement(ctx *CommandTextElementContext) interface{} {
-	return v.VisitChildren(ctx)
-}
-
-func (v *BaseDevcmdParserVisitor) VisitInlineDecorator(ctx *InlineDecoratorContext) interface{} {
 	return v.VisitChildren(ctx)
 }
