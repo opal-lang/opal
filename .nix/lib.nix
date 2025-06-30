@@ -1,7 +1,18 @@
 # Library functions for generating CLI packages from devcmd files
 { pkgs, self, lib }:
 
-rec {
+let
+  # Simple content hash for deterministic caching
+  mkContentHash = content:
+    builtins.hashString "sha256" (toString content);
+
+  # Helper function to safely read files
+  tryReadFile = path:
+    if builtins.pathExists (toString path) then
+      builtins.readFile path
+    else null;
+
+in rec {
   # Generate shell commands from devcmd/cli files - main library function
   mkDevCommands =
     {
@@ -19,18 +30,10 @@ rec {
     }:
 
     let
-      # Helper function to safely detect files in flake context
-      # In flakes, we need to be more careful about path detection
-      flakeSafePathExists = path:
-        if builtins.hasAttr "path" (builtins.functionArgs (import path)) then false
-        else builtins.pathExists path;
-
       # Try to get content from explicit file
       fileContent =
         if commandsFile != null then
-          if builtins.pathExists (toString commandsFile) then
-            builtins.readFile commandsFile
-          else null
+          tryReadFile commandsFile
         else null;
 
       # Use either commandsContent or commands for inline content
@@ -39,19 +42,16 @@ rec {
         else if commands != null then commands
         else null;
 
-      # Auto-detect commands file with improved flake-safe detection
-      # Default to commands.cli as the primary filename
+      # Auto-detect commands file in standard locations
       autoDetectContent =
         let
-          # Try different file locations in order of preference
           candidatePaths = [
-            ./commands.cli # Primary default filename
-            ./commands # Legacy filename
-            ./devcmd.cli # Alternative naming
-            ./.devcmd # Hidden file variant
+            ./commands.cli    # Primary default filename
+            ./commands        # Legacy filename
+            ./devcmd.cli      # Alternative naming
+            ./.devcmd         # Hidden file variant
           ];
 
-          # Find first existing file
           findExistingFile = paths:
             if paths == [ ] then null
             else
@@ -59,15 +59,10 @@ rec {
                 head = builtins.head paths;
                 tail = builtins.tail paths;
               in
-              # Use toString to normalize path for safer checking
-              if builtins.pathExists (toString head) then head
+              if builtins.pathExists (toString head) then tryReadFile head
               else findExistingFile tail;
-
-          foundPath = findExistingFile candidatePaths;
         in
-        if foundPath != null then
-          builtins.readFile foundPath
-        else null;
+        findExistingFile candidatePaths;
 
       # Determine what content to use (in order of priority)
       finalContent =
@@ -79,8 +74,11 @@ rec {
       # Process the content through preProcess function
       processedContent = preProcess finalContent;
 
-      # Write processed content to store for the parser
-      commandsSrc = pkgs.writeText "commands-content" processedContent;
+      # Generate content hash for cache-friendly naming
+      contentHash = mkContentHash processedContent;
+
+      # Use content hash in filename for better caching
+      commandsSrc = pkgs.writeText "commands-content-${contentHash}" processedContent;
 
       # Get devcmd parser binary (automatically uses pkgs.system)
       parserBin =
@@ -96,11 +94,15 @@ rec {
       # Build parser arguments
       parserArgs = lib.optionalString (templatePath != null) "--template ${templatePath}";
 
-      # Parse the commands and generate shell functions
-      parsedShellCode = pkgs.runCommand "parsed-commands"
+      # Parse the commands and generate shell functions with cache-friendly naming
+      parsedShellCode = pkgs.runCommand "parsed-commands-${contentHash}"
         {
           nativeBuildInputs = [ parserBin ];
           meta.description = "Generated shell functions from devcmd";
+
+          # Cache-friendly attributes
+          preferLocalBuild = true;
+          allowSubstitutes = true;
         }
         ''
           echo "Parsing commands with devcmd..."
@@ -125,6 +127,7 @@ rec {
       # Debug information
       debugInfo = lib.optionalString debug ''
         echo "🔍 Debug: Commands source = ${sourceType}"
+        echo "🔍 Debug: Content hash = ${contentHash}"
         echo "🔍 Debug: Parser bin = ${toString parserBin}"
         echo "🔍 Debug: Template = ${if templatePath != null then toString templatePath else "none"}"
         echo "🔍 Debug: System = ${pkgs.system}"
@@ -141,7 +144,7 @@ rec {
       '';
 
       # Exposed metadata for debugging and introspection
-      inherit commandsSrc;
+      inherit commandsSrc contentHash;
       source = sourceType;
       raw = finalContent;
       processed = processedContent;
@@ -169,12 +172,7 @@ rec {
     }:
 
     let
-      # Use the same content resolution logic as mkDevCommands but with better error handling
-      tryReadFile = path:
-        if builtins.pathExists (toString path) then
-          builtins.readFile path
-        else null;
-
+      # Use the same content resolution logic as mkDevCommands
       fileContent =
         if commandsFile != null then tryReadFile commandsFile
         else null;
@@ -209,7 +207,10 @@ rec {
         else throw "No commands content found for CLI '${name}'. Expected commands.cli file or explicit content.";
 
       processedContent = preProcess finalContent;
-      commandsSrc = pkgs.writeText "${name}-commands.cli" processedContent;
+      contentHash = mkContentHash processedContent;
+
+      # Cache-aware source naming
+      commandsSrc = pkgs.writeText "${name}-commands-${contentHash}.cli" processedContent;
 
       # Get devcmd binary with better error handling
       devcmdBin =
@@ -219,10 +220,14 @@ rec {
       # Template arguments
       templateArgs = lib.optionalString (templateFile != null) "--template ${toString templateFile}";
 
-      # Generate Go source
-      goSource = pkgs.runCommand "${name}-go-source"
+      # Generate Go source with cache-friendly naming
+      goSource = pkgs.runCommand "${name}-go-source-${contentHash}"
         {
           nativeBuildInputs = [ devcmdBin pkgs.go ];
+
+          # Cache-friendly attributes
+          preferLocalBuild = true;
+          allowSubstitutes = true;
         } ''
         # Go needs a writable cache dir
         export HOME=$TMPDIR
@@ -251,13 +256,16 @@ rec {
       src = goSource;
       vendorHash = null;
 
+      # Environment variables using correct syntax
+      env.CGO_ENABLED = "0";  # Static binary for better caching
+
       # Build flags following CODE_GUIDELINES.md
       ldflags = [
         "-s"
         "-w"
         "-X main.Version=${version}"
         "-X main.GeneratedBy=devcmd"
-        "-X main.BuildTime=1970-01-01T00:00:00Z"
+        "-X main.BuildTime=1970-01-01T00:00:00Z"  # Deterministic for caching
       ];
 
       meta = {
@@ -366,7 +374,7 @@ rec {
         '' + shellCode;
     };
 
-    # System detection helpers (now use pkgs.system)
+    # System detection helpers
     isLinux = lib.hasPrefix "x86_64-linux" pkgs.system || lib.hasPrefix "aarch64-linux" pkgs.system;
     isDarwin = lib.hasPrefix "x86_64-darwin" pkgs.system || lib.hasPrefix "aarch64-darwin" pkgs.system;
 
@@ -375,5 +383,8 @@ rec {
       if utils.isLinux then linuxCmd
       else if utils.isDarwin then darwinCmd
       else linuxCmd; # default to linux
+
+    # Content hash utility for manual cache management
+    getContentHash = mkContentHash;
   };
 }
