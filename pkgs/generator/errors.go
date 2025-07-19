@@ -3,6 +3,8 @@ package generator
 import (
 	"fmt"
 	"strings"
+
+	"github.com/aledsdavies/devcmd/pkgs/stdlib"
 )
 
 // GeneratorError provides enhanced error reporting with source context
@@ -173,28 +175,6 @@ func (e *VariableError) Error() string {
 	return builder.String()
 }
 
-// Helper functions for creating errors with context
-
-// createValidationError creates a validation error with source context
-func createValidationError(message, cmdName string, cmdLine int, sourceLines []string) error {
-	var sourceText string
-	if cmdLine > 0 && cmdLine <= len(sourceLines) {
-		sourceText = strings.TrimSpace(sourceLines[cmdLine-1])
-	}
-
-	return NewValidationError(message, cmdName, cmdLine, sourceText)
-}
-
-// createDecoratorError creates a decorator error with suggestion
-func createDecoratorError(decoratorName, decoratorType, message, suggestion, cmdName string, cmdLine int, sourceLines []string) error {
-	var sourceText string
-	if cmdLine > 0 && cmdLine <= len(sourceLines) {
-		sourceText = strings.TrimSpace(sourceLines[cmdLine-1])
-	}
-
-	return NewDecoratorError(decoratorName, decoratorType, message, suggestion, cmdName, cmdLine, sourceText)
-}
-
 // ErrorCollector collects multiple errors during processing
 type ErrorCollector struct {
 	errors []error
@@ -239,13 +219,14 @@ func (ec *ErrorCollector) Error() error {
 
 // Common error messages and helpers
 
-// GetSupportedDecoratorsString returns a formatted string of supported decorators
+// GetSupportedDecoratorsString returns a formatted string of supported decorators using stdlib registry
 func GetSupportedDecoratorsString() string {
-	var decorators []string
-	for decorator := range supportedDecorators {
-		decorators = append(decorators, "@"+decorator)
+	allDecorators := stdlib.GetAllDecorators()
+	var decoratorNames []string
+	for _, decorator := range allDecorators {
+		decoratorNames = append(decoratorNames, "@"+decorator.Name)
 	}
-	return strings.Join(decorators, ", ")
+	return strings.Join(decoratorNames, ", ")
 }
 
 // IsUnsupportedDecoratorError checks if an error is about an unsupported decorator

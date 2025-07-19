@@ -8,9 +8,9 @@ Define your commands in a simple syntax:
 
 ```bash
 # commands.cli
-build: echo "Building project...";
-test: echo "Running tests...";
-clean: rm -rf build/;
+build: echo "Building project..."
+test: echo "Running tests..."
+clean: rm -rf build/
 ```
 
 Generate a CLI:
@@ -42,19 +42,19 @@ go build -o mycli main.go
 
 ```bash
 # Variables
-def SRC = ./src;
-def BUILD_DIR = ./build;
+var SRC = "./src"
+var BUILD_DIR = "./build"
 
 # Simple commands
-build: cd @var(SRC) && make;
-test: go test ./...;
-clean: rm -rf @var(BUILD_DIR);
+build: cd @var(SRC) && make
+test: go test ./...
+clean: rm -rf @var(BUILD_DIR)
 
 # Multi-step commands
 setup: {
-  echo "Installing dependencies...";
-  npm install;
-  go mod download;
+  echo "Installing dependencies..."
+  npm install
+  go mod download
   echo "Setup complete"
 }
 ```
@@ -63,8 +63,8 @@ setup: {
 
 ```bash
 # Background processes
-watch dev: npm start;
-stop dev: pkill -f "npm start";
+watch dev: npm start
+stop dev: pkill -f "npm start"
 
 # The CLI automatically creates:
 # mycli dev start  (runs watch command)
@@ -78,23 +78,22 @@ stop dev: pkill -f "npm start";
 ```bash
 # Parallel execution
 deploy: {
-  echo "Building and deploying...";
+  echo "Building and deploying..."
   @parallel {
-    docker build -t frontend ./frontend;
+    docker build -t frontend ./frontend
     docker build -t backend ./backend
-  };
+  }
   kubectl apply -f k8s/
 }
 
-# Shell commands with @sh() decorator
-backup: @sh(tar -czf backup-$(date +%Y%m%d).tar.gz ./data);
-
-# Variable expansion in decorators
-serve: @sh(python -m http.server @var(PORT));
-
 # Shell command substitution and variables work normally
-timestamp: echo "Built at: $(date)";
-user: echo "Current user: $USER";
+timestamp: echo "Built at: $(date)"
+user: echo "Current user: $USER"
+backup: tar -czf backup-$(date +%Y%m%d).tar.gz ./data
+
+# Variable expansion
+var PORT = "8080"
+serve: python -m http.server @var(PORT)
 ```
 
 ## Installation & Usage
@@ -267,71 +266,12 @@ myproject --help
 myproject build
 ```
 
-## Syntax Reference
+## Documentation
 
-```bash
-# All commands end with semicolon
-build: echo "Building...";
+For complete syntax reference and language specification, see:
 
-# Variables with @var(NAME) syntax
-def PORT = 8080;
-serve: python -m http.server @var(PORT);
-
-# Variables in decorators
-start: @sh(./server --port=@var(PORT));
-
-# Shell command substitution and variables work normally
-timestamp: echo "Time: $(date)";
-user: echo "User: $USER";
-
-# Block commands
-setup: {
-  echo "Step 1";
-  echo "Step 2";
-  echo "Done"
-}
-
-# Parallel execution
-services: {
-  @parallel {
-    service1 --start;
-    service2 --start
-  }
-}
-
-# Watch/stop process pairs
-watch server: @sh(./server --port=@var(PORT));
-stop server: pkill -f "./server";
-
-# Shell commands with @sh() decorator
-backup: @sh(tar -czf backup-$(date +%Y%m%d).tar.gz .);
-```
-
-## Decorators
-
-### @var(NAME)
-Expands to the value of the defined variable:
-```bash
-def API_URL = https://api.example.com;
-test: curl @var(API_URL)/health;
-```
-
-### @sh(command)
-Wraps command for shell execution:
-```bash
-backup: @sh(find . -name "*.log" -exec rm {} \;);
-```
-
-### @parallel { ... }
-Runs commands in parallel
-```bash
-build-all: {
-  @parallel {
-    go build ./cmd/server;
-    go build ./cmd/client
-  }
-}
-```
+- **[Language Specification](docs/devcmd_specification.md)** - Complete syntax guide with examples
+- **[Examples](https://github.com/aledsdavies/devcmd/tree/main/.nix/examples.nix)** - Real-world CLI configurations
 
 ## Status
 

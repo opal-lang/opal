@@ -5,12 +5,11 @@
 # PROJECT CONFIGURATION
 # =============================================================================
 
-def PROJECT = devcmd;
-def GRAMMAR_DIR = grammar;
-def GEN_DIR = internal/gen;
-def VERSION = $(git describe --tags --always --dirty 2>/dev/null || echo 'dev');
-def BUILD_TIME = $(date -u +%Y-%m-%dT%H:%M:%SZ);
-def GO_VERSION = 1.22;
+var PROJECT = "devcmd"
+# Note: ANTLR grammar generation removed - now using custom lexer
+var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+var BUILD_TIME = "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+var GO_VERSION = "1.22"
 
 # =============================================================================
 # 🚀 QUICK START & CORE COMMANDS
@@ -18,32 +17,21 @@ def GO_VERSION = 1.22;
 
 # Project setup and initialization
 setup: {
-    echo "🔧 Setting up @var(PROJECT) development environment...";
-    echo "📝 Generating ANTLR parser...";
-    dev grammar;
-    echo "📦 Downloading Go dependencies...";
-    go mod download;
-    go mod verify;
-    echo "✅ Setup complete! Run 'dev test' to verify.";
+    echo "🔧 Setting up @var(PROJECT) development environment..."
+    echo "📦 Downloading Go dependencies..."
+    go mod download
+    go mod verify
+    echo "✅ Setup complete! Run 'dev test' to verify."
 }
 
-# Generate ANTLR parser
-grammar: {
-    echo "📝 Generating ANTLR parser...";
-    rm -rf @var(GEN_DIR);
-    mkdir -p @var(GEN_DIR);
-    @sh(cd @var(GRAMMAR_DIR) && antlr4 -Dlanguage=Go -package gen -listener -visitor -o ../@var(GEN_DIR) DevcmdLexer.g4 DevcmdParser.g4);
-    echo "Generated files:";
-    @sh(ls -la ../@var(GEN_DIR)/);
-    echo "✅ Parser generated";
-}
+# Note: ANTLR grammar generation removed - now using custom lexer in pkgs/lexer/
 
 # Build the CLI
 build: {
-    echo "🔨 Building @var(PROJECT) CLI...";
-    @sh(if [ ! -f @var(GEN_DIR)/devcmd_lexer.go ]; then echo "⚠️  ANTLR parser not found, generating..."; dev grammar; fi);
-    go build -ldflags="-s -w -X main.Version=@var(VERSION) -X main.BuildTime=@var(BUILD_TIME)" -o @var(PROJECT) ./cmd/@var(PROJECT);
-    echo "✅ Built: ./@var(PROJECT)";
+    echo "🔨 Building @var(PROJECT) CLI..."
+    # Note: Now using custom lexer - no parser generation needed
+    go build -ldflags="-s -w -X main.Version=@var(VERSION) -X main.BuildTime=@var(BUILD_TIME)" -o @var(PROJECT) ./cmd/@var(PROJECT)
+    echo "✅ Built: ./@var(PROJECT)"
 }
 
 # =============================================================================
@@ -51,80 +39,80 @@ build: {
 # =============================================================================
 
 test-quick: {
-    echo "⚡ Running quick checks...";
-    echo "🔍 Checking Go formatting...";
-    @sh(if command -v gofumpt >/dev/null 2>&1; then if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofumpt -l .; exit 1; fi; else if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofmt -l .; exit 1; fi; fi);
-    echo "🔍 Checking Nix formatting...";
-    @sh(if command -v nixpkgs-fmt >/dev/null 2>&1; then nixpkgs-fmt --check . || (echo "❌ Run 'dev format' to fix"; exit 1); else echo "⚠️  nixpkgs-fmt not available, skipping Nix format check"; fi);
-    dev lint;
-    echo "✅ Quick checks passed!";
+    echo "⚡ Running quick checks..."
+    echo "🔍 Checking Go formatting..."
+    if command -v gofumpt >/dev/null 2>&1; then if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofumpt -l .; exit 1; fi; else if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofmt -l .; exit 1; fi; fi
+    echo "🔍 Checking Nix formatting..."
+    if command -v nixpkgs-fmt >/dev/null 2>&1; then nixpkgs-fmt --check . || (echo "❌ Run 'dev format' to fix"; exit 1); else echo "⚠️  nixpkgs-fmt not available, skipping Nix format check"; fi
+    dev lint
+    echo "✅ Quick checks passed!"
 }
 
 # Go unit tests with coverage
 test-go: {
-    echo "🧪 Running Go tests with coverage...";
-    @sh(if [ ! -f @var(GEN_DIR)/devcmd_lexer.go ]; then echo "⚠️  ANTLR parser not found, generating..."; dev grammar; fi);
-    go test -race -coverprofile=coverage.out -covermode=atomic ./...;
-    @sh(if command -v go >/dev/null 2>&1; then go tool cover -html=coverage.out -o coverage.html; echo "📊 Coverage report: coverage.html"; fi);
-    echo "✅ Go tests passed!";
+    echo "🧪 Running Go tests with coverage..."
+    # Note: Now using custom lexer - no parser generation needed
+    go test -race -coverprofile=coverage.out -covermode=atomic ./...
+    if command -v go >/dev/null 2>&1; then go tool cover -html=coverage.out -o coverage.html; echo "📊 Coverage report: coverage.html"; fi
+    echo "✅ Go tests passed!"
 }
 
 # Build and test binaries
 test-build: {
-    echo "🔨 Building and testing binaries...";
-    dev build;
-    echo "🧪 Testing built binary...";
-    ./@var(PROJECT) --help;
-    @sh(./@var(PROJECT) --version || echo "⚠️  Version command not available");
-    echo "✅ Binary tests passed!";
+    echo "🔨 Building and testing binaries..."
+    dev build
+    echo "🧪 Testing built binary..."
+    ./@var(PROJECT) --help
+    ./@var(PROJECT) --version || echo "⚠️  Version command not available"
+    echo "✅ Binary tests passed!"
 }
 
 # Nix package tests
 test-nix: {
-    echo "📦 Testing Nix packages...";
-    echo "Building core package...";
-    nix build .#@var(PROJECT) --print-build-logs;
-    echo "Testing core package...";
-    ./result/bin/@var(PROJECT) --help;
-    echo "Basic flake check...";
-    nix flake check --no-build;
-    echo "✅ Nix core tests passed!";
+    echo "📦 Testing Nix packages..."
+    echo "Building core package..."
+    nix build .#@var(PROJECT) --print-build-logs
+    echo "Testing core package..."
+    ./result/bin/@var(PROJECT) --help
+    echo "Basic flake check..."
+    nix flake check --no-build
+    echo "✅ Nix core tests passed!"
 }
 
 # Complete test suite
 test-all: {
-    echo "🧪 Running complete test suite...";
-    dev test-quick;
-    dev test-go;
-    dev test-build;
-    dev test-nix;
-    dev test-examples;
-    echo "🎉 All tests passed!";
+    echo "🧪 Running complete test suite..."
+    dev test-quick
+    dev test-go
+    dev test-build
+    dev test-nix
+    dev test-examples
+    echo "🎉 All tests passed!"
 }
 
 # Run basic Go tests (for quick feedback)
 test: {
-    echo "🧪 Running Go unit tests...";
-    @sh(if [ ! -f @var(GEN_DIR)/devcmd_lexer.go ]; then echo "⚠️  ANTLR parser not found, generating..."; dev grammar; fi);
-    go test ./...;
+    echo "🧪 Running Go unit tests..."
+    # Note: Now using custom lexer - no parser generation needed
+    go test ./...
 }
 
 # Run parser tests only
 test-parser: {
-    echo "🧪 Running parser tests...";
-    go test -v ./pkgs/parser;
+    echo "🧪 Running parser tests..."
+    go test -v ./pkgs/parser
 }
 
 # Run generator tests only
 test-generator: {
-    echo "🧪 Running generator tests...";
-    go test -v ./pkgs/generator;
+    echo "🧪 Running generator tests..."
+    go test -v ./pkgs/generator
 }
 
 # Run tests with coverage (alias for test-go)
 cover: {
-    echo "📊 Running tests with coverage...";
-    dev test-go;
+    echo "📊 Running tests with coverage..."
+    dev test-go
 }
 
 # =============================================================================
@@ -133,37 +121,37 @@ cover: {
 
 # Format all code
 format: {
-    echo "📝 Formatting all code...";
-    echo "Formatting Go code...";
+    echo "📝 Formatting all code..."
+    echo "Formatting Go code..."
     @parallel {
-        @sh(if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi);
-        @sh(if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo "⚠️  nixpkgs-fmt not available"; fi);
-    };
-    echo "✅ Code formatted!";
+        if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi
+        if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo "⚠️  nixpkgs-fmt not available"; fi
+    }
+    echo "✅ Code formatted!"
 }
 
 # Run linters
 lint: {
-    echo "🔍 Running linters...";
-    @sh(if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run --timeout=5m; else echo "⚠️  golangci-lint not installed, running basic checks"; go vet ./...; go fmt ./...; fi);
-    echo "✅ Linting complete!";
+    echo "🔍 Running linters..."
+    if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run --timeout=5m; else echo "⚠️  golangci-lint not installed, running basic checks"; go vet ./...; go fmt ./...; fi
+    echo "✅ Linting complete!"
 }
 
 # Quick checks (format + lint)
 check: {
-    echo "⚡ Running quick checks...";
-    dev format;
-    dev lint;
-    echo "✅ Quick checks passed";
+    echo "⚡ Running quick checks..."
+    dev format
+    dev lint
+    echo "✅ Quick checks passed"
 }
 
 # Clean build artifacts
 clean: {
-    echo "🧹 Cleaning generated files and artifacts...";
-    rm -f @var(PROJECT) coverage.out coverage.html;
-    rm -rf result result-* artifacts/ release/;
-    @sh(go clean -cache -modcache -testcache || echo "Go clean completed with warnings");
-    echo "✅ Cleanup complete";
+    echo "🧹 Cleaning generated files and artifacts..."
+    rm -f @var(PROJECT) coverage.out coverage.html
+    rm -rf result result-* artifacts/ release/
+    go clean -cache -modcache -testcache || echo "Go clean completed with warnings"
+    echo "✅ Cleanup complete"
 }
 
 # =============================================================================
@@ -172,89 +160,89 @@ clean: {
 
 # Build core Nix packages
 nix-build: {
-    echo "📦 Building core Nix packages...";
-    nix build .#@var(PROJECT) --print-build-logs;
-    echo "✅ Core packages built";
+    echo "📦 Building core Nix packages..."
+    nix build .#@var(PROJECT) --print-build-logs
+    echo "✅ Core packages built"
 }
 
 # Build all example CLIs
 examples: {
-    echo "🎯 Building all example CLIs...";
+    echo "🎯 Building all example CLIs..."
     @parallel {
-        nix build .#basicDev --print-build-logs;
-        nix build .#webDev --print-build-logs;
-        nix build .#goProject --print-build-logs;
-    };
+        nix build .#basicDev --print-build-logs
+        nix build .#webDev --print-build-logs
+        nix build .#goProject --print-build-logs
+    }
     @parallel {
-        nix build .#rustProject --print-build-logs;
-        nix build .#dataScienceProject --print-build-logs;
-        nix build .#devOpsProject --print-build-logs;
-    };
-    echo "✅ All example CLIs built";
+        nix build .#rustProject --print-build-logs
+        nix build .#dataScienceProject --print-build-logs
+        nix build .#devOpsProject --print-build-logs
+    }
+    echo "✅ All example CLIs built"
 }
 
 # Test example CLIs
 test-examples: {
-    echo "🧪 Testing example CLIs...";
-    echo "Building all examples...";
-    nix build .#basicDev .#webDev .#goProject .#rustProject .#dataScienceProject .#devOpsProject --print-build-logs;
-    echo "Testing all examples...";
+    echo "🧪 Testing example CLIs..."
+    echo "Building all examples..."
+    nix build .#basicDev .#webDev .#goProject .#rustProject .#dataScienceProject .#devOpsProject --print-build-logs
+    echo "Testing all examples..."
     @parallel {
-        @sh(echo "Testing basicDev..."; nix run .#basicDev -- --help >/dev/null || echo "⚠️  basicDev help issues");
-        @sh(echo "Testing webDev..."; nix run .#webDev -- --help >/dev/null || echo "⚠️  webDev help issues");
-        @sh(echo "Testing goProject..."; nix run .#goProject -- --help >/dev/null || echo "⚠️  goProject help issues");
-    };
+        echo "Testing basicDev..."; nix run .#basicDev -- --help >/dev/null || echo "⚠️  basicDev help issues"
+        echo "Testing webDev..."; nix run .#webDev -- --help >/dev/null || echo "⚠️  webDev help issues"
+        echo "Testing goProject..."; nix run .#goProject -- --help >/dev/null || echo "⚠️  goProject help issues"
+    }
     @parallel {
-        @sh(echo "Testing rustProject..."; nix run .#rustProject -- --help >/dev/null || echo "⚠️  rustProject help issues");
-        @sh(echo "Testing dataScienceProject..."; nix run .#dataScienceProject -- --help >/dev/null || echo "⚠️  dataScienceProject help issues");
-        @sh(echo "Testing devOpsProject..."; nix run .#devOpsProject -- --help >/dev/null || echo "⚠️  devOpsProject help issues");
-    };
-    echo "✅ Example CLI tests passed!";
+        echo "Testing rustProject..."; nix run .#rustProject -- --help >/dev/null || echo "⚠️  rustProject help issues"
+        echo "Testing dataScienceProject..."; nix run .#dataScienceProject -- --help >/dev/null || echo "⚠️  dataScienceProject help issues"
+        echo "Testing devOpsProject..."; nix run .#devOpsProject -- --help >/dev/null || echo "⚠️  devOpsProject help issues"
+    }
+    echo "✅ Example CLI tests passed!"
 }
 
 # Run Nix-based tests
 nix-test: {
-    echo "🧪 Running Nix-based tests...";
-    nix build .#tests --print-build-logs;
-    echo "Building example tests...";
-    @sh(nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available");
-    echo "✅ Nix tests completed";
+    echo "🧪 Running Nix-based tests..."
+    nix build .#tests --print-build-logs
+    echo "Building example tests..."
+    nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available"
+    echo "✅ Nix tests completed"
 }
 
 # Comprehensive Nix validation
 nix-check: {
-    echo "🔍 Running comprehensive Nix validation...";
-    nix flake check --print-build-logs;
-    echo "✅ Nix validation passed";
+    echo "🔍 Running comprehensive Nix validation..."
+    nix flake check --print-build-logs
+    echo "✅ Nix validation passed"
 }
 
 # Try example CLIs interactively
 try-examples: {
-    echo "🎯 Interactive Example CLI Testing";
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    echo "";
-    echo "🔹 BasicDev CLI:";
-    nix run .#basicDev -- --help;
-    echo "";
-    echo "🔹 WebDev CLI:";
-    nix run .#webDev -- --help;
-    echo "";
-    echo "🔹 GoProject CLI:";
-    nix run .#goProject -- --help;
-    echo "";
-    echo "🔹 RustProject CLI:";
-    nix run .#rustProject -- --help;
-    echo "";
-    echo "🔹 DataScience CLI:";
-    nix run .#dataScienceProject -- --help;
-    echo "";
-    echo "🔹 DevOps CLI:";
-    nix run .#devOpsProject -- --help;
-    echo "";
-    echo "🎉 Try running specific commands like:";
-    echo "  nix run .#basicDev -- build";
-    echo "  nix run .#webDev -- install";
-    echo "  nix run .#goProject -- deps";
+    echo "🎯 Interactive Example CLI Testing"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "🔹 BasicDev CLI:"
+    nix run .#basicDev -- --help
+    echo ""
+    echo "🔹 WebDev CLI:"
+    nix run .#webDev -- --help
+    echo ""
+    echo "🔹 GoProject CLI:"
+    nix run .#goProject -- --help
+    echo ""
+    echo "🔹 RustProject CLI:"
+    nix run .#rustProject -- --help
+    echo ""
+    echo "🔹 DataScience CLI:"
+    nix run .#dataScienceProject -- --help
+    echo ""
+    echo "🔹 DevOps CLI:"
+    nix run .#devOpsProject -- --help
+    echo ""
+    echo "🎉 Try running specific commands like:"
+    echo "  nix run .#basicDev -- build"
+    echo "  nix run .#webDev -- install"
+    echo "  nix run .#goProject -- deps"
 }
 
 # =============================================================================
@@ -263,54 +251,54 @@ try-examples: {
 
 # Development workflow (fast iteration)
 dev-flow: {
-    echo "🔄 Running development workflow...";
-    dev setup;
-    dev test-quick;
-    dev test-go;
-    dev build;
-    echo "✅ Development workflow complete!";
+    echo "🔄 Running development workflow..."
+    dev setup
+    dev test-quick
+    dev test-go
+    dev build
+    echo "✅ Development workflow complete!"
 }
 
 # CI workflow (comprehensive testing - mirrors GitHub Actions)
 ci: {
-    echo "🔄 Running CI workflow (mirrors GitHub Actions)...";
-    echo "";
-    echo "Stage 1: Format & Lint...";
-    dev test-quick;
-    echo "";
-    echo "Stage 2: Go Tests...";
-    dev test-go;
-    echo "";
-    echo "Stage 3: Build Binaries...";
-    dev test-build;
-    echo "";
-    echo "Stage 4: Nix Core...";
-    dev test-nix;
-    echo "";
-    echo "Stage 5: Nix Tests...";
-    dev nix-test;
-    echo "";
-    echo "Stage 6: Example CLIs...";
-    dev test-examples;
-    echo "";
-    echo "🎉 CI workflow complete - ready for production!";
+    echo "🔄 Running CI workflow (mirrors GitHub Actions)..."
+    echo ""
+    echo "Stage 1: Format & Lint..."
+    dev test-quick
+    echo ""
+    echo "Stage 2: Go Tests..."
+    dev test-go
+    echo ""
+    echo "Stage 3: Build Binaries..."
+    dev test-build
+    echo ""
+    echo "Stage 4: Nix Core..."
+    dev test-nix
+    echo ""
+    echo "Stage 5: Nix Tests..."
+    dev nix-test
+    echo ""
+    echo "Stage 6: Example CLIs..."
+    dev test-examples
+    echo ""
+    echo "🎉 CI workflow complete - ready for production!"
 }
 
 # Release preparation
 release: {
-    echo "📦 Running release preparation workflow...";
-    dev clean;
-    dev setup;
-    dev ci;
-    dev nix-check;
-    dev format;
-    echo "📋 Release checklist:";
-    echo "  ✅ All tests passed";
-    echo "  ✅ Code formatted";
-    echo "  ✅ Nix packages validated";
-    echo "  ✅ Example CLIs working";
-    echo "";
-    echo "🚀 Ready for release!";
+    echo "📦 Running release preparation workflow..."
+    dev clean
+    dev setup
+    dev ci
+    dev nix-check
+    dev format
+    echo "📋 Release checklist:"
+    echo "  ✅ All tests passed"
+    echo "  ✅ Code formatted"
+    echo "  ✅ Nix packages validated"
+    echo "  ✅ Example CLIs working"
+    echo ""
+    echo "🚀 Ready for release!"
 }
 
 # =============================================================================
@@ -319,37 +307,35 @@ release: {
 
 # Show project status
 info: {
-    echo "📊 @var(PROJECT) Project Status";
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    echo "Project: @var(PROJECT)";
-    echo "Version: @var(VERSION)";
-    echo "Build time: @var(BUILD_TIME)";
-    echo "Go version: @var(GO_VERSION)";
-    echo "";
-    echo "Statistics:";
-    echo "  Grammar files: $(find @var(GRAMMAR_DIR) -name '*.g4' | wc -l)";
-    echo "  Generated files: $(find @var(GEN_DIR) -name '*.go' 2>/dev/null | wc -l || echo 0)";
-    echo "  Go source files: $(find . -name '*.go' -not -path './@var(GEN_DIR)/*' | wc -l)";
-    echo "  Test files: $(find . -name '*_test.go' | wc -l)";
-    echo "  Nix files: $(find . -name '*.nix' | wc -l)";
-    echo "";
-    echo "Tools:";
-    echo "  Go: $(go version 2>/dev/null || echo 'Not installed')";
-    echo "  Nix: $(nix --version 2>/dev/null || echo 'Not installed')";
-    echo "";
-    echo "Git status:";
-    @sh(git status --porcelain | head -10 || echo "Not a git repository");
+    echo "📊 @var(PROJECT) Project Status"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Project: @var(PROJECT)"
+    echo "Version: @var(VERSION)"
+    echo "Build time: @var(BUILD_TIME)"
+    echo "Go version: @var(GO_VERSION)"
+    echo ""
+    echo "Statistics:"
+    echo "  Go source files: $(find . -name '*.go' | wc -l)"
+    echo "  Test files: $(find . -name '*_test.go' | wc -l)"
+    echo "  Nix files: $(find . -name '*.nix' | wc -l)"
+    echo ""
+    echo "Tools:"
+    echo "  Go: $(go version 2>/dev/null || echo 'Not installed')"
+    echo "  Nix: $(nix --version 2>/dev/null || echo 'Not installed')"
+    echo ""
+    echo "Git status:"
+    git status --porcelain | head -10 || echo "Not a git repository"
 }
 
 # Show available Nix outputs
 nix-info: {
-    echo "📋 Available Nix flake outputs:";
-    nix flake show;
+    echo "📋 Available Nix flake outputs:"
+    nix flake show
 }
 
 # Show project status (alias for info)
 status: {
-    dev info;
+    dev info
 }
 
 # =============================================================================
@@ -358,44 +344,44 @@ status: {
 
 # Demonstrate example CLIs
 demo: {
-    echo "🎭 Devcmd Example Showcase";
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    echo "";
-    echo "🔹 Basic Development CLI:";
-    nix run .#basicDev;
-    echo "";
-    echo "🔹 Web Development CLI:";
-    nix run .#webDev;
-    echo "";
-    echo "🔹 Go Project CLI:";
-    nix run .#goProject;
-    echo "";
-    echo "Try running commands like:";
-    echo "  nix run .#basicDev -- build";
-    echo "  nix run .#webDev -- install";
-    echo "  nix run .#goProject -- deps";
+    echo "🎭 Devcmd Example Showcase"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "🔹 Basic Development CLI:"
+    nix run .#basicDev
+    echo ""
+    echo "🔹 Web Development CLI:"
+    nix run .#webDev
+    echo ""
+    echo "🔹 Go Project CLI:"
+    nix run .#goProject
+    echo ""
+    echo "Try running commands like:"
+    echo "  nix run .#basicDev -- build"
+    echo "  nix run .#webDev -- install"
+    echo "  nix run .#goProject -- deps"
 }
 
 # Validate our dogfooding setup
 validate: {
-    echo "🐕 Validating dogfooding setup...";
-    echo "";
-    echo "Testing variable expansion:";
-    echo "  PROJECT = @var(PROJECT)";
-    echo "  VERSION = @var(VERSION)";
-    echo "";
-    echo "Testing parallel execution:";
+    echo "🐕 Validating dogfooding setup..."
+    echo ""
+    echo "Testing variable expansion:"
+    echo "  PROJECT = @var(PROJECT)"
+    echo "  VERSION = @var(VERSION)"
+    echo ""
+    echo "Testing parallel execution:"
     @parallel {
-        echo "✅ Task 1 complete";
-        echo "✅ Task 2 complete";
-        echo "✅ Task 3 complete";
-    };
-    echo "";
-    echo "Testing shell command substitution:";
-    echo "  Current time: $(date)";
-    echo "  Git branch: $(git branch --show-current 2>/dev/null || echo 'unknown')";
-    echo "";
-    echo "✅ Dogfooding validation complete!";
+        echo "✅ Task 1 complete"
+        echo "✅ Task 2 complete"
+        echo "✅ Task 3 complete"
+    }
+    echo ""
+    echo "Testing shell command substitution:"
+    echo "  Current time: $(date)"
+    echo "  Git branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
+    echo ""
+    echo "✅ Dogfooding validation complete!"
 }
 
 # =============================================================================
@@ -404,32 +390,32 @@ validate: {
 
 # Enter basic development shell
 shell-basic: {
-    echo "🐚 Entering basic development shell...";
-    nix develop .#basic;
+    echo "🐚 Entering basic development shell..."
+    nix develop .#basic
 }
 
 # Enter web development shell
 shell-web: {
-    echo "🐚 Entering web development shell...";
-    nix develop .#web;
+    echo "🐚 Entering web development shell..."
+    nix develop .#web
 }
 
 # Enter Go development shell
 shell-go: {
-    echo "🐚 Entering Go development shell...";
-    nix develop .#go;
+    echo "🐚 Entering Go development shell..."
+    nix develop .#go
 }
 
 # Enter data science shell
 shell-data: {
-    echo "🐚 Entering data science shell...";
-    nix develop .#data;
+    echo "🐚 Entering data science shell..."
+    nix develop .#data
 }
 
 # Enter test environment shell
 shell-test: {
-    echo "🐚 Entering test environment shell...";
-    nix develop .#testEnv;
+    echo "🐚 Entering test environment shell..."
+    nix develop .#testEnv
 }
 
 # =============================================================================
@@ -438,52 +424,51 @@ shell-test: {
 
 # Show help with all available commands
 help: {
-    echo "🔧 Devcmd Development Commands";
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-    echo "";
-    echo "🚀 Quick Start:";
-    echo "  setup          - Initial project setup (grammar + deps)";
-    echo "  build          - Build the CLI tool";
-    echo "  test           - Run Go unit tests";
-    echo "  ci             - Run full CI workflow locally";
-    echo "";
-    echo "📝 Grammar & Development:";
-    echo "  grammar        - Generate parser from ANTLR grammar";
-    echo "  format         - Format all code (Go + Nix)";
-    echo "  lint           - Run all linters";
-    echo "  clean          - Clean generated files and artifacts";
-    echo "";
-    echo "🧪 Testing (ordered by speed):";
-    echo "  test-quick     - Fast syntax/format checks";
-    echo "  test-go        - Go unit tests with coverage";
-    echo "  test-build     - Build and test binaries";
-    echo "  test-nix       - Nix package tests";
-    echo "  test-examples  - Build and test example CLIs";
-    echo "  test-all       - Complete test suite";
-    echo "";
-    echo "📦 Nix Integration:";
-    echo "  nix-build      - Build core Nix packages";
-    echo "  examples       - Build all example CLIs";
-    echo "  nix-test       - Run Nix-based tests";
-    echo "  nix-check      - Comprehensive Nix validation";
-    echo "  try-examples   - Interactively test example CLIs";
-    echo "";
-    echo "🔄 Workflows:";
-    echo "  dev-flow       - Development workflow";
-    echo "  ci             - CI workflow (mirrors GitHub Actions)";
-    echo "  release        - Release preparation workflow";
-    echo "";
-    echo "📊 Utilities:";
-    echo "  info           - Show project status";
-    echo "  status         - Show project status (alias)";
-    echo "  help           - Show this help";
-    echo "";
-    echo "🐚 Development Shells:";
-    echo "  shell-basic    - Enter basic development shell";
-    echo "  shell-web      - Enter web development shell";
-    echo "  shell-go       - Enter Go development shell";
-    echo "  shell-data     - Enter data science shell";
-    echo "  shell-test     - Enter test environment shell";
-    echo "";
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    echo "🔧 Devcmd Development Commands"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "🚀 Quick Start:"
+    echo "  setup          - Initial project setup (deps only)"
+    echo "  build          - Build the CLI tool"
+    echo "  test           - Run Go unit tests"
+    echo "  ci             - Run full CI workflow locally"
+    echo ""
+    echo "📝 Development:"
+    echo "  format         - Format all code (Go + Nix)"
+    echo "  lint           - Run all linters"
+    echo "  clean          - Clean generated files and artifacts"
+    echo ""
+    echo "🧪 Testing (ordered by speed):"
+    echo "  test-quick     - Fast syntax/format checks"
+    echo "  test-go        - Go unit tests with coverage"
+    echo "  test-build     - Build and test binaries"
+    echo "  test-nix       - Nix package tests"
+    echo "  test-examples  - Build and test example CLIs"
+    echo "  test-all       - Complete test suite"
+    echo ""
+    echo "📦 Nix Integration:"
+    echo "  nix-build      - Build core Nix packages"
+    echo "  examples       - Build all example CLIs"
+    echo "  nix-test       - Run Nix-based tests"
+    echo "  nix-check      - Comprehensive Nix validation"
+    echo "  try-examples   - Interactively test example CLIs"
+    echo ""
+    echo "🔄 Workflows:"
+    echo "  dev-flow       - Development workflow"
+    echo "  ci             - CI workflow (mirrors GitHub Actions)"
+    echo "  release        - Release preparation workflow"
+    echo ""
+    echo "📊 Utilities:"
+    echo "  info           - Show project status"
+    echo "  status         - Show project status (alias)"
+    echo "  help           - Show this help"
+    echo ""
+    echo "🐚 Development Shells:"
+    echo "  shell-basic    - Enter basic development shell"
+    echo "  shell-web      - Enter web development shell"
+    echo "  shell-go       - Enter Go development shell"
+    echo "  shell-data     - Enter data science shell"
+    echo "  shell-test     - Enter test environment shell"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }

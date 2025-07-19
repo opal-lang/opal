@@ -71,9 +71,9 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "simple-test";
         commandsContent = ''
-          build: echo "Building project...";
-          test: echo "Running tests...";
-          clean: rm -f *.tmp;
+          build: echo "Building project..."
+          test: echo "Running tests..."
+          clean: rm -f *.tmp
         '';
       };
 
@@ -90,9 +90,9 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "posix-test";
         commandsContent = ''
-          check-deps: (which go && echo "Go found") || (echo "Go missing" && exit 1);
-          validate: test -f go.mod && echo "Go module found" || echo "No go.mod";
-          complex: @sh((cd /tmp && echo "In tmp: $(pwd)") && echo "Back to: $(pwd)");
+          check-deps: (which go && echo "Go found") || (echo "Go missing" && exit 1)
+          validate: test -f go.mod && echo "Go module found" || echo "No go.mod"
+          complex: (cd /tmp && echo "In tmp: $(pwd)") && echo "Back to: $(pwd)"
         '';
       };
 
@@ -116,13 +116,13 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "variables-test";
         commandsContent = ''
-          def SRC = ./src;
-          def PORT = 8080;
-          def CHECK_CMD = which node || echo "missing";
+          var SRC = "./src"
+          var PORT = "8080"
+          var CHECK_CMD = "which node || echo missing"
 
-          build: mkdir -p @var(SRC) && cd @var(SRC) && echo "Building in @var(SRC)";
-          serve: echo "Starting server on port @var(PORT)";
-          check: @sh(@var(CHECK_CMD) && echo "Dependencies OK");
+          build: mkdir -p @var(SRC) && cd @var(SRC) && echo "Building in @var(SRC)"
+          serve: echo "Starting server on port @var(PORT)"
+          check: @var(CHECK_CMD) && echo "Dependencies OK"
         '';
       };
 
@@ -143,8 +143,8 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "process-test";
         commandsContent = ''
-          watch demo: python3 -m http.server 9999;
-          stop demo: pkill -f "python3 -m http.server 9999";
+          watch demo: python3 -m http.server 9999
+          stop demo: pkill -f "python3 -m http.server 9999"
 
           watch multi: {
             echo "Starting services...";
@@ -186,8 +186,8 @@ rec {
           }
 
           complex: {
-            @sh((echo "Subshell 1" && sleep 0.1) &);
-            @sh((echo "Subshell 2" || echo "Fallback") &);
+            (echo "Subshell 1" && sleep 0.1) &
+            (echo "Subshell 2" || echo "Fallback") &
             echo "Main thread"
           }
         '';
@@ -262,23 +262,23 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "webdev";
         commandsContent = ''
-          def NODE_ENV = development;
-          def PORT = 3000;
-          def API_PORT = 3001;
+          var NODE_ENV = "development"
+          var PORT = "3000"
+          var API_PORT = "3001"
 
           install: echo "npm install" && echo "Dependencies installed";
           build: {
-            echo "Building frontend...";
-            @sh((test -d frontend && cd frontend && npm run build) || echo "No frontend");
-            echo "Building backend...";
-            @sh((test -d backend && cd backend && go build) || echo "No backend")
+            echo "Building frontend..."
+            (test -d frontend && cd frontend && npm run build) || echo "No frontend"
+            echo "Building backend..."
+            (test -d backend && cd backend && go build) || echo "No backend"
           }
 
           test: {
-            echo "Running frontend tests...";
-            @sh((test -d frontend && cd frontend && npm test) || echo "No frontend tests");
-            echo "Running backend tests...";
-            @sh((test -d backend && cd backend && go test ./...) || echo "No backend tests")
+            echo "Running frontend tests..."
+            (test -d frontend && cd frontend && npm test) || echo "No frontend tests"
+            echo "Running backend tests..."
+            (test -d backend && cd backend && go test ./...) || echo "No backend tests"
           }
         '';
       };
@@ -308,33 +308,33 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "goproj";
         commandsContent = ''
-          def MODULE = github.com/example/myapp;
-          def BINARY = myapp;
-          def VERSION = v0.1.0;
+          var MODULE = "github.com/example/myapp"
+          var BINARY = "myapp"
+          var VERSION = "v0.1.0"
 
           deps: {
-            echo "Managing dependencies...";
-            @sh((test -f go.mod && go mod tidy) || echo "No go.mod");
-            @sh((test -f go.mod && go mod download) || echo "No go.mod");
-            @sh((test -f go.mod && go mod verify) || echo "No go.mod")
+            echo "Managing dependencies..."
+            (test -f go.mod && go mod tidy) || echo "No go.mod"
+            (test -f go.mod && go mod download) || echo "No go.mod"
+            (test -f go.mod && go mod verify) || echo "No go.mod"
           }
 
           build: {
-            echo "Building @var(BINARY) @var(VERSION)...";
-            @sh((test -d ./cmd/@var(BINARY) && go build -ldflags="-X main.Version=@var(VERSION)" -o @var(BINARY) ./cmd/@var(BINARY)) || echo "No ./cmd/@var(BINARY) directory")
+            echo "Building @var(BINARY) @var(VERSION)..."
+            (test -d ./cmd/@var(BINARY) && go build -ldflags="-X main.Version=@var(VERSION)" -o @var(BINARY) ./cmd/@var(BINARY)) || echo "No ./cmd/@var(BINARY) directory"
           }
 
           test: {
-            echo "Running tests...";
-            @sh((go test -v ./... 2>/dev/null) || echo "No tests or go.mod");
-            @sh((go test -race ./... 2>/dev/null) || echo "No tests or go.mod")
+            echo "Running tests..."
+            (go test -v ./... 2>/dev/null) || echo "No tests or go.mod"
+            (go test -race ./... 2>/dev/null) || echo "No tests or go.mod"
           }
 
           lint: {
-            echo "Running linters...";
-            @sh((which golangci-lint && golangci-lint run) || echo "No linter");
-            @sh((test -f go.mod && go fmt ./...) || echo "No go.mod");
-            @sh((test -f go.mod && go vet ./...) || echo "No go.mod")
+            echo "Running linters..."
+            (which golangci-lint && golangci-lint run) || echo "No linter"
+            (test -f go.mod && go fmt ./...) || echo "No go.mod"
+            (test -f go.mod && go vet ./...) || echo "No go.mod"
           }
         '';
       };
@@ -359,13 +359,13 @@ rec {
       cli = devcmdLib.mkDevCLI {
         name = "shell-test";
         commandsContent = ''
-          def LOG_DIR = /tmp/logs;
-          def APP_NAME = myapp;
+          var LOG_DIR = "/tmp/logs"
+          var APP_NAME = "myapp"
 
           timestamp: echo "Current time: $(date)";
           user-info: echo "User: $USER, Home: $HOME";
-          backup: @sh(DATE=$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-$DATE.tar.gz");
-          logrotate: @sh(find @var(LOG_DIR) -name "@var(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at $(date)");
+          backup: DATE=$(date +%Y%m%d-%H%M%S); echo "Backup created: backup-$DATE.tar.gz"
+          logrotate: find @var(LOG_DIR) -name "@var(APP_NAME)*.log" -mtime +7 -exec rm {} \; && echo "Logs rotated at $(date)"
           calculate: echo "Result: $((2 + 3 * 4))";
         '';
       };

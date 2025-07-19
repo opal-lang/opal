@@ -1,12 +1,12 @@
 # Basic development commands
 # Edit this file to customize your project's CLI
 
-def PROJECT_NAME = myproject;
+var PROJECT_NAME = "myproject"
 
 # Build the project
 build: {
-  echo "Building $(PROJECT_NAME)...";
-  echo "Add your build commands here";
+  echo "Building @var(PROJECT_NAME)..."
+  echo "Add your build commands here"
   # Example: go build ./...
   # Example: npm run build
   echo "Build complete"
@@ -14,8 +14,8 @@ build: {
 
 # Run tests
 test: {
-  echo "Running tests...";
-  echo "Add your test commands here";
+  echo "Running tests..."
+  echo "Add your test commands here"
   # Example: go test ./...
   # Example: npm test
   echo "Tests complete"
@@ -23,8 +23,8 @@ test: {
 
 # Clean build artifacts
 clean: {
-  echo "Cleaning build artifacts...";
-  echo "Add your clean commands here";
+  echo "Cleaning build artifacts..."
+  echo "Add your clean commands here"
   # Example: rm -rf build/
   # Example: go clean
   echo "Clean complete"

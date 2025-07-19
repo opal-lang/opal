@@ -9,7 +9,7 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  CACHE_VERSION: v1
+  CACHE_VERSION: v2  # Updated for custom lexer (no ANTLR)
 
 jobs:
   # =============================================================================
@@ -67,7 +67,7 @@ jobs:
           nix flake check --no-build
 
   # =============================================================================
-  # ⚡ GO UNIT TESTS - Core Logic (1-2m)
+  # ⚡ GO UNIT TESTS - Core Logic (30s-1m)
   # =============================================================================
   go-tests:
     name: Go Tests
@@ -83,23 +83,6 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install Java (for ANTLR)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Install ANTLR
-        run: |
-          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
-          echo 'export CLASSPATH="/tmp/antlr.jar:$CLASSPATH"' >> $GITHUB_ENV
-
-      - name: Generate ANTLR Parser
-        run: |
-          echo "📝 Generating ANTLR parser..."
-          rm -rf internal/gen
-          mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Download Go dependencies
         run: |
@@ -126,12 +109,12 @@ jobs:
           path: coverage.html
 
   # =============================================================================
-  # 🔨 BUILD BINARIES - Core Deliverables (2-3m)
+  # 🔨 BUILD BINARIES - Core Deliverables (1-2m)
   # =============================================================================
   build-binaries:
     name: Build Binaries
     runs-on: ${{ matrix.os }}
-    needs: [go-tests]
+    needs: [format-lint]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -151,19 +134,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Install Java (for ANTLR)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Generate ANTLR Parser
-        run: |
-          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
-          rm -rf internal/gen
-          mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Build binary
         env:
@@ -192,12 +162,12 @@ jobs:
           path: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
 
   # =============================================================================
-  # 📦 NIX PACKAGES - Core Nix Integration (3-5m)
+  # 📦 NIX PACKAGES - Core Nix Integration (2-4m)
   # =============================================================================
   nix-core:
     name: Nix Core Packages
     runs-on: ${{ matrix.os }}
-    needs: [go-tests]
+    needs: [format-lint]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -472,19 +442,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
-      - name: Install Java (for ANTLR)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Generate ANTLR Parser
-        run: |
-          wget -q https://www.antlr.org/download/antlr-4.13.1-complete.jar -O /tmp/antlr.jar
-          rm -rf internal/gen
-          mkdir -p internal/gen
-          cd grammar && java -jar /tmp/antlr.jar -Dlanguage=Go -package gen -listener -visitor -o ../internal/gen DevcmdLexer.g4 DevcmdParser.g4
 
       - name: Get version from tag
         id: version

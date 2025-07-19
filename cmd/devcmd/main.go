@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/aledsdavies/devcmd/pkgs/ast"
 	"github.com/aledsdavies/devcmd/pkgs/generator"
 	"github.com/aledsdavies/devcmd/pkgs/parser"
 )
@@ -58,8 +59,8 @@ func main() {
 		os.Exit(ExitIOError)
 	}
 
-	// Parse the command definitions with debug flag
-	commandFile, err := parser.Parse(string(content), debug)
+	// Parse the command definitions
+	program, err := parser.Parse(string(content))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing commands: %v\n", err)
 		os.Exit(ExitParseError)
@@ -69,7 +70,7 @@ func main() {
 	var output string
 	switch outputFormat {
 	case "go":
-		output, err = generateGo(commandFile, templateFile)
+		output, err = generateGo(program, templateFile)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unsupported format '%s'\n", outputFormat)
 		os.Exit(ExitInvalidArguments)
@@ -86,13 +87,13 @@ func main() {
 }
 
 // generateGo generates Go CLI output
-func generateGo(commandFile *parser.CommandFile, templateFile string) (string, error) {
+func generateGo(program *ast.Program, templateFile string) (string, error) {
 	if templateFile != "" {
 		templateContent, err := os.ReadFile(templateFile)
 		if err != nil {
 			return "", fmt.Errorf("error reading template file: %v", err)
 		}
-		return generator.GenerateGoWithTemplate(commandFile, string(templateContent))
+		return generator.GenerateGoWithTemplate(program, string(templateContent))
 	}
-	return generator.GenerateGo(commandFile)
+	return generator.GenerateGo(program)
 }
