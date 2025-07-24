@@ -274,6 +274,8 @@ deploy: npm run build
 
 ## Lexer Modes and Parsing Context
 
+The lexer implements a **three-mode system** to handle the different parsing contexts in devcmd:
+
 ### LanguageMode (Top Level)
 **When**: Top-level parsing and decorator parsing
 **Recognizes**:
@@ -284,22 +286,42 @@ deploy: npm run build
 
 **Transition Rules**:
 - `:` followed by non-structural content → **CommandMode**
-- `{` → **CommandMode**
+- `{` for regular commands → **CommandMode**
+- `{` for pattern decorators → **PatternMode**
 - `@` → stay in **LanguageMode** (parse decorator)
 
 ### CommandMode (Inside Command Bodies)
-**When**: After `:` or inside `{}` blocks
+**When**: After `:` or inside `{}` blocks, or parsing shell content in pattern branches
 **Recognizes**:
-- Shell text as complete units
+- Shell text as complete units (tokenized as `SHELL_TEXT`)
 - Line continuations (`\` + newline)
 - Decorators (switches back to LanguageMode)
 - Block boundaries
 
 **Transition Rules**:
 - `@` followed by identifier → **LanguageMode** (parse decorator)
-- `}` → **LanguageMode** (exit command body)
+- `}` → **LanguageMode** (exit command body) or **PatternMode** (exit pattern branch)
 - `\n` in simple commands → **LanguageMode** (exit command)
+- `\n` in pattern branches → **PatternMode** (return to pattern parsing)
 - `\` + `\n` → continue in **CommandMode** (line continuation)
+
+### PatternMode (Pattern Decorator Context)
+**When**: Inside pattern decorator blocks (`@when`, `@try`, etc.)
+**Recognizes**:
+- Pattern identifiers (decorator-specific - see below)
+- Structural tokens: `:`, `{`, `}`
+- Nested decorators
+
+**Transition Rules**:
+- `:` after pattern identifier → **CommandMode** (parse shell content)
+- `{` after pattern identifier → **CommandMode** (parse multi-command shell content)
+- `}` → previous context via mode stack (exit pattern decorator)
+- `@` → **LanguageMode** (nested decorator)
+
+**Pattern Identifier Rules**:
+- **@when**: Accepts any identifier for matching + `default` as wildcard
+- **@try**: Only accepts `main` (required), `error`, `finally`
+- Each pattern decorator defines its own valid pattern identifier set
 
 ### Mode Transition Examples
 ```devcmd
@@ -312,6 +334,16 @@ deploy: {                    // : and { → CommandMode
     }                       // } → back to outer CommandMode
     echo "done"             // CommandMode: shell text
 }                           // } → LanguageMode
+
+// Pattern decorator mode transitions
+backup: @when(ENV) {        // @ → LanguageMode, parse @when, { → PatternMode
+    production: {            // PatternMode: identifier, : → CommandMode, { → CommandMode  
+        pg_dump mydb         // CommandMode: shell text
+        aws s3 cp backup.sql // CommandMode: shell text
+    }                       // } → PatternMode (return to pattern parsing)
+    staging: kubectl apply  // PatternMode: identifier, : → CommandMode, \n → PatternMode
+    default: echo "unknown" // PatternMode: default wildcard, : → CommandMode, \n → PatternMode
+}                           // } → LanguageMode (exit pattern decorator)
 
 // Simple command with sugar
 build: npm run build        // : → CommandMode, \n → LanguageMode
@@ -457,13 +489,17 @@ backup: @try {
 - Each command in a pattern branch executes sequentially
 
 **Pattern Syntax**:
-- **Identifier patterns**: `production`, `staging`, `main`, `error`, `finally`
-- **Wildcard pattern**: `*` (matches any value not explicitly handled)
+- **Identifier patterns**: Decorator-specific (e.g., `production`, `staging` for @when; `main`, `error`, `finally` for @try)
+- **Wildcard pattern**: `default` (only supported by @when, matches any value not explicitly handled)
 - **Branch syntax**: `pattern: command` or `pattern: { commands }`
 
 **Standard Pattern Decorators**:
 - `@when(variable)` - Branch based on variable value
-- `@try` - Exception handling with `main`, `error`, `finally` blocks
+  - Accepts any identifier patterns + `default` wildcard
+  - Example: `@when(ENV) { production: ..., staging: ..., default: ... }`
+- `@try` - Exception handling with fixed semantic blocks
+  - Only accepts: `main` (required), `error`, `finally` (at least one of error/finally required)
+  - Example: `@try { main: ..., error: ..., finally: ... }`
 
 ### Nested Decorators (Explicit Block Syntax)
 Decorators can be nested using explicit block syntax. **Newlines create multiple commands at every nesting level.**

@@ -5,22 +5,12 @@ pkgs.buildGoModule rec {
   pname = "devcmd";
   inherit version;
 
-  src = lib.cleanSource ./..;
+  src = ./..;
 
-  proxyVendor = true;
-  vendorHash = "sha256-LJ94yAZyfmdf1RF+yV2dUSO/m5yIfMW5qArQfnoUS6g=";
+  # Computed vendorHash for clean dependencies (no replace directive)
+  vendorHash = "sha256-D+GwlCwvxMg71a8jxF+zm5uiWsS4mj1W8Ynk35A2tFw=";
 
   subPackages = [ "cmd/devcmd" ];
-
-  # Ensure Java is available for ANTLR during build
-  nativeBuildInputs = with pkgs; [
-    openjdk17
-  ];
-
-  # Set JAVA_HOME for ANTLR
-  preBuild = ''
-    export JAVA_HOME="${pkgs.openjdk17}/lib/openjdk"
-  '';
 
   # Enhanced build flags following CODE_GUIDELINES.md
   # Note: -buildid= is set by default by buildGoModule, so we don't include it

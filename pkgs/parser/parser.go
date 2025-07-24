@@ -2,12 +2,14 @@ package parser
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
 	"github.com/aledsdavies/devcmd/pkgs/ast"
+	"github.com/aledsdavies/devcmd/pkgs/decorators"
 	"github.com/aledsdavies/devcmd/pkgs/lexer"
-	"github.com/aledsdavies/devcmd/pkgs/stdlib"
+	"github.com/aledsdavies/devcmd/pkgs/types"
 )
 
 // Parser implements a fast, spec-compliant recursive descent parser for the Devcmd language.
@@ -15,18 +17,28 @@ import (
 // purely on assembling the Abstract Syntax Tree (AST).
 type Parser struct {
 	input  string // The raw input string for accurate value slicing
-	tokens []lexer.Token
+	tokens []types.Token
 	pos    int // current position in the token slice
 
 	// errors is a slice of errors encountered during parsing.
 	// This allows for better error reporting by collecting multiple errors.
 	errors []string
+
+	// program is the AST being built during parsing (for variable type lookups)
+	program *ast.Program
 }
 
-// Parse tokenizes and parses the input string into a complete AST.
+// Parse tokenizes and parses the input from an io.Reader into a complete AST.
 // It returns the Program node and any errors encountered.
-func Parse(input string) (*ast.Program, error) {
-	lex := lexer.New(input)
+func Parse(reader io.Reader) (*ast.Program, error) {
+	// Read the input to store for error reporting
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read input: %w", err)
+	}
+	input := string(data)
+
+	lex := lexer.New(strings.NewReader(input))
 	p := &Parser{
 		input:  input, // Store the raw input
 		tokens: lex.TokenizeToSlice(),
@@ -46,6 +58,7 @@ func Parse(input string) (*ast.Program, error) {
 // Program = { VariableDecl | VarGroup | CommandDecl }*
 func (p *Parser) parseProgram() *ast.Program {
 	program := &ast.Program{}
+	p.program = program // Store reference for variable type lookups
 
 	for !p.isAtEnd() {
 		p.skipWhitespaceAndComments()
@@ -54,8 +67,8 @@ func (p *Parser) parseProgram() *ast.Program {
 		}
 
 		switch p.current().Type {
-		case lexer.VAR:
-			if p.peek().Type == lexer.LPAREN {
+		case types.VAR:
+			if p.peek().Type == types.LPAREN {
 				varGroup, err := p.parseVarGroup()
 				if err != nil {
 					p.addError(err)
@@ -72,7 +85,7 @@ func (p *Parser) parseProgram() *ast.Program {
 					program.Variables = append(program.Variables, *varDecl)
 				}
 			}
-		case lexer.IDENTIFIER, lexer.WATCH, lexer.STOP:
+		case types.IDENTIFIER, types.WATCH, types.STOP:
 			// A command can start with a name (IDENTIFIER), a keyword (WATCH/STOP),
 			// or a decorator (@).
 			cmd, err := p.parseCommandDecl()
@@ -83,7 +96,7 @@ func (p *Parser) parseProgram() *ast.Program {
 				program.Commands = append(program.Commands, *cmd)
 			}
 		default:
-			p.addError(fmt.Errorf("unexpected token %s, expected a top-level declaration (var, command)", p.current().Type))
+			p.addError(p.NewSyntaxError(fmt.Sprintf("unexpected token %s at top level, expected 'var' or command declaration", p.current().Type.String())))
 			p.synchronize()
 		}
 	}
@@ -98,13 +111,13 @@ func (p *Parser) parseCommandDecl() (*ast.CommandDecl, error) {
 
 	// 1. Parse command type (watch, stop, or regular)
 	cmdType := ast.Command
-	var typeToken *lexer.Token
-	if p.match(lexer.WATCH) {
+	var typeToken *types.Token
+	if p.match(types.WATCH) {
 		cmdType = ast.WatchCommand
 		token := p.current()
 		typeToken = &token
 		p.advance()
-	} else if p.match(lexer.STOP) {
+	} else if p.match(types.STOP) {
 		cmdType = ast.StopCommand
 		token := p.current()
 		typeToken = &token
@@ -112,14 +125,14 @@ func (p *Parser) parseCommandDecl() (*ast.CommandDecl, error) {
 	}
 
 	// 2. Parse command name
-	nameToken, err := p.consume(lexer.IDENTIFIER, "expected command name")
+	nameToken, err := p.consume(types.IDENTIFIER, "expected command name")
 	if err != nil {
 		return nil, err
 	}
 	name := nameToken.Value
 
 	// 3. Parse colon
-	colonToken, err := p.consume(lexer.COLON, "expected ':' after command name")
+	colonToken, err := p.consume(types.COLON, "expected ':' after command name")
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +163,7 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 
 	// **FIXED**: Check for decorator syntax sugar: @decorator(args) { ... }
 	// This should be equivalent to: { @decorator(args) { ... } }
-	if p.match(lexer.AT) {
+	if p.match(types.AT) {
 		// Save position in case we need to backtrack
 		savedPos := p.pos
 
@@ -164,9 +177,9 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 		// 1. A block { ... } (syntax sugar - should be treated as IsBlock=true)
 		// 2. Simple shell content (only valid for function decorators)
 
-		if p.match(lexer.LBRACE) {
+		if p.match(types.LBRACE) {
 			// **SYNTAX SUGAR**: @decorator(args) { ... } becomes { @decorator(args) { ... } }
-			openBrace, _ := p.consume(lexer.LBRACE, "") // already checked
+			openBrace, _ := p.consume(types.LBRACE, "") // already checked
 
 			// Parse content differently based on decorator type
 			switch d := decorator.(type) {
@@ -175,7 +188,7 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 				if err != nil {
 					return nil, err
 				}
-				closeBrace, err := p.consume(lexer.RBRACE, "expected '}' to close command block")
+				closeBrace, err := p.consume(types.RBRACE, "expected '}' to close command block")
 				if err != nil {
 					return nil, err
 				}
@@ -192,7 +205,7 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 				if err != nil {
 					return nil, err
 				}
-				closeBrace, err := p.consume(lexer.RBRACE, "expected '}' to close pattern block")
+				closeBrace, err := p.consume(types.RBRACE, "expected '}' to close pattern block")
 				if err != nil {
 					return nil, err
 				}
@@ -231,13 +244,13 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 	}
 
 	// Explicit block: { ... }
-	if p.match(lexer.LBRACE) {
-		openBrace, _ := p.consume(lexer.LBRACE, "") // already checked
+	if p.match(types.LBRACE) {
+		openBrace, _ := p.consume(types.LBRACE, "") // already checked
 		contentItems, err := p.parseBlockContent()  // Parse multiple content items
 		if err != nil {
 			return nil, err
 		}
-		closeBrace, err := p.consume(lexer.RBRACE, "expected '}' to close command block")
+		closeBrace, err := p.consume(types.RBRACE, "expected '}' to close command block")
 		if err != nil {
 			return nil, err
 		}
@@ -285,7 +298,7 @@ func (p *Parser) isSimpleShellContent(contentItems []ast.CommandContent) bool {
 		for _, part := range shell.Parts {
 			if funcDecorator, ok := part.(*ast.FunctionDecorator); ok {
 				// Function decorators are allowed in simple content
-				if !stdlib.IsFunctionDecorator(funcDecorator.Name) {
+				if !decorators.IsFunctionDecorator(funcDecorator.Name) {
 					return false
 				}
 			}
@@ -316,19 +329,19 @@ func (p *Parser) parseCommandContent(inBlock bool) (ast.CommandContent, error) {
 		switch d := decorator.(type) {
 		case *ast.BlockDecorator:
 			// Parse the block content for block decorators
-			if p.match(lexer.LBRACE) {
+			if p.match(types.LBRACE) {
 				p.advance() // consume '{'
 				contentItems, err := p.parseBlockContent()
 				if err != nil {
 					return nil, err
 				}
-				_, err = p.consume(lexer.RBRACE, "expected '}' after block decorator content")
+				_, err = p.consume(types.RBRACE, "expected '}' after block decorator content")
 				if err != nil {
 					return nil, err
 				}
 				d.Content = contentItems
 			} else {
-				return nil, fmt.Errorf("expected '{' after block decorator @%s", d.Name)
+				return nil, p.NewMissingTokenError("'{' after block decorator @" + d.Name)
 			}
 			return d, nil
 		case *ast.PatternDecorator:
@@ -349,42 +362,57 @@ func (p *Parser) parsePatternContent() (*ast.PatternDecorator, error) {
 	startPos := p.current()
 
 	// Parse @ symbol
-	atToken, err := p.consume(lexer.AT, "expected '@' to start pattern decorator")
+	atToken, err := p.consume(types.AT, "expected '@' to start pattern decorator")
 	if err != nil {
 		return nil, err
 	}
 
 	// Parse decorator name
-	nameToken, err := p.consume(lexer.IDENTIFIER, "expected decorator name after '@'")
+	nameToken, err := p.consume(types.IDENTIFIER, "expected decorator name after '@'")
 	if err != nil {
 		return nil, err
 	}
 	decoratorName := nameToken.Value
 
+	// Step 1: Check if decorator exists in registry and is a pattern decorator
+	decorator, decoratorType, err := decorators.GetAny(decoratorName)
+	if err != nil || decoratorType != decorators.PatternType {
+		return nil, p.NewInvalidError("unknown pattern decorator @" + decoratorName)
+	}
+
+	// Step 2: Get parameter schema
+	paramSchema := decorator.ParameterSchema()
+
 	// Parse arguments if present
-	var args []ast.Expression
-	if p.match(lexer.LPAREN) {
-		args, err = p.parseArgumentList()
+	var params []ast.NamedParameter
+	if p.match(types.LPAREN) {
+		p.advance() // consume '('
+		params, err = p.parseParameterList(paramSchema)
 		if err != nil {
 			return nil, err
 		}
-		_, err = p.consume(lexer.RPAREN, "expected ')' after decorator arguments")
+		_, err = p.consume(types.RPAREN, "expected ')' after decorator arguments")
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// Step 3: Validate parameters using decorator schema
+	if err := p.validateDecoratorParameters(decorator, params, decoratorName); err != nil {
+		return nil, err
+	}
+
 	// Expect opening brace
-	_, err = p.consume(lexer.LBRACE, "expected '{' after pattern decorator")
+	_, err = p.consume(types.LBRACE, "expected '{' after pattern decorator")
 	if err != nil {
 		return nil, err
 	}
 
 	// Parse pattern branches
 	var patterns []ast.PatternBranch
-	for !p.match(lexer.RBRACE) && !p.isAtEnd() {
+	for !p.match(types.RBRACE) && !p.isAtEnd() {
 		p.skipWhitespaceAndComments()
-		if p.match(lexer.RBRACE) {
+		if p.match(types.RBRACE) {
 			break
 		}
 
@@ -397,14 +425,21 @@ func (p *Parser) parsePatternContent() (*ast.PatternDecorator, error) {
 	}
 
 	// Expect closing brace
-	_, err = p.consume(lexer.RBRACE, "expected '}' to close pattern block")
+	_, err = p.consume(types.RBRACE, "expected '}' to close pattern block")
 	if err != nil {
 		return nil, err
 	}
 
+	// Validate pattern branches using decorator schema
+	if patternDecorator, ok := decorator.(decorators.PatternDecorator); ok {
+		if err := p.validatePatternBranches(patternDecorator, patterns, decoratorName); err != nil {
+			return nil, err
+		}
+	}
+
 	return &ast.PatternDecorator{
 		Name:      decoratorName,
-		Args:      args,
+		Args:      params,
 		Patterns:  patterns,
 		Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
 		AtToken:   atToken,
@@ -419,27 +454,29 @@ func (p *Parser) parsePatternBranch() (*ast.PatternBranch, error) {
 
 	// Parse pattern (identifier or wildcard)
 	var pattern ast.Pattern
-	if p.match(lexer.ASTERISK) {
+	if p.match(types.IDENTIFIER) {
 		token := p.current()
 		p.advance()
-		pattern = &ast.WildcardPattern{
-			Pos:   ast.Position{Line: token.Line, Column: token.Column},
-			Token: token,
-		}
-	} else if p.match(lexer.IDENTIFIER) {
-		token := p.current()
-		p.advance()
-		pattern = &ast.IdentifierPattern{
-			Name:  token.Value,
-			Pos:   ast.Position{Line: token.Line, Column: token.Column},
-			Token: token,
+
+		// Check if this is the "default" wildcard pattern
+		if token.Value == "default" {
+			pattern = &ast.WildcardPattern{
+				Pos:   ast.Position{Line: token.Line, Column: token.Column},
+				Token: token,
+			}
+		} else {
+			pattern = &ast.IdentifierPattern{
+				Name:  token.Value,
+				Pos:   ast.Position{Line: token.Line, Column: token.Column},
+				Token: token,
+			}
 		}
 	} else {
-		return nil, fmt.Errorf("expected pattern identifier or '*', got %s", p.current().Type)
+		return nil, p.NewSyntaxError(fmt.Sprintf("expected pattern identifier, got %s", p.current().Type.String()))
 	}
 
 	// Parse colon
-	colonToken, err := p.consume(lexer.COLON, "expected ':' after pattern")
+	colonToken, err := p.consume(types.COLON, "expected ':' after pattern")
 	if err != nil {
 		return nil, err
 	}
@@ -448,13 +485,13 @@ func (p *Parser) parsePatternBranch() (*ast.PatternBranch, error) {
 	var commands []ast.CommandContent
 
 	// Check if pattern branch has explicit block syntax: pattern: { ... }
-	if p.match(lexer.LBRACE) {
+	if p.match(types.LBRACE) {
 		p.advance() // consume '{'
 		blockCommands, err := p.parseBlockContent()
 		if err != nil {
 			return nil, err
 		}
-		_, err = p.consume(lexer.RBRACE, "expected '}' to close pattern branch block")
+		_, err = p.consume(types.RBRACE, "expected '}' to close pattern branch block")
 		if err != nil {
 			return nil, err
 		}
@@ -481,9 +518,9 @@ func (p *Parser) parsePatternBranch() (*ast.PatternBranch, error) {
 func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 	var contentItems []ast.CommandContent
 
-	for !p.match(lexer.RBRACE) && !p.isAtEnd() {
+	for !p.match(types.RBRACE) && !p.isAtEnd() {
 		p.skipWhitespaceAndComments()
-		if p.match(lexer.RBRACE) {
+		if p.match(types.RBRACE) {
 			break
 		}
 
@@ -508,13 +545,13 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 			switch d := decorator.(type) {
 			case *ast.BlockDecorator:
 				// Parse the block content for block decorators
-				if p.match(lexer.LBRACE) {
+				if p.match(types.LBRACE) {
 					p.advance() // consume '{'
 					nestedContent, err := p.parseBlockContent()
 					if err != nil {
 						return nil, err
 					}
-					_, err = p.consume(lexer.RBRACE, "expected '}' after block decorator content")
+					_, err = p.consume(types.RBRACE, "expected '}' after block decorator content")
 					if err != nil {
 						return nil, err
 					}
@@ -539,7 +576,7 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 
 		// **CRITICAL FIX**: Parse consecutive SHELL_TEXT tokens as separate commands
 		// This implements the spec requirement: "newlines create multiple commands everywhere"
-		if p.match(lexer.SHELL_TEXT) {
+		if p.match(types.SHELL_TEXT) {
 			shellContent, err := p.parseShellContent(true)
 			if err != nil {
 				return nil, err
@@ -566,7 +603,7 @@ func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
 	var parts []ast.ShellPart
 
 	// Parse only one SHELL_TEXT token at a time
-	if p.match(lexer.SHELL_TEXT) {
+	if p.match(types.SHELL_TEXT) {
 		shellToken := p.current()
 		p.advance()
 
@@ -584,7 +621,7 @@ func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
 	}, nil
 }
 
-// extractInlineDecorators extracts function decorators from shell text using stdlib registry validation
+// extractInlineDecorators extracts function decorators from shell text using decorators registry validation
 func (p *Parser) extractInlineDecorators(shellText string) ([]ast.ShellPart, error) {
 	var parts []ast.ShellPart
 	textStart := 0
@@ -624,7 +661,7 @@ func (p *Parser) extractInlineDecorators(shellText string) ([]ast.ShellPart, err
 	return parts, nil
 }
 
-// extractFunctionDecorator extracts a function decorator starting at position i using stdlib validation
+// extractFunctionDecorator extracts a function decorator starting at position i using unified decorator approach
 // Returns the decorator, new position, and whether a decorator was found
 func (p *Parser) extractFunctionDecorator(shellText string, i int) (*ast.FunctionDecorator, int, bool) {
 	if i >= len(shellText) || shellText[i] != '@' {
@@ -648,8 +685,9 @@ func (p *Parser) extractFunctionDecorator(shellText string, i int) (*ast.Functio
 
 	decoratorName := shellText[nameStart:start]
 
-	// **CRITICAL FIX**: Use stdlib registry to validate function decorators
-	if !stdlib.IsFunctionDecorator(decoratorName) {
+	// Step 1: Check if decorator exists in registry and is a function decorator
+	decorator, decoratorType, err := decorators.GetAny(decoratorName)
+	if err != nil || decoratorType != decorators.FunctionType {
 		return nil, i, false
 	}
 
@@ -683,10 +721,15 @@ func (p *Parser) extractFunctionDecorator(shellText string, i int) (*ast.Functio
 	argEnd := start - 1 // Position of closing ')'
 	argText := shellText[argStart:argEnd]
 
-	// Parse the argument
-	var args []ast.Expression
+	// Step 2: Get parameter schema and parse simple arguments
+	paramSchema := decorator.ParameterSchema()
+	var params []ast.NamedParameter
+
 	if strings.TrimSpace(argText) != "" {
 		trimmed := strings.TrimSpace(argText)
+
+		// For inline decorators, we'll use simple parsing (no named parameters for now)
+		var value ast.Expression
 
 		// Handle quoted strings
 		if (strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`)) ||
@@ -694,20 +737,39 @@ func (p *Parser) extractFunctionDecorator(shellText string, i int) (*ast.Functio
 			(strings.HasPrefix(trimmed, "`") && strings.HasSuffix(trimmed, "`")) {
 			// String literal - remove quotes
 			unquoted := trimmed[1 : len(trimmed)-1]
-			args = append(args, &ast.StringLiteral{Value: unquoted})
+			value = &ast.StringLiteral{Value: unquoted}
 		} else {
 			// Identifier
-			args = append(args, &ast.Identifier{Name: trimmed})
+			value = &ast.Identifier{Name: trimmed}
 		}
+
+		// Use first parameter name from schema if available
+		var paramName string
+		if len(paramSchema) > 0 {
+			paramName = paramSchema[0].Name
+		} else {
+			paramName = "arg0"
+		}
+
+		params = append(params, ast.NamedParameter{
+			Name:  paramName,
+			Value: value,
+			Pos:   ast.Position{Line: 1, Column: i + 1},
+		})
 	}
 
-	decorator := &ast.FunctionDecorator{
+	// Step 3: Validate parameters using decorator schema
+	if err := p.validateDecoratorParameters(decorator, params, decoratorName); err != nil {
+		return nil, i, false // Invalid decorator usage
+	}
+
+	functionDecorator := &ast.FunctionDecorator{
 		Name: decoratorName,
-		Args: args,
+		Args: params,
 		Pos:  ast.Position{Line: 1, Column: i + 1}, // Approximate position
 	}
 
-	return decorator, start, true
+	return functionDecorator, start, true
 }
 
 // Helper functions for character classification
@@ -721,102 +783,22 @@ func isDigit(ch rune) bool {
 
 // --- Expression and Literal Parsing ---
 
-// parseExpression parses any valid expression (literals, identifiers, function decorators).
-// This is used for parsing decorator arguments, where an identifier can be complex.
-func (p *Parser) parseExpression() (ast.Expression, error) {
-	switch p.current().Type {
-	case lexer.STRING:
-		tok := p.current()
-		p.advance()
-		return &ast.StringLiteral{Value: tok.Value, Raw: tok.Raw, StringToken: tok}, nil
-	case lexer.NUMBER:
-		tok := p.current()
-		p.advance()
-		return &ast.NumberLiteral{Value: tok.Value, Token: tok}, nil
-	case lexer.DURATION:
-		tok := p.current()
-		p.advance()
-		return &ast.DurationLiteral{Value: tok.Value, Token: tok}, nil
-	case lexer.BOOLEAN:
-		tok := p.current()
-		p.advance()
-		return &ast.BooleanLiteral{Value: tok.Value == "true", Token: tok}, nil
-	case lexer.IDENTIFIER:
-		// For decorator arguments, an "identifier" can be a complex value.
-		// This function consumes tokens until a separator is found.
-		return p.parseDecoratorArgument()
-	case lexer.AT:
-		// **SPEC COMPLIANCE**: REJECT function decorators in decorator arguments
-		return nil, fmt.Errorf("function decorators (@var, @env, etc.) are not allowed as decorator arguments. Use direct variable names instead (e.g., @timeout(DURATION) not @timeout(@var(DURATION)))")
-	}
-	return nil, fmt.Errorf("unexpected token %s, expected an expression (literal or identifier)", p.current().Type)
-}
-
-// parseDecoratorArgument handles complex decorator arguments.
-// **UPDATED**: This version is now robust and handles nested parentheses correctly,
-// ensuring it consumes the entire intended argument without overrunning.
-func (p *Parser) parseDecoratorArgument() (ast.Expression, error) {
-	startToken := p.current()
-	startOffset := startToken.Span.Start.Offset
-
-	// We need to find the end of the argument, which is either a comma or a closing parenthesis
-	// at the same parenthesis level.
-	parenDepth := 0
-	searchPos := p.pos
-
-	for searchPos < len(p.tokens) {
-		tok := p.tokens[searchPos]
-		if (tok.Type == lexer.COMMA || tok.Type == lexer.RPAREN) && parenDepth == 0 {
-			break
-		}
-		switch tok.Type {
-		case lexer.LPAREN:
-			parenDepth++
-		case lexer.RPAREN:
-			parenDepth--
-		}
-		searchPos++
-	}
-
-	// The argument ends at the start of the terminator token, or the end of the last token if at EOF.
-	var endOffset int
-	if searchPos < len(p.tokens) {
-		endOffset = p.tokens[searchPos].Span.Start.Offset
-		// Trim trailing space
-		for endOffset > startOffset && strings.ContainsRune(" \t", rune(p.input[endOffset-1])) {
-			endOffset--
-		}
-	} else {
-		endOffset = p.tokens[len(p.tokens)-1].Span.End.Offset // EOF
-	}
-
-	value := p.input[startOffset:endOffset]
-
-	// Advance parser position past the consumed tokens for the argument.
-	p.pos = searchPos
-
-	return &ast.Identifier{
-		Name:  value,
-		Token: lexer.Token{Value: value, Line: startToken.Line, Column: startToken.Column},
-	}, nil
-}
-
 // --- Variable Parsing ---
 
 // parseVariableDecl parses a variable declaration.
 // **SPEC COMPLIANCE**: Now enforces that values must be string, number, duration, or boolean literals
 func (p *Parser) parseVariableDecl() (*ast.VariableDecl, error) {
 	startPos := p.current()
-	_, err := p.consume(lexer.VAR, "expected 'var'")
+	_, err := p.consume(types.VAR, "expected 'var'")
 	if err != nil {
 		return nil, err
 	}
 
-	name, err := p.consume(lexer.IDENTIFIER, "expected variable name")
+	name, err := p.consume(types.IDENTIFIER, "expected variable name")
 	if err != nil {
 		return nil, err
 	}
-	_, err = p.consume(lexer.EQUALS, "expected '=' after variable name")
+	_, err = p.consume(types.EQUALS, "expected '=' after variable name")
 	if err != nil {
 		return nil, err
 	}
@@ -842,16 +824,16 @@ func (p *Parser) parseVariableValue() (ast.Expression, error) {
 
 	// Handle standard literals only - no unquoted strings allowed
 	switch startToken.Type {
-	case lexer.STRING:
+	case types.STRING:
 		p.advance()
 		return &ast.StringLiteral{Value: startToken.Value, Raw: startToken.Raw, StringToken: startToken}, nil
-	case lexer.NUMBER:
+	case types.NUMBER:
 		p.advance()
 		return &ast.NumberLiteral{Value: startToken.Value, Token: startToken}, nil
-	case lexer.DURATION:
+	case types.DURATION:
 		p.advance()
 		return &ast.DurationLiteral{Value: startToken.Value, Token: startToken}, nil
-	case lexer.BOOLEAN:
+	case types.BOOLEAN:
 		p.advance()
 		return &ast.BooleanLiteral{Value: startToken.Value == "true", Token: startToken}, nil
 	default:
@@ -863,22 +845,22 @@ func (p *Parser) parseVariableValue() (ast.Expression, error) {
 
 func (p *Parser) parseVarGroup() (*ast.VarGroup, error) {
 	startPos := p.current()
-	_, err := p.consume(lexer.VAR, "expected 'var'")
+	_, err := p.consume(types.VAR, "expected 'var'")
 	if err != nil {
 		return nil, err
 	}
-	openParen, err := p.consume(lexer.LPAREN, "expected '(' for var group")
+	openParen, err := p.consume(types.LPAREN, "expected '(' for var group")
 	if err != nil {
 		return nil, err
 	}
 
 	var variables []ast.VariableDecl
-	for !p.match(lexer.RPAREN) && !p.isAtEnd() {
+	for !p.match(types.RPAREN) && !p.isAtEnd() {
 		p.skipWhitespaceAndComments()
-		if p.match(lexer.RPAREN) {
+		if p.match(types.RPAREN) {
 			break
 		}
-		if p.current().Type != lexer.IDENTIFIER {
+		if p.current().Type != types.IDENTIFIER {
 			p.addError(fmt.Errorf("expected variable name inside var group, got %s", p.current().Type))
 			p.synchronize()
 			continue
@@ -892,7 +874,7 @@ func (p *Parser) parseVarGroup() (*ast.VarGroup, error) {
 		p.skipWhitespaceAndComments()
 	}
 
-	closeParen, err := p.consume(lexer.RPAREN, "expected ')' to close var group")
+	closeParen, err := p.consume(types.RPAREN, "expected ')' to close var group")
 	if err != nil {
 		return nil, err
 	}
@@ -907,11 +889,11 @@ func (p *Parser) parseVarGroup() (*ast.VarGroup, error) {
 
 // parseGroupedVariableDecl is a helper for parsing `NAME = VALUE` lines within a `var (...)` block.
 func (p *Parser) parseGroupedVariableDecl() (*ast.VariableDecl, error) {
-	name, err := p.consume(lexer.IDENTIFIER, "expected variable name")
+	name, err := p.consume(types.IDENTIFIER, "expected variable name")
 	if err != nil {
 		return nil, err
 	}
-	_, err = p.consume(lexer.EQUALS, "expected '=' after variable name")
+	_, err = p.consume(types.EQUALS, "expected '=' after variable name")
 	if err != nil {
 		return nil, err
 	}
@@ -935,19 +917,19 @@ func (p *Parser) parseGroupedVariableDecl() (*ast.VariableDecl, error) {
 // parseDecorator parses a single decorator and returns the appropriate AST node type
 func (p *Parser) parseDecorator() (ast.CommandContent, error) {
 	startPos := p.current()
-	atToken, _ := p.consume(lexer.AT, "expected '@'")
+	atToken, _ := p.consume(types.AT, "expected '@'")
 
 	// Get decorator name
-	var nameToken lexer.Token
+	var nameToken types.Token
 	var err error
 
-	if p.current().Type == lexer.IDENTIFIER {
-		nameToken, err = p.consume(lexer.IDENTIFIER, "expected decorator name")
+	if p.current().Type == types.IDENTIFIER {
+		nameToken, err = p.consume(types.IDENTIFIER, "expected decorator name")
 	} else {
 		// Handle special cases where keywords appear as decorator names
 		nameToken = p.current()
 		if !p.isValidDecoratorName(nameToken) {
-			return nil, fmt.Errorf("expected decorator name, got %s", nameToken.Type)
+			return nil, p.NewSyntaxError(fmt.Sprintf("expected decorator name after '@', got %s", nameToken.Type.String()))
 		}
 		p.advance()
 	}
@@ -957,104 +939,270 @@ func (p *Parser) parseDecorator() (ast.CommandContent, error) {
 	}
 
 	decoratorName := nameToken.Value
-	if nameToken.Type != lexer.IDENTIFIER {
+	if nameToken.Type != types.IDENTIFIER {
 		decoratorName = strings.ToLower(nameToken.Value)
 	}
 
-	// Parse arguments if present
-	var args []ast.Expression
-	if p.match(lexer.LPAREN) {
+	// Step 1: Check if decorator exists in registry
+	decorator, decoratorType, err := decorators.GetAny(decoratorName)
+	if err != nil {
+		return nil, p.NewInvalidError("unknown decorator @" + decoratorName)
+	}
+
+	// Step 2: Get parameter schema from decorator
+	paramSchema := decorator.ParameterSchema()
+
+	// Step 3: Parse parameters according to schema
+	var params []ast.NamedParameter
+	if p.match(types.LPAREN) {
 		p.advance() // consume '('
-		args, err = p.parseArgumentList()
+		params, err = p.parseParameterList(paramSchema)
 		if err != nil {
 			return nil, err
 		}
-		_, err = p.consume(lexer.RPAREN, "expected ')' after decorator arguments")
+		_, err = p.consume(types.RPAREN, "expected ')' after decorator arguments")
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Determine decorator type from registry and create appropriate AST node
-	if stdlib.IsBlockDecorator(decoratorName) {
+	// Step 4: Validate parameters using decorator schema
+	if err := p.validateDecoratorParameters(decorator, params, decoratorName); err != nil {
+		return nil, err
+	}
+
+	// Step 5: Create appropriate AST node based on decorator type
+	switch decoratorType {
+	case decorators.FunctionType:
+		return &ast.FunctionDecorator{
+			Name:      decoratorName,
+			Args:      params,
+			Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
+			AtToken:   atToken,
+			NameToken: nameToken,
+		}, nil
+	case decorators.BlockType:
 		return &ast.BlockDecorator{
 			Name:      decoratorName,
-			Args:      args,
+			Args:      params,
 			Content:   nil, // Will be filled in by caller
 			Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
 			AtToken:   atToken,
 			NameToken: nameToken,
 		}, nil
-	} else if stdlib.IsPatternDecorator(decoratorName) {
+	case decorators.PatternType:
 		return &ast.PatternDecorator{
 			Name:      decoratorName,
-			Args:      args,
+			Args:      params,
 			Patterns:  nil, // Will be filled in by caller
 			Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
 			AtToken:   atToken,
 			NameToken: nameToken,
 		}, nil
-	} else if stdlib.IsFunctionDecorator(decoratorName) {
-		return &ast.FunctionDecorator{
-			Name:      decoratorName,
-			Args:      args,
-			Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
-			AtToken:   atToken,
-			NameToken: nameToken,
-		}, nil
-	} else {
-		return nil, fmt.Errorf("unknown decorator: @%s", decoratorName)
+	default:
+		return nil, p.NewInvalidError("unknown decorator type for @" + decoratorName)
 	}
 }
 
-// parseBlockDecorator removed - block decorators are now created directly in parseBlockDecoratorContent
+// parseParameterList parses a comma-separated list of named parameters using the decorator's schema
+func (p *Parser) parseParameterList(paramSchema []decorators.ParameterSchema) ([]ast.NamedParameter, error) {
+	var params []ast.NamedParameter
+	if p.match(types.RPAREN) {
+		return params, nil // No parameters
+	}
 
-// parsePatternDecorator removed - pattern decorators are now created directly in parsePatternContent
+	positionalIndex := 0
+
+	for {
+		param, err := p.parseParameter(paramSchema, &positionalIndex)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, param)
+
+		if !p.match(types.COMMA) {
+			break
+		}
+		p.advance() // consume ','
+	}
+	return params, nil
+}
+
+// parseParameter parses a single parameter (either named or positional) using the schema
+func (p *Parser) parseParameter(paramSchema []decorators.ParameterSchema, positionalIndex *int) (ast.NamedParameter, error) {
+	startPos := p.current()
+
+	// Check if this is a named parameter (identifier = value)
+	if p.current().Type == types.IDENTIFIER && p.peek().Type == types.EQUALS {
+		// Named parameter
+		nameToken, err := p.consume(types.IDENTIFIER, "expected parameter name")
+		if err != nil {
+			return ast.NamedParameter{}, err
+		}
+		equalsToken, err := p.consume(types.EQUALS, "expected '=' after parameter name")
+		if err != nil {
+			return ast.NamedParameter{}, err
+		}
+
+		// Find the parameter schema for this named parameter
+		var foundSchema *decorators.ParameterSchema
+		for i := range paramSchema {
+			if paramSchema[i].Name == nameToken.Value {
+				foundSchema = &paramSchema[i]
+				break
+			}
+		}
+
+		value, err := p.parseParameterValue(foundSchema, nameToken.Value)
+		if err != nil {
+			return ast.NamedParameter{}, err
+		}
+
+		return ast.NamedParameter{
+			Name:        nameToken.Value,
+			Value:       value,
+			Pos:         ast.Position{Line: startPos.Line, Column: startPos.Column},
+			NameToken:   &nameToken,
+			EqualsToken: &equalsToken,
+		}, nil
+	} else {
+		// Positional parameter
+		var foundSchema *decorators.ParameterSchema
+		var paramName string
+		if *positionalIndex < len(paramSchema) {
+			foundSchema = &paramSchema[*positionalIndex]
+			paramName = paramSchema[*positionalIndex].Name
+		} else {
+			paramName = fmt.Sprintf("arg%d", *positionalIndex)
+		}
+
+		value, err := p.parseParameterValue(foundSchema, paramName)
+		if err != nil {
+			return ast.NamedParameter{}, err
+		}
+		*positionalIndex++
+
+		return ast.NamedParameter{
+			Name:  paramName,
+			Value: value,
+			Pos:   ast.Position{Line: startPos.Line, Column: startPos.Column},
+			// NameToken and EqualsToken are nil for positional parameters
+		}, nil
+	}
+}
+
+// parseValue parses a literal value (string, number, duration, boolean, identifier)
+func (p *Parser) parseValue() (ast.Expression, error) {
+	switch p.current().Type {
+	case types.STRING:
+		tok := p.current()
+		p.advance()
+		return &ast.StringLiteral{Value: tok.Value, Raw: tok.Raw, StringToken: tok}, nil
+	case types.NUMBER:
+		tok := p.current()
+		p.advance()
+		return &ast.NumberLiteral{Value: tok.Value, Token: tok}, nil
+	case types.DURATION:
+		tok := p.current()
+		p.advance()
+		return &ast.DurationLiteral{Value: tok.Value, Token: tok}, nil
+	case types.BOOLEAN:
+		tok := p.current()
+		p.advance()
+		boolValue := tok.Value == "true"
+		return &ast.BooleanLiteral{Value: boolValue, Raw: tok.Value, Token: tok}, nil
+	case types.IDENTIFIER:
+		tok := p.current()
+		p.advance()
+		return &ast.Identifier{Name: tok.Value, Token: tok}, nil
+	default:
+		return nil, p.NewSyntaxError(fmt.Sprintf("unexpected token %s, expected a value", p.current().Type.String()))
+	}
+}
+
+// parseParameterValue parses a parameter value with type checking and enhanced error messages
+func (p *Parser) parseParameterValue(schema *decorators.ParameterSchema, paramName string) (ast.Expression, error) {
+	// If we have schema information, validate the type
+	if schema != nil {
+		return p.parseValueWithTypeCheck(schema.Type, paramName)
+	}
+
+	// Fallback to general value parsing if no schema
+	return p.parseValue()
+}
+
+// parseValueWithTypeCheck parses a value and validates it against the expected type
+func (p *Parser) parseValueWithTypeCheck(expectedType types.ExpressionType, paramName string) (ast.Expression, error) {
+	currentToken := p.current()
+
+	switch currentToken.Type {
+	case types.STRING:
+		if expectedType != types.StringType {
+			return nil, p.NewTypeError(paramName, expectedType, p.current())
+		}
+		tok := p.current()
+		p.advance()
+		return &ast.StringLiteral{Value: tok.Value, Raw: tok.Raw, StringToken: tok}, nil
+
+	case types.NUMBER:
+		if expectedType != types.NumberType {
+			return nil, p.NewTypeError(paramName, expectedType, p.current())
+		}
+		tok := p.current()
+		p.advance()
+		return &ast.NumberLiteral{Value: tok.Value, Token: tok}, nil
+
+	case types.DURATION:
+		if expectedType != types.DurationType {
+			return nil, p.NewTypeError(paramName, expectedType, p.current())
+		}
+		tok := p.current()
+		p.advance()
+		return &ast.DurationLiteral{Value: tok.Value, Token: tok}, nil
+
+	case types.BOOLEAN:
+		if expectedType != types.BooleanType {
+			return nil, p.NewTypeError(paramName, expectedType, p.current())
+		}
+		tok := p.current()
+		p.advance()
+		boolValue := tok.Value == "true"
+		return &ast.BooleanLiteral{Value: boolValue, Raw: tok.Value, Token: tok}, nil
+
+	case types.IDENTIFIER:
+		// Identifiers are valid for any type - they reference variables
+		tok := p.current()
+		p.advance()
+		return &ast.Identifier{Name: tok.Value, Token: tok}, nil
+
+	default:
+		return nil, p.NewTypeError(paramName, expectedType, p.current())
+	}
+}
+
+// Legacy error functions - these are now implemented in errors.go
+// Kept for any remaining compatibility needs
 
 // isValidDecoratorName checks if a token can be used as a decorator name
-func (p *Parser) isValidDecoratorName(token lexer.Token) bool {
+func (p *Parser) isValidDecoratorName(token types.Token) bool {
 	switch token.Type {
-	case lexer.IDENTIFIER:
+	case types.IDENTIFIER:
 		return true
-	case lexer.VAR:
+	case types.VAR:
 		// "var" can be used as a decorator name for @var()
-		return true
-	case lexer.WHEN, lexer.TRY:
-		// Pattern decorator keywords
 		return true
 	default:
 		return false
 	}
 }
 
-// parseArgumentList parses a comma-separated list of expressions.
-func (p *Parser) parseArgumentList() ([]ast.Expression, error) {
-	var args []ast.Expression
-	if p.match(lexer.RPAREN) {
-		return args, nil // No arguments
-	}
-
-	for {
-		arg, err := p.parseExpression()
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, arg)
-		if !p.match(lexer.COMMA) {
-			break
-		}
-		p.advance() // consume ','
-	}
-	return args, nil
-}
-
 // parsePatternBranchesInBlock parses pattern branches directly from the token stream
 func (p *Parser) parsePatternBranchesInBlock() ([]ast.PatternBranch, error) {
 	var patterns []ast.PatternBranch
 
-	for !p.match(lexer.RBRACE) && !p.isAtEnd() {
+	for !p.match(types.RBRACE) && !p.isAtEnd() {
 		p.skipWhitespaceAndComments()
-		if p.match(lexer.RBRACE) {
+		if p.match(types.RBRACE) {
 			break
 		}
 
@@ -1072,20 +1220,20 @@ func (p *Parser) parsePatternBranchesInBlock() ([]ast.PatternBranch, error) {
 
 // --- Utility and Helper Methods ---
 
-func (p *Parser) advance() lexer.Token {
+func (p *Parser) advance() types.Token {
 	if !p.isAtEnd() {
 		p.pos++
 	}
 	return p.previous()
 }
 
-func (p *Parser) current() lexer.Token  { return p.tokens[p.pos] }
-func (p *Parser) previous() lexer.Token { return p.tokens[p.pos-1] }
-func (p *Parser) peek() lexer.Token     { return p.tokens[p.pos+1] }
+func (p *Parser) current() types.Token  { return p.tokens[p.pos] }
+func (p *Parser) previous() types.Token { return p.tokens[p.pos-1] }
+func (p *Parser) peek() types.Token     { return p.tokens[p.pos+1] }
 
-func (p *Parser) isAtEnd() bool { return p.current().Type == lexer.EOF }
+func (p *Parser) isAtEnd() bool { return p.current().Type == types.EOF }
 
-func (p *Parser) match(types ...lexer.TokenType) bool {
+func (p *Parser) match(types ...types.TokenType) bool {
 	for _, t := range types {
 		if p.current().Type == t {
 			return true
@@ -1095,7 +1243,7 @@ func (p *Parser) match(types ...lexer.TokenType) bool {
 }
 
 // formatError creates a detailed error message with source context
-func (p *Parser) formatError(message string, token lexer.Token) error {
+func (p *Parser) formatError(message string, token types.Token) error {
 	lines := strings.Split(p.input, "\n")
 	lineNum := token.Line
 	colNum := token.Column
@@ -1150,63 +1298,55 @@ func min(a, b int) int {
 	return b
 }
 
-func (p *Parser) consume(t lexer.TokenType, message string) (lexer.Token, error) {
+func (p *Parser) consume(t types.TokenType, message string) (types.Token, error) {
 	if p.match(t) {
 		tok := p.current()
 		p.advance()
 		return tok, nil
 	}
-	return lexer.Token{}, p.formatError(message, p.current())
+	return types.Token{}, p.formatError(message, p.current())
 }
 
 func (p *Parser) skipWhitespaceAndComments() {
 	// NEWLINE tokens no longer exist - they're handled as whitespace by lexer
-	for p.match(lexer.COMMENT, lexer.MULTILINE_COMMENT) {
+	for p.match(types.COMMENT, types.MULTILINE_COMMENT) {
 		p.advance()
 	}
 }
 
 // isPatternDecorator checks if the current position starts a pattern decorator.
 func (p *Parser) isPatternDecorator() bool {
-	if p.current().Type != lexer.AT {
+	if p.current().Type != types.AT {
 		return false
 	}
 	if p.pos+1 < len(p.tokens) {
 		nextToken := p.tokens[p.pos+1]
-		var name string
 
-		switch nextToken.Type {
-		case lexer.IDENTIFIER:
-			name = nextToken.Value
-		case lexer.WHEN:
-			name = "when"
-		case lexer.TRY:
-			name = "try"
-		default:
-			return false
+		if nextToken.Type == types.IDENTIFIER {
+			// Use the decorator registry to check for pattern decorators
+			return decorators.IsPatternDecorator(nextToken.Value)
 		}
-
-		return stdlib.IsPatternDecorator(name)
 	}
 	return false
 }
 
 // isBlockDecorator checks if the current position starts a block decorator.
 func (p *Parser) isBlockDecorator() bool {
-	if p.current().Type != lexer.AT {
+	if p.current().Type != types.AT {
 		return false
 	}
 	if p.pos+1 < len(p.tokens) {
 		nextToken := p.tokens[p.pos+1]
 		var name string
 
-		if nextToken.Type == lexer.IDENTIFIER {
+		if nextToken.Type == types.IDENTIFIER {
 			name = nextToken.Value
 		} else {
 			return false
 		}
 
-		return stdlib.IsBlockDecorator(name)
+		// Use the decorator registry to check for block decorators
+		return decorators.IsBlockDecorator(name)
 	}
 	return false
 }
@@ -1224,9 +1364,176 @@ func (p *Parser) synchronize() {
 		// NEWLINE tokens no longer exist - removed synchronization point
 		// A new top-level keyword is also a good place.
 		switch p.current().Type {
-		case lexer.VAR, lexer.WATCH, lexer.STOP:
+		case types.VAR, types.WATCH, types.STOP:
 			return
 		}
 		p.advance()
 	}
+}
+
+// validateDecoratorParameters validates parameters against the decorator's schema
+func (p *Parser) validateDecoratorParameters(decorator decorators.Decorator, params []ast.NamedParameter, decoratorName string) error {
+	schema := decorator.ParameterSchema()
+
+	// Check required parameters
+	requiredParams := make(map[string]bool)
+	for _, param := range schema {
+		if param.Required {
+			requiredParams[param.Name] = true
+		}
+	}
+
+	// Check provided parameters
+	providedParams := make(map[string]bool)
+	for i, param := range params {
+		var paramName string
+		if param.Name != "" {
+			// Named parameter
+			paramName = param.Name
+		} else {
+			// Positional parameter - map to schema
+			if i >= len(schema) {
+				return fmt.Errorf("too many parameters for @%s decorator (expected %d, got %d)", decoratorName, len(schema), len(params))
+			}
+			paramName = schema[i].Name
+		}
+
+		// Check if parameter exists in schema
+		found := false
+		for _, schemaParam := range schema {
+			if schemaParam.Name == paramName {
+				found = true
+				// Validate parameter type
+				if err := p.validateParameterType(param.Value, schemaParam.Type, paramName, decoratorName); err != nil {
+					return err
+				}
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown parameter '%s' for @%s decorator", paramName, decoratorName)
+		}
+
+		providedParams[paramName] = true
+		delete(requiredParams, paramName)
+	}
+
+	// Check for missing required parameters
+	for paramName := range requiredParams {
+		return fmt.Errorf("missing required parameter '%s' for @%s decorator", paramName, decoratorName)
+	}
+
+	return nil
+}
+
+// validateParameterType checks if a parameter value matches the expected type
+func (p *Parser) validateParameterType(value ast.Expression, expectedType ast.ExpressionType, paramName, decoratorName string) error {
+	// Get the actual type of the provided value
+	actualType := value.GetType()
+
+	// Check if types match
+	if actualType != expectedType {
+		// Handle identifier references to variables
+		if actualType == ast.IdentifierType {
+			if ident, ok := value.(*ast.Identifier); ok {
+				// Look up the variable to check its type
+				varType, found := p.getVariableType(ident.Name)
+				if !found {
+					return fmt.Errorf("parameter '%s' for @%s decorator references undefined variable '%s'",
+						paramName, decoratorName, ident.Name)
+				}
+
+				// Check if the variable's type matches the expected type
+				if varType != expectedType {
+					return fmt.Errorf("parameter '%s' for @%s decorator expects %s, but variable '%s' is %s",
+						paramName, decoratorName, expectedType.String(), ident.Name, varType.String())
+				}
+
+				// Variable type matches - identifier is valid
+				return nil
+			}
+		}
+
+		return fmt.Errorf("parameter '%s' for @%s decorator expects %s, got %s",
+			paramName, decoratorName, expectedType.String(), actualType.String())
+	}
+
+	return nil
+}
+
+// getVariableType looks up a variable's type from the program's variable declarations
+func (p *Parser) getVariableType(varName string) (ast.ExpressionType, bool) {
+	// Look in the current program being parsed
+	if p.program != nil {
+		// Check regular variables
+		for _, variable := range p.program.Variables {
+			if variable.Name == varName {
+				return variable.Value.GetType(), true
+			}
+		}
+
+		// Check variable groups
+		for _, group := range p.program.VarGroups {
+			for _, variable := range group.Variables {
+				if variable.Name == varName {
+					return variable.Value.GetType(), true
+				}
+			}
+		}
+	}
+
+	return ast.StringType, false // Return any type since it wasn't found
+}
+
+// validatePatternBranches validates pattern branches against the decorator's pattern schema
+func (p *Parser) validatePatternBranches(decorator decorators.PatternDecorator, patterns []ast.PatternBranch, decoratorName string) error {
+	schema := decorator.PatternSchema()
+
+	// Track which patterns are provided
+	providedPatterns := make(map[string]bool)
+	for _, patternBranch := range patterns {
+		var patternName string
+
+		// Handle different pattern types
+		switch p := patternBranch.Pattern.(type) {
+		case *ast.IdentifierPattern:
+			patternName = p.Name
+		case *ast.WildcardPattern:
+			patternName = "default"
+		default:
+			return fmt.Errorf("unknown pattern type for @%s decorator", decoratorName)
+		}
+
+		// Check for wildcard
+		if patternName == "default" {
+			if !schema.AllowsWildcard {
+				return fmt.Errorf("@%s decorator does not allow 'default' wildcard pattern", decoratorName)
+			}
+		} else {
+			// Check if this specific pattern is allowed
+			if !schema.AllowsAnyIdentifier && len(schema.AllowedPatterns) > 0 {
+				allowed := false
+				for _, allowedPattern := range schema.AllowedPatterns {
+					if patternName == allowedPattern {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					return fmt.Errorf("unknown pattern '%s' for @%s decorator", patternName, decoratorName)
+				}
+			}
+		}
+
+		providedPatterns[patternName] = true
+	}
+
+	// Check for missing required patterns
+	for _, requiredPattern := range schema.RequiredPatterns {
+		if !providedPatterns[requiredPattern] {
+			return fmt.Errorf("missing required pattern '%s' for @%s decorator", requiredPattern, decoratorName)
+		}
+	}
+
+	return nil
 }

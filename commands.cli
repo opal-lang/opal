@@ -86,7 +86,6 @@ test-all: {
     dev test-go
     dev test-build
     dev test-nix
-    dev test-examples
     echo "🎉 All tests passed!"
 }
 
@@ -278,9 +277,6 @@ ci: {
     echo "Stage 5: Nix Tests..."
     dev nix-test
     echo ""
-    echo "Stage 6: Example CLIs..."
-    dev test-examples
-    echo ""
     echo "🎉 CI workflow complete - ready for production!"
 }
 
@@ -296,7 +292,6 @@ release: {
     echo "  ✅ All tests passed"
     echo "  ✅ Code formatted"
     echo "  ✅ Nix packages validated"
-    echo "  ✅ Example CLIs working"
     echo ""
     echo "🚀 Ready for release!"
 }
@@ -443,15 +438,11 @@ help: {
     echo "  test-go        - Go unit tests with coverage"
     echo "  test-build     - Build and test binaries"
     echo "  test-nix       - Nix package tests"
-    echo "  test-examples  - Build and test example CLIs"
     echo "  test-all       - Complete test suite"
     echo ""
     echo "📦 Nix Integration:"
     echo "  nix-build      - Build core Nix packages"
-    echo "  examples       - Build all example CLIs"
-    echo "  nix-test       - Run Nix-based tests"
     echo "  nix-check      - Comprehensive Nix validation"
-    echo "  try-examples   - Interactively test example CLIs"
     echo ""
     echo "🔄 Workflows:"
     echo "  dev-flow       - Development workflow"

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aledsdavies/devcmd/pkgs/types"
 )
 
 // Real-world Devcmd examples based on the ACTUAL language specification
@@ -236,12 +238,12 @@ process-files: {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				lexer := New(scenario.input)
+				lexer := New(strings.NewReader(scenario.input))
 				tokenCount := 0
 				for {
 					token := lexer.NextToken()
 					tokenCount++
-					if token.Type == EOF {
+					if token.Type == types.EOF {
 						break
 					}
 				}
@@ -466,13 +468,13 @@ build: echo "Debug: @var(DEBUG), Production: @var(PRODUCTION)"`,
 
 			// Performance contract: spec-compliant examples should lex quickly
 			start := time.Now()
-			lexer := New(test.input)
+			lexer := New(strings.NewReader(test.input))
 			tokenCount := 0
 
 			for {
 				token := lexer.NextToken()
 				tokenCount++
-				if token.Type == EOF {
+				if token.Type == types.EOF {
 					break
 				}
 			}
@@ -524,17 +526,17 @@ ci: @try {
 }`
 
 	start := time.Now()
-	lexer := New(input)
+	lexer := New(strings.NewReader(input))
 	tokenCount := 0
 	decoratorCount := 0
 
 	for {
 		token := lexer.NextToken()
 		tokenCount++
-		if token.Type == AT {
+		if token.Type == types.AT {
 			decoratorCount++
 		}
-		if token.Type == EOF {
+		if token.Type == types.EOF {
 			break
 		}
 	}
@@ -596,13 +598,13 @@ safe-deploy: @try {
 
 	var totalTokens int
 	for i := 0; i < iterations; i++ {
-		lexer := New(input)
+		lexer := New(strings.NewReader(input))
 		tokenCount := 0
 
 		for {
 			token := lexer.NextToken()
 			tokenCount++
-			if token.Type == EOF {
+			if token.Type == types.EOF {
 				break
 			}
 		}
@@ -636,10 +638,10 @@ func BenchmarkSpecCompliantMemory(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		lexer := New(input)
+		lexer := New(strings.NewReader(input))
 		for {
 			token := lexer.NextToken()
-			if token.Type == EOF {
+			if token.Type == types.EOF {
 				break
 			}
 		}
@@ -673,17 +675,17 @@ config: @when(PRODUCTION) {
 }`
 
 	start := time.Now()
-	lexer := New(input)
+	lexer := New(strings.NewReader(input))
 	tokenCount := 0
 	booleanCount := 0
 
 	for {
 		token := lexer.NextToken()
 		tokenCount++
-		if token.Type == BOOLEAN {
+		if token.Type == types.BOOLEAN {
 			booleanCount++
 		}
-		if token.Type == EOF {
+		if token.Type == types.EOF {
 			break
 		}
 	}

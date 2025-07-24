@@ -1,10 +1,10 @@
 # Development environment for devcmd project
 # Dogfooding our own tool for development commands
-{ pkgs, self ? null }:
+{ pkgs, self ? null, gitRev ? "dev" }:
 let
   # Import our own library to create the development CLI
   devcmdLib = import ./lib.nix {
-    inherit pkgs self;
+    inherit pkgs self gitRev;
     lib = pkgs.lib;
   };
   # Generate the development CLI from our commands.cli file
@@ -13,6 +13,7 @@ let
       devcmdLib.mkDevCLI
         {
           name = "dev";
+          binaryName = "dev"; # Explicitly set binary name for self-awareness
           commandsFile = ../commands.cli;
           version = "latest";
           meta = {
@@ -34,9 +35,6 @@ pkgs.mkShell {
     go
     gopls
     golangci-lint
-    # ANTLR for grammar generation
-    antlr4
-    openjdk17 # Required for ANTLR
     # Development tools
     git
     zsh
@@ -44,8 +42,6 @@ pkgs.mkShell {
     nixpkgs-fmt
     gofumpt
   ] ++ pkgs.lib.optional (devCLI != null) devCLI;
-  # Environment setup
-  JAVA_HOME = "${pkgs.openjdk17}/lib/openjdk";
   shellHook = ''
     echo "🔧 Devcmd Development Environment"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

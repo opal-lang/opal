@@ -7,6 +7,47 @@
 .idea/
 AI_CONTEXT.local.md
 
+# AI Agent context files (keep these local to user, not in project)
+# AI agent
+AI_CONTEXT.md
+.agent/
+
+# Cursor AI Editor
+.cursor/
+.cursorrules
+.cursorignore
+.cursorindexingignore
+
+# Continue AI Extension (VSCode)
+.continue/
+.continueignore
+continue.json
+
+# Other common AI agents
+.aider*
+aider.conf.yml
+.copilot-*
+copilot.yml
+.github-copilot
+.codeium/
+codeium.json
+.tabnine/
+tabnine_config.json
+.sourcegraph/
+.windsurf/
+.deepseek/
+.anthropic/
+.openai/
+
+# Generic AI context files
+.ai-*
+ai-*.md
+*-ai-context*
+.agent-*
+agent.md
+context.md
+.context/
+
 # ANTLR Generated Files
 internal/gen/
 grammar/*.interp
@@ -28,6 +69,9 @@ devcmd-*
 examples/*.go
 examples/dev/
 examples/build/
+
+# Build directory for temporary files
+build/
 
 # Test artifacts
 coverage.out
@@ -500,3 +544,8 @@ workspace.xml
 dev.sh
 dev.bat
 local.*
+
+
+# Added by cargo
+
+/target

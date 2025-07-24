@@ -1,13 +1,13 @@
 package lexer
 
 import (
-	"fmt"
+	"io"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/aledsdavies/devcmd/pkgs/stdlib"
+	"github.com/aledsdavies/devcmd/pkgs/decorators"
+	"github.com/aledsdavies/devcmd/pkgs/types"
 )
 
 // ASCII character lookup tables for fast classification
@@ -17,8 +17,8 @@ var (
 	isDigit           [128]bool
 	isIdentStart      [128]bool
 	isIdentPart       [128]bool
-	singleCharTokens  [128]TokenType // Fast lookup for single-char tokens
-	singleCharStrings [128]string    // Pre-allocated single-char strings
+	singleCharTokens  [128]types.TokenType // Fast lookup for single-char tokens
+	singleCharStrings [128]string          // Pre-allocated single-char strings
 )
 
 func init() {
@@ -29,1533 +29,839 @@ func init() {
 		isDigit[i] = '0' <= ch && ch <= '9'
 		isIdentStart[i] = isLetter[i] || ch == '_'
 		isIdentPart[i] = isIdentStart[i] || isDigit[i] || ch == '-'
-		singleCharTokens[i] = ILLEGAL     // Default to ILLEGAL for non-single-char tokens
-		singleCharStrings[i] = string(ch) // Pre-allocate single char strings
+		singleCharTokens[i] = types.ILLEGAL // Default to ILLEGAL for non-single-char tokens
+		singleCharStrings[i] = string(ch)   // Pre-allocate single char strings
 	}
 
 	// Initialize single character token mappings
-	singleCharTokens['@'] = AT
-	singleCharTokens[':'] = COLON
-	singleCharTokens['='] = EQUALS
-	singleCharTokens[','] = COMMA
-	singleCharTokens['('] = LPAREN
-	singleCharTokens[')'] = RPAREN
-	singleCharTokens['{'] = LBRACE
-	singleCharTokens['}'] = RBRACE
-	singleCharTokens['*'] = ASTERISK
+	singleCharTokens['@'] = types.AT
+	singleCharTokens[':'] = types.COLON
+	singleCharTokens['='] = types.EQUALS
+	singleCharTokens[','] = types.COMMA
+	singleCharTokens['('] = types.LPAREN
+	singleCharTokens[')'] = types.RPAREN
+	singleCharTokens['{'] = types.LBRACE
+	singleCharTokens['}'] = types.RBRACE
+	singleCharTokens['*'] = types.ASTERISK
 }
 
-// Object pools for memory optimization
-var (
-	// Pool for token slices with different capacity tiers
-	smallSlicePool = sync.Pool{
-		New: func() interface{} {
-			slice := make([]Token, 0, 16)
-			return &slice
-		},
-	}
-	mediumSlicePool = sync.Pool{
-		New: func() interface{} {
-			slice := make([]Token, 0, 64)
-			return &slice
-		},
-	}
-	largeSlicePool = sync.Pool{
-		New: func() interface{} {
-			slice := make([]Token, 0, 256)
-			return &slice
-		},
-	}
-)
-
-// getTokenSlice returns a token slice from the appropriate pool
-func getTokenSlice(estimatedSize int) *[]Token {
-	if estimatedSize <= 16 {
-		return smallSlicePool.Get().(*[]Token)
-	} else if estimatedSize <= 64 {
-		return mediumSlicePool.Get().(*[]Token)
-	} else {
-		return largeSlicePool.Get().(*[]Token)
-	}
-}
-
-// putTokenSlice returns a token slice to the appropriate pool
-func putTokenSlice(slice *[]Token) {
-	*slice = (*slice)[:0] // Reset length but keep capacity
-
-	cap := cap(*slice)
-	if cap <= 16 {
-		smallSlicePool.Put(slice)
-	} else if cap <= 64 {
-		mediumSlicePool.Put(slice)
-	} else if cap <= 256 {
-		largeSlicePool.Put(slice)
-	}
-	// For larger slices, let GC handle them
-}
-
-// LexerMode represents the current parsing context
+// LexerMode represents the lexer's parsing modes
 type LexerMode int
 
 const (
-	// LanguageMode: Structural parsing of Devcmd syntax
-	LanguageMode LexerMode = iota
-	// CommandMode: Shell content capture
-	CommandMode
-	// PatternMode: Inside pattern-matching blocks (@when, @try, etc.)
-	PatternMode
+	LanguageMode LexerMode = iota // Top-level parsing and decorator parsing
+	CommandMode                   // Shell content parsing inside command bodies
+	PatternMode                   // Pattern decorator parsing (@when, @try blocks)
 )
 
-// String implements Stringer for LexerMode
-func (lm LexerMode) String() string {
-	switch lm {
-	case LanguageMode:
-		return "LanguageMode"
-	case CommandMode:
-		return "CommandMode"
-	case PatternMode:
-		return "PatternMode"
-	default:
-		return fmt.Sprintf("LexerMode(%d)", int(lm))
-	}
-}
-
-// Lexer tokenizes Devcmd source code with rune-based parsing
+// Lexer implements the three-mode system with simple context-free transitions
 type Lexer struct {
-	input        string        // Source text
-	position     int           // Current position in input (byte offset)
-	readPos      int           // Current reading position in input (byte offset)
-	ch           rune          // Current rune under examination
-	line         int           // Current line number
-	column       int           // Current column number
-	stateMachine *StateMachine // State machine for parsing context
-	braceLevel   int           // Track brace nesting for command mode
-	patternLevel int           // Track pattern-matching decorator nesting
+	input    string // Complete input (read once from Reader)
+	position int    // Current position in input (byte offset)
+	readPos  int    // Current reading position in input (byte offset)
+	ch       rune   // Current rune under examination
+	line     int    // Current line number
+	column   int    // Current column number
 
-	// Structural brace tracking - only track braces that are part of Devcmd structure
-	structuralBraceStack []int // positions of structural { braces
+	// Simple three-mode system
+	mode LexerMode
 
-	// Infinite loop detection
-	lastPosition     int
-	lastLine         int
-	lastColumn       int
-	stuckCounter     int
-	maxStuckAttempts int // Set to 3-5 typically
+	// Minimal context tracking
+	braceLevel        int // Track brace nesting for mode transitions
+	patternBraceLevel int // Track the brace level where we entered pattern decorator
+
+	// Position tracking for error reporting
+	lastPosition int
+	lastLine     int
+	lastColumn   int
 }
 
-// New creates a new lexer instance with state machine
-func New(input string) *Lexer {
+// New creates a new Lexer from an io.Reader
+func New(reader io.Reader) *Lexer {
+	// Read entire input into string (simpler approach for now)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		// Handle error by creating empty lexer
+		data = []byte{}
+	}
+
 	l := &Lexer{
-		input:                input,
-		line:                 1,
-		column:               0, // Start at column 0, will be incremented to 1 on first readChar
-		stateMachine:         NewStateMachine(),
-		braceLevel:           0,
-		patternLevel:         0,
-		structuralBraceStack: make([]int, 0, 8), // Pre-allocate small capacity
-		maxStuckAttempts:     3,                 // Allow 3 attempts before panicking
-		lastPosition:         -1,                // Start with -1 so first token is always progress
+		input:  string(data),
+		line:   1,
+		column: 0,            // Will be incremented to 1 by initial readChar()
+		mode:   LanguageMode, // Start in LanguageMode
 	}
 	l.readChar()
 	return l
 }
 
-// NewWithDebug creates a new lexer instance with debugging enabled
-func NewWithDebug(input string) *Lexer {
-	l := New(input)
-	l.stateMachine.SetDebug(true)
-	return l
-}
+// isAfterPatternDecorator checks if we just parsed a pattern decorator by looking back
+func (l *Lexer) isAfterPatternDecorator() bool {
+	// Look back through recent input to find any pattern decorator using the registry
+	pos := l.position - 1
 
-// checkStuck detects infinite loops in lexing
-func (l *Lexer) checkStuck(context string) {
-	if l.position == l.lastPosition &&
-		l.line == l.lastLine &&
-		l.column == l.lastColumn {
-		l.stuckCounter++
-		if l.stuckCounter >= l.maxStuckAttempts {
-			// Fatal log with detailed context
-			panic(fmt.Sprintf(
-				"LEXER STUCK: Infinite loop detected in %s\n"+
-					"Position: %d, Line: %d, Column: %d\n"+
-					"Current char: %q (U+%04X)\n"+
-					"State: %s, Mode: %s\n"+
-					"Brace level: %d, Pattern level: %d\n"+
-					"Input around position: %s\n"+
-					"Context stack: %+v",
-				context,
-				l.position, l.line, l.column,
-				l.ch, l.ch,
-				l.stateMachine.Current().String(),
-				l.stateMachine.GetMode().String(),
-				l.braceLevel, l.patternLevel,
-				l.getContextWindow(),
-				l.stateMachine.contextStack,
-			))
-		}
-	} else {
-		// Reset counter when we make progress
-		l.stuckCounter = 0
-		l.lastPosition = l.position
-		l.lastLine = l.line
-		l.lastColumn = l.column
-	}
-}
-
-// getContextWindow returns input context around current position
-func (l *Lexer) getContextWindow() string {
-	start := l.position - 20
-	if start < 0 {
-		start = 0
-	}
-	end := l.position + 20
-	if end > len(l.input) {
-		end = len(l.input)
+	// Skip backwards through whitespace and closing paren to find the decorator
+	for pos >= 0 && (l.input[pos] == ' ' || l.input[pos] == '\t' || l.input[pos] == ')') {
+		pos--
 	}
 
-	context := l.input[start:end]
-	result := make([]rune, 0, len(context)+1)
-
-	// Mark current position with »
-	runePos := 0
-	for _, r := range context {
-		if start+runePos == l.position {
-			result = append(result, '»')
-		}
-		result = append(result, r)
-		runePos += utf8.RuneLen(r)
-	}
-
-	return string(result)
-}
-
-// TokenizeToSlice tokenizes to pre-allocated slice with memory optimization
-func (l *Lexer) TokenizeToSlice() []Token {
-	// Better estimation based on input characteristics
-	estimatedTokens := l.estimateTokenCount()
-
-	// Get a pooled slice
-	resultPtr := getTokenSlice(estimatedTokens)
-	result := *resultPtr
-
-	// Iteration limit as safeguard
-	maxTokens := len(l.input) * 2
-	tokenCount := 0
-
-	for {
-		tok := l.NextToken()
-
-		// Smart doubling if we exceed capacity
-		if len(result) == cap(result) {
-			newCap := cap(result) * 2
-			if newCap > maxTokens {
-				newCap = maxTokens
+	// Look back to find @ symbol and extract decorator name
+	if pos >= 4 {
+		// Find the @ symbol by scanning backwards
+		atPos := -1
+		for i := pos; i >= max(0, pos-20); i-- {
+			if l.input[i] == '@' {
+				atPos = i
+				break
 			}
-			newResult := make([]Token, len(result), newCap)
-			copy(newResult, result)
-
-			// Return old slice to pool if it's a pooled size
-			putTokenSlice(resultPtr)
-			result = newResult
-			resultPtr = &result
 		}
 
-		result = append(result, tok)
-		tokenCount++
+		if atPos >= 0 {
+			// Extract potential decorator name after @
+			nameStart := atPos + 1
+			nameEnd := nameStart
 
-		if tok.Type == EOF {
+			// Find end of identifier (decorator name)
+			for nameEnd < len(l.input) && nameEnd <= pos+1 {
+				ch := l.input[nameEnd]
+				if ch >= 128 || (!isLetter[ch] && !isDigit[ch]) {
+					break
+				}
+				nameEnd++
+			}
+
+			if nameEnd > nameStart {
+				decoratorName := l.input[nameStart:nameEnd]
+				// Use decorator registry to check if this is a pattern decorator
+				return decorators.IsPatternDecorator(decoratorName)
+			}
+		}
+	}
+	return false
+}
+
+// isInPatternContext determines if we're currently inside a pattern decorator context
+func (l *Lexer) isInPatternContext() bool {
+	// Simple check: are we at or below the brace level where we entered pattern mode?
+	return l.patternBraceLevel > 0 && l.braceLevel >= l.patternBraceLevel
+}
+
+// max helper function
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// readChar reads the next character and advances position
+func (l *Lexer) readChar() {
+	l.position = l.readPos
+
+	if l.readPos >= len(l.input) {
+		l.ch = 0 // EOF
+	} else {
+		var size int
+		l.ch, size = utf8.DecodeRuneInString(l.input[l.readPos:])
+		if l.ch == utf8.RuneError {
+			l.ch = rune(l.input[l.readPos])
+			size = 1
+		}
+		l.readPos += size
+	}
+
+	// Track line/column for current character
+	if l.ch == '\n' {
+		l.line++
+		l.column = 0 // Will be incremented to 1 for next character
+	} else {
+		l.column++
+	}
+}
+
+// peekChar returns the next character without advancing position
+func (l *Lexer) peekChar() rune {
+	if l.readPos >= len(l.input) {
+		return 0
+	}
+	ch, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
+	return ch
+}
+
+// skipWhitespace skips whitespace characters except newlines (using fast ASCII lookups)
+func (l *Lexer) skipWhitespace() {
+	for l.ch != '\n' && l.ch != 0 {
+		// Fast path for ASCII
+		if l.ch < 128 && isWhitespace[l.ch] {
+			l.readChar()
+		} else if l.ch >= 128 && unicode.IsSpace(l.ch) {
+			// Fallback for non-ASCII
+			l.readChar()
+		} else {
 			break
 		}
-
-		if tokenCount > maxTokens {
-			putTokenSlice(resultPtr)
-			panic(fmt.Sprintf("Too many tokens: %d (input size: %d)", tokenCount, len(l.input)))
-		}
 	}
-
-	// Create final result and return slice to pool
-	finalResult := make([]Token, len(result))
-	copy(finalResult, result)
-	putTokenSlice(resultPtr)
-
-	return finalResult
 }
 
-// estimateTokenCount provides better token count estimation
-func (l *Lexer) estimateTokenCount() int {
-	inputLen := len(l.input)
-	if inputLen == 0 {
-		return 4
-	}
-
-	// Count structural characters that likely generate tokens
-	structuralChars := 0
-	for i := 0; i < inputLen; i++ {
-		ch := l.input[i]
-		if ch == ':' || ch == '{' || ch == '}' || ch == '@' || ch == '(' || ch == ')' {
-			structuralChars++
+// TokenizeToSlice tokenizes the entire input and returns a slice of tokens
+func (l *Lexer) TokenizeToSlice() []types.Token {
+	var tokens []types.Token
+	for {
+		token := l.NextToken()
+		tokens = append(tokens, token)
+		if token.Type == types.EOF {
+			break
 		}
 	}
-
-	// Base estimate on structural chars + some factor for identifiers/shell text
-	estimated := structuralChars + (inputLen / 20) // Assume avg 20 chars per token
-
-	if estimated < 4 {
-		estimated = 4
-	}
-	if estimated > 500 {
-		estimated = 500
-	}
-
-	return estimated
+	return tokens
 }
 
 // NextToken returns the next token from the input
-func (l *Lexer) NextToken() Token {
-	l.checkStuck("NextToken")
-	return l.lexToken()
-}
-
-// lexToken performs token lexing with state machine-aware logic
-func (l *Lexer) lexToken() Token {
-	// Skip whitespace in most modes
-	mode := l.stateMachine.GetMode()
-	if mode == LanguageMode || mode == PatternMode {
-		l.skipWhitespace()
+func (l *Lexer) NextToken() types.Token {
+	// Prevent infinite loops
+	if l.position == l.lastPosition && l.line == l.lastLine && l.column == l.lastColumn {
+		// We haven't advanced - force EOF to prevent infinite loop
+		return l.createToken(types.EOF, "", l.position, l.line, l.column)
 	}
+	l.lastPosition = l.position
+	l.lastLine = l.line
+	l.lastColumn = l.column
 
-	start := l.position
-
-	// Check if we should enter shell content mode based on current state
-	currentState := l.stateMachine.Current()
-	if l.shouldLexShellContent(currentState) {
-		return l.lexShellText(start)
-	}
-
-	switch mode {
+	// Dispatch based on current mode
+	switch l.mode {
 	case LanguageMode:
-		return l.lexLanguageMode(start)
+		return l.lexLanguageMode()
 	case CommandMode:
-		return l.lexCommandMode(start)
+		return l.lexCommandMode()
 	case PatternMode:
-		return l.lexPatternMode(start)
+		return l.lexPatternMode()
 	default:
-		return l.lexLanguageMode(start)
+		return l.createToken(types.EOF, "", l.position, l.line, l.column)
 	}
 }
 
-// shouldLexShellContent determines if we should lex shell content based on state
-func (l *Lexer) shouldLexShellContent(state LexerState) bool {
-	// Don't lex shell content if we're at structural tokens
-	switch l.ch {
-	case 0, '\n', '{', '}':
-		return false
-	case ':':
-		// Colon is structural in pattern mode
-		if l.stateMachine.GetMode() == PatternMode {
-			return false
-		}
-		return false
-	case '*':
-		// Asterisk is structural in pattern mode
-		if l.stateMachine.GetMode() == PatternMode {
-			return false
-		}
-		// In other modes, continue to check state
-	case '@':
-		// Special handling for @ - check if it's followed by a function decorator
-		if l.stateMachine.GetMode() == CommandMode || state == StateAfterColon || state == StateAfterPatternColon {
-			// Look ahead to see if this is a function decorator
-			if l.isFunctionDecorator() {
-				return true // Treat as shell content
-			}
-		}
-		return false
-	}
-
-	// Lex shell content in these states when we're not at structural boundaries
-	switch state {
-	case StateAfterColon:
-		// After colon, if we see content that isn't a block decorator or brace, it's shell content
-		return l.ch != '{'
-	case StateAfterPatternColon:
-		// After pattern colon, if we see content that isn't a block decorator or brace, it's shell content
-		return l.ch != '{'
-	case StateCommandContent:
-		// In command content, everything except structural tokens is shell content
-		return true
-	case StateAfterDecorator:
-		// After decorator, if we see content that isn't a brace, it might be shell content
-		return l.ch != '{'
-	case StatePatternBlock:
-		// In pattern block, don't lex shell content - parse pattern structure
-		return false
-	default:
-		return false
-	}
-}
-
-// isFunctionDecorator looks ahead to determine if @ is followed by a function decorator
-func (l *Lexer) isFunctionDecorator() bool {
-	if l.ch != '@' {
-		return false
-	}
-
-	// Save current state
-	savePos := l.position
-	saveReadPos := l.readPos
-	saveCh := l.ch
-	saveLine := l.line
-	saveColumn := l.column
-
-	// Move past @
-	l.readChar()
-
-	// Skip any whitespace (though there shouldn't be any)
-	for unicode.IsSpace(l.ch) && l.ch != '\n' && l.ch != 0 {
-		l.readChar()
-	}
-
-	// Read identifier if present
-	var decoratorName string
-	if unicode.IsLetter(l.ch) || l.ch == '_' {
-		identStart := l.position
-		for (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch) || l.ch == '_' || l.ch == '-') && l.ch != 0 {
-			l.readChar()
-		}
-		decoratorName = l.input[identStart:l.position]
-	}
-
-	// Restore state
-	l.position = savePos
-	l.readPos = saveReadPos
-	l.ch = saveCh
-	l.line = saveLine
-	l.column = saveColumn
-
-	// Check if it's a function decorator
-	return decoratorName != "" && stdlib.IsFunctionDecorator(decoratorName)
-}
-
-// lexLanguageMode handles structural Devcmd syntax
-func (l *Lexer) lexLanguageMode(start int) Token {
-	startLine, startColumn := l.line, l.column
-
-	// Fast path for ASCII single-character tokens (but skip context-sensitive ones)
-	if l.ch < 128 && l.ch != 0 && l.ch != '\n' && l.ch != '{' && l.ch != '}' {
-		if tokenType := singleCharTokens[l.ch]; tokenType != ILLEGAL {
-			value := singleCharStrings[l.ch] // Use pre-allocated string
-			var tok Token
-			if tokenType == AT {
-				tok = l.createTokenWithSemantic(AT, SemOperator, value, start, startLine, startColumn)
-			} else {
-				tok = l.createSimpleToken(tokenType, value, start, startLine, startColumn)
-			}
-			l.readChar()
-			l.updateTokenEnd(&tok)
-			l.updateStateMachine(tokenType, value)
-			return tok
-		}
-	}
-
-	switch l.ch {
-	case 0:
-		tok := l.createSimpleToken(EOF, "", start, startLine, startColumn)
-		l.updateStateMachine(EOF, "")
-		return tok
-	case '\n':
-		// Skip newlines - they're not needed in the parser/AST
-		l.readChar()
-		l.skipWhitespace()
-		return l.lexToken() // Get the next meaningful token
-	case '@':
-		tok := l.createTokenWithSemantic(AT, SemOperator, "@", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(AT, "@")
-		return tok
-	case ':':
-		tok := l.createSimpleToken(COLON, ":", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(COLON, ":")
-		return tok
-	case '=':
-		tok := l.createSimpleToken(EQUALS, "=", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(EQUALS, "=")
-		return tok
-	case ',':
-		tok := l.createSimpleToken(COMMA, ",", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(COMMA, ",")
-		return tok
-	case '(':
-		tok := l.createSimpleToken(LPAREN, "(", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(LPAREN, "(")
-		return tok
-	case ')':
-		tok := l.createSimpleToken(RPAREN, ")", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(RPAREN, ")")
-		return tok
-	case '{':
-		tok := l.createSimpleToken(LBRACE, "{", start, startLine, startColumn)
-		l.braceLevel++
-
-		// Track if this is a structural brace
-		if l.isStructuralContext() {
-			l.pushStructuralBrace()
-		}
-
-		l.readChar()
-		l.skipWhitespace() // Skip whitespace after opening brace
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(LBRACE, "{")
-		return tok
-	case '}':
-		tok := l.createSimpleToken(RBRACE, "}", start, startLine, startColumn)
-		if l.braceLevel > 0 {
-			l.braceLevel--
-		}
-
-		// Pop structural brace if this closes one
-		if l.hasStructuralBraces() {
-			l.popStructuralBrace()
-		}
-
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(RBRACE, "}")
-		return tok
-	case '*':
-		// Always treat * as ASTERISK token for wildcard patterns
-		tok := l.createSimpleToken(ASTERISK, "*", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(ASTERISK, "*")
-		return tok
-	case '"':
-		return l.lexString('"', DoubleQuoted, start)
-	case '\'':
-		return l.lexString('\'', SingleQuoted, start)
-	case '`':
-		return l.lexString('`', Backtick, start)
-	case '#':
-		return l.lexComment(start)
-	case '/':
-		if l.peekChar() == '*' {
-			return l.lexMultilineComment(start)
-		}
-		fallthrough
-	case '\\':
-		if l.peekChar() == '\n' {
-			// Line continuation in language mode - treat as single char
-			return l.lexSingleChar(start)
-		}
-		fallthrough
-	default:
-		if unicode.IsLetter(l.ch) || l.ch == '_' {
-			return l.lexIdentifierOrKeyword(start)
-		} else if unicode.IsDigit(l.ch) || (l.ch == '-' && unicode.IsDigit(l.peekChar())) {
-			return l.lexNumberOrDuration(start)
-		} else {
-			return l.lexSingleChar(start)
-		}
-	}
-}
-
-// lexPatternMode handles pattern-matching decorator blocks (@when, @try, etc.)
-func (l *Lexer) lexPatternMode(start int) Token {
-	startLine, startColumn := l.line, l.column
-
-	switch l.ch {
-	case 0:
-		tok := l.createSimpleToken(EOF, "", start, startLine, startColumn)
-		l.updateStateMachine(EOF, "")
-		return tok
-	case '\n':
-		// Skip newlines - they're not needed in the parser/AST
-		l.readChar()
-		l.skipWhitespace()
-		return l.lexToken() // Get the next meaningful token
-	case ':':
-		tok := l.createSimpleToken(COLON, ":", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(COLON, ":")
-		return tok
-	case '}':
-		tok := l.createSimpleToken(RBRACE, "}", start, startLine, startColumn)
-		if l.braceLevel > 0 {
-			l.braceLevel--
-		}
-
-		// Pop structural brace if this closes one
-		if l.hasStructuralBraces() {
-			l.popStructuralBrace()
-		}
-
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(RBRACE, "}")
-		return tok
-	case '{':
-		tok := l.createSimpleToken(LBRACE, "{", start, startLine, startColumn)
-		l.braceLevel++
-
-		// Track if this is a structural brace
-		if l.isStructuralContext() {
-			l.pushStructuralBrace()
-		}
-
-		l.readChar()
-		l.skipWhitespace()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(LBRACE, "{")
-		return tok
-	case '@':
-		tok := l.createTokenWithSemantic(AT, SemOperator, "@", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(AT, "@")
-		return tok
-	case '*':
-		// Always treat * as ASTERISK token for wildcard patterns
-		tok := l.createSimpleToken(ASTERISK, "*", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(ASTERISK, "*")
-		return tok
-	case '(':
-		tok := l.createSimpleToken(LPAREN, "(", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(LPAREN, "(")
-		return tok
-	case ')':
-		tok := l.createSimpleToken(RPAREN, ")", start, startLine, startColumn)
-		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(RPAREN, ")")
-		return tok
-	case '"':
-		return l.lexString('"', DoubleQuoted, start)
-	case '\'':
-		return l.lexString('\'', SingleQuoted, start)
-	case '`':
-		return l.lexString('`', Backtick, start)
-	default:
-		// In pattern mode, identifiers should be treated as pattern identifiers
-		if unicode.IsLetter(l.ch) || l.ch == '_' {
-			return l.lexPatternIdentifier(start)
-		} else if unicode.IsDigit(l.ch) || (l.ch == '-' && unicode.IsDigit(l.peekChar())) {
-			return l.lexNumberOrDuration(start)
-		} else {
-			return l.lexSingleChar(start)
-		}
-	}
-}
-
-// lexPatternIdentifier lexes identifiers in pattern mode
-func (l *Lexer) lexPatternIdentifier(start int) Token {
-	startLine, startColumn := l.line, l.column
-
-	// Read the full identifier
-	l.readIdentifier()
-
-	value := l.input[start:l.position]
-
-	tok := Token{
-		Type:      IDENTIFIER,
-		Value:     value,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  SemPattern, // Mark as pattern semantic in pattern mode
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
+// createToken creates a token with position information
+func (l *Lexer) createToken(tokenType types.TokenType, value string, start, line, column int) types.Token {
+	return types.Token{
+		Type:   tokenType,
+		Value:  value,
+		Line:   line,
+		Column: column,
+		Span: types.SourceSpan{
+			Start: types.SourcePosition{Line: line, Column: column, Offset: start},
+			End:   types.SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
 		},
 	}
-	l.updateStateMachine(IDENTIFIER, value)
-	return tok
 }
 
-// lexCommandMode handles shell content capture with proper newline handling
-func (l *Lexer) lexCommandMode(start int) Token {
+// lexLanguageMode handles top-level parsing and decorator parsing
+func (l *Lexer) lexLanguageMode() types.Token {
+	l.skipWhitespace()
+
+	start := l.position
 	startLine, startColumn := l.line, l.column
 
 	switch l.ch {
 	case 0:
-		tok := l.createSimpleToken(EOF, "", start, startLine, startColumn)
-		l.updateStateMachine(EOF, "")
-		return tok
+		return l.createToken(types.EOF, "", start, startLine, startColumn)
+
 	case '\n':
-		// Skip newlines - they're not needed in the parser/AST
+		// Skip newlines in language mode
 		l.readChar()
-		l.skipWhitespace()
-		return l.lexToken() // Get the next meaningful token
-	case '}':
-		// Only recognize } as structural if it closes a structural Devcmd brace
-		if l.hasStructuralBraces() {
-			tok := l.createSimpleToken(RBRACE, "}", start, startLine, startColumn)
-			l.braceLevel--
-			l.popStructuralBrace()
-			l.readChar()
-			l.updateTokenEnd(&tok)
-			l.updateStateMachine(RBRACE, "}")
-			return tok
-		}
-		// Otherwise, treat as shell content
-		return l.lexShellText(start)
-	case '@':
-		// Check if this is a function decorator
-		if l.isFunctionDecorator() {
-			// Function decorator should be part of shell text
-			return l.lexShellText(start)
-		}
+		return l.NextToken()
 
-		// It's a block/pattern decorator, treat it as structural.
-		tok := l.createTokenWithSemantic(AT, SemOperator, "@", start, startLine, startColumn)
+	case ':':
 		l.readChar()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(AT, "@")
-		return tok
+		// Transition to CommandMode after colon
+		l.mode = CommandMode
+		return l.createToken(types.COLON, ":", start, startLine, startColumn)
+
+	case '=':
+		l.readChar()
+		return l.createToken(types.EQUALS, "=", start, startLine, startColumn)
+
+	case ',':
+		l.readChar()
+		return l.createToken(types.COMMA, ",", start, startLine, startColumn)
+
+	case '(':
+		l.readChar()
+		return l.createToken(types.LPAREN, "(", start, startLine, startColumn)
+
+	case ')':
+		l.readChar()
+		return l.createToken(types.RPAREN, ")", start, startLine, startColumn)
+
 	case '{':
-		// Handle opening brace in command mode
-		tok := l.createSimpleToken(LBRACE, "{", start, startLine, startColumn)
-		l.braceLevel++
-
-		// Track if this is a structural brace
-		if l.isStructuralContext() {
-			l.pushStructuralBrace()
-		}
-
 		l.readChar()
-		l.skipWhitespace()
-		l.updateTokenEnd(&tok)
-		l.updateStateMachine(LBRACE, "{")
-		return tok
+		l.braceLevel++
+		// Simple rule: { after pattern decorator → PatternMode, otherwise → CommandMode
+		if l.isAfterPatternDecorator() {
+			l.mode = PatternMode
+			l.patternBraceLevel = l.braceLevel // Remember where we entered pattern mode
+		} else {
+			l.mode = CommandMode
+		}
+		return l.createToken(types.LBRACE, "{", start, startLine, startColumn)
+
+	case '}':
+		l.readChar()
+		l.braceLevel--
+		// Simple rule: completely exited all braces → LanguageMode
+		if l.braceLevel <= 0 {
+			l.mode = LanguageMode
+			l.patternBraceLevel = 0 // Clear pattern context
+		}
+		// Otherwise stay in current mode - parent context will handle mode transitions
+		return l.createToken(types.RBRACE, "}", start, startLine, startColumn)
+
+	case '*':
+		l.readChar()
+		return l.createToken(types.ASTERISK, "*", start, startLine, startColumn)
+
+	case '@':
+		return l.lexDecorator(start, startLine, startColumn)
+
+	case '"', '\'', '`':
+		return l.lexString(l.ch, start, startLine, startColumn)
+
+	case '#':
+		return l.lexComment(start, startLine, startColumn)
+
+	case '/':
+		// Check for multi-line comment /* */
+		if l.peekChar() == '*' {
+			return l.lexMultilineComment(start, startLine, startColumn)
+		}
+		// Not a comment - treat as unknown character
+		char := string(l.ch)
+		l.readChar()
+		return l.createToken(types.ILLEGAL, char, start, startLine, startColumn)
+
+	case '-':
+		// Check if this is a negative number
+		if l.readPos < len(l.input) {
+			nextCh, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
+			if (nextCh < 128 && isDigit[nextCh]) || (nextCh >= 128 && unicode.IsDigit(nextCh)) {
+				return l.lexNumber(start, startLine, startColumn)
+			}
+		}
+		// Not a negative number - treat as unknown character
+		char := string(l.ch)
+		l.readChar()
+		return l.createToken(types.ILLEGAL, char, start, startLine, startColumn)
+
 	default:
-		// All other content is handled as shell text
-		return l.lexShellText(start)
+		// Fast path for ASCII identifier start
+		if (l.ch < 128 && isIdentStart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || l.ch == '_')) {
+			return l.lexIdentifierOrKeyword(start, startLine, startColumn)
+		}
+		// Fast path for ASCII digits
+		if (l.ch < 128 && isDigit[l.ch]) || (l.ch >= 128 && unicode.IsDigit(l.ch)) {
+			return l.lexNumber(start, startLine, startColumn)
+		}
+
+		// Unknown character
+		char := string(l.ch)
+		l.readChar()
+		return l.createToken(types.ILLEGAL, char, start, startLine, startColumn)
 	}
 }
 
-// updateStateMachine notifies the state machine about the current token
-func (l *Lexer) updateStateMachine(tokenType TokenType, value string) {
-	if _, err := l.stateMachine.HandleToken(tokenType, value); err != nil {
-		// In production, you might want to handle this error differently
-		// For debugging, log state machine errors
-		if l.stateMachine.debug {
-			println("State machine error:", err.Error(), "- token:", tokenType.String(), "value:", value)
+// lexCommandMode handles shell content parsing inside command bodies
+// Recognizes: Shell text, Line continuations, Decorators, Block boundaries
+func (l *Lexer) lexCommandMode() types.Token {
+	l.skipWhitespace()
+
+	start := l.position
+	startLine, startColumn := l.line, l.column
+
+	switch l.ch {
+	case 0:
+		return l.createToken(types.EOF, "", start, startLine, startColumn)
+
+	case '\n':
+		// Newlines end shell content in command mode (unless line continuation)
+		l.readChar()
+		// Simple rule: determine next mode based on context
+		if l.braceLevel == 0 {
+			l.mode = LanguageMode
+		} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
+			// Only return to PatternMode if we're at the exact pattern brace level
+			// (not inside nested blocks within the pattern)
+			l.mode = PatternMode
+		}
+		// Otherwise stay in CommandMode for regular braced blocks or nested blocks within patterns
+		return l.NextToken()
+
+	case '}':
+		// Closing brace - exit command mode
+		l.readChar()
+		l.braceLevel--
+		// Simple rule: determine next mode based on context
+		if l.braceLevel <= 0 {
+			l.mode = LanguageMode
+			l.patternBraceLevel = 0 // Clear pattern context
+		} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
+			// Only return to PatternMode if we're back to the exact pattern brace level
+			// (exiting a pattern branch block, not a nested block within the pattern)
+			l.mode = PatternMode
+		}
+		// Otherwise stay in CommandMode for nested command blocks
+		return l.createToken(types.RBRACE, "}", start, startLine, startColumn)
+
+	case '{':
+		// Opening brace in command mode - start new block
+		l.readChar()
+		l.braceLevel++
+		return l.createToken(types.LBRACE, "{", start, startLine, startColumn)
+
+	case '@':
+		// Handle Decorator path: check if Block or Pattern decorator
+		return l.lexDecoratorInCommand(start, startLine, startColumn)
+
+	default:
+		// Handle Shell path: all other content as shell text
+		return l.lexShellText(start, startLine, startColumn)
+	}
+}
+
+// lexDecorator handles decorator parsing in LanguageMode
+func (l *Lexer) lexDecorator(start, startLine, startColumn int) types.Token {
+	// Skip @ character
+	l.readChar()
+
+	// Skip whitespace after @
+	l.skipWhitespace()
+
+	// Read decorator identifier using fast ASCII lookups
+	if (l.ch >= 128 || !isIdentStart[l.ch]) && (l.ch < 128 || (!unicode.IsLetter(l.ch) && l.ch != '_')) {
+		return l.createToken(types.ILLEGAL, "@", start, startLine, startColumn)
+	}
+
+	// Return AT token, let next token be the identifier
+	return l.createToken(types.AT, "@", start, startLine, startColumn)
+}
+
+// lexDecoratorInCommand checks if @identifier is a decorator in CommandMode
+func (l *Lexer) lexDecoratorInCommand(start, startLine, startColumn int) types.Token {
+	// Look ahead to check if this is @identifier pattern
+	savedPos := l.position
+	savedReadPos := l.readPos
+	savedCh := l.ch
+	savedLine := l.line
+	savedColumn := l.column
+
+	// Skip @
+	l.readChar()
+	l.skipWhitespace()
+
+	// Check if followed by identifier using fast ASCII lookups
+	if (l.ch < 128 && isIdentStart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || l.ch == '_')) {
+		// Read the identifier to check if it's a decorator
+		identStart := l.position
+		for {
+			if l.ch < 128 && isIdentPart[l.ch] {
+				l.readChar()
+			} else if l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch)) {
+				l.readChar()
+			} else {
+				break
+			}
+		}
+		identifier := l.input[identStart:l.position]
+
+		// Check if it's a registered decorator
+		if decorators.IsDecorator(identifier) {
+			// Check decorator type from registry - only block/pattern decorators need LanguageMode
+			// Function decorators (@var, @env) should remain as shell text for parser processing
+			if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
+				// Switch to LanguageMode for decorator parsing
+				l.mode = LanguageMode
+
+				// Advance past @ character (don't restore position)
+				l.position = savedPos
+				l.readPos = savedReadPos
+				l.ch = savedCh
+				l.line = savedLine
+				l.column = savedColumn
+				l.readChar() // Skip the @ character
+
+				return l.createToken(types.AT, "@", start, startLine, startColumn)
+			}
 		}
 	}
+
+	// Restore position - this is shell text starting with @
+	l.position = savedPos
+	l.readPos = savedReadPos
+	l.ch = savedCh
+	l.line = savedLine
+	l.column = savedColumn
+
+	return l.lexShellText(start, startLine, startColumn)
 }
 
-// lexShellText captures shell content as a single token
-// It handles POSIX quoting rules and line continuations structurally
-func (l *Lexer) lexShellText(start int) Token {
+// lexPatternMode handles pattern decorator content (@when, @try blocks)
+func (l *Lexer) lexPatternMode() types.Token {
+	l.skipWhitespace()
+
+	start := l.position
 	startLine, startColumn := l.line, l.column
-	startOffset := start
 
-	var inSingleQuotes, inDoubleQuotes, inBackticks bool
-	var prevWasBackslash bool
+	switch l.ch {
+	case 0:
+		return l.createToken(types.EOF, "", start, startLine, startColumn)
 
-	// Track shell-level brace nesting separate from structural braces
-	// This handles things like find -exec cmd {} +
-	shellBraceLevel := 0
+	case '\n':
+		// Skip newlines in pattern mode
+		l.readChar()
+		return l.NextToken()
 
-	for {
-		switch l.ch {
-		case 0:
-			// EOF - return what we have
-			tok := l.makeShellToken(start, startOffset, startLine, startColumn)
-			l.updateStateMachine(SHELL_TEXT, tok.Value)
-			return tok
+	case '}':
+		// Closing brace - exit pattern mode
+		l.readChar()
+		l.braceLevel--
+		// Simple rule: completely exited → LanguageMode, otherwise determine by context
+		if l.braceLevel <= 0 {
+			l.mode = LanguageMode
+			l.patternBraceLevel = 0 // Clear pattern context
+		} else if l.isInPatternContext() {
+			// Still inside a pattern decorator, return to PatternMode for more pattern branches
+			l.mode = PatternMode
+		} else {
+			// Regular block context, return to CommandMode
+			l.mode = CommandMode
+		}
+		return l.createToken(types.RBRACE, "}", start, startLine, startColumn)
 
-		case '\n':
-			// Handle line continuation outside quotes
-			if !inSingleQuotes && !inDoubleQuotes && !inBackticks && prevWasBackslash {
-				prevWasBackslash = false
-				l.readChar()
-				// Skip following whitespace per GNU make behavior
+	case ':':
+		l.readChar()
+		// After colon in pattern mode, switch to CommandMode for shell content
+		l.mode = CommandMode
+		return l.createToken(types.COLON, ":", start, startLine, startColumn)
+
+	case '{':
+		l.readChar()
+		l.braceLevel++
+		// Transition to CommandMode for block content inside patterns
+		l.mode = CommandMode
+		return l.createToken(types.LBRACE, "{", start, startLine, startColumn)
+
+	default:
+		// Pattern identifiers (prod, dev, main, error, finally, default)
+		if (l.ch < 128 && isIdentStart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || l.ch == '_')) {
+			return l.lexIdentifierOrKeyword(start, startLine, startColumn)
+		}
+
+		// Unknown character
+		char := string(l.ch)
+		l.readChar()
+		return l.createToken(types.ILLEGAL, char, start, startLine, startColumn)
+	}
+}
+
+// lexShellText handles shell content in CommandMode
+func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
+	var result strings.Builder
+	var inSingleQuote, inDoubleQuote, inBacktick bool
+	var shellBraceLevel int // Track ${...} parameter expansion braces
+	var parenLevel int      // Track $(...) command substitution
+	var anyBraceLevel int   // Track any {...} constructs in shell context
+
+	for l.ch != 0 {
+
+		// Stop at newline (unless line continuation or inside quotes)
+		if l.ch == '\n' {
+			// Check for line continuation (backslash before newline)
+			// Process line continuation when NOT inside single quotes (but do process in double quotes and backticks)
+			if l.position > 0 && l.input[l.position-1] == '\\' && !inSingleQuote {
+				// Line continuation - remove the backslash
+				text := result.String()
+				if len(text) > 0 && text[len(text)-1] == '\\' {
+					result.Reset()
+					result.WriteString(text[:len(text)-1]) // Remove the backslash
+				}
+				l.readChar() // Skip newline
+				// Skip leading whitespace on the next line
 				for l.ch == ' ' || l.ch == '\t' {
 					l.readChar()
 				}
 				continue
 			}
 
-			// Newlines inside quotes are part of shell text
-			if inSingleQuotes || inDoubleQuotes || inBackticks {
-				prevWasBackslash = false
+			// If inside single quotes, include the newline literally
+			if inSingleQuote {
+				result.WriteRune(l.ch)
 				l.readChar()
 				continue
 			}
 
-			// Otherwise, newline ends shell text
-			tok := l.makeShellToken(start, startOffset, startLine, startColumn)
-			l.updateStateMachine(SHELL_TEXT, tok.Value)
-			// Also handle the newline for state transitions (but don't generate NEWLINE token)
-			if _, err := l.stateMachine.handleNewline(); err != nil {
-				// Log error but continue
-				if l.stateMachine.debug {
-					println("Newline state transition error:", err.Error())
-				}
-			}
-			return tok
-
-		case '\'':
-			if !inDoubleQuotes && !inBackticks {
-				inSingleQuotes = !inSingleQuotes
-			}
-			prevWasBackslash = false
-			l.readChar()
-
-		case '"':
-			if !inSingleQuotes && !inBackticks {
-				inDoubleQuotes = !inDoubleQuotes
-			}
-			prevWasBackslash = false
-			l.readChar()
-
-		case '`':
-			if !inSingleQuotes && !inDoubleQuotes {
-				inBackticks = !inBackticks
-			}
-			prevWasBackslash = false
-			l.readChar()
-
-		case '\\':
-			if inSingleQuotes {
-				// In single quotes, backslash is literal
-				prevWasBackslash = false
+			// If inside double quotes or backticks without line continuation, include newline
+			if inDoubleQuote || inBacktick {
+				result.WriteRune(l.ch)
 				l.readChar()
+				continue
+			}
+
+			// Not in quotes and no line continuation - end of shell text
+			break
+		}
+
+		// Stop at closing brace (block boundary) - unless inside quotes or shell constructs
+		if l.ch == '}' && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			if shellBraceLevel > 0 {
+				// This is closing a shell parameter expansion ${...}
+				shellBraceLevel--
+			} else if anyBraceLevel > 0 {
+				// This is closing some other shell brace construct
+				anyBraceLevel--
 			} else {
-				// Mark potential line continuation
-				prevWasBackslash = true
-				l.readChar()
-				// In double quotes or backticks, consume escaped character
-				if (inDoubleQuotes || inBackticks) && l.ch != 0 {
-					prevWasBackslash = false // Not a line continuation
+				// This is a block boundary - only break if we're not inside any shell constructs
+				break
+			}
+		}
+
+		// Stop at @ if it starts a block/pattern decorator - unless inside quotes
+		if l.ch == '@' && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			// Look ahead to see if this is @identifier for a block/pattern decorator
+			if l.readPos < len(l.input) {
+				nextCh, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
+				if (nextCh < 128 && isIdentStart[nextCh]) || (nextCh >= 128 && (unicode.IsLetter(nextCh) || nextCh == '_')) {
+					// Check if this is a block/pattern decorator by reading ahead
+					savedPos := l.position
+					savedReadPos := l.readPos
+					savedCh := l.ch
+
+					// Skip @ and read identifier
 					l.readChar()
+					identStart := l.position
+					for {
+						if l.ch < 128 && isIdentPart[l.ch] {
+							l.readChar()
+						} else if l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch)) {
+							l.readChar()
+						} else {
+							break
+						}
+					}
+					identifier := l.input[identStart:l.position]
+
+					// Restore position
+					l.position = savedPos
+					l.readPos = savedReadPos
+					l.ch = savedCh
+
+					// Only break for block/pattern decorators
+					if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
+						break
+					}
 				}
 			}
+		}
 
-		case '{':
-			// Track shell-level braces (like in find -exec cmd {} +)
-			if !inSingleQuotes && !inDoubleQuotes && !inBackticks {
+		// Track various shell constructs BEFORE adding character
+		if !inSingleQuote && !inDoubleQuote && !inBacktick {
+			// Track shell parameter expansion ${...}
+			if l.ch == '$' && l.peekChar() == '{' {
 				shellBraceLevel++
 			}
-			prevWasBackslash = false
-			l.readChar()
-
-		case '}':
-			// Handle shell-level and structural braces
-			if !inSingleQuotes && !inDoubleQuotes && !inBackticks {
-				if shellBraceLevel > 0 {
-					// This closes a shell-level brace, continue in shell text
-					shellBraceLevel--
-					prevWasBackslash = false
-					l.readChar()
-				} else if len(l.structuralBraceStack) > 0 {
-					// This could close a structural brace, exit shell text
-					tok := l.makeShellToken(start, startOffset, startLine, startColumn)
-					l.updateStateMachine(SHELL_TEXT, tok.Value)
-					return tok
+			// Track command substitution $(...)
+			if l.ch == '$' && l.peekChar() == '(' {
+				parenLevel++
+			}
+			// Track closing parentheses for command substitution
+			if l.ch == ')' && parenLevel > 0 {
+				parenLevel--
+			}
+			// Track standalone braces in shell context (brace expansion, find {})
+			if l.ch == '{' {
+				// Check if this is part of ${...} (already handled above)
+				if result.Len() > 0 {
+					lastChar := result.String()[result.Len()-1]
+					if lastChar != '$' {
+						anyBraceLevel++
+					}
 				} else {
-					// No braces to close, continue as shell text
-					prevWasBackslash = false
-					l.readChar()
-				}
-			} else {
-				prevWasBackslash = false
-				l.readChar()
-			}
-
-		default:
-			// Any other character resets line continuation and continues as shell content
-			// This includes semicolons and the '@' symbol.
-			if l.ch != ' ' && l.ch != '\t' {
-				prevWasBackslash = false
-			}
-			l.readChar()
-		}
-	}
-}
-
-// makeShellToken creates a shell text token from the captured range
-func (l *Lexer) makeShellToken(start, startOffset, startLine, startColumn int) Token {
-	// Get the raw text
-	rawText := l.input[start:l.position]
-
-	// Process line continuations
-	processedText := l.processLineContinuations(rawText)
-
-	// Trim whitespace
-	processedText = strings.TrimSpace(processedText)
-
-	// Don't emit empty tokens - but ensure we've actually consumed something
-	if processedText == "" {
-		// If we haven't moved forward, we need to consume at least one character
-		// to avoid infinite loops
-		if l.position == start && l.ch != 0 {
-			l.readChar()
-		}
-		return l.lexToken()
-	}
-
-	return Token{
-		Type:      SHELL_TEXT,
-		Value:     processedText,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Raw:       rawText, // Keep original for formatting tools
-		Semantic:  SemShellText,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: startOffset},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-}
-
-// processLineContinuations handles backslash-newline sequences in shell text
-func (l *Lexer) processLineContinuations(text string) string {
-	// Fast path: no backslashes means no continuations
-	if !strings.Contains(text, "\\") {
-		return text
-	}
-
-	var result strings.Builder
-	result.Grow(len(text))
-
-	runes := []rune(text)
-	i := 0
-	inSingleQuotes := false
-
-	for i < len(runes) {
-		ch := runes[i]
-
-		// Track single quote state
-		if ch == '\'' {
-			inSingleQuotes = !inSingleQuotes
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-
-		// In single quotes, everything is literal
-		if inSingleQuotes {
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-
-		// Check for line continuation outside single quotes
-		if ch == '\\' && i+1 < len(runes) && runes[i+1] == '\n' {
-			// Skip the backslash and newline
-			i += 2
-
-			// Skip following whitespace
-			for i < len(runes) && (runes[i] == ' ' || runes[i] == '\t') {
-				i++
-			}
-
-			// Add a space to join the lines
-			if result.Len() > 0 && i < len(runes) {
-				str := result.String()
-				lastCh := rune(str[len(str)-1])
-				if lastCh != ' ' && lastCh != '\t' {
-					result.WriteRune(' ')
+					anyBraceLevel++
 				}
 			}
+		}
+
+		// Add character to result
+		result.WriteRune(l.ch)
+
+		// Track quote state AFTER adding character
+		if l.ch == '\'' && !inDoubleQuote && !inBacktick {
+			inSingleQuote = !inSingleQuote
+		} else if l.ch == '"' && !inSingleQuote && !inBacktick {
+			inDoubleQuote = !inDoubleQuote
+		} else if l.ch == '`' && !inSingleQuote && !inDoubleQuote {
+			inBacktick = !inBacktick
+		}
+
+		l.readChar()
+	}
+
+	text := strings.TrimSpace(result.String())
+	if text == "" {
+		return l.createToken(types.ILLEGAL, "", start, startLine, startColumn)
+	}
+
+	return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+}
+
+// lexIdentifierOrKeyword handles identifiers and keywords (using fast ASCII lookups)
+func (l *Lexer) lexIdentifierOrKeyword(start, startLine, startColumn int) types.Token {
+	for {
+		// Fast path for ASCII
+		if l.ch < 128 && isIdentPart[l.ch] {
+			l.readChar()
+		} else if l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch)) {
+			// Fallback for non-ASCII
+			l.readChar()
 		} else {
-			result.WriteRune(ch)
-			i++
+			break
 		}
 	}
-
-	return result.String()
-}
-
-// lexIdentifierOrKeyword lexes identifiers and keywords with optimized lookahead
-func (l *Lexer) lexIdentifierOrKeyword(start int) Token {
-	startLine, startColumn := l.line, l.column
-
-	// Read the full identifier
-	l.readIdentifier()
 
 	value := l.input[start:l.position]
 
-	var tokenType TokenType
-	var semantic SemanticTokenType
-
-	// Check for boolean literals first
-	if value == "true" || value == "false" {
-		tok := Token{
-			Type:      BOOLEAN,
-			Value:     value,
-			Line:      startLine,
-			Column:    startColumn,
-			EndLine:   l.line,
-			EndColumn: l.column,
-			Semantic:  SemBoolean,
-			Span: SourceSpan{
-				Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-				End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-			},
-		}
-		l.updateStateMachine(BOOLEAN, value)
-		return tok
-	}
+	// No need to track decorator names with simplified approach
 
 	// Check for keywords
-	if keywordType, isKeyword := keywords[value]; isKeyword {
-		tokenType = keywordType
-		semantic = SemKeyword
-		// Special handling for pattern-matching decorators
-		if value == "when" || value == "try" {
-			// Track that we're entering a pattern-matching decorator
-			l.patternLevel++
+	switch value {
+	case "var":
+		return l.createToken(types.VAR, value, start, startLine, startColumn)
+	case "watch":
+		return l.createToken(types.WATCH, value, start, startLine, startColumn)
+	case "stop":
+		return l.createToken(types.STOP, value, start, startLine, startColumn)
+	case "true", "false":
+		return l.createToken(types.BOOLEAN, value, start, startLine, startColumn)
+	default:
+		return l.createToken(types.IDENTIFIER, value, start, startLine, startColumn)
+	}
+}
+
+// lexString handles string literals (quoted strings)
+func (l *Lexer) lexString(quote rune, start, startLine, startColumn int) types.Token {
+	// Skip opening quote
+	l.readChar()
+	contentStart := l.position
+
+	for l.ch != quote && l.ch != 0 {
+		if l.ch == '\\' {
+			// Handle escape sequences
+			l.readChar() // Skip backslash
+			if l.ch != 0 {
+				l.readChar() // Skip escaped character
+			}
+		} else {
+			l.readChar()
 		}
-	} else {
-		tokenType = IDENTIFIER
-		semantic = SemCommand // Default to command name
 	}
 
-	tok := Token{
-		Type:      tokenType,
-		Value:     value,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  semantic,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
+	if l.ch == 0 {
+		// Unterminated string
+		return l.createToken(types.ILLEGAL, "unterminated string", start, startLine, startColumn)
 	}
-	l.updateStateMachine(tokenType, value)
-	return tok
+
+	// Extract content without quotes
+	value := l.input[contentStart:l.position]
+	l.readChar() // Skip closing quote
+
+	return l.createToken(types.STRING, value, start, startLine, startColumn)
 }
 
-// Keywords map - includes pattern-matching decorator keywords
-var keywords = map[string]TokenType{
-	"var":   VAR,
-	"stop":  STOP,
-	"watch": WATCH,
-	"when":  WHEN,
-	"try":   TRY,
-}
+// lexNumber handles number literals (using fast ASCII lookups)
+func (l *Lexer) lexNumber(start, startLine, startColumn int) types.Token {
+	hasDecimal := false
 
-// lexNumberOrDuration lexes numbers and durations with rune-based scanning
-func (l *Lexer) lexNumberOrDuration(start int) Token {
-	startLine, startColumn := l.line, l.column
-
-	// Handle negative numbers
+	// Handle negative sign if present
 	if l.ch == '-' {
 		l.readChar()
 	}
 
-	// Scan integer part
-	for unicode.IsDigit(l.ch) {
-		l.readChar()
-	}
-
-	// Check for decimal part
-	if l.ch == '.' && unicode.IsDigit(l.peekChar()) {
-		l.readChar() // consume '.'
-		for unicode.IsDigit(l.ch) {
+	for {
+		// Fast path for ASCII digits
+		if l.ch < 128 && isDigit[l.ch] {
 			l.readChar()
+		} else if l.ch == '.' && !hasDecimal {
+			hasDecimal = true
+			l.readChar()
+		} else if l.ch >= 128 && unicode.IsDigit(l.ch) {
+			// Fallback for non-ASCII digits
+			l.readChar()
+		} else {
+			break
 		}
 	}
 
-	// Check for duration unit
-	isDuration := false
-	if l.isDurationUnit() {
-		isDuration = true
-		l.readDurationUnit()
+	// Check for duration suffix using fast ASCII lookups
+	if (l.ch < 128 && isLetter[l.ch]) || (l.ch >= 128 && unicode.IsLetter(l.ch)) {
+		durStart := l.position
+		for {
+			if l.ch < 128 && isLetter[l.ch] {
+				l.readChar()
+			} else if l.ch >= 128 && unicode.IsLetter(l.ch) {
+				l.readChar()
+			} else {
+				break
+			}
+		}
+		suffix := l.input[durStart:l.position]
+
+		// Valid duration suffixes
+		switch suffix {
+		case "ns", "us", "ms", "s", "m", "h":
+			value := l.input[start:l.position]
+			return l.createToken(types.DURATION, value, start, startLine, startColumn)
+		default:
+			// Invalid suffix - treat as separate tokens
+			l.position = durStart
+			l.readPos = durStart + utf8.RuneLen(l.ch)
+			l.ch, _ = utf8.DecodeRuneInString(l.input[durStart:])
+		}
 	}
 
 	value := l.input[start:l.position]
-
-	tokenType := NUMBER
-	if isDuration {
-		tokenType = DURATION
-	}
-
-	tok := Token{
-		Type:      tokenType,
-		Value:     value,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  SemNumber,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-	l.updateStateMachine(tokenType, value)
-	return tok
+	return l.createToken(types.NUMBER, value, start, startLine, startColumn)
 }
 
-// lexString lexes string literals with rune-based scanning
-func (l *Lexer) lexString(quote rune, stringType StringType, start int) Token {
-	startLine, startColumn := l.line, l.column
-	l.readChar() // consume opening quote
-
-	var value string
-	var hasEscapes bool
-
-	// For single-quoted strings, just find the next quote
-	if stringType == SingleQuoted {
-		valueStart := l.position
-		for l.ch != quote && l.ch != 0 {
-			l.readChar()
-		}
-		value = l.input[valueStart:l.position]
-	} else {
-		// For double-quoted and backtick strings, handle escapes
-		var escaped strings.Builder
-		valueStart := l.position
-
-		for l.ch != quote && l.ch != 0 {
-			if l.ch == '\\' {
-				if !hasEscapes {
-					hasEscapes = true
-					escaped.WriteString(l.input[valueStart:l.position])
-				}
-				l.readChar()
-				if l.ch == 0 {
-					break
-				}
-				escapeStr := l.handleEscape(stringType)
-				escaped.WriteString(escapeStr)
-				l.readChar()
-				valueStart = l.position
-			} else {
-				l.readChar()
-			}
-		}
-
-		if hasEscapes {
-			escaped.WriteString(l.input[valueStart:l.position])
-			value = escaped.String()
-		} else {
-			value = l.input[valueStart:l.position]
-		}
-	}
-
-	if l.ch == quote {
-		l.readChar() // consume closing quote
-	}
-
-	tok := Token{
-		Type:       STRING,
-		Value:      value,
-		Line:       startLine,
-		Column:     startColumn,
-		EndLine:    l.line,
-		EndColumn:  l.column,
-		StringType: stringType,
-		Raw:        l.input[start:l.position],
-		Semantic:   SemString,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-	l.updateStateMachine(STRING, value)
-	return tok
-}
-
-// lexComment lexes single-line comments
-func (l *Lexer) lexComment(start int) Token {
-	startLine, startColumn := l.line, l.column
+// lexComment handles comment lines starting with #
+func (l *Lexer) lexComment(start, startLine, startColumn int) types.Token {
+	// Read from # to end of line
 	for l.ch != '\n' && l.ch != 0 {
 		l.readChar()
 	}
-	tok := Token{
-		Type:      COMMENT,
-		Value:     l.input[start:l.position],
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  SemComment,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-	l.updateStateMachine(COMMENT, tok.Value)
-	return tok
+
+	value := l.input[start:l.position]
+	return l.createToken(types.COMMENT, value, start, startLine, startColumn)
 }
 
-// lexMultilineComment lexes multi-line comments
-func (l *Lexer) lexMultilineComment(start int) Token {
-	startLine, startColumn := l.line, l.column
-	l.readChar() // consume '/'
-	l.readChar() // consume '*'
+// lexMultilineComment handles multi-line comments /* */
+func (l *Lexer) lexMultilineComment(start, startLine, startColumn int) types.Token {
+	// Skip /*
+	l.readChar() // Skip /
+	l.readChar() // Skip *
 
-	for l.ch != 0 {
+	// Read until */
+	for {
+		if l.ch == 0 {
+			// Unterminated comment
+			return l.createToken(types.ILLEGAL, "unterminated comment", start, startLine, startColumn)
+		}
+
 		if l.ch == '*' && l.peekChar() == '/' {
-			l.readChar()
-			l.readChar()
+			l.readChar() // Skip *
+			l.readChar() // Skip /
 			break
 		}
+
 		l.readChar()
 	}
 
-	tok := Token{
-		Type:      MULTILINE_COMMENT,
-		Value:     l.input[start:l.position],
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  SemComment,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-	l.updateStateMachine(MULTILINE_COMMENT, tok.Value)
-	return tok
-}
-
-// lexSingleChar lexes single character tokens
-func (l *Lexer) lexSingleChar(start int) Token {
-	startLine, startColumn := l.line, l.column
-	char := l.ch
-	l.readChar()
-
-	token := Token{
-		Type:      IDENTIFIER,
-		Value:     string(char),
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   l.line,
-		EndColumn: l.column,
-		Semantic:  SemOperator,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: l.line, Column: l.column, Offset: l.position},
-		},
-	}
-	l.updateStateMachine(IDENTIFIER, token.Value)
-	return token
-}
-
-// Helper methods for creating tokens with proper position tracking
-
-// createSimpleToken creates a token with basic type and value
-func (l *Lexer) createSimpleToken(tokenType TokenType, value string, start, startLine, startColumn int) Token {
-	return Token{
-		Type:      tokenType,
-		Value:     value,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   startLine,   // Will be updated by updateTokenEnd
-		EndColumn: startColumn, // Will be updated by updateTokenEnd
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: startLine, Column: startColumn, Offset: start}, // Will be updated
-		},
-	}
-}
-
-// createTokenWithSemantic creates a token with specific semantic type
-func (l *Lexer) createTokenWithSemantic(tokenType TokenType, semantic SemanticTokenType, value string, start, startLine, startColumn int) Token {
-	return Token{
-		Type:      tokenType,
-		Value:     value,
-		Line:      startLine,
-		Column:    startColumn,
-		EndLine:   startLine,   // Will be updated by updateTokenEnd
-		EndColumn: startColumn, // Will be updated by updateTokenEnd
-		Semantic:  semantic,
-		Span: SourceSpan{
-			Start: SourcePosition{Line: startLine, Column: startColumn, Offset: start},
-			End:   SourcePosition{Line: startLine, Column: startColumn, Offset: start}, // Will be updated
-		},
-	}
-}
-
-// updateTokenEnd updates the end position of a token
-func (l *Lexer) updateTokenEnd(token *Token) {
-	token.EndLine = l.line
-	token.EndColumn = l.column
-	token.Span.End = SourcePosition{Line: l.line, Column: l.column, Offset: l.position}
-}
-
-// Helper methods
-
-func (l *Lexer) readIdentifier() {
-	for l.ch != 0 {
-		// ASCII fast path using lookup table
-		if l.ch < 128 {
-			if !isIdentPart[l.ch] {
-				break
-			}
-		} else {
-			// Unicode fallback for non-ASCII characters
-			if !unicode.IsLetter(l.ch) && !unicode.IsDigit(l.ch) {
-				break
-			}
-		}
-		l.readChar()
-	}
-}
-
-// skipWhitespace with hybrid ASCII/Unicode scanning
-func (l *Lexer) skipWhitespace() {
-	for l.ch != '\n' && l.ch != 0 {
-		// ASCII fast path using lookup table
-		if l.ch < 128 {
-			if !isWhitespace[l.ch] {
-				break
-			}
-		} else {
-			// Unicode fallback for non-ASCII characters
-			if !unicode.IsSpace(l.ch) {
-				break
-			}
-		}
-		l.readChar()
-	}
-}
-
-func (l *Lexer) readChar() {
-	if l.readPos >= len(l.input) {
-		l.ch = 0
-		l.position = l.readPos
-	} else {
-		// ASCII fast path - most config files are primarily ASCII
-		if b := l.input[l.readPos]; b < 0x80 {
-			l.ch = rune(b)
-			l.position = l.readPos
-			l.readPos++
-		} else {
-			// Unicode slow path
-			r, size := utf8.DecodeRuneInString(l.input[l.readPos:])
-			l.ch = r
-			l.position = l.readPos
-			l.readPos += size
-		}
-	}
-
-	// Position tracking: increment column before handling newline
-	l.column++
-	if l.ch == '\n' {
-		l.line++
-		l.column = 0 // Reset to 0, will be incremented to 1 on next readChar
-	}
-}
-
-func (l *Lexer) peekChar() rune {
-	if l.readPos >= len(l.input) {
-		return 0
-	}
-	// ASCII fast path
-	if b := l.input[l.readPos]; b < 0x80 {
-		return rune(b)
-	}
-	// Unicode slow path
-	r, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
-	return r
-}
-
-func (l *Lexer) isDurationUnit() bool {
-	if l.ch == 0 {
-		return false
-	}
-	next := l.peekChar()
-	switch l.ch {
-	case 'n', 'u':
-		return next == 's'
-	case 'm':
-		return next == 's' || next == 0 || !unicode.IsLetter(next)
-	case 's', 'h':
-		return next == 0 || !unicode.IsLetter(next)
-	}
-	return false
-}
-
-func (l *Lexer) readDurationUnit() {
-	switch l.ch {
-	case 'n', 'u':
-		if l.peekChar() == 's' {
-			l.readChar()
-			l.readChar()
-		}
-	case 'm':
-		l.readChar()
-		if l.ch == 's' {
-			l.readChar()
-		}
-	case 's', 'h':
-		l.readChar()
-	}
-}
-
-func (l *Lexer) handleEscape(stringType StringType) string {
-	switch stringType {
-	case SingleQuoted:
-		// In single-quoted strings, a backslash is a literal character.
-		return "\\" + string(l.ch)
-	case DoubleQuoted:
-		switch l.ch {
-		case 'n':
-			return "\n"
-		case 't':
-			return "\t"
-		case 'r':
-			return "\r"
-		case '\\':
-			return "\\"
-		case '"':
-			return "\""
-		default:
-			return "\\" + string(l.ch)
-		}
-	case Backtick:
-		switch l.ch {
-		case 'n':
-			return "\n"
-		case 't':
-			return "\t"
-		case 'r':
-			return "\r"
-		case 'b':
-			return "\b"
-		case 'f':
-			return "\f"
-		case 'v':
-			return "\v"
-		case '0':
-			return "\x00"
-		case '\\':
-			return "\\"
-		case '`':
-			return "`"
-		case '"':
-			return "\""
-		case '\'':
-			return "'"
-		case 'x':
-			return l.readHexEscape()
-		case 'u':
-			if l.peekChar() == '{' {
-				return l.readUnicodeEscape()
-			}
-			return "\\u"
-		default:
-			return "\\" + string(l.ch)
-		}
-	}
-	return "\\" + string(l.ch)
-}
-
-func (l *Lexer) readHexEscape() string {
-	if !isHexDigit(l.peekChar()) {
-		return "\\x"
-	}
-	l.readChar()
-	hex1 := l.ch
-	l.readChar()
-	if !isHexDigit(l.ch) {
-		return "\\x" + string(hex1)
-	}
-	hex2 := l.ch
-	value := hexValue(hex1)*16 + hexValue(hex2)
-	return string(rune(value))
-}
-
-func (l *Lexer) readUnicodeEscape() string {
-	l.readChar()
-	l.readChar()
-	start := l.position
-	for l.ch != '}' && l.ch != 0 && isHexDigit(l.ch) {
-		l.readChar()
-	}
-	if l.ch != '}' {
-		return "\\u{"
-	}
-	hexDigits := l.input[start:l.position]
-	l.readChar()
-	if len(hexDigits) == 0 {
-		return "\\u{}"
-	}
-	var value rune
-	for _, ch := range hexDigits {
-		value = value*16 + rune(hexValue(ch))
-	}
-	if !utf8.ValidRune(value) {
-		return "\\u{" + hexDigits + "}"
-	}
-	return string(value)
-}
-
-func isHexDigit(ch rune) bool {
-	return unicode.IsDigit(ch) || ('a' <= ch && ch <= 'f') || ('A' <= ch && ch <= 'F')
-}
-
-func hexValue(ch rune) int {
-	switch {
-	case unicode.IsDigit(ch):
-		return int(ch - '0')
-	case 'a' <= ch && ch <= 'f':
-		return int(ch - 'a' + 10)
-	case 'A' <= ch && ch <= 'F':
-		return int(ch - 'A' + 10)
-	}
-	return 0
-}
-
-// pushStructuralBrace adds a structural brace to the stack
-func (l *Lexer) pushStructuralBrace() {
-	l.structuralBraceStack = append(l.structuralBraceStack, l.position)
-}
-
-// popStructuralBrace removes the most recent structural brace from the stack
-func (l *Lexer) popStructuralBrace() {
-	if len(l.structuralBraceStack) > 0 {
-		l.structuralBraceStack = l.structuralBraceStack[:len(l.structuralBraceStack)-1]
-	}
-}
-
-// hasStructuralBraces returns true if there are structural braces on the stack
-func (l *Lexer) hasStructuralBraces() bool {
-	return len(l.structuralBraceStack) > 0
-}
-
-// isStructuralContext determines if the current context expects a structural brace
-func (l *Lexer) isStructuralContext() bool {
-	currentState := l.stateMachine.Current()
-	switch currentState {
-	case StateAfterColon:
-		// After command: or pattern:, a { is structural
-		return true
-	case StateAfterDecorator:
-		// After @parallel, @timeout, etc., a { is structural
-		return true
-	case StateAfterPatternColon:
-		// After pattern:, a { is structural
-		return true
-	default:
-		return false
-	}
+	value := l.input[start:l.position]
+	return l.createToken(types.MULTILINE_COMMENT, value, start, startLine, startColumn)
 }

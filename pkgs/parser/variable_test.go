@@ -215,13 +215,13 @@ func TestVariableDecoratorArgumentRestrictions(t *testing.T) {
 			Input: `var TIMEOUT = 30s
 test: @timeout(@var(TIMEOUT)) { npm test }`,
 			WantErr:     true,
-			ErrorSubstr: "function decorators (@var, @env, etc.) are not allowed as decorator arguments",
+			ErrorSubstr: "parameter 'duration' expects duration, got AT",
 		},
 		{
 			Name:        "reject @env() in decorator arguments",
 			Input:       `test: @timeout(@env(DURATION)) { npm test }`,
 			WantErr:     true,
-			ErrorSubstr: "function decorators (@var, @env, etc.) are not allowed as decorator arguments",
+			ErrorSubstr: "parameter 'duration' expects duration, got AT",
 		},
 		{
 			Name: "allow direct variable references in decorator arguments",

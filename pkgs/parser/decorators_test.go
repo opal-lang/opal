@@ -304,24 +304,24 @@ func TestPatternDecorators(t *testing.T) {
 	testCases := []TestCase{
 		{
 			Name: "@when pattern decorator with simple branches",
-			Input: `deploy: @when(ENV) {
+			Input: `deploy: @when("ENV") {
   production: kubectl apply -f k8s/prod/
   staging: kubectl apply -f k8s/staging/
-  *: echo "Unknown environment"
+  default: echo "Unknown environment"
 }`,
 			Expected: Program(
 				Cmd("deploy",
-					PatternDecoratorWithBranches("when", Id("ENV"),
+					PatternDecoratorWithBranches("when", Str("ENV"),
 						Branch("production", Shell("kubectl apply -f k8s/prod/")),
 						Branch("staging", Shell("kubectl apply -f k8s/staging/")),
-						Branch("*", Shell("echo \"Unknown environment\"")),
+						Branch("default", Shell("echo \"Unknown environment\"")),
 					),
 				),
 			),
 		},
 		{
 			Name: "@when pattern decorator with multiple commands per branch",
-			Input: `deploy: @when(ENV) {
+			Input: `deploy: @when("ENV") {
   production: {
     kubectl config use-context prod
     kubectl apply -f k8s/prod/
@@ -331,7 +331,7 @@ func TestPatternDecorators(t *testing.T) {
 }`,
 			Expected: Program(
 				Cmd("deploy",
-					PatternDecoratorWithBranches("when", Id("ENV"),
+					PatternDecoratorWithBranches("when", Str("ENV"),
 						Branch("production",
 							Shell("kubectl config use-context prod"),
 							Shell("kubectl apply -f k8s/prod/"),
@@ -373,15 +373,94 @@ func TestPatternDecorators(t *testing.T) {
 		},
 		{
 			Name: "@when with @var references in commands",
-			Input: `deploy: @when(MODE) {
+			Input: `deploy: @when("MODE") {
   production: echo "Deploying @var(APP) to production"
   staging: echo "Deploying @var(APP) to staging"
 }`,
 			Expected: Program(
 				Cmd("deploy",
-					PatternDecoratorWithBranches("when", Id("MODE"),
+					PatternDecoratorWithBranches("when", Str("MODE"),
 						Branch("production", Shell("echo \"Deploying ", At("var", Id("APP")), " to production\"")),
 						Branch("staging", Shell("echo \"Deploying ", At("var", Id("APP")), " to staging\"")),
+					),
+				),
+			),
+		},
+	}
+
+	for _, tc := range testCases {
+		RunTestCase(t, tc)
+	}
+}
+
+func TestNamedParameterSupport(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "retry with positional parameter",
+			Input: "test: @retry(3) { echo \"task\" }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("retry", Num(3)),
+						Text("echo \"task\""),
+					),
+				),
+			),
+		},
+		{
+			Name:  "retry with named parameter",
+			Input: "test: @retry(attempts=3) { echo \"task\" }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("retry", Named("attempts", Num(3))),
+						Text("echo \"task\""),
+					),
+				),
+			),
+		},
+		{
+			Name:  "retry with mixed parameters",
+			Input: "test: @retry(3, delay=1s) { echo \"task\" }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("retry", Num(3), Named("delay", Duration("1s"))),
+						Text("echo \"task\""),
+					),
+				),
+			),
+		},
+		{
+			Name:  "timeout with named parameter",
+			Input: "test: @timeout(duration=30s) { echo \"task\" }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("timeout", Named("duration", Duration("30s"))),
+						Text("echo \"task\""),
+					),
+				),
+			),
+		},
+		{
+			Name:  "parallel with named parameters",
+			Input: "test: @parallel(concurrency=2, failOnFirstError=true) { echo \"task1\"; echo \"task2\" }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("parallel", Named("concurrency", Num(2)), Named("failOnFirstError", Bool(true))),
+						Text("echo \"task1\"; echo \"task2\""),
+					),
+				),
+			),
+		},
+		{
+			Name: "when with string parameter",
+			Input: `test: @when("ENV") { 
+  production: echo "prod"
+  default: echo "dev"
+}`,
+			Expected: Program(
+				Cmd("test",
+					PatternDecoratorWithBranches("when", Str("ENV"),
+						Branch("production", Shell("echo \"prod\"")),
+						Branch("default", Shell("echo \"dev\"")),
 					),
 				),
 			),
@@ -490,10 +569,10 @@ func TestNestedDecorators(t *testing.T) {
 		},
 		{
 			Name:  "decorator with variable as argument",
-			Input: "build: @cwd(BUILD_DIR) { make clean && make all }",
+			Input: "build: @cwd(\"BUILD_DIR\") { make clean && make all }",
 			Expected: Program(
 				CmdBlock("build",
-					DecoratedShell(Decorator("cwd", Id("BUILD_DIR")),
+					DecoratedShell(Decorator("cwd", Str("BUILD_DIR")),
 						Text("make clean && make all"),
 					),
 				),
@@ -526,6 +605,82 @@ func TestNestedDecorators(t *testing.T) {
 					),
 				),
 			),
+		},
+	}
+
+	for _, tc := range testCases {
+		RunTestCase(t, tc)
+	}
+}
+
+func TestNewDecoratorParameterTypes(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "timeout with positional duration parameter",
+			Input: "test: @timeout(30s) { npm test }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("timeout", Dur("30s")),
+						Text("npm test"),
+					),
+				),
+			),
+		},
+		{
+			Name:  "retry with positional parameters",
+			Input: "test: @retry(3, 1s) { npm test }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("retry", Num(3), Dur("1s")),
+						Text("npm test"),
+					),
+				),
+			),
+		},
+		{
+			Name:  "retry with single attempts parameter",
+			Input: "test: @retry(5) { npm test }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("retry", Num(5)),
+						Text("npm test"),
+					),
+				),
+			),
+		},
+		{
+			Name:  "parallel with concurrency parameter",
+			Input: "test: @parallel(2) { npm test }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("parallel", Num(2)),
+						Text("npm test"),
+					),
+				),
+			),
+		},
+		{
+			Name:  "parallel with concurrency and failOnFirstError",
+			Input: "test: @parallel(2, true) { npm test }",
+			Expected: Program(
+				CmdBlock("test",
+					DecoratedShell(Decorator("parallel", Num(2), Bool(true)),
+						Text("npm test"),
+					),
+				),
+			),
+		},
+		{
+			Name:        "timeout missing required parameter",
+			Input:       "test: @timeout() { npm test }",
+			WantErr:     true,
+			ErrorSubstr: "missing required parameter 'duration' for @timeout decorator",
+		},
+		{
+			Name:        "retry with wrong parameter type",
+			Input:       "test: @retry(\"three\") { npm test }",
+			WantErr:     true,
+			ErrorSubstr: "parameter 'attempts' expects number, got STRING",
 		},
 	}
 
@@ -593,10 +748,10 @@ func TestDecoratorVariations(t *testing.T) {
 		},
 		{
 			Name:  "decorator with variable argument",
-			Input: "deploy: @cwd(BUILD_DIR) { make install }",
+			Input: "deploy: @cwd(\"BUILD_DIR\") { make install }",
 			Expected: Program(
 				CmdBlock("deploy",
-					DecoratedShell(Decorator("cwd", Id("BUILD_DIR")),
+					DecoratedShell(Decorator("cwd", Str("BUILD_DIR")),
 						Text("make install"),
 					),
 				),
@@ -604,10 +759,10 @@ func TestDecoratorVariations(t *testing.T) {
 		},
 		{
 			Name:  "decorator with variable pattern argument",
-			Input: "advanced: @watch-files(PATTERN) { rebuild }",
+			Input: "advanced: @watch-files(\"PATTERN\") { rebuild }",
 			Expected: Program(
 				CmdBlock("advanced",
-					DecoratedShell(Decorator("watch-files", Id("PATTERN")),
+					DecoratedShell(Decorator("watch-files", Str("PATTERN")),
 						Text("rebuild"),
 					),
 				),
@@ -615,10 +770,10 @@ func TestDecoratorVariations(t *testing.T) {
 		},
 		{
 			Name:  "decorator with boolean argument",
-			Input: "deploy: @confirm(true) { ./deploy.sh }",
+			Input: "deploy: @confirm(defaultYes=true) { ./deploy.sh }",
 			Expected: Program(
 				CmdBlock("deploy",
-					DecoratedShell(Decorator("confirm", Bool(true)),
+					DecoratedShell(Decorator("confirm", Named("defaultYes", Bool(true))),
 						Text("./deploy.sh"),
 					),
 				),
@@ -653,6 +808,35 @@ func TestDecoratorVariations(t *testing.T) {
 				CmdBlock("test",
 					DecoratedShell(Decorator("parallel"),
 						Text("task1; task2"),
+					),
+				),
+			),
+		},
+	}
+
+	for _, tc := range testCases {
+		RunTestCase(t, tc)
+	}
+}
+
+func TestNestedPatternDecorators(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name: "pattern decorator inside block decorator",
+			Input: `test: @retry(attempts=2) {
+				@when("ENV") {
+					production: echo "prod task"
+					default: echo "default task"
+				}
+			}`,
+			// This should parse correctly since lexer handles it properly
+			Expected: Program(
+				CmdBlock("test",
+					BlockDecorator("retry", Named("attempts", Num(2)),
+						PatternDecoratorWithBranches("when", Str("ENV"),
+							Branch("production", Shell("echo \"prod task\"")),
+							Branch("default", Shell("echo \"default task\"")),
+						),
 					),
 				),
 			),

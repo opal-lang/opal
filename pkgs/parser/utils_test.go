@@ -7,89 +7,184 @@ import (
 	"testing"
 
 	"github.com/aledsdavies/devcmd/pkgs/ast"
-	"github.com/aledsdavies/devcmd/pkgs/stdlib"
+	"github.com/aledsdavies/devcmd/pkgs/decorators"
+	"github.com/aledsdavies/devcmd/pkgs/execution"
 	"github.com/google/go-cmp/cmp"
 )
 
-// init registers any test-specific decorators not in stdlib
+// init registers any test-specific decorators not in decorators
 func init() {
 	registerTestOnlyDecorators()
 }
 
+// Test-only decorator implementations
+
+// ConfirmDecorator is now implemented in the real decorators package
+// Test removed since we have a real implementation
+
+// DebounceDecorator - test implementation
+type DebounceDecorator struct{}
+
+func (d *DebounceDecorator) Name() string { return "debounce" }
+func (d *DebounceDecorator) Description() string {
+	return "Debounces command execution with specified delay"
+}
+
+func (d *DebounceDecorator) ParameterSchema() []decorators.ParameterSchema {
+	return []decorators.ParameterSchema{
+		{Name: "delay", Type: ast.DurationType, Required: true, Description: "Debounce delay"},
+	}
+}
+
+func (d *DebounceDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
+	switch ctx.Mode() {
+	case execution.InterpreterMode:
+		return &execution.ExecutionResult{Mode: execution.InterpreterMode, Data: nil, Error: nil}
+	case execution.GeneratorMode:
+		return &execution.ExecutionResult{Mode: execution.GeneratorMode, Data: "// debounce", Error: nil}
+	case execution.PlanMode:
+		return &execution.ExecutionResult{Mode: execution.PlanMode, Data: nil, Error: nil}
+	default:
+		return &execution.ExecutionResult{Mode: ctx.Mode(), Data: nil, Error: fmt.Errorf("unsupported mode")}
+	}
+}
+
+func (d *DebounceDecorator) ImportRequirements() decorators.ImportRequirement {
+	return decorators.ImportRequirement{}
+}
+
+// CwdDecorator - test implementation
+type CwdDecorator struct{}
+
+func (c *CwdDecorator) Name() string        { return "cwd" }
+func (c *CwdDecorator) Description() string { return "Changes working directory for command execution" }
+func (c *CwdDecorator) ParameterSchema() []decorators.ParameterSchema {
+	return []decorators.ParameterSchema{
+		{Name: "directory", Type: ast.StringType, Required: true, Description: "Working directory"},
+	}
+}
+
+func (c *CwdDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
+	switch ctx.Mode() {
+	case execution.InterpreterMode:
+		return &execution.ExecutionResult{Mode: execution.InterpreterMode, Data: nil, Error: nil}
+	case execution.GeneratorMode:
+		return &execution.ExecutionResult{Mode: execution.GeneratorMode, Data: "// cwd", Error: nil}
+	case execution.PlanMode:
+		return &execution.ExecutionResult{Mode: execution.PlanMode, Data: nil, Error: nil}
+	default:
+		return &execution.ExecutionResult{Mode: ctx.Mode(), Data: nil, Error: fmt.Errorf("unsupported mode")}
+	}
+}
+
+func (c *CwdDecorator) ImportRequirements() decorators.ImportRequirement {
+	return decorators.ImportRequirement{}
+}
+
+// WatchFilesDecorator - test implementation
+type WatchFilesDecorator struct{}
+
+func (w *WatchFilesDecorator) Name() string { return "watch-files" }
+func (w *WatchFilesDecorator) Description() string {
+	return "Watches files for changes and executes commands"
+}
+
+func (w *WatchFilesDecorator) ParameterSchema() []decorators.ParameterSchema {
+	return []decorators.ParameterSchema{
+		{Name: "pattern", Type: ast.StringType, Required: true, Description: "File pattern to watch"},
+	}
+}
+
+func (w *WatchFilesDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
+	switch ctx.Mode() {
+	case execution.InterpreterMode:
+		return &execution.ExecutionResult{Mode: execution.InterpreterMode, Data: nil, Error: nil}
+	case execution.GeneratorMode:
+		return &execution.ExecutionResult{Mode: execution.GeneratorMode, Data: "// watch-files", Error: nil}
+	case execution.PlanMode:
+		return &execution.ExecutionResult{Mode: execution.PlanMode, Data: nil, Error: nil}
+	default:
+		return &execution.ExecutionResult{Mode: ctx.Mode(), Data: nil, Error: fmt.Errorf("unsupported mode")}
+	}
+}
+
+func (w *WatchFilesDecorator) ImportRequirements() decorators.ImportRequirement {
+	return decorators.ImportRequirement{}
+}
+
+// OffsetDecorator - test implementation
+type OffsetDecorator struct{}
+
+func (o *OffsetDecorator) Name() string { return "offset" }
+func (o *OffsetDecorator) Description() string {
+	return "Test decorator - applies numeric offset to command execution"
+}
+
+func (o *OffsetDecorator) ParameterSchema() []decorators.ParameterSchema {
+	return []decorators.ParameterSchema{
+		{Name: "value", Type: ast.NumberType, Required: true, Description: "Offset value"},
+	}
+}
+
+func (o *OffsetDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
+	switch ctx.Mode() {
+	case execution.InterpreterMode:
+		return &execution.ExecutionResult{Mode: execution.InterpreterMode, Data: nil, Error: nil}
+	case execution.GeneratorMode:
+		return &execution.ExecutionResult{Mode: execution.GeneratorMode, Data: "// offset", Error: nil}
+	case execution.PlanMode:
+		return &execution.ExecutionResult{Mode: execution.PlanMode, Data: nil, Error: nil}
+	default:
+		return &execution.ExecutionResult{Mode: ctx.Mode(), Data: nil, Error: fmt.Errorf("unsupported mode")}
+	}
+}
+
+func (o *OffsetDecorator) ImportRequirements() decorators.ImportRequirement {
+	return decorators.ImportRequirement{}
+}
+
+// FactorDecorator - test implementation
+type FactorDecorator struct{}
+
+func (f *FactorDecorator) Name() string { return "factor" }
+func (f *FactorDecorator) Description() string {
+	return "Test decorator - applies scaling factor to command execution"
+}
+
+func (f *FactorDecorator) ParameterSchema() []decorators.ParameterSchema {
+	return []decorators.ParameterSchema{
+		{Name: "multiplier", Type: ast.NumberType, Required: true, Description: "Scaling factor"},
+	}
+}
+
+func (f *FactorDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
+	switch ctx.Mode() {
+	case execution.InterpreterMode:
+		return &execution.ExecutionResult{Mode: execution.InterpreterMode, Data: nil, Error: nil}
+	case execution.GeneratorMode:
+		return &execution.ExecutionResult{Mode: execution.GeneratorMode, Data: "// factor", Error: nil}
+	case execution.PlanMode:
+		return &execution.ExecutionResult{Mode: execution.PlanMode, Data: nil, Error: nil}
+	default:
+		return &execution.ExecutionResult{Mode: ctx.Mode(), Data: nil, Error: fmt.Errorf("unsupported mode")}
+	}
+}
+
+func (f *FactorDecorator) ImportRequirements() decorators.ImportRequirement {
+	return decorators.ImportRequirement{}
+}
+
 // registerTestOnlyDecorators registers decorators that are only used for testing
-// and not part of the standard library
 func registerTestOnlyDecorators() {
-	// Only register decorators that don't exist in stdlib and are needed for tests
+	// Register test decorators with the new decorator registry
+	decorators.RegisterBlock(&DebounceDecorator{})
+	decorators.RegisterBlock(&CwdDecorator{})
+	decorators.RegisterBlock(&WatchFilesDecorator{})
+	decorators.RegisterBlock(&OffsetDecorator{})
+	decorators.RegisterBlock(&FactorDecorator{})
 
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "confirm",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Prompts for user confirmation before executing commands",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "message", Type: stdlib.StringArg, Optional: true, Default: "Are you sure?"},
-		},
-	})
-
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "debounce",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Debounces command execution with specified delay",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "delay", Type: stdlib.DurationArg, Optional: false},
-			{Name: "pattern", Type: stdlib.StringArg, Optional: true},
-		},
-	})
-
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "cwd",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Changes working directory for command execution",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "directory", Type: stdlib.ExpressionArg, Optional: false}, // Can be @var() expression
-		},
-	})
-
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "watch-files",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Watches files for changes and executes commands",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "pattern", Type: stdlib.ExpressionArg, Optional: true}, // Can be @var() expression
-			{Name: "interval", Type: stdlib.DurationArg, Optional: true, Default: "1s"},
-			{Name: "recursive", Type: stdlib.BooleanArg, Optional: true, Default: "true"},
-		},
-	})
-
-	// Test-specific decorators for edge cases (these are truly test-only)
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "offset",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Test decorator - applies numeric offset to command execution",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "value", Type: stdlib.NumberArg, Optional: false},
-		},
-	})
-
-	stdlib.RegisterDecorator(&stdlib.DecoratorSignature{
-		Name:          "factor",
-		Type:          stdlib.BlockDecorator,
-		Semantic:      stdlib.SemDecorator,
-		Description:   "Test decorator - applies scaling factor to command execution",
-		RequiresBlock: true,
-		Args: []stdlib.ArgumentSpec{
-			{Name: "multiplier", Type: stdlib.NumberArg, Optional: false},
-		},
-	})
+	// Note: @try is already registered in the main decorators package
+	// Note: @when is already registered in the main decorators package
 }
 
 // Test helper types for the new CST structure
@@ -206,8 +301,10 @@ type TestCase struct {
 }
 
 // DSL for building expected test results using natural language
+// NOTE: This DSL creates Expected* structures for parser testing, not actual AST nodes.
+// For creating actual AST nodes, use the functions in pkgs/ast/builder.go
 
-// Program creates an expected program
+// ExpectedProgram creates an expected program for parser tests
 func Program(items ...interface{}) ExpectedProgram {
 	var variables []ExpectedVariable
 	var commands []ExpectedCommand
@@ -305,6 +402,20 @@ func DurationExpr(value string) ExpectedExpression {
 	return Dur(value)
 }
 
+func Duration(value string) ExpectedExpression {
+	return Dur(value)
+}
+
+// Named creates a named parameter expression for decorators
+func Named(name string, value ExpectedExpression) ExpectedExpression {
+	return ExpectedExpression{
+		Type:  value.Type,  // Use the actual underlying type
+		Value: value.Value, // Use the actual underlying value
+		Name:  name,        // Preserve the parameter name
+		Args:  []ExpectedExpression{value},
+	}
+}
+
 func BooleanExpr(value bool) ExpectedExpression {
 	return Bool(value)
 }
@@ -388,7 +499,7 @@ func Simple(parts ...interface{}) ExpectedCommandBody {
 	// Function decorators are allowed in simple commands
 	for _, part := range shellParts {
 		if part.Type == "function_decorator" {
-			if part.FunctionDecorator != nil && !stdlib.IsFunctionDecorator(part.FunctionDecorator.Name) {
+			if part.FunctionDecorator != nil && !decorators.IsFunctionDecorator(part.FunctionDecorator.Name) {
 				// Instead of panic, return an error body
 				return ExpectedCommandBody{
 					Content: []ExpectedCommandContent{
@@ -424,7 +535,7 @@ func Text(text string) ExpectedShellPart {
 // Only valid for function decorators like @var()
 func At(name string, args ...interface{}) ExpectedShellPart {
 	// Validate that this is a function decorator
-	if !stdlib.IsFunctionDecorator(name) {
+	if !decorators.IsFunctionDecorator(name) {
 		// Instead of panic, return an error shell part
 		return ExpectedShellPart{
 			Type: "text",
@@ -449,10 +560,9 @@ func At(name string, args ...interface{}) ExpectedShellPart {
 // Decorator creates a block decorator: @timeout(30s)
 // Only valid for block decorators that require explicit braces
 func Decorator(name string, args ...interface{}) ExpectedDecorator {
-	// Validate that this is a block decorator
-	if !stdlib.IsBlockDecorator(name) {
-		// Instead of panic, we'll return a decorator with an error name
-		// This will cause tests to fail but not panic
+	// Check if decorator exists in the new registry system
+	if _, err := decorators.GetBlock(name); err != nil {
+		// Return error decorator name to make test failures clear
 		return ExpectedDecorator{
 			Name: fmt.Sprintf("ERROR_NOT_BLOCK_DECORATOR_%s", name),
 			Args: []ExpectedExpression{},
@@ -473,9 +583,9 @@ func Decorator(name string, args ...interface{}) ExpectedDecorator {
 // PatternDecorator creates a pattern decorator: @when(VAR) or @try
 // Only valid for pattern decorators that handle pattern matching
 func PatternDecorator(name string, args ...interface{}) ExpectedDecorator {
-	// Validate that this is a pattern decorator
-	if !stdlib.IsPatternDecorator(name) {
-		// Instead of panic, we'll return a decorator with an error name
+	// Check if decorator exists in the new registry system
+	if _, err := decorators.GetPattern(name); err != nil {
+		// Return error decorator name to make test failures clear
 		return ExpectedDecorator{
 			Name: fmt.Sprintf("ERROR_NOT_PATTERN_DECORATOR_%s", name),
 			Args: []ExpectedExpression{},
@@ -494,9 +604,9 @@ func PatternDecorator(name string, args ...interface{}) ExpectedDecorator {
 }
 
 func PatternDecoratorWithBranches(name string, firstArg interface{}, branches ...ExpectedPatternBranch) ExpectedPatternDecorator {
-	// Validate that this is a pattern decorator
-	if !stdlib.IsPatternDecorator(name) {
-		panic(fmt.Sprintf("Not a pattern decorator: %s", name))
+	// Check if decorator exists in the new registry system
+	if _, err := decorators.GetPattern(name); err != nil {
+		panic(fmt.Sprintf("Pattern decorator %s not found in registry: %v", name, err))
 	}
 
 	var decoratorArgs []ExpectedExpression
@@ -526,7 +636,7 @@ func Branch(pattern interface{}, commands ...interface{}) ExpectedPatternBranch 
 
 	switch p := pattern.(type) {
 	case string:
-		if p == "*" {
+		if p == "default" {
 			patternObj = ExpectedWildcardPattern{}
 		} else {
 			patternObj = ExpectedIdentifierPattern{Name: p}
@@ -576,13 +686,13 @@ func Shell(parts ...interface{}) ExpectedCommandContent {
 // DecoratedShell creates decorated shell content: @timeout(30s) npm run build
 func DecoratedShell(decorator ExpectedDecorator, parts ...interface{}) ExpectedCommandContent {
 	// Determine decorator type and create appropriate expected structure
-	if stdlib.IsBlockDecorator(decorator.Name) {
+	if decorators.IsBlockDecorator(decorator.Name) {
 		return ExpectedBlockDecorator{
 			Name:    decorator.Name,
 			Args:    decorator.Args,
 			Content: []ExpectedCommandContent{Shell(parts...)},
 		}
-	} else if stdlib.IsPatternDecorator(decorator.Name) {
+	} else if decorators.IsPatternDecorator(decorator.Name) {
 		return ExpectedPatternDecorator{
 			Name:     decorator.Name,
 			Args:     decorator.Args,
@@ -694,7 +804,7 @@ func toCommandBody(v interface{}) ExpectedCommandBody {
 		// Function decorators are allowed and get syntax sugar
 		for _, part := range val.Parts {
 			if part.Type == "function_decorator" {
-				if part.FunctionDecorator != nil && !stdlib.IsFunctionDecorator(part.FunctionDecorator.Name) {
+				if part.FunctionDecorator != nil && !decorators.IsFunctionDecorator(part.FunctionDecorator.Name) {
 					// Instead of panic, return an error body
 					return ExpectedCommandBody{
 						Content: []ExpectedCommandContent{
@@ -848,7 +958,7 @@ func toShellParts(items ...interface{}) []ExpectedShellPart {
 			parts = append(parts, Text(v))
 		case ExpectedFunctionDecorator:
 			// Validate that function decorators are only used inline
-			if !stdlib.IsFunctionDecorator(v.Name) {
+			if !decorators.IsFunctionDecorator(v.Name) {
 				// Instead of panic, create an error text part
 				parts = append(parts, Text(fmt.Sprintf("ERROR: '%s' is not a function decorator and cannot be used inline in shell content", v.Name)))
 			} else {
@@ -910,7 +1020,7 @@ func expressionToComparable(expr ast.Expression) interface{} {
 	case *ast.FunctionDecorator:
 		args := make([]interface{}, len(e.Args))
 		for i, arg := range e.Args {
-			args[i] = expressionToComparable(arg)
+			args[i] = namedParameterToComparable(arg)
 		}
 		return map[string]interface{}{
 			"Type": "function_decorator",
@@ -925,22 +1035,61 @@ func expressionToComparable(expr ast.Expression) interface{} {
 	}
 }
 
-func expectedExpressionToComparable(expr ExpectedExpression) interface{} {
-	if expr.Type == "function_decorator" {
-		args := make([]interface{}, len(expr.Args))
-		for i, arg := range expr.Args {
-			args[i] = expectedExpressionToComparable(arg)
+// namedParameterToComparable converts a NamedParameter to a comparable format
+func namedParameterToComparable(param ast.NamedParameter) interface{} {
+	result := map[string]interface{}{
+		"Name": param.Name,
+	}
+
+	// Add the value using the existing expression logic
+	if param.Value != nil {
+		result["Value"] = expressionToComparable(param.Value)
+	}
+
+	return result
+}
+
+// Helper function to convert expected decorator arguments to NamedParameter format using registry
+func expectedArgsToNamedParams(decoratorName string, args []ExpectedExpression) []interface{} {
+	result := make([]interface{}, len(args))
+
+	// Look up the decorator in the registry to get parameter names
+	// Try function, block, and pattern decorators
+	var schema []decorators.ParameterSchema
+	if funcDecorator, err := decorators.GetFunction(decoratorName); err == nil {
+		schema = funcDecorator.ParameterSchema()
+	} else if blockDecorator, err := decorators.GetBlock(decoratorName); err == nil {
+		schema = blockDecorator.ParameterSchema()
+	} else if patternDecorator, err := decorators.GetPattern(decoratorName); err == nil {
+		schema = patternDecorator.ParameterSchema()
+	} else {
+		panic(fmt.Sprintf("Decorator %s not found in registry - all decorators used in tests must be registered", decoratorName))
+	}
+
+	for i, arg := range args {
+		var paramName string
+
+		// If the argument already has a name (from Named() helper), use it
+		if arg.Name != "" {
+			paramName = arg.Name
+		} else {
+			// Map positional arguments to parameter names from schema
+			if i >= len(schema) {
+				panic(fmt.Sprintf("Decorator %s expects at most %d parameters, but test provided %d parameters", decoratorName, len(schema), len(args)))
+			}
+			paramName = schema[i].Name
 		}
-		return map[string]interface{}{
-			"Type": "function_decorator",
-			"Name": expr.Name,
-			"Args": args,
+
+		result[i] = map[string]interface{}{
+			"Name": paramName,
+			"Value": map[string]interface{}{
+				"Type":  arg.Type,
+				"Value": arg.Value,
+			},
 		}
 	}
-	return map[string]interface{}{
-		"Type":  expr.Type,
-		"Value": expr.Value,
-	}
+
+	return result
 }
 
 func shellPartToComparable(part ast.ShellPart) interface{} {
@@ -953,7 +1102,7 @@ func shellPartToComparable(part ast.ShellPart) interface{} {
 	case *ast.FunctionDecorator:
 		args := make([]interface{}, len(p.Args))
 		for i, arg := range p.Args {
-			args[i] = expressionToComparable(arg)
+			args[i] = namedParameterToComparable(arg)
 		}
 		return map[string]interface{}{
 			"Type": "function_decorator",
@@ -980,10 +1129,7 @@ func expectedShellPartToComparable(part ExpectedShellPart) interface{} {
 		result["Text"] = part.Text
 	case "function_decorator":
 		if part.FunctionDecorator != nil {
-			args := make([]interface{}, len(part.FunctionDecorator.Args))
-			for i, arg := range part.FunctionDecorator.Args {
-				args[i] = expectedExpressionToComparable(arg)
-			}
+			args := expectedArgsToNamedParams(part.FunctionDecorator.Name, part.FunctionDecorator.Args)
 			result["FunctionDecorator"] = map[string]interface{}{
 				"Name": part.FunctionDecorator.Name,
 				"Args": args,
@@ -1045,7 +1191,7 @@ func commandContentToComparable(content ast.CommandContent) interface{} {
 	case *ast.BlockDecorator:
 		args := make([]interface{}, len(c.Args))
 		for i, arg := range c.Args {
-			args[i] = expressionToComparable(arg)
+			args[i] = namedParameterToComparable(arg)
 		}
 		contentArray := make([]interface{}, len(c.Content))
 		for i, content := range c.Content {
@@ -1060,7 +1206,7 @@ func commandContentToComparable(content ast.CommandContent) interface{} {
 	case *ast.PatternDecorator:
 		args := make([]interface{}, len(c.Args))
 		for i, arg := range c.Args {
-			args[i] = expressionToComparable(arg)
+			args[i] = namedParameterToComparable(arg)
 		}
 		patterns := make([]interface{}, len(c.Patterns))
 		for i, pattern := range c.Patterns {
@@ -1111,10 +1257,7 @@ func expectedCommandContentToComparable(content ExpectedCommandContent) interfac
 			"Parts": parts,
 		}
 	case ExpectedBlockDecorator:
-		args := make([]interface{}, len(c.Args))
-		for i, arg := range c.Args {
-			args[i] = expectedExpressionToComparable(arg)
-		}
+		args := expectedArgsToNamedParams(c.Name, c.Args)
 		content := make([]interface{}, len(c.Content))
 		for i, cont := range c.Content {
 			content[i] = expectedCommandContentToComparable(cont)
@@ -1126,10 +1269,7 @@ func expectedCommandContentToComparable(content ExpectedCommandContent) interfac
 			"Content": content,
 		}
 	case ExpectedPatternDecorator:
-		args := make([]interface{}, len(c.Args))
-		for i, arg := range c.Args {
-			args[i] = expectedExpressionToComparable(arg)
-		}
+		args := expectedArgsToNamedParams(c.Name, c.Args)
 		patterns := make([]interface{}, len(c.Patterns))
 		for i, pattern := range c.Patterns {
 			// Convert pattern branch to comparable format
@@ -1145,10 +1285,7 @@ func expectedCommandContentToComparable(content ExpectedCommandContent) interfac
 			"Patterns": patterns,
 		}
 	case ExpectedFunctionDecorator:
-		args := make([]interface{}, len(c.Args))
-		for i, arg := range c.Args {
-			args[i] = expectedExpressionToComparable(arg)
-		}
+		args := expectedArgsToNamedParams(c.Name, c.Args)
 		return map[string]interface{}{
 			"Type": "function_decorator",
 			"Name": c.Name,
@@ -1211,7 +1348,7 @@ func expectedCommandContentArrayToComparable(contents []ExpectedCommandContent) 
 
 func RunTestCase(t *testing.T, tc TestCase) {
 	t.Run(tc.Name, func(t *testing.T) {
-		program, err := Parse(tc.Input)
+		program, err := Parse(strings.NewReader(tc.Input))
 
 		if tc.WantErr {
 			if err == nil {
@@ -1243,8 +1380,11 @@ func RunTestCase(t *testing.T, tc TestCase) {
 				}
 
 				expectedComparable := map[string]interface{}{
-					"Name":  expectedVar.Name,
-					"Value": expectedExpressionToComparable(expectedVar.Value),
+					"Name": expectedVar.Name,
+					"Value": map[string]interface{}{
+						"Type":  expectedVar.Value.Type,
+						"Value": expectedVar.Value.Value,
+					},
 				}
 
 				if diff := cmp.Diff(expectedComparable, actualComparable); diff != "" {

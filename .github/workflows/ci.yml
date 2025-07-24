@@ -201,138 +201,7 @@ jobs:
           echo "🔍 Running comprehensive Nix flake check..."
           nix flake check --print-build-logs
 
-  # =============================================================================
-  # 🧪 NIX TESTS - Generated CLI Testing (5-8m)
-  # =============================================================================
-  nix-tests:
-    name: Nix Tests
-    runs-on: ubuntu-latest
-    needs: [nix-core]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v8
-        with:
-          logger: pretty
-
-      - name: Run Nix test suite
-        run: |
-          echo "🧪 Running Nix-based tests..."
-          nix build .#tests --print-build-logs
-          echo "✅ Core test suite passed"
-
-      - name: Run example tests
-        run: |
-          echo "🧪 Running example CLI tests..."
-          nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available"
-
-      - name: Test individual components (continue on failure)
-        run: |
-          echo "🧪 Testing individual components..."
-
-          # Test each component individually, don't fail the whole job
-          components=(
-            "test-basic:Basic functionality"
-            "test-posix:POSIX syntax"
-            "test-variables:Variable expansion"
-            "test-processes:Process management"
-            "test-blocks:Block commands"
-            "test-errors:Error handling"
-            "test-performance:Performance"
-            "test-webdev:Web development"
-            "test-go:Go project"
-          )
-
-          for component in "${components[@]}"; do
-            name="${component%%:*}"
-            desc="${component##*:}"
-            echo "Testing $desc..."
-            if nix build .#${name} --print-build-logs 2>/dev/null; then
-              echo "✅ $desc tests passed"
-            else
-              echo "⚠️  $desc tests not available or failed"
-            fi
-          done
-
-  # =============================================================================
-  # 🎯 EXAMPLE CLIS - Real-world Usage Examples (8-12m)
-  # =============================================================================
-  nix-examples:
-    name: Example CLIs
-    runs-on: ubuntu-latest
-    needs: [nix-tests]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v8
-        with:
-          logger: pretty
-
-      - name: Build all example CLIs
-        run: |
-          echo "🎯 Building all example CLIs..."
-
-          examples=(
-            "basicDev:Basic development CLI"
-            "webDev:Web development CLI"
-            "goProject:Go project CLI"
-            "rustProject:Rust project CLI"
-            "dataScienceProject:Data science CLI"
-            "devOpsProject:DevOps CLI"
-          )
-
-          for example in "${examples[@]}"; do
-            name="${example%%:*}"
-            desc="${example##*:}"
-            echo "Building $desc..."
-            if nix build .#${name} --print-build-logs; then
-              echo "✅ $desc built successfully"
-              # Test the CLI
-              echo "🧪 Testing $desc..."
-              ./result/bin/* --help || echo "⚠️  Help command not available"
-            else
-              echo "❌ Failed to build $desc"
-              exit 1
-            fi
-          done
-
-      - name: Interactive example testing
-        run: |
-          echo "🎯 Running interactive example tests..."
-
-          # Test each example's basic functionality
-          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
-
-          for example in "${examples[@]}"; do
-            echo "Testing $example..."
-            if nix run .#${example} -- --help >/dev/null 2>&1; then
-              echo "✅ $example CLI works"
-            else
-              echo "⚠️  $example CLI has issues"
-            fi
-          done
-
-      - name: Upload example binaries
-        run: |
-          echo "📦 Collecting example binaries..."
-          mkdir -p example-binaries
-
-          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
-          for example in "${examples[@]}"; do
-            if nix build .#${example} --print-build-logs; then
-              cp -L result/bin/* example-binaries/${example} || echo "Could not copy ${example}"
-            fi
-          done
-
-      - name: Archive example binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: example-clis
-          path: example-binaries/
 
   # =============================================================================
   # 📋 SUMMARY - Collect Results
@@ -340,7 +209,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [format-lint, go-tests, build-binaries, nix-core, nix-tests, nix-examples]
+    needs: [format-lint, go-tests, build-binaries, nix-core]
     if: always()
     steps:
       - name: Check job statuses
@@ -353,8 +222,6 @@ jobs:
             "${{ needs.go-tests.result }}:Go Tests"
             "${{ needs.build-binaries.result }}:Build Binaries"
             "${{ needs.nix-core.result }}:Nix Core"
-            "${{ needs.nix-tests.result }}:Nix Tests"
-            "${{ needs.nix-examples.result }}:Example CLIs"
           )
 
           all_passed=true
@@ -403,10 +270,6 @@ jobs:
           # Copy binaries with dev suffix
           find artifacts/ -name 'devcmd-*' -type f -exec cp {} latest/ \;
 
-          # Copy example CLIs
-          if [ -d artifacts/example-clis ]; then
-            cp -r artifacts/example-clis latest/
-          fi
 
           # Create build info
           echo "Built from commit: ${{ github.sha }}" > latest/build-info.txt
@@ -483,17 +346,6 @@ jobs:
               ./cmd/devcmd
           done
 
-      - name: Build example CLIs
-        run: |
-          echo "🎯 Building example CLIs for release..."
-          mkdir -p release/examples/
-
-          examples=(basicDev webDev goProject rustProject dataScienceProject devOpsProject)
-          for example in "${examples[@]}"; do
-            echo "Building $example..."
-            nix build .#${example} --print-build-logs
-            cp -L result/bin/* "release/examples/${example}" || echo "Could not copy ${example}"
-          done
 
       - name: Create checksums
         run: |
@@ -507,12 +359,6 @@ jobs:
             fi
           done
 
-          # Create checksums for examples
-          for file in examples/*; do
-            if [ -f "$file" ]; then
-              sha256sum "$file" >> checksums.txt
-            fi
-          done
 
       - name: Create release
         uses: softprops/action-gh-release@v1
@@ -521,7 +367,6 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
             release/devcmd-*
-            release/examples/*
             release/checksums.txt
           generate_release_notes: true
           body: |
@@ -536,8 +381,6 @@ jobs:
             - **macOS (Apple Silicon)**: `devcmd-darwin-arm64`
             - **Windows (x64)**: `devcmd-windows-amd64.exe`
 
-            ### 🎯 Example CLIs
-            Pre-built example CLIs are included in the `examples/` directory.
 
             ### ✅ Verification
             Verify downloads with SHA256 checksums in `checksums.txt`.

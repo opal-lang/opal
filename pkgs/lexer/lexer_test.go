@@ -5,12 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aledsdavies/devcmd/pkgs/types"
+
 	"github.com/google/go-cmp/cmp"
 )
 
 // tokenExpectation represents expected token with type and value
 type tokenExpectation struct {
-	Type  TokenType
+	Type  types.TokenType
 	Value string
 }
 
@@ -18,7 +20,7 @@ type tokenExpectation struct {
 func assertTokens(t *testing.T, name string, input string, expected []tokenExpectation) {
 	t.Helper()
 
-	lexer := New(input)
+	lexer := New(strings.NewReader(input))
 	tokens := lexer.TokenizeToSlice()
 
 	// Convert tokens to comparable format (excluding positions)
@@ -35,7 +37,7 @@ func assertTokens(t *testing.T, name string, input string, expected []tokenExpec
 		}
 
 		// Show input for context
-		if strings.Contains(diff, "SHELL_TEXT") || strings.Contains(diff, "IDENTIFIER") {
+		if strings.Contains(diff, "types.SHELL_TEXT") || strings.Contains(diff, "types.IDENTIFIER") {
 			t.Logf("\nInput: %q", input)
 
 			// Brief analysis of the likely issue
@@ -59,7 +61,7 @@ func assertTokens(t *testing.T, name string, input string, expected []tokenExpec
 }
 
 // Helper to convert tokens to comparable format without positions
-func tokensToComparableNoPos(tokens []Token) []map[string]interface{} {
+func tokensToComparableNoPos(tokens []types.Token) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(tokens))
 	for i, tok := range tokens {
 		result[i] = map[string]interface{}{
@@ -92,83 +94,83 @@ func TestCoreStructure(t *testing.T) {
 			name:  "variable declaration",
 			input: `var PORT = 8080`,
 			expected: []tokenExpectation{
-				{VAR, "var"},
-				{IDENTIFIER, "PORT"},
-				{EQUALS, "="},
-				{NUMBER, "8080"},
-				{EOF, ""},
+				{types.VAR, "var"},
+				{types.IDENTIFIER, "PORT"},
+				{types.EQUALS, "="},
+				{types.NUMBER, "8080"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "simple command",
 			input: `build: echo hello`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo hello"},
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo hello"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "watch command",
 			input: `watch server: node app.js`,
 			expected: []tokenExpectation{
-				{WATCH, "watch"},
-				{IDENTIFIER, "server"},
-				{COLON, ":"},
-				{SHELL_TEXT, "node app.js"},
-				{EOF, ""},
+				{types.WATCH, "watch"},
+				{types.IDENTIFIER, "server"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "node app.js"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "stop command",
 			input: `stop server: pkill node`,
 			expected: []tokenExpectation{
-				{STOP, "stop"},
-				{IDENTIFIER, "server"},
-				{COLON, ":"},
-				{SHELL_TEXT, "pkill node"},
-				{EOF, ""},
+				{types.STOP, "stop"},
+				{types.IDENTIFIER, "server"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "pkill node"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "command with block",
 			input: `deploy: { npm run build; npm run deploy }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build; npm run deploy"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build; npm run deploy"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "decorator with arguments",
 			input: `@timeout(30s)`,
 			expected: []tokenExpectation{
-				{AT, "@"},
-				{IDENTIFIER, "timeout"},
-				{LPAREN, "("},
-				{DURATION, "30s"},
-				{RPAREN, ")"},
-				{EOF, ""},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "30s"},
+				{types.RPAREN, ")"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "grouped variables",
 			input: "var (\n  PORT = 8080\n  HOST = \"localhost\"\n)",
 			expected: []tokenExpectation{
-				{VAR, "var"},
-				{LPAREN, "("},
-				{IDENTIFIER, "PORT"},
-				{EQUALS, "="},
-				{NUMBER, "8080"},
-				{IDENTIFIER, "HOST"},
-				{EQUALS, "="},
-				{STRING, "localhost"},
-				{RPAREN, ")"},
-				{EOF, ""},
+				{types.VAR, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "PORT"},
+				{types.EQUALS, "="},
+				{types.NUMBER, "8080"},
+				{types.IDENTIFIER, "HOST"},
+				{types.EQUALS, "="},
+				{types.STRING, "localhost"},
+				{types.RPAREN, ")"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -190,53 +192,53 @@ func TestLiteralTypes(t *testing.T) {
 			name:  "string types",
 			input: `"double" 'single' ` + "`backtick`",
 			expected: []tokenExpectation{
-				{STRING, "double"},
-				{STRING, "single"},
-				{STRING, "backtick"},
-				{EOF, ""},
+				{types.STRING, "double"},
+				{types.STRING, "single"},
+				{types.STRING, "backtick"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "number types",
 			input: `42 3.14 -100 0.5`,
 			expected: []tokenExpectation{
-				{NUMBER, "42"},
-				{NUMBER, "3.14"},
-				{NUMBER, "-100"},
-				{NUMBER, "0.5"},
-				{EOF, ""},
+				{types.NUMBER, "42"},
+				{types.NUMBER, "3.14"},
+				{types.NUMBER, "-100"},
+				{types.NUMBER, "0.5"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "duration types",
 			input: `30s 5m 1h 500ms 2.5s`,
 			expected: []tokenExpectation{
-				{DURATION, "30s"},
-				{DURATION, "5m"},
-				{DURATION, "1h"},
-				{DURATION, "500ms"},
-				{DURATION, "2.5s"},
-				{EOF, ""},
+				{types.DURATION, "30s"},
+				{types.DURATION, "5m"},
+				{types.DURATION, "1h"},
+				{types.DURATION, "500ms"},
+				{types.DURATION, "2.5s"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "boolean types",
 			input: `true false`,
 			expected: []tokenExpectation{
-				{BOOLEAN, "true"},
-				{BOOLEAN, "false"},
-				{EOF, ""},
+				{types.BOOLEAN, "true"},
+				{types.BOOLEAN, "false"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "boolean vs identifier",
 			input: `var truename = true`,
 			expected: []tokenExpectation{
-				{VAR, "var"},
-				{IDENTIFIER, "truename"},
-				{EQUALS, "="},
-				{BOOLEAN, "true"},
-				{EOF, ""},
+				{types.VAR, "var"},
+				{types.IDENTIFIER, "truename"},
+				{types.EQUALS, "="},
+				{types.BOOLEAN, "true"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -258,40 +260,40 @@ func TestShellContentHandling(t *testing.T) {
 			name:  "shell with semicolons",
 			input: `build: echo hello; echo world`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo hello; echo world"},
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo hello; echo world"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "shell with pipes",
 			input: `process: cat file | grep pattern | sort`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "process"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cat file | grep pattern | sort"},
-				{EOF, ""},
+				{types.IDENTIFIER, "process"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cat file | grep pattern | sort"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "shell with logical operators",
 			input: `deploy: npm build && npm test || exit 1`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{SHELL_TEXT, "npm build && npm test || exit 1"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "npm build && npm test || exit 1"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "shell with redirections",
 			input: `log: tail -f app.log > output.txt 2>&1`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "log"},
-				{COLON, ":"},
-				{SHELL_TEXT, "tail -f app.log > output.txt 2>&1"},
-				{EOF, ""},
+				{types.IDENTIFIER, "log"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "tail -f app.log > output.txt 2>&1"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -301,13 +303,13 @@ func TestShellContentHandling(t *testing.T) {
     echo "line2"
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "echo \"line1\""},
-				{SHELL_TEXT, "echo \"line2\""},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "echo \"line1\""},
+				{types.SHELL_TEXT, "echo \"line2\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -330,10 +332,10 @@ func TestLineContinuation(t *testing.T) {
 			input: `build: echo hello \
 world`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo hello world"}, // Continuation merged with space
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo hello world"}, // Continuation merged with space
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -342,10 +344,10 @@ world`,
 beautiful \
 world`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo hello beautiful world"},
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo hello beautiful world"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -355,23 +357,44 @@ world`,
     world
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "echo hello world"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "echo hello world"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
-			name: "continuation in quoted string",
+			name: "continuation in single quoted string (preserved)",
 			input: `build: echo 'hello \
 world'`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo 'hello \\\nworld'"}, // Preserved in quotes
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo 'hello \\\nworld'"}, // Preserved in single quotes
+				{types.EOF, ""},
+			},
+		},
+		{
+			name: "continuation in double quoted string (processed)",
+			input: `build: echo "hello \
+world"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "hello world"`}, // Processed in double quotes
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "continuation in backtick string (processed)",
+			input: "build: echo `hello \\\nworld`",
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo `hello world`"}, // Should be processed in backticks
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -394,28 +417,28 @@ func TestPatternDecorators(t *testing.T) {
 			input: `deploy: @when(ENV) {
   prod: echo production
   dev: echo development
-  *: echo default
+  default: echo default
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "ENV"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "prod"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo production"},
-				{IDENTIFIER, "dev"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo development"},
-				{ASTERISK, "*"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo default"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "prod"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo production"},
+				{types.IDENTIFIER, "dev"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo development"},
+				{types.IDENTIFIER, "default"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo default"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -423,32 +446,32 @@ func TestPatternDecorators(t *testing.T) {
 			input: `deploy: @when(ENV) {
   prod: { npm run build && npm run deploy }
   dev: npm run dev-deploy
-  *: { echo "Unknown env: $ENV"; exit 1 }
+  default: { echo "Unknown env: $ENV"; exit 1 }
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "ENV"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "prod"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build && npm run deploy"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "dev"},
-				{COLON, ":"},
-				{SHELL_TEXT, "npm run dev-deploy"},
-				{ASTERISK, "*"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "echo \"Unknown env: $ENV\"; exit 1"},
-				{RBRACE, "}"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "prod"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build && npm run deploy"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "dev"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "npm run dev-deploy"},
+				{types.IDENTIFIER, "default"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "echo \"Unknown env: $ENV\"; exit 1"},
+				{types.RBRACE, "}"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -459,22 +482,22 @@ func TestPatternDecorators(t *testing.T) {
   finally: echo "done"
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{AT, "@"},
-				{TRY, "try"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "main"},
-				{COLON, ":"},
-				{SHELL_TEXT, "npm test"},
-				{IDENTIFIER, "error"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo \"failed\""},
-				{IDENTIFIER, "finally"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo \"done\""},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "try"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "main"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "npm test"},
+				{types.IDENTIFIER, "error"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"failed\""},
+				{types.IDENTIFIER, "finally"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"done\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -484,36 +507,36 @@ func TestPatternDecorators(t *testing.T) {
   dev: @timeout(30s) { deploy dev }
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "ENV"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "prod"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "timeout"},
-				{LPAREN, "("},
-				{DURATION, "60s"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "deploy prod"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "dev"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "timeout"},
-				{LPAREN, "("},
-				{DURATION, "30s"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "deploy dev"},
-				{RBRACE, "}"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "prod"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "60s"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "deploy prod"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "dev"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "30s"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "deploy dev"},
+				{types.RBRACE, "}"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -525,50 +548,50 @@ func TestPatternDecorators(t *testing.T) {
     npm run build:test
     npm run lint
   }
-  *: npm run build
+  default: npm run build
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "STAGE"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "prod"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "timeout"},
-				{LPAREN, "("},
-				{DURATION, "60s"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build:prod"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "dev"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "retry"},
-				{LPAREN, "("},
-				{NUMBER, "3"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build:dev"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "parallel"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build:test"},
-				{SHELL_TEXT, "npm run lint"},
-				{RBRACE, "}"},
-				{ASTERISK, "*"},
-				{COLON, ":"},
-				{SHELL_TEXT, "npm run build"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "STAGE"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "prod"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "60s"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build:prod"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "dev"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "retry"},
+				{types.LPAREN, "("},
+				{types.NUMBER, "3"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build:dev"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "parallel"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build:test"},
+				{types.SHELL_TEXT, "npm run lint"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "default"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "npm run build"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -582,34 +605,34 @@ func TestPatternDecorators(t *testing.T) {
     npm run build:dev
     npm start
   }
-  *: echo "Unknown environment"
+  default: echo "Unknown environment"
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "server"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "NODE_ENV"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "production"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build:prod"},
-				{SHELL_TEXT, "npm run deploy"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "development"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build:dev"},
-				{SHELL_TEXT, "npm start"},
-				{RBRACE, "}"},
-				{ASTERISK, "*"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo \"Unknown environment\""},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "server"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NODE_ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "production"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build:prod"},
+				{types.SHELL_TEXT, "npm run deploy"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "development"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build:dev"},
+				{types.SHELL_TEXT, "npm start"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "default"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"Unknown environment\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -620,36 +643,36 @@ func TestPatternDecorators(t *testing.T) {
   finally: echo "Done"
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{AT, "@"},
-				{TRY, "try"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "main"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "timeout"},
-				{LPAREN, "("},
-				{DURATION, "30s"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "npm run build"},
-				{RBRACE, "}"},
-				{IDENTIFIER, "error"},
-				{COLON, ":"},
-				{AT, "@"},
-				{IDENTIFIER, "retry"},
-				{LPAREN, "("},
-				{NUMBER, "3"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "echo \"Retrying...\""},
-				{RBRACE, "}"},
-				{IDENTIFIER, "finally"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo \"Done\""},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "try"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "main"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "30s"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build"},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "error"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "retry"},
+				{types.LPAREN, "("},
+				{types.NUMBER, "3"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "echo \"Retrying...\""},
+				{types.RBRACE, "}"},
+				{types.IDENTIFIER, "finally"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"Done\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -659,22 +682,22 @@ func TestPatternDecorators(t *testing.T) {
   dev: echo dev
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{AT, "@"},
-				{WHEN, "when"},
-				{LPAREN, "("},
-				{IDENTIFIER, "ENV"},
-				{RPAREN, ")"},
-				{LBRACE, "{"},
-				{IDENTIFIER, "prod"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo prod"},
-				{IDENTIFIER, "dev"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo dev"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "prod"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo prod"},
+				{types.IDENTIFIER, "dev"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo dev"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -687,7 +710,7 @@ func TestPatternDecorators(t *testing.T) {
 			// NEWLINE tokens no longer exist - validation not needed
 			// Only check tests that actually have pattern decorators
 			if strings.Contains(tt.input, "@when") || strings.Contains(tt.input, "@try") {
-				lexer := New(tt.input)
+				lexer := New(strings.NewReader(tt.input))
 				tokens := lexer.TokenizeToSlice()
 
 				inPatternBlock := false
@@ -695,15 +718,15 @@ func TestPatternDecorators(t *testing.T) {
 
 				for i, tok := range tokens {
 					// Track when we enter a pattern block
-					if i > 0 && (tokens[i-1].Type == WHEN || tokens[i-1].Type == TRY) && tok.Type == LBRACE {
+					if i > 0 && tokens[i-1].Type == types.IDENTIFIER && tok.Type == types.LBRACE {
 						inPatternBlock = true
 						braceDepth = 1
 					} else if inPatternBlock {
 						// Track brace nesting
 						switch tok.Type {
-						case LBRACE:
+						case types.LBRACE:
 							braceDepth++
-						case RBRACE:
+						case types.RBRACE:
 							braceDepth--
 							if braceDepth == 0 {
 								inPatternBlock = false
@@ -728,42 +751,42 @@ func TestEdgeCases(t *testing.T) {
 			name:  "empty input",
 			input: "",
 			expected: []tokenExpectation{
-				{EOF, ""},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "whitespace only",
 			input: "   \n\t  ",
 			expected: []tokenExpectation{
-				{EOF, ""},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "comment only",
 			input: "# comment",
 			expected: []tokenExpectation{
-				{COMMENT, "# comment"},
-				{EOF, ""},
+				{types.COMMENT, "# comment"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "empty command",
 			input: "empty:",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "empty"},
-				{COLON, ":"},
-				{EOF, ""},
+				{types.IDENTIFIER, "empty"},
+				{types.COLON, ":"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "empty block",
 			input: "empty: { }",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "empty"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "empty"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -771,7 +794,7 @@ func TestEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use modified assertTokens that handles position edge cases
-			lexer := New(tt.input)
+			lexer := New(strings.NewReader(tt.input))
 			tokens := lexer.TokenizeToSlice()
 
 			// Check token count
@@ -785,16 +808,16 @@ func TestEdgeCases(t *testing.T) {
 				actual := tokens[i]
 
 				if actual.Type != exp.Type {
-					t.Errorf("Token[%d]: expected type %s, got %s", i, exp.Type, actual.Type)
+					t.Errorf("types.Token[%d]: expected type %s, got %s", i, exp.Type, actual.Type)
 				}
 
 				if actual.Value != exp.Value {
-					t.Errorf("Token[%d]: expected value %q, got %q", i, exp.Value, actual.Value)
+					t.Errorf("types.Token[%d]: expected value %q, got %q", i, exp.Value, actual.Value)
 				}
 
 				// Special position handling for edge cases
-				if actual.Line <= 0 || (actual.Column <= 0 && actual.Type != EOF) {
-					t.Errorf("Token[%d] has invalid position: %d:%d",
+				if actual.Line <= 0 || (actual.Column <= 0 && actual.Type != types.EOF) {
+					t.Errorf("types.Token[%d] has invalid position: %d:%d",
 						i, actual.Line, actual.Column)
 				}
 			}
@@ -812,27 +835,27 @@ func TestModeTransitions(t *testing.T) {
 			name:  "language to command mode",
 			input: "build: echo hello",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},      // LanguageMode
-				{COLON, ":"},               // LanguageMode → CommandMode
-				{SHELL_TEXT, "echo hello"}, // CommandMode
-				{EOF, ""},                  // LanguageMode
+				{types.IDENTIFIER, "build"},      // LanguageMode
+				{types.COLON, ":"},               // LanguageMode → CommandMode
+				{types.SHELL_TEXT, "echo hello"}, // CommandMode
+				{types.EOF, ""},                  // LanguageMode
 			},
 		},
 		{
 			name:  "decorator in command mode",
 			input: "build: @timeout(30s) { echo hello }",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},      // LanguageMode
-				{COLON, ":"},               // LanguageMode
-				{AT, "@"},                  // CommandMode → LanguageMode
-				{IDENTIFIER, "timeout"},    // LanguageMode
-				{LPAREN, "("},              // LanguageMode
-				{DURATION, "30s"},          // LanguageMode
-				{RPAREN, ")"},              // LanguageMode
-				{LBRACE, "{"},              // LanguageMode → CommandMode
-				{SHELL_TEXT, "echo hello"}, // CommandMode
-				{RBRACE, "}"},              // CommandMode → LanguageMode
-				{EOF, ""},                  // LanguageMode
+				{types.IDENTIFIER, "build"},      // LanguageMode
+				{types.COLON, ":"},               // LanguageMode
+				{types.AT, "@"},                  // CommandMode → LanguageMode
+				{types.IDENTIFIER, "timeout"},    // LanguageMode
+				{types.LPAREN, "("},              // LanguageMode
+				{types.DURATION, "30s"},          // LanguageMode
+				{types.RPAREN, ")"},              // LanguageMode
+				{types.LBRACE, "{"},              // LanguageMode → CommandMode
+				{types.SHELL_TEXT, "echo hello"}, // CommandMode
+				{types.RBRACE, "}"},              // CommandMode → LanguageMode
+				{types.EOF, ""},                  // LanguageMode
 			},
 		},
 	}
@@ -854,73 +877,73 @@ func TestComments(t *testing.T) {
 			name:  "single line comment",
 			input: "# This is a comment",
 			expected: []tokenExpectation{
-				{COMMENT, "# This is a comment"},
-				{EOF, ""},
+				{types.COMMENT, "# This is a comment"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "multi-line comment",
 			input: "/* This is\na multi-line\ncomment */",
 			expected: []tokenExpectation{
-				{MULTILINE_COMMENT, "/* This is\na multi-line\ncomment */"},
-				{EOF, ""},
+				{types.MULTILINE_COMMENT, "/* This is\na multi-line\ncomment */"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "comment after command",
 			input: "build: echo hello # comment",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "build"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo hello # comment"}, // Comment is part of shell
-				{EOF, ""},
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo hello # comment"}, // Comment is part of shell
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "comment at start followed by var declaration",
 			input: "# Data science project development\nvar PYTHON = \"python3\"",
 			expected: []tokenExpectation{
-				{COMMENT, "# Data science project development"},
-				{VAR, "var"},
-				{IDENTIFIER, "PYTHON"},
-				{EQUALS, "="},
-				{STRING, "python3"},
-				{EOF, ""},
+				{types.COMMENT, "# Data science project development"},
+				{types.VAR, "var"},
+				{types.IDENTIFIER, "PYTHON"},
+				{types.EQUALS, "="},
+				{types.STRING, "python3"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "shell command with hash in URL",
 			input: "fetch: curl https://example.com#anchor",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "fetch"},
-				{COLON, ":"},
-				{SHELL_TEXT, "curl https://example.com#anchor"}, // # should be part of shell text
-				{EOF, ""},
+				{types.IDENTIFIER, "fetch"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "curl https://example.com#anchor"}, // # should be part of shell text
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "shell command with git issue reference",
 			input: "commit: git commit -m \"Fix issue #123\"",
 			expected: []tokenExpectation{
-				{IDENTIFIER, "commit"},
-				{COLON, ":"},
-				{SHELL_TEXT, "git commit -m \"Fix issue #123\""}, // # should be part of shell text
-				{EOF, ""},
+				{types.IDENTIFIER, "commit"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "git commit -m \"Fix issue #123\""}, // # should be part of shell text
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "reproduce failing example pattern",
 			input: "var PYTHON = \"python3\"\n# Data science project development\nsetup: echo \"Setting up...\"",
 			expected: []tokenExpectation{
-				{VAR, "var"},
-				{IDENTIFIER, "PYTHON"},
-				{EQUALS, "="},
-				{STRING, "python3"},
-				{COMMENT, "# Data science project development"},
-				{IDENTIFIER, "setup"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo \"Setting up...\""},
-				{EOF, ""},
+				{types.VAR, "var"},
+				{types.IDENTIFIER, "PYTHON"},
+				{types.EQUALS, "="},
+				{types.STRING, "python3"},
+				{types.COMMENT, "# Data science project development"},
+				{types.IDENTIFIER, "setup"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"Setting up...\""},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -937,25 +960,25 @@ func TestTokenPositions(t *testing.T) {
 	input := `var PORT = 8080
 build: echo hello`
 
-	lexer := New(input)
+	lexer := New(strings.NewReader(input))
 	tokens := lexer.TokenizeToSlice()
 
 	// Expected positions (1-based indexing)
 	expectedPositions := []struct {
-		tokenType TokenType
+		tokenType types.TokenType
 		line      int
 		column    int
 		value     string
 	}{
-		{VAR, 1, 1, "var"},         // 'var' starts at column 1
-		{IDENTIFIER, 1, 5, "PORT"}, // 'PORT' starts at column 5
-		{EQUALS, 1, 10, "="},       // '=' at column 10
-		{NUMBER, 1, 12, "8080"},    // '8080' starts at column 12
+		{types.VAR, 1, 1, "var"},         // 'var' starts at column 1
+		{types.IDENTIFIER, 1, 5, "PORT"}, // 'PORT' starts at column 5
+		{types.EQUALS, 1, 10, "="},       // '=' at column 10
+		{types.NUMBER, 1, 12, "8080"},    // '8080' starts at column 12
 		// NEWLINE token removed from position tests
-		{IDENTIFIER, 2, 1, "build"},      // 'build' starts at line 2, column 1
-		{COLON, 2, 6, ":"},               // ':' at column 6
-		{SHELL_TEXT, 2, 8, "echo hello"}, // Shell text starts at column 8
-		{EOF, 2, 18, ""},                 // EOF position (CORRECTED from 19)
+		{types.IDENTIFIER, 2, 1, "build"},      // 'build' starts at line 2, column 1
+		{types.COLON, 2, 6, ":"},               // ':' at column 6
+		{types.SHELL_TEXT, 2, 8, "echo hello"}, // Shell text starts at column 8
+		{types.EOF, 2, 18, ""},                 // types.EOF position (CORRECTED from 19)
 	}
 
 	// Convert to comparable format
@@ -984,7 +1007,7 @@ build: echo hello`
 	}
 
 	if diff := cmp.Diff(expectedComp, actualComp); diff != "" {
-		t.Errorf("Token positions mismatch (-want +got):\n%s", diff)
+		t.Errorf("types.Token positions mismatch (-want +got):\n%s", diff)
 
 		// Note: NEWLINE token issues no longer exist
 	}
@@ -1000,62 +1023,62 @@ func TestVarInShellText(t *testing.T) {
 			name:  "simple @var in shell text",
 			input: `test: cd @var(DIR)`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cd @var(DIR)"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cd @var(DIR)"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var with surrounding spaces",
 			input: `test: cd @var(DIR) && pwd`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cd @var(DIR) && pwd"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cd @var(DIR) && pwd"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "multiple @var in single command",
 			input: `test: echo @var(FIRST) @var(SECOND)`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo @var(FIRST) @var(SECOND)"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo @var(FIRST) @var(SECOND)"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var in quoted string",
 			input: `test: echo "Hello @var(NAME)"`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, `echo "Hello @var(NAME)"`},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "Hello @var(NAME)"`},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var with shell operators",
 			input: `test: cat @var(FILE) | grep pattern`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cat @var(FILE) | grep pattern"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cat @var(FILE) | grep pattern"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var in block command",
 			input: `test: { cd @var(DIR); make }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, "cd @var(DIR); make"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "cd @var(DIR); make"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -1063,100 +1086,100 @@ func TestVarInShellText(t *testing.T) {
 			input: `test: cd @var(DIR) \
 && make`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cd @var(DIR) && make"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cd @var(DIR) && make"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@env in shell text",
 			input: `test: echo @env("NODE_ENV")`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, `echo @env("NODE_ENV")`},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo @env("NODE_ENV")`},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "mixed @var and @env",
 			input: `test: @var(CMD) --env=@env("ENV_VAR")`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, `@var(CMD) --env=@env("ENV_VAR")`},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `@var(CMD) --env=@env("ENV_VAR")`},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var in shell parameter expansion",
-			input: `test: echo ${@var(VAR):-default}`,
+			input: `test: echo ${@var(types.VAR):-default}`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo ${@var(VAR):-default}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo ${@var(types.VAR):-default}"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var in command substitution",
 			input: `test: echo $(ls @var(DIR) | wc -l)`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo $(ls @var(DIR) | wc -l)"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo $(ls @var(DIR) | wc -l)"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var at start of shell text",
 			input: `test: @var(CMD) arg1 arg2`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "@var(CMD) arg1 arg2"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "@var(CMD) arg1 arg2"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var at end of shell text",
 			input: `test: cd /path/to/@var(DIR)`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cd /path/to/@var(DIR)"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cd /path/to/@var(DIR)"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@ not followed by var should be literal",
 			input: `test: echo user@host.com`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo user@host.com"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo user@host.com"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var without parentheses is literal",
 			input: `test: echo @var is not a decorator`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{SHELL_TEXT, "echo @var is not a decorator"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo @var is not a decorator"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "complex shell with multiple @var",
 			input: `deploy: cd @var(SRC) && npm run build:@var(ENV) && cp -r dist/* @var(DEST)/`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "deploy"},
-				{COLON, ":"},
-				{SHELL_TEXT, "cd @var(SRC) && npm run build:@var(ENV) && cp -r dist/* @var(DEST)/"},
-				{EOF, ""},
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "cd @var(SRC) && npm run build:@var(ENV) && cp -r dist/* @var(DEST)/"},
+				{types.EOF, ""},
 			},
 		},
 		{
@@ -1167,24 +1190,24 @@ func TestVarInShellText(t *testing.T) {
     make @var(TARGET)
 }`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "test"},
-				{COLON, ":"},
-				{LBRACE, "{"},
-				{SHELL_TEXT, `echo "Building @var(APP)"`},
-				{SHELL_TEXT, "cd @var(DIR)"},
-				{SHELL_TEXT, "make @var(TARGET)"},
-				{RBRACE, "}"},
-				{EOF, ""},
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, `echo "Building @var(APP)"`},
+				{types.SHELL_TEXT, "cd @var(DIR)"},
+				{types.SHELL_TEXT, "make @var(TARGET)"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
 			},
 		},
 		{
 			name:  "@var with double @ in shell text",
 			input: `connect: ssh -p @var(PORT) user@@var(HOST)`,
 			expected: []tokenExpectation{
-				{IDENTIFIER, "connect"},
-				{COLON, ":"},
-				{SHELL_TEXT, "ssh -p @var(PORT) user@@var(HOST)"},
-				{EOF, ""},
+				{types.IDENTIFIER, "connect"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "ssh -p @var(PORT) user@@var(HOST)"},
+				{types.EOF, ""},
 			},
 		},
 	}
@@ -1202,7 +1225,7 @@ func BenchmarkLexer(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		lexer := New(input)
+		lexer := New(strings.NewReader(input))
 		tokens := lexer.TokenizeToSlice()
 		_ = tokens
 	}
@@ -1214,7 +1237,7 @@ func generateLargeInput(lines int) string {
 	for i := 0; i < lines; i++ {
 		switch i % 4 {
 		case 0:
-			fmt.Fprintf(&sb, "var VAR%d = \"value%d\"\n", i, i)
+			fmt.Fprintf(&sb, "var types.VAR%d = \"value%d\"\n", i, i)
 		case 1:
 			fmt.Fprintf(&sb, "cmd%d: echo hello %d\n", i, i)
 		case 2:
@@ -1224,6 +1247,90 @@ func generateLargeInput(lines int) string {
 		}
 	}
 	return sb.String()
+}
+
+// TestBlockDecoratorShellContent tests that shell content inside block decorators is properly lexed as SHELL_TEXT
+func TestBlockDecoratorShellContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "parallel decorator with simple shell content",
+			input: `services: @parallel { server; client }`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "services"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "parallel"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "server; client"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "timeout decorator with shell content",
+			input: `build: @timeout(30s) { npm run build }`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "build"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "timeout"},
+				{types.LPAREN, "("},
+				{types.DURATION, "30s"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm run build"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "retry decorator with complex shell content",
+			input: `test: @retry(3) { npm test && echo "success" }`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "retry"},
+				{types.LPAREN, "("},
+				{types.NUMBER, "3"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "npm test && echo \"success\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name: "nested parallel decorator inside command block",
+			input: `format: {
+    @parallel {
+        echo test
+    }
+}`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "format"},
+				{types.COLON, ":"},
+				{types.LBRACE, "{"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "parallel"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, "echo test"},
+				{types.RBRACE, "}"},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
 }
 
 // TestRealWorldFormatCommand tests lexing of the failing format command from commands.cli
@@ -1240,22 +1347,175 @@ format: {
 }`
 
 	expected := []tokenExpectation{
-		{COMMENT, "# Format all code"},
-		{IDENTIFIER, "format"},
-		{COLON, ":"},
-		{LBRACE, "{"},
-		{SHELL_TEXT, "echo \"📝 Formatting all code...\""},
-		{SHELL_TEXT, "echo \"Formatting Go code...\""},
-		{AT, "@"},
-		{IDENTIFIER, "parallel"},
-		{LBRACE, "{"},
-		{SHELL_TEXT, "if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi"},
-		{SHELL_TEXT, "if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo \"⚠️  nixpkgs-fmt not available\"; fi"},
-		{RBRACE, "}"},
-		{SHELL_TEXT, "echo \"✅ Code formatted!\""},
-		{RBRACE, "}"},
-		{EOF, ""},
+		{types.COMMENT, "# Format all code"},
+		{types.IDENTIFIER, "format"},
+		{types.COLON, ":"},
+		{types.LBRACE, "{"},
+		{types.SHELL_TEXT, "echo \"📝 Formatting all code...\""},
+		{types.SHELL_TEXT, "echo \"Formatting Go code...\""},
+		{types.AT, "@"},
+		{types.IDENTIFIER, "parallel"},
+		{types.LBRACE, "{"},
+		{types.SHELL_TEXT, "if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi"},
+		{types.SHELL_TEXT, "if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo \"⚠️  nixpkgs-fmt not available\"; fi"},
+		{types.RBRACE, "}"},
+		{types.SHELL_TEXT, "echo \"✅ Code formatted!\""},
+		{types.RBRACE, "}"},
+		{types.EOF, ""},
 	}
 
 	assertTokens(t, "Real world format command", input, expected)
+}
+
+func TestWatchStopMultipleCommands(t *testing.T) {
+	input := "watch server: npm start\nstop server: pkill node"
+
+	expected := []tokenExpectation{
+		{types.WATCH, "watch"},
+		{types.IDENTIFIER, "server"},
+		{types.COLON, ":"},
+		{types.SHELL_TEXT, "npm start"},
+		{types.STOP, "stop"},
+		{types.IDENTIFIER, "server"},
+		{types.COLON, ":"},
+		{types.SHELL_TEXT, "pkill node"},
+		{types.EOF, ""},
+	}
+
+	assertTokens(t, "watch and stop commands on separate lines", input, expected)
+}
+
+// TestSpecialCharacters tests lexing of commands with special characters
+// This test uses the same inputs as the failing error handling test to diagnose the issue
+func TestSpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "valid command without special chars",
+			input: `valid: echo "This works"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "valid"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "This works"`},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "command with special characters",
+			input: `special-chars: echo "Special: !#\$%^&*()"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "special-chars"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "Special: !#\$%^&*()"`},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "unicode command",
+			input: `unicode: echo "Hello 世界"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "unicode"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "Hello 世界"`},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "special chars in single quotes",
+			input: `single-quote: echo 'Special: !#$%^&*()'`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "single-quote"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo 'Special: !#$%^&*()'`},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "mixed quotes with special chars",
+			input: `mixed: echo "Before" && echo 'Special: !@#$%' && echo "After"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "mixed"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, `echo "Before" && echo 'Special: !@#$%' && echo "After"`},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
+}
+
+func TestNamedParameters(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "retry with named parameter",
+			input: `test: @retry(attempts=3) { echo "task" }`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "retry"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "attempts"},
+				{types.EQUALS, "="},
+				{types.NUMBER, "3"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.SHELL_TEXT, `echo "task"`},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name: "complex nested decorators with named parameters",
+			input: `test: @retry(attempts=3) {
+		@when(ENV) {
+			development: echo "Dev environment"
+		}
+		echo "Always execute"
+	}`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "retry"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "attempts"},
+				{types.EQUALS, "="},
+				{types.NUMBER, "3"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "when"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "ENV"},
+				{types.RPAREN, ")"},
+				{types.LBRACE, "{"},
+				{types.IDENTIFIER, "development"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo \"Dev environment\""},
+				{types.RBRACE, "}"},
+				{types.SHELL_TEXT, "echo \"Always execute\""},
+				{types.RBRACE, "}"},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
 }

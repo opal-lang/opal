@@ -2,9 +2,11 @@ package ast
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
-	"github.com/aledsdavies/devcmd/pkgs/lexer"
+	"github.com/aledsdavies/devcmd/pkgs/types"
 )
 
 // Node represents any node in the AST
@@ -12,7 +14,7 @@ type Node interface {
 	String() string
 	Position() Position
 	TokenRange() TokenRange
-	SemanticTokens() []lexer.Token
+	SemanticTokens() []types.Token
 }
 
 // Position represents source location information
@@ -24,9 +26,9 @@ type Position struct {
 
 // TokenRange represents the span of tokens for this AST node
 type TokenRange struct {
-	Start lexer.Token
-	End   lexer.Token
-	All   []lexer.Token
+	Start types.Token
+	End   types.Token
+	All   []types.Token
 }
 
 // Program represents the root of the CST (entire devcmd file)
@@ -61,7 +63,7 @@ func (p *Program) TokenRange() TokenRange {
 	return p.Tokens
 }
 
-func (p *Program) SemanticTokens() []lexer.Token {
+func (p *Program) SemanticTokens() []types.Token {
 	return p.Tokens.All
 }
 
@@ -73,8 +75,8 @@ type VariableDecl struct {
 	Tokens TokenRange
 
 	// LSP-specific information
-	NameToken  lexer.Token
-	ValueToken lexer.Token
+	NameToken  types.Token
+	ValueToken types.Token
 }
 
 func (v *VariableDecl) String() string {
@@ -89,11 +91,11 @@ func (v *VariableDecl) TokenRange() TokenRange {
 	return v.Tokens
 }
 
-func (v *VariableDecl) SemanticTokens() []lexer.Token {
-	tokens := []lexer.Token{v.NameToken, v.ValueToken}
+func (v *VariableDecl) SemanticTokens() []types.Token {
+	tokens := []types.Token{v.NameToken, v.ValueToken}
 	for _, token := range v.Tokens.All {
-		if token.Type == lexer.IDENTIFIER && token.Value == v.Name {
-			token.Semantic = lexer.SemVariable
+		if token.Type == types.IDENTIFIER && token.Value == v.Name {
+			token.Semantic = types.SemVariable
 		}
 	}
 	return tokens
@@ -107,9 +109,9 @@ type VarGroup struct {
 	Tokens    TokenRange
 
 	// Concrete syntax tokens for precise formatting
-	VarToken   lexer.Token // The "var" keyword
-	OpenParen  lexer.Token // The "(" token
-	CloseParen lexer.Token // The ")" token
+	VarToken   types.Token // The "var" keyword
+	OpenParen  types.Token // The "(" token
+	CloseParen types.Token // The ")" token
 }
 
 func (g *VarGroup) String() string {
@@ -130,12 +132,12 @@ func (g *VarGroup) TokenRange() TokenRange {
 	return g.Tokens
 }
 
-func (g *VarGroup) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (g *VarGroup) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	// Add structural tokens with proper semantics
 	varToken := g.VarToken
-	varToken.Semantic = lexer.SemKeyword
+	varToken.Semantic = types.SemKeyword
 	tokens = append(tokens, varToken)
 
 	tokens = append(tokens, g.OpenParen)
@@ -150,21 +152,125 @@ func (g *VarGroup) SemanticTokens() []lexer.Token {
 	return tokens
 }
 
+// NamedParameter represents a named parameter in decorator arguments
+// Supports both named syntax (name = value) and positional (resolved by parser)
+type NamedParameter struct {
+	Name   string     // Parameter name (e.g., "concurrency", "failOnFirstError")
+	Value  Expression // Parameter value
+	Pos    Position
+	Tokens TokenRange
+
+	// Concrete syntax tokens for LSP support
+	NameToken   *types.Token // The parameter name token (nil for positional args)
+	EqualsToken *types.Token // The "=" token (nil for positional args)
+}
+
+func (n NamedParameter) String() string {
+	if n.NameToken != nil {
+		return fmt.Sprintf("%s = %s", n.Name, n.Value.String())
+	}
+	return n.Value.String() // Positional argument
+}
+
+func (n NamedParameter) Position() Position {
+	return n.Pos
+}
+
+func (n NamedParameter) TokenRange() TokenRange {
+	return n.Tokens
+}
+
+func (n NamedParameter) SemanticTokens() []types.Token {
+	var tokens []types.Token
+	if n.NameToken != nil {
+		nameToken := *n.NameToken
+		nameToken.Semantic = types.SemParameter
+		tokens = append(tokens, nameToken)
+	}
+	if n.EqualsToken != nil {
+		tokens = append(tokens, *n.EqualsToken)
+	}
+	tokens = append(tokens, n.Value.SemanticTokens()...)
+	return tokens
+}
+
+// IsNamed returns true if this parameter was specified with a name
+func (n NamedParameter) IsNamed() bool {
+	return n.NameToken != nil
+}
+
+// Helper functions for working with named parameters
+
+// FindParameter searches for a parameter by name in the slice
+func FindParameter(params []NamedParameter, name string) *NamedParameter {
+	for i := range params {
+		if params[i].Name == name {
+			return &params[i]
+		}
+	}
+	return nil
+}
+
+// GetStringParam retrieves a string parameter value with default fallback
+func GetStringParam(params []NamedParameter, name string, defaultValue string) string {
+	if param := FindParameter(params, name); param != nil {
+		if str, ok := param.Value.(*StringLiteral); ok {
+			return str.Value
+		}
+	}
+	return defaultValue
+}
+
+// GetIntParam retrieves an integer parameter value with default fallback
+func GetIntParam(params []NamedParameter, name string, defaultValue int) int {
+	if param := FindParameter(params, name); param != nil {
+		if num, ok := param.Value.(*NumberLiteral); ok {
+			if val, err := strconv.Atoi(num.Value); err == nil {
+				return val
+			}
+		}
+	}
+	return defaultValue
+}
+
+// GetBoolParam retrieves a boolean parameter value with default fallback
+func GetBoolParam(params []NamedParameter, name string, defaultValue bool) bool {
+	if param := FindParameter(params, name); param != nil {
+		if b, ok := param.Value.(*BooleanLiteral); ok {
+			return b.Value
+		}
+	}
+	return defaultValue
+}
+
+// GetDurationParam retrieves a duration parameter value with default fallback
+func GetDurationParam(params []NamedParameter, name string, defaultValue time.Duration) time.Duration {
+	if param := FindParameter(params, name); param != nil {
+		if dur, ok := param.Value.(*DurationLiteral); ok {
+			if d, err := time.ParseDuration(dur.Value); err == nil {
+				return d
+			}
+		}
+	}
+	return defaultValue
+}
+
 // Expression represents any expression (literals, identifiers, etc.)
 type Expression interface {
 	Node
 	IsExpression() bool
-	GetType() ExpressionType
+	GetType() types.ExpressionType
 }
 
-type ExpressionType int
+// Use types from the shared types package
+type ExpressionType = types.ExpressionType
 
 const (
-	StringType ExpressionType = iota
-	NumberType
-	DurationType
-	IdentifierType
-	BooleanType
+	StringType     = types.StringType
+	NumberType     = types.NumberType
+	DurationType   = types.DurationType
+	IdentifierType = types.IdentifierType
+	BooleanType    = types.BooleanType
 )
 
 // StringLiteral represents string values
@@ -173,7 +279,7 @@ type StringLiteral struct {
 	Raw         string
 	Pos         Position
 	Tokens      TokenRange
-	StringToken lexer.Token
+	StringToken types.Token
 }
 
 func (s *StringLiteral) String() string {
@@ -188,8 +294,8 @@ func (s *StringLiteral) TokenRange() TokenRange {
 	return s.Tokens
 }
 
-func (s *StringLiteral) SemanticTokens() []lexer.Token {
-	return []lexer.Token{s.StringToken}
+func (s *StringLiteral) SemanticTokens() []types.Token {
+	return []types.Token{s.StringToken}
 }
 
 func (s *StringLiteral) IsExpression() bool {
@@ -205,7 +311,7 @@ type NumberLiteral struct {
 	Value  string
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (n *NumberLiteral) String() string {
@@ -220,8 +326,8 @@ func (n *NumberLiteral) TokenRange() TokenRange {
 	return n.Tokens
 }
 
-func (n *NumberLiteral) SemanticTokens() []lexer.Token {
-	return []lexer.Token{n.Token}
+func (n *NumberLiteral) SemanticTokens() []types.Token {
+	return []types.Token{n.Token}
 }
 
 func (n *NumberLiteral) IsExpression() bool {
@@ -237,7 +343,7 @@ type DurationLiteral struct {
 	Value  string
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (d *DurationLiteral) String() string {
@@ -252,8 +358,8 @@ func (d *DurationLiteral) TokenRange() TokenRange {
 	return d.Tokens
 }
 
-func (d *DurationLiteral) SemanticTokens() []lexer.Token {
-	return []lexer.Token{d.Token}
+func (d *DurationLiteral) SemanticTokens() []types.Token {
+	return []types.Token{d.Token}
 }
 
 func (d *DurationLiteral) IsExpression() bool {
@@ -270,7 +376,7 @@ type BooleanLiteral struct {
 	Raw    string // The raw string ("true" or "false")
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (b *BooleanLiteral) String() string {
@@ -285,10 +391,10 @@ func (b *BooleanLiteral) TokenRange() TokenRange {
 	return b.Tokens
 }
 
-func (b *BooleanLiteral) SemanticTokens() []lexer.Token {
+func (b *BooleanLiteral) SemanticTokens() []types.Token {
 	token := b.Token
-	token.Semantic = lexer.SemBoolean
-	return []lexer.Token{token}
+	token.Semantic = types.SemBoolean
+	return []types.Token{token}
 }
 
 func (b *BooleanLiteral) IsExpression() bool {
@@ -304,7 +410,7 @@ type Identifier struct {
 	Name   string
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (i *Identifier) String() string {
@@ -319,8 +425,8 @@ func (i *Identifier) TokenRange() TokenRange {
 	return i.Tokens
 }
 
-func (i *Identifier) SemanticTokens() []lexer.Token {
-	return []lexer.Token{i.Token}
+func (i *Identifier) SemanticTokens() []types.Token {
+	return []types.Token{i.Token}
 }
 
 func (i *Identifier) IsExpression() bool {
@@ -340,9 +446,9 @@ type CommandDecl struct {
 	Tokens TokenRange
 
 	// Concrete syntax tokens for precise formatting and LSP
-	TypeToken  *lexer.Token // The watch/stop keyword (nil for regular commands)
-	NameToken  lexer.Token  // The command name token
-	ColonToken lexer.Token  // The ":" token
+	TypeToken  *types.Token // The watch/stop keyword (nil for regular commands)
+	NameToken  types.Token  // The command name token
+	ColonToken types.Token  // The ":" token
 }
 
 func (c *CommandDecl) String() string {
@@ -367,17 +473,17 @@ func (c *CommandDecl) TokenRange() TokenRange {
 	return c.Tokens
 }
 
-func (c *CommandDecl) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (c *CommandDecl) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
-	if c.TypeToken != nil && c.TypeToken.Type != lexer.ILLEGAL {
+	if c.TypeToken != nil && c.TypeToken.Type != types.ILLEGAL {
 		typeToken := *c.TypeToken
-		typeToken.Semantic = lexer.SemKeyword
+		typeToken.Semantic = types.SemKeyword
 		tokens = append(tokens, typeToken)
 	}
 
 	nameToken := c.NameToken
-	nameToken.Semantic = lexer.SemCommand
+	nameToken.Semantic = types.SemCommand
 	tokens = append(tokens, nameToken)
 
 	tokens = append(tokens, c.Body.SemanticTokens()...)
@@ -415,8 +521,8 @@ type CommandBody struct {
 	Tokens  TokenRange
 
 	// Concrete syntax tokens for precise formatting
-	OpenBrace  *lexer.Token // The "{" token (nil for simple commands)
-	CloseBrace *lexer.Token // The "}" token (nil for simple commands)
+	OpenBrace  *types.Token // The "{" token (nil for simple commands)
+	CloseBrace *types.Token // The "}" token (nil for simple commands)
 }
 
 func (b *CommandBody) String() string {
@@ -438,8 +544,8 @@ func (b *CommandBody) TokenRange() TokenRange {
 	return b.Tokens
 }
 
-func (b *CommandBody) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (b *CommandBody) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	if b.OpenBrace != nil {
 		tokens = append(tokens, *b.OpenBrace)
@@ -486,8 +592,8 @@ func (s *ShellContent) TokenRange() TokenRange {
 	return s.Tokens
 }
 
-func (s *ShellContent) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (s *ShellContent) SemanticTokens() []types.Token {
+	var tokens []types.Token
 	for _, part := range s.Parts {
 		tokens = append(tokens, part.SemanticTokens()...)
 	}
@@ -523,14 +629,14 @@ func (t *TextPart) TokenRange() TokenRange {
 	return t.Tokens
 }
 
-func (t *TextPart) SemanticTokens() []lexer.Token {
-	tokens := make([]lexer.Token, len(t.Tokens.All))
+func (t *TextPart) SemanticTokens() []types.Token {
+	tokens := make([]types.Token, len(t.Tokens.All))
 	copy(tokens, t.Tokens.All)
 
 	// Mark all tokens as shell content
 	for i := range tokens {
-		if tokens[i].Semantic != lexer.SemCommand {
-			tokens[i].Semantic = lexer.SemShellText
+		if tokens[i].Semantic != types.SemCommand {
+			tokens[i].Semantic = types.SemShellText
 		}
 	}
 
@@ -547,14 +653,14 @@ func (t *TextPart) IsShellPart() bool {
 // This handles cases like: @parallel { cmd1; cmd2 } or @timeout(30s) { npm start }
 type BlockDecorator struct {
 	Name    string           // Decorator name: "parallel", "timeout", "retry"
-	Args    []Expression     // Arguments within parentheses
+	Args    []NamedParameter // Arguments within parentheses
 	Content []CommandContent // The commands inside the decorator block
 	Pos     Position
 	Tokens  TokenRange
 
 	// LSP support
-	AtToken   lexer.Token
-	NameToken lexer.Token
+	AtToken   types.Token
+	NameToken types.Token
 }
 
 func (d *BlockDecorator) String() string {
@@ -584,17 +690,17 @@ func (d *BlockDecorator) TokenRange() TokenRange {
 	return d.Tokens
 }
 
-func (d *BlockDecorator) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (d *BlockDecorator) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	// Add @ token
 	atToken := d.AtToken
-	atToken.Semantic = lexer.SemOperator
+	atToken.Semantic = types.SemOperator
 	tokens = append(tokens, atToken)
 
 	// Add name token
 	nameToken := d.NameToken
-	nameToken.Semantic = lexer.SemKeyword
+	nameToken.Semantic = types.SemKeyword
 	tokens = append(tokens, nameToken)
 
 	// Add argument tokens
@@ -617,15 +723,15 @@ func (d *BlockDecorator) IsCommandContent() bool {
 // PatternDecorator represents pattern decorators like @when, @try
 // This handles cases like: @when(MODE) { production: deploy.sh; staging: deploy-staging.sh }
 type PatternDecorator struct {
-	Name     string          // Decorator name: "when", "try"
-	Args     []Expression    // Arguments within parentheses (e.g., variable for @when)
-	Patterns []PatternBranch // Pattern branches inside the decorator block
+	Name     string           // Decorator name: "when", "try"
+	Args     []NamedParameter // Arguments within parentheses (e.g., variable for @when)
+	Patterns []PatternBranch  // Pattern branches inside the decorator block
 	Pos      Position
 	Tokens   TokenRange
 
 	// LSP support
-	AtToken   lexer.Token
-	NameToken lexer.Token
+	AtToken   types.Token
+	NameToken types.Token
 }
 
 func (d *PatternDecorator) String() string {
@@ -657,17 +763,17 @@ func (d *PatternDecorator) TokenRange() TokenRange {
 	return d.Tokens
 }
 
-func (d *PatternDecorator) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (d *PatternDecorator) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	// Add @ token
 	atToken := d.AtToken
-	atToken.Semantic = lexer.SemOperator
+	atToken.Semantic = types.SemOperator
 	tokens = append(tokens, atToken)
 
 	// Add name token
 	nameToken := d.NameToken
-	nameToken.Semantic = lexer.SemKeyword
+	nameToken.Semantic = types.SemKeyword
 	tokens = append(tokens, nameToken)
 
 	// Add argument tokens
@@ -712,8 +818,8 @@ func (p *PatternContent) TokenRange() TokenRange {
 	return p.Tokens
 }
 
-func (p *PatternContent) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (p *PatternContent) SemanticTokens() []types.Token {
+	var tokens []types.Token
 	for _, cmd := range p.Commands {
 		tokens = append(tokens, cmd.SemanticTokens()...)
 	}
@@ -734,7 +840,7 @@ type PatternBranch struct {
 	Tokens   TokenRange
 
 	// Concrete syntax tokens for precise formatting and LSP
-	ColonToken lexer.Token // The ":" token separating pattern from command
+	ColonToken types.Token // The ":" token separating pattern from command
 }
 
 func (b *PatternBranch) String() string {
@@ -753,13 +859,13 @@ func (b *PatternBranch) TokenRange() TokenRange {
 	return b.Tokens
 }
 
-func (b *PatternBranch) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (b *PatternBranch) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	tokens = append(tokens, b.Pattern.SemanticTokens()...)
 
 	colonToken := b.ColonToken
-	colonToken.Semantic = lexer.SemOperator
+	colonToken.Semantic = types.SemOperator
 	tokens = append(tokens, colonToken)
 
 	for _, command := range b.Commands {
@@ -800,7 +906,7 @@ type IdentifierPattern struct {
 	Name   string
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (i *IdentifierPattern) String() string {
@@ -815,10 +921,10 @@ func (i *IdentifierPattern) TokenRange() TokenRange {
 	return i.Tokens
 }
 
-func (i *IdentifierPattern) SemanticTokens() []lexer.Token {
+func (i *IdentifierPattern) SemanticTokens() []types.Token {
 	token := i.Token
-	token.Semantic = lexer.SemPattern
-	return []lexer.Token{token}
+	token.Semantic = types.SemPattern
+	return []types.Token{token}
 }
 
 func (i *IdentifierPattern) IsPattern() bool {
@@ -833,7 +939,7 @@ func (i *IdentifierPattern) GetPatternType() PatternType {
 type WildcardPattern struct {
 	Pos    Position
 	Tokens TokenRange
-	Token  lexer.Token
+	Token  types.Token
 }
 
 func (w *WildcardPattern) String() string {
@@ -848,10 +954,10 @@ func (w *WildcardPattern) TokenRange() TokenRange {
 	return w.Tokens
 }
 
-func (w *WildcardPattern) SemanticTokens() []lexer.Token {
+func (w *WildcardPattern) SemanticTokens() []types.Token {
 	token := w.Token
-	token.Semantic = lexer.SemPattern
-	return []lexer.Token{token}
+	token.Semantic = types.SemPattern
+	return []types.Token{token}
 }
 
 func (w *WildcardPattern) IsPattern() bool {
@@ -868,15 +974,15 @@ func (w *WildcardPattern) GetPatternType() PatternType {
 // These appear WITHIN shell content and return values
 type FunctionDecorator struct {
 	Name   string
-	Args   []Expression
+	Args   []NamedParameter
 	Pos    Position
 	Tokens TokenRange
 
 	// Concrete syntax tokens for precise formatting and LSP
-	AtToken    lexer.Token  // The "@" symbol
-	NameToken  lexer.Token  // The decorator name token
-	OpenParen  *lexer.Token // The "(" token (nil if no args)
-	CloseParen *lexer.Token // The ")" token (nil if no args)
+	AtToken    types.Token  // The "@" symbol
+	NameToken  types.Token  // The decorator name token
+	OpenParen  *types.Token // The "(" token (nil if no args)
+	CloseParen *types.Token // The ")" token (nil if no args)
 }
 
 func (f *FunctionDecorator) String() string {
@@ -901,27 +1007,27 @@ func (f *FunctionDecorator) TokenRange() TokenRange {
 	return f.Tokens
 }
 
-func (f *FunctionDecorator) SemanticTokens() []lexer.Token {
-	var tokens []lexer.Token
+func (f *FunctionDecorator) SemanticTokens() []types.Token {
+	var tokens []types.Token
 
 	// @ token as operator
 	atToken := f.AtToken
-	atToken.Semantic = lexer.SemOperator
+	atToken.Semantic = types.SemOperator
 	tokens = append(tokens, atToken)
 
 	// Function decorator name with proper semantic
 	nameToken := f.NameToken
 	if f.Name == "var" || f.Name == "sh" {
-		nameToken.Semantic = lexer.SemVariable
+		nameToken.Semantic = types.SemVariable
 	} else {
-		nameToken.Semantic = lexer.SemDecorator
+		nameToken.Semantic = types.SemDecorator
 	}
 	tokens = append(tokens, nameToken)
 
 	// Add parentheses if present
 	if f.OpenParen != nil {
 		openParen := *f.OpenParen
-		openParen.Semantic = lexer.SemOperator
+		openParen.Semantic = types.SemOperator
 		tokens = append(tokens, openParen)
 	}
 
@@ -932,7 +1038,7 @@ func (f *FunctionDecorator) SemanticTokens() []lexer.Token {
 
 	if f.CloseParen != nil {
 		closeParen := *f.CloseParen
-		closeParen.Semantic = lexer.SemOperator
+		closeParen.Semantic = types.SemOperator
 		tokens = append(tokens, closeParen)
 	}
 
@@ -993,14 +1099,14 @@ func Walk(node Node, fn func(Node) bool) {
 	// BlockDecoratorContent removed - content is now in BlockDecorator.Content directly
 	case *BlockDecorator:
 		for _, arg := range n.Args {
-			Walk(arg, fn)
+			Walk(arg.Value, fn)
 		}
 		for _, content := range n.Content {
 			Walk(content, fn)
 		}
 	case *PatternDecorator:
 		for _, arg := range n.Args {
-			Walk(arg, fn)
+			Walk(arg.Value, fn)
 		}
 		for _, pattern := range n.Patterns {
 			Walk(&pattern, fn)
@@ -1021,7 +1127,7 @@ func Walk(node Node, fn func(Node) bool) {
 	// Decorator type removed - specific decorator types handle their own walking
 	case *FunctionDecorator:
 		for _, arg := range n.Args {
-			Walk(arg, fn)
+			Walk(arg.Value, fn)
 		}
 	}
 }
@@ -1205,7 +1311,7 @@ func ValidateVariableReferences(program *Program) []error {
 	refs := FindVariableReferences(program)
 	for _, ref := range refs {
 		if len(ref.Args) > 0 {
-			if identifier, ok := ref.Args[0].(*Identifier); ok {
+			if identifier, ok := ref.Args[0].Value.(*Identifier); ok {
 				if !defined[identifier.Name] {
 					errors = append(errors, fmt.Errorf("undefined variable '%s' at line %d", identifier.Name, ref.Pos.Line))
 				}
@@ -1257,7 +1363,7 @@ func GetReferencesForVariable(program *Program, varName string) []*FunctionDecor
 	refs := FindVariableReferences(program)
 	for _, ref := range refs {
 		if len(ref.Args) > 0 {
-			if identifier, ok := ref.Args[0].(*Identifier); ok && identifier.Name == varName {
+			if identifier, ok := ref.Args[0].Value.(*Identifier); ok && identifier.Name == varName {
 				references = append(references, ref)
 			}
 		}
@@ -1294,69 +1400,4 @@ func GetPatternDecoratorsByName(node Node, decoratorName string) []*PatternDecor
 	})
 
 	return patterns
-}
-
-// GetPatternType returns the type of pattern for a specific lexer token
-func GetPatternType(token lexer.Token) lexer.PatternType {
-	if token.Type == lexer.ASTERISK {
-		return lexer.WildcardPattern
-	}
-
-	if token.Type == lexer.IDENTIFIER {
-		switch token.Value {
-		case "main", "error", "finally":
-			return lexer.TryPattern
-		case "production", "development", "staging", "test", "prod", "dev":
-			return lexer.WhenPattern
-		default:
-			return lexer.CustomPattern
-		}
-	}
-
-	return lexer.UnknownPattern
-}
-
-// ValidatePatternSequence validates a sequence of pattern tokens
-func ValidatePatternSequence(tokens []lexer.Token, decoratorType string) []lexer.PatternError {
-	var errors []lexer.PatternError
-
-	patterns := make(map[string]lexer.Token)
-	hasWildcard := false
-
-	for _, token := range tokens {
-		switch token.Type {
-		case lexer.ASTERISK:
-			if hasWildcard {
-				errors = append(errors, lexer.PatternError{
-					Message: "multiple wildcard patterns not allowed",
-					Token:   token,
-					Code:    "duplicate-wildcard",
-				})
-			}
-			hasWildcard = true
-		case lexer.IDENTIFIER:
-			if existing, exists := patterns[token.Value]; exists {
-				errors = append(errors, lexer.PatternError{
-					Message: fmt.Sprintf("duplicate pattern '%s'", token.Value),
-					Token:   token,
-					Code:    "duplicate-pattern",
-					Related: &existing,
-				})
-			}
-			patterns[token.Value] = token
-		}
-	}
-
-	// Decorator-specific validation
-	switch decoratorType {
-	case "try":
-		if _, hasMain := patterns["main"]; !hasMain {
-			errors = append(errors, lexer.PatternError{
-				Message: "@try decorator requires 'main' pattern",
-				Code:    "missing-main-pattern",
-			})
-		}
-	}
-
-	return errors
 }
