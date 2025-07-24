@@ -277,6 +277,38 @@ func (p *ParallelDecorator) executePlan(ctx *execution.ExecutionContext, concurr
 		element = element.WithParameter("failOnFirstError", "true")
 	}
 
+	// Build child plan elements for each command in the parallel block
+	for _, cmd := range content {
+		switch c := cmd.(type) {
+		case *ast.ShellContent:
+			// Create plan element for shell command
+			result := ctx.ExecuteShell(c)
+			if result.Error != nil {
+				return &execution.ExecutionResult{
+					Mode:  execution.PlanMode,
+					Data:  nil,
+					Error: fmt.Errorf("failed to create plan for shell content: %w", result.Error),
+				}
+			}
+
+			// Extract command string from result
+			if planData, ok := result.Data.(map[string]interface{}); ok {
+				if cmdStr, ok := planData["command"].(string); ok {
+					childDesc := "Execute shell command"
+					if desc, ok := planData["description"].(string); ok {
+						childDesc = desc
+					}
+					childElement := plan.Command(cmdStr).WithDescription(childDesc)
+					element = element.AddChild(childElement)
+				}
+			}
+		case *ast.BlockDecorator:
+			// For nested decorators, just add a placeholder - they will be handled by the engine
+			childElement := plan.Command(fmt.Sprintf("@%s{...}", c.Name)).WithDescription("Nested decorator")
+			element = element.AddChild(childElement)
+		}
+	}
+
 	return &execution.ExecutionResult{
 		Mode:  execution.PlanMode,
 		Data:  element,

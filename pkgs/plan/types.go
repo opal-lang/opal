@@ -90,126 +90,255 @@ type PlanSummary struct {
 	HasErrorHandling    bool           `json:"has_error_handling"`
 }
 
+// ANSI color codes
+const (
+	ColorReset  = "\033[0m"
+	ColorBold   = "\033[1m"
+	ColorDim    = "\033[2m"
+	ColorBlue   = "\033[34m"
+	ColorGreen  = "\033[32m"
+	ColorYellow = "\033[33m"
+	ColorCyan   = "\033[36m"
+	ColorGray   = "\033[90m"
+)
+
 // String returns a human-readable representation of the execution plan
 func (ep *ExecutionPlan) String() string {
 	var builder strings.Builder
 
-	builder.WriteString("=== Execution Plan ===\n")
-	builder.WriteString(fmt.Sprintf("Total Steps: %d\n", ep.Summary.TotalSteps))
-	builder.WriteString(fmt.Sprintf("Shell Commands: %d\n", ep.Summary.ShellCommands))
-
-	if len(ep.Summary.DecoratorsUsed) > 0 {
-		builder.WriteString(fmt.Sprintf("Decorators: %s\n", strings.Join(ep.Summary.DecoratorsUsed, ", ")))
+	// Get the command name from context if available
+	commandName := "command"
+	if name, exists := ep.Context["command_name"]; exists {
+		if nameStr, ok := name.(string); ok {
+			commandName = nameStr
+		}
 	}
 
-	if ep.Summary.EstimatedDuration != nil {
-		builder.WriteString(fmt.Sprintf("Estimated Duration: %v\n", *ep.Summary.EstimatedDuration))
-	}
+	// Command header with color
+	builder.WriteString(fmt.Sprintf("%s%s%s:%s\n", ColorBold, ColorBlue, commandName, ColorReset))
 
-	builder.WriteString("\n=== Execution Steps ===\n")
+	// Format each step with the new tree structure
 	for i, step := range ep.Steps {
 		isLast := i == len(ep.Steps)-1
-		builder.WriteString(ep.formatStepWithTree(step, "", isLast, i+1))
+		builder.WriteString(ep.formatStepAesthetic(step, "", isLast))
 	}
 
 	return builder.String()
 }
 
-// formatStepWithTree formats a step using tree-like ASCII art
-func (ep *ExecutionPlan) formatStepWithTree(step ExecutionStep, prefix string, isLast bool, stepNum int) string {
+// StringNoColor returns a human-readable representation of the execution plan without ANSI colors
+func (ep *ExecutionPlan) StringNoColor() string {
+	var builder strings.Builder
+
+	// Get the command name from context if available
+	commandName := "command"
+	if name, exists := ep.Context["command_name"]; exists {
+		if nameStr, ok := name.(string); ok {
+			commandName = nameStr
+		}
+	}
+
+	// Command header without color
+	builder.WriteString(fmt.Sprintf("%s:\n", commandName))
+
+	// Format each step with the new tree structure (no colors)
+	for i, step := range ep.Steps {
+		isLast := i == len(ep.Steps)-1
+		builder.WriteString(ep.formatStepAestheticNoColor(step, "", isLast))
+	}
+
+	return builder.String()
+}
+
+// formatStepAesthetic formats a step using the new aesthetic tree format
+func (ep *ExecutionPlan) formatStepAesthetic(step ExecutionStep, prefix string, isLast bool) string {
 	var builder strings.Builder
 
 	// Choose the appropriate tree characters
 	var connector, nextPrefix string
-	if prefix == "" {
-		// Root level
-		connector = ""
-		nextPrefix = ""
+	if isLast {
+		connector = "└─ "
+		nextPrefix = prefix + "   "
 	} else {
-		if isLast {
-			connector = "└── "
-			nextPrefix = prefix + "    "
-		} else {
-			connector = "├── "
-			nextPrefix = prefix + "│   "
-		}
+		connector = "├─ "
+		nextPrefix = prefix + "│  "
 	}
 
-	// Format the main step line
-	stepLabel := fmt.Sprintf("[%s] %s", step.Type, step.Description)
-	if step.Command != "" {
-		stepLabel += fmt.Sprintf(": %s", step.Command)
-	}
-
-	builder.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, stepLabel))
-
-	// Add decorator information as a child node if present
-	if step.Decorator != nil {
-		decoratorInfo := fmt.Sprintf("@%s", step.Decorator.Name)
-		if len(step.Decorator.Parameters) > 0 {
-			var params []string
-			for k, v := range step.Decorator.Parameters {
-				params = append(params, fmt.Sprintf("%s=%v", k, v))
-			}
-			decoratorInfo += fmt.Sprintf("(%s)", strings.Join(params, ", "))
+	// Format based on step type
+	switch step.Type {
+	case StepShell:
+		// Clean shell command formatting
+		cmd := step.Command
+		if cmd == "" {
+			cmd = step.Description
 		}
 
-		hasMoreDetails := step.Condition != nil || step.Timing != nil || len(step.Children) > 0
-		detailConnector := "└── "
-		if hasMoreDetails {
-			detailConnector = "├── "
+		// Truncate very long commands and add ellipses
+		if len(cmd) > 80 {
+			cmd = cmd[:77] + "..."
 		}
-		builder.WriteString(fmt.Sprintf("%s%s🔧 %s\n", nextPrefix, detailConnector, decoratorInfo))
-	}
 
-	// Add condition information
-	if step.Condition != nil {
-		conditionInfo := fmt.Sprintf("Condition: %s = %s → %s",
-			step.Condition.Variable,
-			step.Condition.Evaluation.CurrentValue,
-			step.Condition.Evaluation.SelectedBranch)
+		builder.WriteString(fmt.Sprintf("%s%s%s\n",
+			prefix, connector, cmd))
 
-		hasMoreDetails := step.Timing != nil || len(step.Children) > 0
-		detailConnector := "└── "
-		if hasMoreDetails {
-			detailConnector = "├── "
+	case StepParallel:
+		// Format parallel decorator with concurrency info
+		concurrency := ""
+		count := len(step.Children)
+		if step.Timing != nil && step.Timing.ConcurrencyLimit > 0 {
+			count = step.Timing.ConcurrencyLimit
 		}
-		builder.WriteString(fmt.Sprintf("%s%s🔀 %s\n", nextPrefix, detailConnector, conditionInfo))
-	}
+		concurrency = fmt.Sprintf("%s{%s%d%s concurrent%s}%s",
+			ColorGray, ColorYellow, count, ColorGray, ColorGray, ColorReset)
 
-	// Add timing information
-	if step.Timing != nil {
-		var timingDetails []string
+		builder.WriteString(fmt.Sprintf("%s%s%s@parallel%s %s\n",
+			prefix, connector, ColorYellow, ColorReset, concurrency))
 
-		if step.Timing.Timeout != nil {
-			timingDetails = append(timingDetails, fmt.Sprintf("timeout=%v", *step.Timing.Timeout))
+	case StepTimeout:
+		// Format timeout decorator with duration info
+		duration := ""
+		if step.Timing != nil && step.Timing.Timeout != nil {
+			duration = fmt.Sprintf("%s{%s%s timeout%s}%s",
+				ColorGray, ColorYellow, step.Timing.Timeout.String(), ColorGray, ColorReset)
 		}
-		if step.Timing.RetryAttempts > 0 {
-			retry := fmt.Sprintf("retry=%d", step.Timing.RetryAttempts)
+
+		builder.WriteString(fmt.Sprintf("%s%s%s@timeout%s %s\n",
+			prefix, connector, ColorCyan, ColorReset, duration))
+
+	case StepRetry:
+		// Format retry decorator with attempt info
+		attempts := ""
+		if step.Timing != nil && step.Timing.RetryAttempts > 0 {
+			attempts = fmt.Sprintf("%s{%s%d%s attempts",
+				ColorGray, ColorYellow, step.Timing.RetryAttempts, ColorGray)
 			if step.Timing.RetryDelay != nil {
-				retry += fmt.Sprintf(" delay=%v", *step.Timing.RetryDelay)
+				attempts += fmt.Sprintf(", %s%s%s delay", ColorYellow, step.Timing.RetryDelay.String(), ColorGray)
 			}
-			timingDetails = append(timingDetails, retry)
-		}
-		if step.Timing.ConcurrencyLimit > 0 {
-			timingDetails = append(timingDetails, fmt.Sprintf("concurrency=%d", step.Timing.ConcurrencyLimit))
+			attempts += fmt.Sprintf("}%s", ColorReset)
 		}
 
-		if len(timingDetails) > 0 {
-			hasMoreDetails := len(step.Children) > 0
-			detailConnector := "└── "
-			if hasMoreDetails {
-				detailConnector = "├── "
-			}
-			builder.WriteString(fmt.Sprintf("%s%s⏱️  %s\n", nextPrefix, detailConnector, strings.Join(timingDetails, ", ")))
+		builder.WriteString(fmt.Sprintf("%s%s%s@retry%s %s\n",
+			prefix, connector, ColorYellow, ColorReset, attempts))
+
+	case StepConditional:
+		// Format conditional decorator with evaluation info
+		evalInfo := ""
+		if step.Condition != nil {
+			evalInfo = fmt.Sprintf("%s{%s%s%s = %s%s%s → %s%s%s}%s",
+				ColorGray,
+				ColorYellow, step.Condition.Variable, ColorGray,
+				ColorYellow, step.Condition.Evaluation.CurrentValue, ColorGray,
+				ColorYellow, step.Condition.Evaluation.SelectedBranch, ColorGray,
+				ColorReset)
 		}
+
+		builder.WriteString(fmt.Sprintf("%s%s%s@when%s %s\n",
+			prefix, connector, ColorCyan, ColorReset, evalInfo))
+
+	default:
+		// Generic step formatting
+		builder.WriteString(fmt.Sprintf("%s%s%s%s%s\n",
+			prefix, connector, ColorGray, step.Description, ColorReset))
 	}
 
-	// Format child steps
+	// Format child steps recursively
 	for i, child := range step.Children {
 		isLastChild := i == len(step.Children)-1
-		childStepNum := i + 1
-		builder.WriteString(ep.formatStepWithTree(child, nextPrefix, isLastChild, childStepNum))
+		builder.WriteString(ep.formatStepAesthetic(child, nextPrefix, isLastChild))
+	}
+
+	return builder.String()
+}
+
+// formatStepAestheticNoColor formats a step using the new aesthetic tree format without colors
+func (ep *ExecutionPlan) formatStepAestheticNoColor(step ExecutionStep, prefix string, isLast bool) string {
+	var builder strings.Builder
+
+	// Choose the appropriate tree characters
+	var connector, nextPrefix string
+	if isLast {
+		connector = "└─ "
+		nextPrefix = prefix + "   "
+	} else {
+		connector = "├─ "
+		nextPrefix = prefix + "│  "
+	}
+
+	// Format based on step type (no colors)
+	switch step.Type {
+	case StepShell:
+		// Clean shell command formatting
+		cmd := step.Command
+		if cmd == "" {
+			cmd = step.Description
+		}
+
+		// Truncate very long commands and add ellipses
+		if len(cmd) > 80 {
+			cmd = cmd[:77] + "..."
+		}
+
+		builder.WriteString(fmt.Sprintf("%s%s%s\n",
+			prefix, connector, cmd))
+
+	case StepParallel:
+		// Format parallel decorator with concurrency info (no colors)
+		count := len(step.Children)
+		if step.Timing != nil && step.Timing.ConcurrencyLimit > 0 {
+			count = step.Timing.ConcurrencyLimit
+		}
+		concurrency := fmt.Sprintf("{%d concurrent}", count)
+
+		builder.WriteString(fmt.Sprintf("%s%s@parallel %s\n",
+			prefix, connector, concurrency))
+
+	case StepTimeout:
+		// Format timeout decorator with duration info (no colors)
+		duration := ""
+		if step.Timing != nil && step.Timing.Timeout != nil {
+			duration = fmt.Sprintf("{%s timeout}", step.Timing.Timeout.String())
+		}
+
+		builder.WriteString(fmt.Sprintf("%s%s@timeout %s\n",
+			prefix, connector, duration))
+
+	case StepRetry:
+		// Format retry decorator with attempt info (no colors)
+		attempts := ""
+		if step.Timing != nil && step.Timing.RetryAttempts > 0 {
+			attempts = fmt.Sprintf("{%d attempts", step.Timing.RetryAttempts)
+			if step.Timing.RetryDelay != nil {
+				attempts += fmt.Sprintf(", %s delay", step.Timing.RetryDelay.String())
+			}
+			attempts += "}"
+		}
+
+		builder.WriteString(fmt.Sprintf("%s%s@retry %s\n",
+			prefix, connector, attempts))
+
+	case StepConditional:
+		// Format conditional decorator with evaluation info (no colors)
+		evalInfo := ""
+		if step.Condition != nil {
+			evalInfo = fmt.Sprintf("{%s = %s → %s}",
+				step.Condition.Variable,
+				step.Condition.Evaluation.CurrentValue,
+				step.Condition.Evaluation.SelectedBranch)
+		}
+
+		builder.WriteString(fmt.Sprintf("%s%s@when %s\n",
+			prefix, connector, evalInfo))
+
+	default:
+		// Generic step formatting
+		builder.WriteString(fmt.Sprintf("%s%s%s\n",
+			prefix, connector, step.Description))
+	}
+
+	// Format child steps recursively
+	for i, child := range step.Children {
+		isLastChild := i == len(step.Children)-1
+		builder.WriteString(ep.formatStepAestheticNoColor(child, nextPrefix, isLastChild))
 	}
 
 	return builder.String()

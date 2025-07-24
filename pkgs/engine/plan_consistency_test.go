@@ -199,9 +199,9 @@ simple: echo "Hello @var(NAME)"`
 
 	planStr := plan.String()
 
-	// Verify the plan contains expected elements
-	if !strings.Contains(planStr, "=== Execution Plan ===") {
-		t.Error("Plan missing header")
+	// Verify the plan contains expected elements with new format
+	if !strings.Contains(planStr, "simple:") {
+		t.Error("Plan missing command header")
 	}
 
 	if !strings.Contains(planStr, "echo \"Hello test\"") {

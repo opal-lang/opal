@@ -148,7 +148,11 @@ func (e *Engine) ExecuteCommandPlan(command *ast.CommandDecl) (*plan.ExecutionPl
 		}
 	}
 
-	return planBuilder.Build(), nil
+	// Build the plan and add command name to context
+	execPlan := planBuilder.Build()
+	execPlan.Context["command_name"] = command.Name
+
+	return execPlan, nil
 }
 
 // executeDecoratorPlan executes a decorator in plan mode
@@ -726,23 +730,29 @@ func main() {
 	{{range .Variables}}{{if .Used}}{{.Name}} := {{.Value}}
 	{{end}}{{end}}
 
-	// Global flag for dry-run mode
+	// Global flags for dry-run mode
 	var dryRun bool
+	var noColor bool
 
 	rootCmd := &cobra.Command{
 		Use:   "cli",
 		Short: "Generated CLI from devcmd",
 	}
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output in dry-run mode")
 
 	{{range .Commands}}
 	// Command: {{.Name}}
 	{{.FunctionName}} := func(cmd *cobra.Command, args []string) {
 		if dryRun {
 			// Execute in plan mode using embedded execution plan
-			fmt.Printf("=== Execution Plan ===\n")
-			fmt.Printf("Command: {{.Name}}\n")
-			{{if .ExecutionPlan}}fmt.Print({{.ExecutionPlan}}){{else}}fmt.Printf("(No plan available)\n"){{end}}
+			{{if .ExecutionPlan}}
+			if noColor {
+				fmt.Print({{.ExecutionPlanNoColor}})
+			} else {
+				fmt.Print({{.ExecutionPlan}})
+			}
+			{{else}}fmt.Printf("(No plan available)\n"){{end}}
 			return
 		}
 		
@@ -762,9 +772,13 @@ func main() {
 	{{.FunctionName}}Run := func(cmd *cobra.Command, args []string) {
 		if dryRun {
 			// Execute in plan mode using embedded execution plan
-			fmt.Printf("=== Execution Plan ===\n")
-			fmt.Printf("Process: {{.Identifier}} (run)\n")
-			{{if .WatchExecutionPlan}}fmt.Print({{.WatchExecutionPlan}}){{else}}fmt.Printf("(No plan available)\n"){{end}}
+			{{if .WatchExecutionPlan}}
+			if noColor {
+				fmt.Print({{.WatchExecutionPlanNoColor}})
+			} else {
+				fmt.Print({{.WatchExecutionPlan}})
+			}
+			{{else}}fmt.Printf("(No plan available)\n"){{end}}
 			return
 		}
 		
@@ -851,9 +865,13 @@ func main() {
 	{{.FunctionName}}Stop := func(cmd *cobra.Command, args []string) {
 		if dryRun {
 			// Execute in plan mode using embedded execution plan
-			fmt.Printf("=== Execution Plan ===\n")
-			fmt.Printf("Process: {{.Identifier}} (stop)\n")
-			{{if .StopExecutionPlan}}fmt.Print({{.StopExecutionPlan}}){{else}}fmt.Printf("(No plan available)\n"){{end}}
+			{{if .StopExecutionPlan}}
+			if noColor {
+				fmt.Print({{.StopExecutionPlanNoColor}})
+			} else {
+				fmt.Print({{.StopExecutionPlan}})
+			}
+			{{else}}fmt.Printf("(No plan available)\n"){{end}}
 			return
 		}
 		
@@ -1047,25 +1065,28 @@ type VariableData struct {
 }
 
 type CommandData struct {
-	Name          string
-	FunctionName  string
-	CommandName   string
-	ExecutionCode string
-	ExecutionPlan string // Embedded execution plan for dry-run mode
+	Name                 string
+	FunctionName         string
+	CommandName          string
+	ExecutionCode        string
+	ExecutionPlan        string // Embedded execution plan for dry-run mode (with colors)
+	ExecutionPlanNoColor string // Embedded execution plan for dry-run mode (no colors)
 }
 
 type ProcessGroupData struct {
-	Identifier         string
-	FunctionName       string
-	CommandName        string
-	RunFunctionName    string
-	HasCustomStop      bool
-	WatchExecutionCode string
-	StopExecutionCode  string
-	WatchExecutionPlan string // Embedded execution plan for watch command dry-run
-	StopExecutionPlan  string // Embedded execution plan for stop command dry-run
-	WatchCommandString string // Raw shell command for process management
-	StopCommandString  string // Raw shell command for stop process management
+	Identifier                string
+	FunctionName              string
+	CommandName               string
+	RunFunctionName           string
+	HasCustomStop             bool
+	WatchExecutionCode        string
+	StopExecutionCode         string
+	WatchExecutionPlan        string // Embedded execution plan for watch command dry-run (with colors)
+	WatchExecutionPlanNoColor string // Embedded execution plan for watch command dry-run (no colors)
+	StopExecutionPlan         string // Embedded execution plan for stop command dry-run (with colors)
+	StopExecutionPlanNoColor  string // Embedded execution plan for stop command dry-run (no colors)
+	WatchCommandString        string // Raw shell command for process management
+	StopCommandString         string // Raw shell command for stop process management
 }
 
 // generateCodeWithTemplate uses a template-based approach instead of fragile WriteString calls
@@ -1227,18 +1248,21 @@ func (e *Engine) generateCodeWithTemplate(program *ast.Program) (*GenerationResu
 			}
 		}
 
-		// Generate execution plan for this command
+		// Generate execution plan for this command (both colored and no-color versions)
 		executionPlan := ""
+		executionPlanNoColor := ""
 		if plan, err := e.ExecuteCommandPlan(cmd); err == nil {
 			executionPlan = fmt.Sprintf("%q", plan.String())
+			executionPlanNoColor = fmt.Sprintf("%q", plan.StringNoColor())
 		}
 
 		templateData.Commands = append(templateData.Commands, CommandData{
-			Name:          cmd.Name,
-			FunctionName:  toCamelCase(cmd.Name),
-			CommandName:   toCamelCase(cmd.Name) + "Cmd",
-			ExecutionCode: executionCode.String(),
-			ExecutionPlan: executionPlan,
+			Name:                 cmd.Name,
+			FunctionName:         toCamelCase(cmd.Name),
+			CommandName:          toCamelCase(cmd.Name) + "Cmd",
+			ExecutionCode:        executionCode.String(),
+			ExecutionPlan:        executionPlan,
+			ExecutionPlanNoColor: executionPlanNoColor,
 		})
 	}
 
@@ -1339,26 +1363,34 @@ func (e *Engine) generateCodeWithTemplate(program *ast.Program) (*GenerationResu
 			processData.StopExecutionCode = stopCode.String()
 		}
 
-		// Generate execution plans for watch and stop commands
+		// Generate execution plans for watch and stop commands (both colored and no-color versions)
 		watchExecutionPlan := ""
+		watchExecutionPlanNoColor := ""
 		if group.WatchCommand != nil {
 			if plan, err := e.ExecuteCommandPlan(group.WatchCommand); err == nil {
 				watchExecutionPlan = fmt.Sprintf("%q", plan.String())
+				watchExecutionPlanNoColor = fmt.Sprintf("%q", plan.StringNoColor())
 			}
 		}
 
 		stopExecutionPlan := ""
+		stopExecutionPlanNoColor := ""
 		if group.StopCommand != nil {
 			if plan, err := e.ExecuteCommandPlan(group.StopCommand); err == nil {
 				stopExecutionPlan = fmt.Sprintf("%q", plan.String())
+				stopExecutionPlanNoColor = fmt.Sprintf("%q", plan.StringNoColor())
 			}
 		} else {
-			// Default stop plan
-			stopExecutionPlan = fmt.Sprintf("%q", fmt.Sprintf("├── Execute shell command: pkill -f '%s'\n", identifier))
+			// Default stop plan (both versions are the same since no colors)
+			defaultPlan := fmt.Sprintf("└─ pkill -f '%s'", identifier)
+			stopExecutionPlan = fmt.Sprintf("%q", defaultPlan)
+			stopExecutionPlanNoColor = fmt.Sprintf("%q", defaultPlan)
 		}
 
 		processData.WatchExecutionPlan = watchExecutionPlan
+		processData.WatchExecutionPlanNoColor = watchExecutionPlanNoColor
 		processData.StopExecutionPlan = stopExecutionPlan
+		processData.StopExecutionPlanNoColor = stopExecutionPlanNoColor
 		processData.WatchCommandString = watchCommandString
 		processData.StopCommandString = stopCommandString
 

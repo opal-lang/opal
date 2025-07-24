@@ -252,13 +252,48 @@ func (w *WhenDecorator) executePlan(ctx *execution.ExecutionContext, varName str
 		}
 	}
 
-	description := fmt.Sprintf("Evaluate %s = %q → execute '%s' branch (%d commands)",
-		varName, currentValue, selectedPattern, len(selectedCommands))
+	element := plan.Conditional(varName, currentValue, selectedPattern).
+		WithReason(fmt.Sprintf("Variable %s matched %s", varName, selectedPattern))
 
-	element := plan.Decorator("when").
-		WithType("pattern").
-		WithParameter("variable", varName).
-		WithDescription(description)
+	// Add all branch information for completeness
+	for _, pattern := range patterns {
+		patternStr := w.patternToString(pattern.Pattern)
+		willExecute := patternStr == selectedPattern
+		branchDesc := fmt.Sprintf("Execute %d commands", len(pattern.Commands))
+		element = element.AddBranch(patternStr, branchDesc, willExecute)
+	}
+
+	// Build child plan elements for the selected commands only
+	for _, cmd := range selectedCommands {
+		switch c := cmd.(type) {
+		case *ast.ShellContent:
+			// Create plan element for shell command
+			result := ctx.ExecuteShell(c)
+			if result.Error != nil {
+				return &execution.ExecutionResult{
+					Mode:  execution.PlanMode,
+					Data:  nil,
+					Error: fmt.Errorf("failed to create plan for shell content: %w", result.Error),
+				}
+			}
+
+			// Extract command string from result
+			if planData, ok := result.Data.(map[string]interface{}); ok {
+				if cmdStr, ok := planData["command"].(string); ok {
+					childDesc := "Execute shell command"
+					if desc, ok := planData["description"].(string); ok {
+						childDesc = desc
+					}
+					childElement := plan.Command(cmdStr).WithDescription(childDesc)
+					element = element.WithChildren(childElement)
+				}
+			}
+		case *ast.BlockDecorator:
+			// For nested decorators, just add a placeholder - they will be handled by the engine
+			childElement := plan.Command(fmt.Sprintf("@%s{...}", c.Name)).WithDescription("Nested decorator")
+			element = element.WithChildren(childElement)
+		}
+	}
 
 	return &execution.ExecutionResult{
 		Mode:  execution.PlanMode,

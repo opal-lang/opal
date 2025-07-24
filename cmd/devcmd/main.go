@@ -32,6 +32,7 @@ var (
 	outputDir    string
 	generateOnly bool
 	dryRun       bool
+	noColor      bool
 )
 
 func main() {
@@ -167,12 +168,25 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug output")
 	rootCmd.PersistentFlags().StringVar(&outputDir, "output-dir", "", "Directory to write generated files (default: stdout for main.go only)")
 
+	// Add version flag support
+	var showVersion bool
+	rootCmd.PersistentFlags().BoolVar(&showVersion, "version", false, "Show version information")
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if showVersion {
+			fmt.Printf("devcmd %s\n", Version)
+			fmt.Printf("Built: %s\n", BuildTime)
+			fmt.Printf("Commit: %s\n", GitCommit)
+			os.Exit(0)
+		}
+	}
+
 	// Build command specific flags
 	buildCmd.Flags().StringVarP(&output, "output", "o", "", "Output binary path (default: ./<binary-name>)")
 	buildCmd.Flags().BoolVar(&generateOnly, "generate-only", false, "Generate code only without building binary")
 
 	// Run command specific flags
 	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
+	runCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output in dry-run mode")
 
 	// Add subcommands
 	rootCmd.AddCommand(buildCmd)
@@ -382,7 +396,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		}
 
 		// Print the plan using the plan DSL's beautiful ASCII tree visualization
-		fmt.Print(plan.String())
+		if noColor {
+			fmt.Print(plan.StringNoColor())
+		} else {
+			fmt.Print(plan.String())
+		}
 		return nil
 	}
 

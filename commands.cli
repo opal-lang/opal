@@ -202,7 +202,8 @@ test-examples: {
 # Run Nix-based tests
 nix-test: {
     echo "🧪 Running Nix-based tests..."
-    nix build .#tests --print-build-logs
+    echo "Running Go tests via Nix..."
+    nix develop --command go test ./...
     echo "Building example tests..."
     nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available"
     echo "✅ Nix tests completed"
