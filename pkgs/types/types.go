@@ -58,6 +58,7 @@ const (
 	// Literals and Content
 	IDENTIFIER // command names, variable names, decorator names, patterns
 	SHELL_TEXT // shell command text
+	SHELL_END  // marks end of shell content
 	NUMBER     // 8080, 3.14, -100
 	STRING     // "hello", 'world', `template`
 	DURATION   // 30s, 5m, 1h
@@ -88,6 +89,7 @@ var tokenNames = [...]string{
 	ASTERISK:          "ASTERISK",
 	IDENTIFIER:        "IDENTIFIER",
 	SHELL_TEXT:        "SHELL_TEXT",
+	SHELL_END:         "SHELL_END",
 	NUMBER:            "NUMBER",
 	STRING:            "STRING",
 	DURATION:          "DURATION",

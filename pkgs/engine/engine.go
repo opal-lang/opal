@@ -16,6 +16,16 @@ import (
 	"github.com/aledsdavies/devcmd/pkgs/plan"
 )
 
+// functionDecoratorAdapter adapts decorators.FunctionDecorator to execution.FunctionDecorator
+type functionDecoratorAdapter struct {
+	decorator decorators.FunctionDecorator
+}
+
+// Expand implements execution.FunctionDecorator by delegating to decorators.FunctionDecorator.Expand
+func (a *functionDecoratorAdapter) Expand(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult {
+	return a.decorator.Expand(ctx, params)
+}
+
 // ProcessGroup represents a group of watch/stop commands for the same identifier
 type ProcessGroup struct {
 	Identifier   string
@@ -180,10 +190,16 @@ func (e *Engine) GenerateCode(program *ast.Program) (*GenerationResult, error) {
 
 // setupDependencyInjection sets up dependency injection for the execution context
 func (e *Engine) setupDependencyInjection() {
-	// Set up function decorator lookup
+	// Set up function decorator lookup - create an adapter to bridge decorator interfaces
 	e.ctx.SetFunctionDecoratorLookup(func(name string) (execution.FunctionDecorator, bool) {
 		decorator, exists := decorators.GetFunctionDecorator(name)
-		return decorator, exists
+		if !exists {
+			return nil, false
+		}
+
+		// Create an adapter that bridges the interface difference
+		adapter := &functionDecoratorAdapter{decorator: decorator}
+		return adapter, true
 	})
 
 	// Command content execution is handled directly by the execution context
@@ -557,16 +573,23 @@ func (e *Engine) generateShellCommandExpression(content *ast.ShellContent) (stri
 			goExprParts = append(goExprParts, fmt.Sprintf("%q", p.Text))
 
 		case *ast.FunctionDecorator:
-			// For @var(NAME) decorators, generate Go variable reference
-			if p.Name == "var" && len(p.Args) == 1 {
-				if ident, ok := p.Args[0].Value.(*ast.Identifier); ok {
-					varName := ident.Name
-					goExprParts = append(goExprParts, varName)
-				} else {
-					return "", fmt.Errorf("@var decorator argument must be an identifier, got: %T", p.Args[0].Value)
-				}
+			// Let the decorator handle its own expansion logic
+			decorator, err := decorators.GetFunction(p.Name)
+			if err != nil {
+				return "", fmt.Errorf("function decorator @%s not found in shell command: %w", p.Name, err)
+			}
+
+			// Expand the decorator in generator mode to get Go code
+			result := decorator.Expand(e.ctx, p.Args)
+			if result.Error != nil {
+				return "", fmt.Errorf("decorator @%s expansion failed: %w", p.Name, result.Error)
+			}
+
+			// Use the decorator-generated code
+			if codeStr, ok := result.Data.(string); ok {
+				goExprParts = append(goExprParts, codeStr)
 			} else {
-				return "", fmt.Errorf("unsupported function decorator in shell command: @%s", p.Name)
+				return "", fmt.Errorf("decorator @%s returned invalid data type for shell generation: %T", p.Name, result.Data)
 			}
 
 		default:
@@ -590,23 +613,25 @@ func (e *Engine) extractShellCommand(shellContent *ast.ShellContent) string {
 		case *ast.TextPart:
 			command.WriteString(p.Text)
 		case *ast.FunctionDecorator:
-			// Handle function decorators like @var(name)
-			if p.Name == "var" && len(p.Args) > 0 {
-				if param := p.Args[0]; param.Name == "" || param.Name == "name" {
-					if identifier, ok := param.Value.(*ast.Identifier); ok {
-						if value, exists := e.ctx.GetVariable(identifier.Name); exists {
-							command.WriteString(value)
-						}
-					}
-				}
-			} else if p.Name == "env" && len(p.Args) > 0 {
-				if param := p.Args[0]; param.Name == "" || param.Name == "name" {
-					if identifier, ok := param.Value.(*ast.Identifier); ok {
-						if value := os.Getenv(identifier.Name); value != "" {
-							command.WriteString(value)
-						}
-					}
-				}
+			// Let the decorator handle its own expansion logic
+			decorator, err := decorators.GetFunction(p.Name)
+			if err != nil {
+				// For now, show the error instead of silently skipping
+				command.WriteString(fmt.Sprintf("[ERROR: %v]", err))
+				continue
+			}
+
+			// Expand the decorator in interpreter mode to get actual value
+			result := decorator.Expand(e.ctx, p.Args)
+			if result.Error != nil {
+				// For now, show the error instead of silently skipping
+				command.WriteString(fmt.Sprintf("[ERROR: %v]", result.Error))
+				continue
+			}
+
+			// Use the decorator-generated value
+			if value, ok := result.Data.(string); ok {
+				command.WriteString(value)
 			}
 		}
 	}

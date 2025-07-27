@@ -13,7 +13,7 @@ import (
 // Mock function decorators for testing
 type mockVarDecorator struct{}
 
-func (m *mockVarDecorator) Execute(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult {
+func (m *mockVarDecorator) Expand(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult {
 	if len(params) == 0 {
 		return &ExecutionResult{
 			Mode:  ctx.Mode(),
@@ -88,7 +88,7 @@ func (m *mockVarDecorator) Execute(ctx *ExecutionContext, params []ast.NamedPara
 
 type mockEnvDecorator struct{}
 
-func (m *mockEnvDecorator) Execute(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult {
+func (m *mockEnvDecorator) Expand(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult {
 	if len(params) == 0 {
 		return &ExecutionResult{
 			Mode:  ctx.Mode(),

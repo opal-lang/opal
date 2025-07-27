@@ -35,8 +35,8 @@ func (v *VarDecorator) ParameterSchema() []ParameterSchema {
 
 // Validate checks if the decorator usage is correct during parsing
 
-// Execute provides unified execution for all modes using the execution package
-func (v *VarDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult {
+// Expand provides unified expansion for all modes using the execution package
+func (v *VarDecorator) Expand(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult {
 	// Validate parameters first
 
 	// Get the variable name

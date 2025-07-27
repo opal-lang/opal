@@ -43,6 +43,6 @@ type ExecutionResult struct {
 // FunctionDecorator interface to avoid circular imports
 // This mirrors the decorators.FunctionDecorator interface
 type FunctionDecorator interface {
-	// Execute provides unified execution for all modes
-	Execute(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult
+	// Expand provides unified expansion for all modes - returns values for command composition
+	Expand(ctx *ExecutionContext, params []ast.NamedParameter) *ExecutionResult
 }

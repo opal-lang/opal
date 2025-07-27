@@ -574,9 +574,9 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 			continue
 		}
 
-		// **CRITICAL FIX**: Parse consecutive SHELL_TEXT tokens as separate commands
+		// **CRITICAL FIX**: Parse consecutive SHELL_TEXT tokens and decorator sequences as separate commands
 		// This implements the spec requirement: "newlines create multiple commands everywhere"
-		if p.match(types.SHELL_TEXT) {
+		if p.match(types.SHELL_TEXT) || p.match(types.AT) {
 			shellContent, err := p.parseShellContent(true)
 			if err != nil {
 				return nil, err
@@ -596,189 +596,45 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 	return contentItems, nil
 }
 
-// parseShellContent parses a single shell content item (one SHELL_TEXT token)
-// **UPDATED**: Now parses only one SHELL_TEXT token to create separate content items
+// parseShellContent parses a complete shell command from the new lexer token sequences
+// Handles: SHELL_TEXT + AT + IDENTIFIER + LPAREN + params + RPAREN + SHELL_TEXT + ... + SHELL_END
 func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
 	startPos := p.current()
 	var parts []ast.ShellPart
 
-	// Parse only one SHELL_TEXT token at a time
-	if p.match(types.SHELL_TEXT) {
-		shellToken := p.current()
-		p.advance()
-
-		extractedParts, err := p.extractInlineDecorators(shellToken.Value)
-		if err != nil {
-			return nil, err
+	// Parse all parts of the shell command until SHELL_END
+	for !p.match(types.SHELL_END) && !p.isAtEnd() && !p.match(types.RBRACE) {
+		if p.match(types.SHELL_TEXT) {
+			// Add shell text part
+			parts = append(parts, &ast.TextPart{Text: p.current().Value})
+			p.advance()
+		} else if p.match(types.AT) {
+			// Parse any type of decorator using unified approach
+			decorator, err := p.parseDecorator()
+			if err != nil {
+				return nil, err
+			}
+			// Only function decorators can appear in shell content
+			if funcDecorator, ok := decorator.(*ast.FunctionDecorator); ok {
+				parts = append(parts, funcDecorator)
+			} else {
+				return nil, p.NewSyntaxError("only function decorators are allowed in shell content")
+			}
+		} else {
+			// Unexpected token - stop parsing
+			break
 		}
+	}
 
-		parts = append(parts, extractedParts...)
+	// Consume SHELL_END if present
+	if p.match(types.SHELL_END) {
+		p.advance()
 	}
 
 	return &ast.ShellContent{
 		Parts: parts,
 		Pos:   ast.Position{Line: startPos.Line, Column: startPos.Column},
 	}, nil
-}
-
-// extractInlineDecorators extracts function decorators from shell text using decorators registry validation
-func (p *Parser) extractInlineDecorators(shellText string) ([]ast.ShellPart, error) {
-	var parts []ast.ShellPart
-	textStart := 0
-
-	for i := 0; i < len(shellText); {
-		// Look for @ symbol
-		atPos := strings.IndexByte(shellText[i:], '@')
-		if atPos == -1 {
-			// No more @ symbols, add remaining text if any
-			if textStart < len(shellText) {
-				parts = append(parts, &ast.TextPart{Text: shellText[textStart:]})
-			}
-			break
-		}
-
-		// Absolute position of @
-		absAtPos := i + atPos
-
-		// Try to extract decorator starting at @
-		decorator, newPos, found := p.extractFunctionDecorator(shellText, absAtPos)
-		if found {
-			// Add any text before the decorator
-			if absAtPos > textStart {
-				parts = append(parts, &ast.TextPart{Text: shellText[textStart:absAtPos]})
-			}
-			// Add the decorator
-			parts = append(parts, decorator)
-			// Update positions
-			i = newPos
-			textStart = newPos
-		} else {
-			// Not a valid function decorator, continue scanning after this @
-			i = absAtPos + 1
-		}
-	}
-
-	return parts, nil
-}
-
-// extractFunctionDecorator extracts a function decorator starting at position i using unified decorator approach
-// Returns the decorator, new position, and whether a decorator was found
-func (p *Parser) extractFunctionDecorator(shellText string, i int) (*ast.FunctionDecorator, int, bool) {
-	if i >= len(shellText) || shellText[i] != '@' {
-		return nil, i, false
-	}
-
-	// Look for decorator name after @
-	start := i + 1 // Skip @
-	nameStart := start
-
-	// First character must be a letter
-	if start >= len(shellText) || !isLetter(rune(shellText[start])) {
-		return nil, i, false
-	}
-	start++
-
-	// Rest can be letters, digits, underscore, or hyphen
-	for start < len(shellText) && (isLetter(rune(shellText[start])) || isDigit(rune(shellText[start])) || shellText[start] == '_' || shellText[start] == '-') {
-		start++
-	}
-
-	decoratorName := shellText[nameStart:start]
-
-	// Step 1: Check if decorator exists in registry and is a function decorator
-	decorator, decoratorType, err := decorators.GetAny(decoratorName)
-	if err != nil || decoratorType != decorators.FunctionType {
-		return nil, i, false
-	}
-
-	// Look for opening parenthesis
-	if start >= len(shellText) || shellText[start] != '(' {
-		// Function decorators require parentheses
-		return nil, i, false
-	}
-
-	// Find matching closing parenthesis
-	start++ // Skip opening (
-	parenCount := 1
-	argStart := start
-
-	for start < len(shellText) && parenCount > 0 {
-		switch shellText[start] {
-		case '(':
-			parenCount++
-		case ')':
-			parenCount--
-		}
-		start++
-	}
-
-	if parenCount != 0 {
-		// Unmatched parentheses
-		return nil, i, false
-	}
-
-	// Extract argument text (between parentheses)
-	argEnd := start - 1 // Position of closing ')'
-	argText := shellText[argStart:argEnd]
-
-	// Step 2: Get parameter schema and parse simple arguments
-	paramSchema := decorator.ParameterSchema()
-	var params []ast.NamedParameter
-
-	if strings.TrimSpace(argText) != "" {
-		trimmed := strings.TrimSpace(argText)
-
-		// For inline decorators, we'll use simple parsing (no named parameters for now)
-		var value ast.Expression
-
-		// Handle quoted strings
-		if (strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`)) ||
-			(strings.HasPrefix(trimmed, `'`) && strings.HasSuffix(trimmed, `'`)) ||
-			(strings.HasPrefix(trimmed, "`") && strings.HasSuffix(trimmed, "`")) {
-			// String literal - remove quotes
-			unquoted := trimmed[1 : len(trimmed)-1]
-			value = &ast.StringLiteral{Value: unquoted}
-		} else {
-			// Identifier
-			value = &ast.Identifier{Name: trimmed}
-		}
-
-		// Use first parameter name from schema if available
-		var paramName string
-		if len(paramSchema) > 0 {
-			paramName = paramSchema[0].Name
-		} else {
-			paramName = "arg0"
-		}
-
-		params = append(params, ast.NamedParameter{
-			Name:  paramName,
-			Value: value,
-			Pos:   ast.Position{Line: 1, Column: i + 1},
-		})
-	}
-
-	// Step 3: Validate parameters using decorator schema
-	if err := p.validateDecoratorParameters(decorator, params, decoratorName); err != nil {
-		return nil, i, false // Invalid decorator usage
-	}
-
-	functionDecorator := &ast.FunctionDecorator{
-		Name: decoratorName,
-		Args: params,
-		Pos:  ast.Position{Line: 1, Column: i + 1}, // Approximate position
-	}
-
-	return functionDecorator, start, true
-}
-
-// Helper functions for character classification
-func isLetter(ch rune) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
-}
-
-func isDigit(ch rune) bool {
-	return ch >= '0' && ch <= '9'
 }
 
 // --- Expression and Literal Parsing ---

@@ -231,7 +231,7 @@ benchmark: @timeout(duration=30s) {
 }
 
 # Command with environment variables
-serve: echo "Serving on @env(HOST, default=localhost):@env(PORT, default=8080)"
+serve: echo "Serving on @env("HOST", default="localhost"):@env("PORT", default="8080")"
 
 # Command using debug variable
 debug: echo "Debug mode: @var(DEBUG)"`

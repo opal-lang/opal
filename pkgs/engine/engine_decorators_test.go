@@ -59,7 +59,7 @@ serve: echo "Server running on @var(PORT)"`,
 		},
 		{
 			name:  "environment variable",
-			input: `deploy: echo "Deploying to @env(ENVIRONMENT)"`,
+			input: `deploy: echo "Deploying to @env("ENVIRONMENT")"`,
 			contains: []string{
 				"func main()",
 				"cobra.Command",

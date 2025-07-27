@@ -425,7 +425,7 @@ func TestDecoratorConsistencyAcrossModes(t *testing.T) {
 		{
 			name: "function decorators",
 			input: `var PORT = "8080"
-serve: echo "Server on @var(PORT) at @env(HOST, default=localhost)"`,
+serve: echo "Server on @var(PORT) at @env("HOST", default="localhost")"`,
 		},
 	}
 

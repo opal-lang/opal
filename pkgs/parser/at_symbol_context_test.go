@@ -255,14 +255,10 @@ func TestAtSymbolInOtherContexts(t *testing.T) {
 			),
 		},
 		{
-			Name:  "at symbol in literal strings with emails - but @var should still work",
+			Name:  "at symbol in literal strings with emails - should be treated as literal text",
 			Input: "test: echo 'Contact @var(SUPPORT_USER) @ support@company.com'",
 			Expected: Program(
-				Cmd("test", Simple(
-					Text("echo 'Contact "),
-					At("var", Id("SUPPORT_USER")),
-					Text(" @ support@company.com'"),
-				)),
+				Cmd("test", "echo 'Contact @var(SUPPORT_USER) @ support@company.com'"),
 			),
 		},
 		{
@@ -486,16 +482,10 @@ func TestAtSymbolEdgeCases(t *testing.T) {
 			),
 		},
 		{
-			Name:  "at symbol in quoted context - @var should still work as decorator",
+			Name:  "at symbol in quoted context - should be treated as literal text",
 			Input: "quoted: echo 'Building @var(PROJECT) version @var(VERSION)'",
 			Expected: Program(
-				Cmd("quoted", Simple(
-					Text("echo 'Building "),
-					At("var", Id("PROJECT")),
-					Text(" version "),
-					At("var", Id("VERSION")),
-					Text("'"),
-				)),
+				Cmd("quoted", "echo 'Building @var(PROJECT) version @var(VERSION)'"),
 			),
 		},
 		{

@@ -40,13 +40,18 @@ type Decorator interface {
 	ImportRequirements() ImportRequirement
 }
 
-// FunctionDecorator represents decorators that transform input arguments to output strings
-// Examples: @env, @cd, @time, @var
+// FunctionDecorator represents decorators that provide values for command composition
+// Examples: @env, @var, @file, @config, @api
+// These decorators transform input parameters into values that can be injected into shell commands
 type FunctionDecorator interface {
 	Decorator
 
-	// Execute provides unified execution for all modes using the execution package
-	Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult
+	// Expand returns a value that can be used in command composition
+	// The execution context determines how the value is used:
+	// - GeneratorMode: Returns Go code expression that evaluates to the value
+	// - InterpreterMode: Returns the actual runtime value
+	// - PlanMode: Returns description for dry-run display
+	Expand(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult
 }
 
 // BlockDecorator represents decorators that modify command execution behavior

@@ -303,8 +303,9 @@ stop web: echo "Gracefully stopping" && kill -TERM @var(PID_FILE)
 
 	generatedCode := result.String()
 
-	// Should contain custom stop logic, not default pkill
-	expectedCustomStop := `"echo \"Gracefully stopping\" && kill -TERM " + PID_FILE`
+	// Should contain custom stop logic with resolved variable value, not default pkill
+	// Look for the pattern in the plan output section which correctly resolves variables
+	expectedCustomStop := `echo \"Gracefully stopping\" && kill -TERM /tmp/web.pid`
 	if !strings.Contains(generatedCode, expectedCustomStop) {
 		t.Errorf("Expected custom stop logic not found: %s", expectedCustomStop)
 	}

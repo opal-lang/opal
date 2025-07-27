@@ -29,7 +29,7 @@ func TestVarDecorators(t *testing.T) {
 			),
 		},
 		{
-			Name:  "@var() in quoted string - gets syntax sugar in simple command",
+			Name:  "@var() in double quoted string - should still be parsed as decorators",
 			Input: "echo: echo \"Building @var(PROJECT) version @var(VERSION)\"",
 			Expected: Program(
 				Cmd("echo", Simple(
@@ -839,6 +839,37 @@ func TestNestedPatternDecorators(t *testing.T) {
 						),
 					),
 				),
+			),
+		},
+	}
+
+	for _, tc := range testCases {
+		RunTestCase(t, tc)
+	}
+}
+
+func TestVarVsEnvDecorators(t *testing.T) {
+	testCases := []TestCase{
+		{
+			Name:  "@var decorator should parse as FunctionDecorator",
+			Input: `test: echo "@var(PORT)"`,
+			Expected: Program(
+				Cmd("test", Simple(
+					Text("echo \""),
+					At("var", Id("PORT")),
+					Text("\""),
+				)),
+			),
+		},
+		{
+			Name:  "@env decorator should parse as FunctionDecorator (using quoted string)",
+			Input: `test: echo "@env("HOME")"`,
+			Expected: Program(
+				Cmd("test", Simple(
+					Text("echo \""),
+					At("env", Str("HOME")),
+					Text("\""),
+				)),
 			),
 		},
 	}

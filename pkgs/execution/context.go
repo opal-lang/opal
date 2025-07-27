@@ -167,7 +167,7 @@ func (c *ExecutionContext) executeShellGenerator(content *ast.ShellContent) *Exe
 
 			// Execute the decorator in generator mode to get Go code
 			generatorCtx := c.WithMode(GeneratorMode)
-			result := funcDecorator.Execute(generatorCtx, p.Args)
+			result := funcDecorator.Expand(generatorCtx, p.Args)
 			if result.Error != nil {
 				return &ExecutionResult{
 					Mode:  GeneratorMode,
@@ -303,7 +303,7 @@ func (c *ExecutionContext) processFunctionDecorator(decorator *ast.FunctionDecor
 	}
 
 	// Execute the decorator using the unified Execute pattern
-	result := funcDecorator.Execute(c, decorator.Args)
+	result := funcDecorator.Expand(c, decorator.Args)
 	if result.Error != nil {
 		return "", fmt.Errorf("@%s decorator execution failed: %w", decorator.Name, result.Error)
 	}
@@ -446,7 +446,7 @@ func (c *ExecutionContext) GenerateShellCodeForTemplate(content *ast.ShellConten
 
 			// Execute the decorator in generator mode to get Go code
 			generatorCtx := c.WithMode(GeneratorMode)
-			result := funcDecorator.Execute(generatorCtx, p.Args)
+			result := funcDecorator.Expand(generatorCtx, p.Args)
 			if result.Error != nil {
 				return "", fmt.Errorf("@%s decorator code generation failed: %w", p.Name, result.Error)
 			}

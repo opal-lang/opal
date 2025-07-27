@@ -67,7 +67,7 @@ serve: echo "Server on port @var(PORT)"`,
 		},
 		{
 			name:           "environment variables",
-			input:          `deploy: echo "Deploying to @env(ENVIRONMENT, default=dev)"`,
+			input:          `deploy: echo "Deploying to @env("ENVIRONMENT", default="dev")"`,
 			expectGenerate: true,
 			contains: []string{
 				"func main()",

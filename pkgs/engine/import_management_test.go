@@ -34,7 +34,7 @@ func TestImportManagement(t *testing.T) {
 		},
 		{
 			name:               "env decorator imports",
-			input:              `deploy: echo "Deploying to @env(ENVIRONMENT)"`,
+			input:              `deploy: echo "Deploying to @env("ENVIRONMENT")"`,
 			expectedStandard:   []string{"os"},
 			expectedThirdParty: []string{},
 		},
@@ -46,7 +46,7 @@ func TestImportManagement(t *testing.T) {
         echo "Backend"
     }
 }
-deploy: echo "Environment: @env(ENV)"`,
+deploy: echo "Environment: @env("ENV")"`,
 			expectedStandard:   []string{"time", "context", "sync", "os"},
 			expectedThirdParty: []string{},
 		},

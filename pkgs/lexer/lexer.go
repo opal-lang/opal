@@ -50,7 +50,8 @@ type LexerMode int
 
 const (
 	LanguageMode LexerMode = iota // Top-level parsing and decorator parsing
-	CommandMode                   // Shell content parsing inside command bodies
+	CommandMode                   // Simple shell content parsing inside command bodies
+	ShellMode                     // Complex shell content with decorator expansion and maintained shell context
 	PatternMode                   // Pattern decorator parsing (@when, @try blocks)
 )
 
@@ -70,10 +71,39 @@ type Lexer struct {
 	braceLevel        int // Track brace nesting for mode transitions
 	patternBraceLevel int // Track the brace level where we entered pattern decorator
 
+	// Function decorator state
+	inFunctionDecorator bool // True when we're inside a function decorator sequence
+
+	// Shell context tracking (maintained across decorator breaks in ShellMode)
+	shellBraceLevel    int  // Track ${...} parameter expansion braces globally
+	shellParenLevel    int  // Track $(...) command substitution globally
+	shellAnyBraceLevel int  // Track any {...} constructs in shell context globally
+	needsShellEnd      bool // True when we need to emit SHELL_END before next non-shell token
+
+	// Quote state tracking (maintained across decorator breaks in ShellMode)
+	shellInSingleQuote bool
+	shellInDoubleQuote bool
+	shellInBacktick    bool
+
+	// SHELL_END position tracking - the end position of the last shell content
+	shellEndPosition int
+	shellEndLine     int
+	shellEndColumn   int
+
 	// Position tracking for error reporting
 	lastPosition int
 	lastLine     int
 	lastColumn   int
+}
+
+// getShellEndPosition returns a safe position for SHELL_END tokens
+func (l *Lexer) getShellEndPosition(fallbackPos, fallbackLine, fallbackColumn int) (int, int, int) {
+	// If shell end position is set, use it
+	if l.shellEndPosition > 0 {
+		return l.shellEndPosition, l.shellEndLine, l.shellEndColumn
+	}
+	// Otherwise use fallback position but ensure column > 0
+	return fallbackPos, fallbackLine, max(1, fallbackColumn)
 }
 
 // New creates a new Lexer from an io.Reader
@@ -218,8 +248,8 @@ func (l *Lexer) TokenizeToSlice() []types.Token {
 
 // NextToken returns the next token from the input
 func (l *Lexer) NextToken() types.Token {
-	// Prevent infinite loops
-	if l.position == l.lastPosition && l.line == l.lastLine && l.column == l.lastColumn {
+	// Prevent infinite loops, but allow SHELL_END transitions
+	if l.position == l.lastPosition && l.line == l.lastLine && l.column == l.lastColumn && !l.needsShellEnd {
 		// We haven't advanced - force EOF to prevent infinite loop
 		return l.createToken(types.EOF, "", l.position, l.line, l.column)
 	}
@@ -233,6 +263,8 @@ func (l *Lexer) NextToken() types.Token {
 		return l.lexLanguageMode()
 	case CommandMode:
 		return l.lexCommandMode()
+	case ShellMode:
+		return l.lexShellMode()
 	case PatternMode:
 		return l.lexPatternMode()
 	default:
@@ -263,6 +295,17 @@ func (l *Lexer) lexLanguageMode() types.Token {
 
 	switch l.ch {
 	case 0:
+		// Check if we're ending a function decorator in shell content
+		if l.inFunctionDecorator {
+			// Transition back to ShellMode to emit SHELL_END before EOF
+			l.inFunctionDecorator = false
+			l.mode = ShellMode
+			l.needsShellEnd = true
+			// Reset position tracking to allow SHELL_END processing
+			l.lastPosition = -1
+			pos, line, col := l.getShellEndPosition(start, startLine, startColumn)
+			return l.createToken(types.SHELL_END, "", pos, line, col)
+		}
 		return l.createToken(types.EOF, "", start, startLine, startColumn)
 
 	case '\n':
@@ -272,8 +315,8 @@ func (l *Lexer) lexLanguageMode() types.Token {
 
 	case ':':
 		l.readChar()
-		// Transition to CommandMode after colon
-		l.mode = CommandMode
+		// Transition to ShellMode after colon (ShellMode can handle both simple and complex shell content)
+		l.mode = ShellMode
 		return l.createToken(types.COLON, ":", start, startLine, startColumn)
 
 	case '=':
@@ -290,6 +333,27 @@ func (l *Lexer) lexLanguageMode() types.Token {
 
 	case ')':
 		l.readChar()
+		// Check if we're ending a function decorator sequence
+		if l.inFunctionDecorator {
+			l.inFunctionDecorator = false
+			l.mode = ShellMode // Return to ShellMode to continue with shell text with maintained context
+			// Check if this decorator is the last shell token before newline (command end)
+			// Skip whitespace to see what comes next
+			pos := l.position
+			ch := l.ch
+			for ch == ' ' || ch == '\t' {
+				pos++
+				if pos >= len(l.input) {
+					ch = 0
+					break
+				}
+				ch = rune(l.input[pos])
+			}
+			// If next non-whitespace is newline, EOF, or closing brace (but not inside shell parameter expansion), this decorator ends the command
+			if ch == '\n' || ch == 0 || (ch == '}' && l.shellBraceLevel == 0) {
+				l.needsShellEnd = true
+			}
+		}
 		return l.createToken(types.RPAREN, ")", start, startLine, startColumn)
 
 	case '{':
@@ -422,7 +486,8 @@ func (l *Lexer) lexCommandMode() types.Token {
 
 	default:
 		// Handle Shell path: all other content as shell text
-		return l.lexShellText(start, startLine, startColumn)
+		l.mode = ShellMode // Switch to ShellMode for proper SHELL_END handling
+		return l.lexShellTextWithContext(start, startLine, startColumn)
 	}
 }
 
@@ -473,10 +538,9 @@ func (l *Lexer) lexDecoratorInCommand(start, startLine, startColumn int) types.T
 
 		// Check if it's a registered decorator
 		if decorators.IsDecorator(identifier) {
-			// Check decorator type from registry - only block/pattern decorators need LanguageMode
-			// Function decorators (@var, @env) should remain as shell text for parser processing
+			// Handle different decorator types appropriately
 			if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
-				// Switch to LanguageMode for decorator parsing
+				// Switch to LanguageMode for block/pattern decorator parsing
 				l.mode = LanguageMode
 
 				// Advance past @ character (don't restore position)
@@ -488,6 +552,23 @@ func (l *Lexer) lexDecoratorInCommand(start, startLine, startColumn int) types.T
 				l.readChar() // Skip the @ character
 
 				return l.createToken(types.AT, "@", start, startLine, startColumn)
+			} else if decorators.IsFunctionDecorator(identifier) {
+				// Check if followed by parentheses for function decorators
+				if l.ch == '(' {
+					// This is a function decorator - switch to LanguageMode for the decorator sequence
+					l.mode = LanguageMode
+					l.inFunctionDecorator = true
+
+					// Reset position to @ and advance past it
+					l.position = savedPos
+					l.readPos = savedReadPos
+					l.ch = savedCh
+					l.line = savedLine
+					l.column = savedColumn
+					l.readChar() // Skip the @ character
+
+					return l.createToken(types.AT, "@", start, startLine, startColumn)
+				}
 			}
 		}
 	}
@@ -561,6 +642,423 @@ func (l *Lexer) lexPatternMode() types.Token {
 	}
 }
 
+// lexShellMode handles complex shell content with decorator expansion and maintained shell context
+func (l *Lexer) lexShellMode() types.Token {
+	// Check if we need to emit SHELL_END first
+	if l.needsShellEnd {
+		l.needsShellEnd = false
+		// After emitting SHELL_END, transition to appropriate mode based on context
+		if l.braceLevel > 0 {
+			// Still inside braces - return to CommandMode for more shell content
+			l.mode = CommandMode
+		} else {
+			// Exited all braces - return to LanguageMode
+			l.mode = LanguageMode
+		}
+		// Create SHELL_END token using stored shell end position
+		pos, line, col := l.getShellEndPosition(l.position, l.line, l.column)
+		token := l.createToken(types.SHELL_END, "", pos, line, col)
+		// Reset position tracking to allow the next token to be processed
+		l.lastPosition = -1 // Force position check to pass
+		return token
+	}
+
+	// Skip whitespace at start of shell content or start of lines, but preserve mid-command whitespace
+	// Check if we're at start of shell content (after colon) or start of new line
+	shouldSkipWhitespace := false
+	if l.position > 0 {
+		prevChar := l.input[l.position-1]
+		if prevChar == ':' || prevChar == '{' || prevChar == '\n' {
+			shouldSkipWhitespace = true
+		}
+	}
+
+	if shouldSkipWhitespace {
+		l.skipWhitespace()
+	}
+
+	start := l.position
+	startLine, startColumn := l.line, l.column
+
+	switch l.ch {
+	case 0:
+		return l.createToken(types.EOF, "", start, startLine, startColumn)
+
+	case '\n':
+		// Newlines end shell content in shell mode (unless line continuation)
+		l.readChar()
+		// Simple rule: determine next mode based on context
+		if l.braceLevel == 0 {
+			l.mode = LanguageMode
+			// Only reset shell context when truly exiting shell mode, not during temporary decorator parsing
+			if !l.inFunctionDecorator {
+				l.shellBraceLevel = 0
+				l.shellParenLevel = 0
+				l.shellAnyBraceLevel = 0
+				// Reset quote state when exiting shell mode
+				l.shellInSingleQuote = false
+				l.shellInDoubleQuote = false
+				l.shellInBacktick = false
+			}
+		} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
+			// Only return to PatternMode if we're at the exact pattern brace level
+			l.mode = PatternMode
+		}
+		// Otherwise stay in ShellMode for regular braced blocks
+		return l.NextToken()
+
+	case '}':
+		// Closing brace - need to check if it's shell syntax or block boundary
+		if l.shellBraceLevel > 0 || l.shellAnyBraceLevel > 0 {
+			// This is shell syntax, not a block boundary - continue with shell text
+			return l.lexShellTextWithContext(start, startLine, startColumn)
+		} else {
+			// This is a block boundary - check if we need SHELL_END first
+			if l.needsShellEnd {
+				// Emit SHELL_END first, then handle } on next call
+				l.needsShellEnd = false
+				// Set up mode transition for after SHELL_END
+				if l.braceLevel <= 0 {
+					l.mode = LanguageMode
+					l.patternBraceLevel = 0 // Clear pattern context
+				} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
+					l.mode = PatternMode
+				} else {
+					l.mode = CommandMode
+				}
+				// Only reset shell context when truly exiting shell mode, not during temporary decorator parsing
+				if !l.inFunctionDecorator {
+					l.shellBraceLevel = 0
+					l.shellParenLevel = 0
+					l.shellAnyBraceLevel = 0
+				}
+				// Reset position tracking to allow next token processing
+				l.lastPosition = -1
+				pos, line, col := l.getShellEndPosition(start, startLine, startColumn)
+				return l.createToken(types.SHELL_END, "", pos, line, col)
+			} else {
+				// No SHELL_END needed - set up mode transition and handle }
+				if l.braceLevel <= 0 {
+					l.mode = LanguageMode
+					l.patternBraceLevel = 0 // Clear pattern context
+				} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
+					l.mode = PatternMode
+				} else {
+					l.mode = CommandMode
+				}
+				// Only reset shell context when truly exiting shell mode, not during temporary decorator parsing
+				if !l.inFunctionDecorator {
+					l.shellBraceLevel = 0
+					l.shellParenLevel = 0
+					l.shellAnyBraceLevel = 0
+				}
+				// Let the appropriate mode handle the } token
+				return l.NextToken()
+			}
+		}
+
+	case '{':
+		// Opening brace in shell mode - start new block
+		l.readChar()
+		l.braceLevel++
+		return l.createToken(types.LBRACE, "{", start, startLine, startColumn)
+
+	case '@':
+		// Handle decorators inline - check if it's a registered decorator
+		return l.lexDecoratorInShell(start, startLine, startColumn)
+
+	default:
+		// Handle shell content with maintained context
+		return l.lexShellTextWithContext(start, startLine, startColumn)
+	}
+}
+
+// lexDecoratorInShell handles decorators inline in ShellMode
+func (l *Lexer) lexDecoratorInShell(start, startLine, startColumn int) types.Token {
+	// Look ahead to check if this is @identifier pattern
+	savedPos := l.position
+	savedReadPos := l.readPos
+	savedCh := l.ch
+	savedLine := l.line
+	savedColumn := l.column
+
+	// Skip @
+	l.readChar()
+	l.skipWhitespace()
+
+	// Check if followed by identifier
+	if (l.ch < 128 && isIdentStart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || l.ch == '_')) {
+		// Read the identifier to check if it's a decorator
+		identStart := l.position
+		for {
+			if l.ch < 128 && isIdentPart[l.ch] {
+				l.readChar()
+			} else if l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch)) {
+				l.readChar()
+			} else {
+				break
+			}
+		}
+		identifier := l.input[identStart:l.position]
+
+		// Check if it's a registered decorator
+		if decorators.IsDecorator(identifier) {
+			// Handle different decorator types appropriately
+			if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
+				// Switch to LanguageMode for block/pattern decorator parsing
+				l.mode = LanguageMode
+
+				// Reset position to @ and advance past it
+				l.position = savedPos
+				l.readPos = savedReadPos
+				l.ch = savedCh
+				l.line = savedLine
+				l.column = savedColumn
+				l.readChar() // Skip the @ character
+
+				return l.createToken(types.AT, "@", start, startLine, startColumn)
+			} else if decorators.IsFunctionDecorator(identifier) {
+				// Check if followed by parentheses for function decorators
+				if l.ch == '(' {
+					// This is a function decorator - switch to LanguageMode for the decorator sequence
+					l.mode = LanguageMode
+					l.inFunctionDecorator = true
+
+					// Reset position to @ and advance past it
+					l.position = savedPos
+					l.readPos = savedReadPos
+					l.ch = savedCh
+					l.line = savedLine
+					l.column = savedColumn
+					l.readChar() // Skip the @ character
+
+					return l.createToken(types.AT, "@", start, startLine, startColumn)
+				}
+			}
+		}
+	}
+
+	// Restore position - this is shell text starting with @
+	l.position = savedPos
+	l.readPos = savedReadPos
+	l.ch = savedCh
+	l.line = savedLine
+	l.column = savedColumn
+
+	return l.lexShellTextWithContext(start, startLine, startColumn)
+}
+
+// lexShellTextWithContext handles shell content in ShellMode with maintained global context
+func (l *Lexer) lexShellTextWithContext(start, startLine, startColumn int) types.Token {
+	var result strings.Builder
+	// Use global quote state to maintain context across decorator breaks
+	inSingleQuote := l.shellInSingleQuote
+	inDoubleQuote := l.shellInDoubleQuote
+	inBacktick := l.shellInBacktick
+
+	for l.ch != 0 {
+
+		// Stop at newline (unless line continuation or inside quotes)
+		if l.ch == '\n' {
+			// Check for line continuation (backslash before newline)
+			if l.position > 0 && l.input[l.position-1] == '\\' && !inSingleQuote {
+				// Line continuation - remove the backslash
+				text := result.String()
+				if len(text) > 0 && text[len(text)-1] == '\\' {
+					result.Reset()
+					result.WriteString(text[:len(text)-1]) // Remove the backslash
+				}
+				l.readChar() // Skip newline
+				// Skip leading whitespace on the next line
+				for l.ch == ' ' || l.ch == '\t' {
+					l.readChar()
+				}
+				continue
+			}
+
+			// If inside single quotes, include the newline literally
+			if inSingleQuote {
+				result.WriteRune(l.ch)
+				l.readChar()
+				continue
+			}
+
+			// If inside double quotes or backticks without line continuation, include newline
+			if inDoubleQuote || inBacktick {
+				result.WriteRune(l.ch)
+				l.readChar()
+				continue
+			}
+
+			// Not in quotes and no line continuation - end of shell text
+			break
+		}
+
+		// Stop at closing brace (block boundary) - unless inside quotes or shell constructs
+		if l.ch == '}' && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			if l.shellBraceLevel > 0 {
+				// This is closing a shell parameter expansion ${...}
+				l.shellBraceLevel--
+			} else if l.shellAnyBraceLevel > 0 {
+				// This is closing some other shell brace construct
+				l.shellAnyBraceLevel--
+			} else {
+				// This is a block boundary - only break if we're not inside any shell constructs
+				break
+			}
+		}
+
+		// Stop at @ if it starts any registered decorator - allow inside double quotes for decorator expansion
+		if l.ch == '@' && !inSingleQuote {
+			// Look ahead to see if this is @identifier for any registered decorator
+			if l.readPos < len(l.input) {
+				nextCh, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
+				if (nextCh < 128 && isIdentStart[nextCh]) || (nextCh >= 128 && (unicode.IsLetter(nextCh) || nextCh == '_')) {
+					// Check if this is any registered decorator by reading ahead
+					savedPos := l.position
+					savedReadPos := l.readPos
+					savedCh := l.ch
+
+					// Skip @ and read identifier
+					l.readChar()
+					identStart := l.position
+					for {
+						if l.ch < 128 && isIdentPart[l.ch] {
+							l.readChar()
+						} else if l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch)) {
+							l.readChar()
+						} else {
+							break
+						}
+					}
+					identifier := l.input[identStart:l.position]
+
+					// Check what follows the identifier
+					hasOpenParen := l.ch == '('
+
+					// Restore position
+					l.position = savedPos
+					l.readPos = savedReadPos
+					l.ch = savedCh
+
+					// Break for block/pattern decorators (they switch to LanguageMode)
+					if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
+						break
+					}
+
+					// Break for function decorators with parentheses (we'll tokenize them here)
+					if decorators.IsFunctionDecorator(identifier) && hasOpenParen {
+						break
+					}
+				}
+			}
+		}
+
+		// Track various shell constructs BEFORE adding character
+		if !inSingleQuote && !inDoubleQuote && !inBacktick {
+			// Track shell parameter expansion ${...}
+			if l.ch == '$' && l.peekChar() == '{' {
+				l.shellBraceLevel++
+			}
+			// Track command substitution $(...)
+			if l.ch == '$' && l.peekChar() == '(' {
+				l.shellParenLevel++
+			}
+			// Track closing parentheses for command substitution
+			if l.ch == ')' && l.shellParenLevel > 0 {
+				l.shellParenLevel--
+			}
+			// Track standalone braces in shell context (brace expansion, find {})
+			if l.ch == '{' {
+				// Check if this is part of ${...} (already handled above)
+				if result.Len() > 0 {
+					lastChar := result.String()[result.Len()-1]
+					if lastChar != '$' {
+						l.shellAnyBraceLevel++
+					}
+				} else {
+					l.shellAnyBraceLevel++
+				}
+			}
+		}
+
+		// Add character to result
+		result.WriteRune(l.ch)
+
+		// Track quote state AFTER adding character
+		if l.ch == '\'' && !inDoubleQuote && !inBacktick {
+			inSingleQuote = !inSingleQuote
+		} else if l.ch == '"' && !inSingleQuote && !inBacktick {
+			inDoubleQuote = !inDoubleQuote
+		} else if l.ch == '`' && !inSingleQuote && !inDoubleQuote {
+			inBacktick = !inBacktick
+		}
+
+		l.readChar()
+	}
+
+	text := result.String()
+	if text == "" {
+		return l.createToken(types.ILLEGAL, "", start, startLine, startColumn)
+	}
+
+	// Minimal whitespace trimming for ShellMode - preserve shell syntax
+	originalText := text
+
+	// Determine why we stopped (what comes next)
+	stoppedAtNewline := l.ch == '\n'
+	stoppedAtBrace := l.ch == '}'
+	stoppedAtEOF := l.ch == 0
+
+	// Only trim trailing whitespace when ending command (not when continuing after decorators)
+	if stoppedAtNewline || stoppedAtBrace || stoppedAtEOF {
+		// Trim trailing whitespace when ending command
+		text = strings.TrimRight(text, " \t")
+
+		// If we have shell text, return it first, SHELL_END will come next
+		if text != "" {
+			l.needsShellEnd = true
+			// Set SHELL_END position to end of current line (ensures column > 0)
+			l.shellEndPosition = l.position
+			l.shellEndLine = l.line
+			l.shellEndColumn = max(1, l.column) // Ensure column is at least 1
+			// Save quote state before returning
+			l.shellInSingleQuote = inSingleQuote
+			l.shellInDoubleQuote = inDoubleQuote
+			l.shellInBacktick = inBacktick
+			return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+		} else {
+			// No shell text, emit SHELL_END directly with safe position
+			pos, line, col := l.getShellEndPosition(start, startLine, startColumn)
+			// Save quote state before returning
+			l.shellInSingleQuote = inSingleQuote
+			l.shellInDoubleQuote = inDoubleQuote
+			l.shellInBacktick = inBacktick
+			return l.createToken(types.SHELL_END, "", pos, line, col)
+		}
+	}
+	// Preserve all other whitespace to maintain shell syntax
+
+	// If trimming resulted in empty string, fall back to original
+	if text == "" && originalText != "" {
+		text = originalText
+	}
+
+	if text == "" {
+		// Save quote state before returning
+		l.shellInSingleQuote = inSingleQuote
+		l.shellInDoubleQuote = inDoubleQuote
+		l.shellInBacktick = inBacktick
+		return l.createToken(types.ILLEGAL, "", start, startLine, startColumn)
+	}
+
+	// Save quote state before returning
+	l.shellInSingleQuote = inSingleQuote
+	l.shellInDoubleQuote = inDoubleQuote
+	l.shellInBacktick = inBacktick
+	return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+}
+
 // lexShellText handles shell content in CommandMode
 func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 	var result strings.Builder
@@ -568,6 +1066,19 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 	var shellBraceLevel int // Track ${...} parameter expansion braces
 	var parenLevel int      // Track $(...) command substitution
 	var anyBraceLevel int   // Track any {...} constructs in shell context
+
+	// Determine if this is the start of shell content by checking if we're at beginning of line or after colon
+	isStartOfCommand := false
+	if start > 0 {
+		// Look back to see if this follows a colon (start of command) or whitespace after colon
+		pos := start - 1
+		for pos >= 0 && (l.input[pos] == ' ' || l.input[pos] == '\t') {
+			pos--
+		}
+		if pos >= 0 && l.input[pos] == ':' {
+			isStartOfCommand = true
+		}
+	}
 
 	for l.ch != 0 {
 
@@ -622,13 +1133,13 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 			}
 		}
 
-		// Stop at @ if it starts a block/pattern decorator - unless inside quotes
-		if l.ch == '@' && !inSingleQuote && !inDoubleQuote && !inBacktick {
-			// Look ahead to see if this is @identifier for a block/pattern decorator
+		// Stop at @ if it starts any registered decorator - allow inside double quotes for decorator expansion
+		if l.ch == '@' && !inSingleQuote {
+			// Look ahead to see if this is @identifier for any registered decorator
 			if l.readPos < len(l.input) {
 				nextCh, _ := utf8.DecodeRuneInString(l.input[l.readPos:])
 				if (nextCh < 128 && isIdentStart[nextCh]) || (nextCh >= 128 && (unicode.IsLetter(nextCh) || nextCh == '_')) {
-					// Check if this is a block/pattern decorator by reading ahead
+					// Check if this is any registered decorator by reading ahead
 					savedPos := l.position
 					savedReadPos := l.readPos
 					savedCh := l.ch
@@ -647,13 +1158,21 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 					}
 					identifier := l.input[identStart:l.position]
 
+					// Check what follows the identifier
+					hasOpenParen := l.ch == '('
+
 					// Restore position
 					l.position = savedPos
 					l.readPos = savedReadPos
 					l.ch = savedCh
 
-					// Only break for block/pattern decorators
+					// Break for block/pattern decorators (they switch to LanguageMode)
 					if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
+						break
+					}
+
+					// Break for function decorators with parentheses (we'll tokenize them here)
+					if decorators.IsFunctionDecorator(identifier) && hasOpenParen {
 						break
 					}
 				}
@@ -703,7 +1222,45 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 		l.readChar()
 	}
 
-	text := strings.TrimSpace(result.String())
+	text := result.String()
+	if text == "" {
+		return l.createToken(types.ILLEGAL, "", start, startLine, startColumn)
+	}
+
+	// Context-aware whitespace trimming
+	originalText := text
+
+	// Determine why we stopped (what comes next)
+	stoppedAtDecorator := l.ch == '@'
+	stoppedAtNewline := l.ch == '\n'
+	stoppedAtBrace := l.ch == '}'
+	stoppedAtEOF := l.ch == 0
+
+	// Apply trimming rules based on context:
+	// 1. If we're at start of command AND stopping at decorator, preserve trailing space
+	// 2. If we're stopping at newline/brace/EOF, trim trailing whitespace
+	// 3. If we're in middle (after decorator), trim leading whitespace
+
+	if isStartOfCommand && stoppedAtDecorator {
+		// Keep trailing space for cases like "cd @var(DIR)" - preserve the "cd " part
+		text = strings.TrimLeft(text, " \t")
+	} else if stoppedAtNewline || stoppedAtBrace || stoppedAtEOF {
+		// Trim trailing whitespace when ending command
+		text = strings.TrimRight(text, " \t")
+		if !isStartOfCommand {
+			// Also trim leading if not start of command (middle of sequence)
+			text = strings.TrimLeft(text, " \t")
+		}
+	} else if stoppedAtDecorator && !isStartOfCommand {
+		// Middle of sequence, trim both sides but keep internal spaces
+		text = strings.TrimSpace(text)
+	}
+
+	// If trimming resulted in empty string, fall back to original
+	if text == "" && originalText != "" {
+		text = originalText
+	}
+
 	if text == "" {
 		return l.createToken(types.ILLEGAL, "", start, startLine, startColumn)
 	}
@@ -729,9 +1286,13 @@ func (l *Lexer) lexIdentifierOrKeyword(start, startLine, startColumn int) types.
 
 	// No need to track decorator names with simplified approach
 
-	// Check for keywords
+	// Check for keywords - but only in appropriate contexts
 	switch value {
 	case "var":
+		// Only treat 'var' as VAR token if we're not in decorator context
+		if l.inFunctionDecorator {
+			return l.createToken(types.IDENTIFIER, value, start, startLine, startColumn)
+		}
 		return l.createToken(types.VAR, value, start, startLine, startColumn)
 	case "watch":
 		return l.createToken(types.WATCH, value, start, startLine, startColumn)

@@ -52,16 +52,20 @@ func (e *EnvDecorator) ParameterSchema() []ParameterSchema {
 
 // Validate checks if the decorator usage is correct during parsing
 
-// Execute provides unified execution for all modes using the execution package
-func (e *EnvDecorator) Execute(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult {
+// Expand provides unified expansion for all modes using the execution package
+func (e *EnvDecorator) Expand(ctx *execution.ExecutionContext, params []ast.NamedParameter) *execution.ExecutionResult {
 	// Validate parameters first
 
 	// Get the environment variable key using helper
 	key := ast.GetStringParam(params, "key", "")
 	if key == "" && len(params) > 0 {
 		// Fallback to positional if no named parameter
-		if keyLiteral, ok := params[0].Value.(*ast.StringLiteral); ok {
-			key = keyLiteral.Value
+		switch v := params[0].Value.(type) {
+		case *ast.StringLiteral:
+			key = v.Value
+		case *ast.Identifier:
+			// Allow identifiers for convenience (e.g., @env(HOME) instead of @env("HOME"))
+			key = v.Name
 		}
 	}
 
