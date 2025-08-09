@@ -8,15 +8,15 @@ on:
   workflow_dispatch: # Allow manual triggers
 
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.24.3'
   CACHE_VERSION: v2  # Updated for custom lexer (no ANTLR)
 
 jobs:
   # =============================================================================
-  # 🔍 FAST CHECKS - Formatting & Linting (30s)
+  # 🔍 FORMATTING CHECKS - Nix & Go Formatting (30s)
   # =============================================================================
-  format-lint:
-    name: Format & Lint
+  format-check:
+    name: Format Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,7 +31,7 @@ jobs:
         run: |
           echo "🔍 Checking Nix file formatting..."
           nix run nixpkgs#nixpkgs-fmt -- --check . || {
-            echo "❌ Nix formatting check failed. Run 'just format' to fix."
+            echo "❌ Nix formatting check failed. Run 'dev format' to fix."
             exit 1
           }
 
@@ -41,10 +41,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install Go tools
-        run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          go install mvdan.cc/gofumpt@latest
+      - name: Install gofumpt
+        run: go install mvdan.cc/gofumpt@latest
 
       - name: Check Go formatting
         run: |
@@ -52,14 +50,9 @@ jobs:
           if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then
             echo "❌ Go formatting issues found:"
             gofumpt -l .
-            echo "Run 'just format' to fix."
+            echo "Run 'dev format' to fix."
             exit 1
           fi
-
-      - name: Go linting
-        run: |
-          echo "🔍 Running Go linters..."
-          golangci-lint run --timeout=5m
 
       - name: Nix flake check (basic)
         run: |
@@ -67,46 +60,172 @@ jobs:
           nix flake check --no-build
 
   # =============================================================================
-  # ⚡ GO UNIT TESTS - Core Logic (30s-1m)
+  # 🔍 MODULE LINTING - Using dev commands (30s each)
   # =============================================================================
-  go-tests:
-    name: Go Tests
+  module-lint:
+    name: Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
-    needs: [format-lint]
+    needs: [format-check]
+    strategy:
+      matrix:
+        module: [core, runtime, testing, cli]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          logger: pretty
 
-
-      - name: Download Go dependencies
+      - name: Run module linting
         run: |
-          go mod download
-          go mod verify
+          echo "🔍 Running linters for ${{ matrix.module }} module using dev commands..."
+          nix develop -c dev ${{ matrix.module }}-lint
 
-      - name: Run Go tests with coverage
+  # =============================================================================
+  # 🧪 MODULE TESTING - Respecting Dependency Hierarchy
+  # =============================================================================
+  
+  # Core module (foundation - no dependencies)
+  test-core:
+    name: Test Core Module
+    runs-on: ubuntu-latest
+    needs: [format-check, module-lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Run core module CI
         run: |
-          echo "🧪 Running Go tests with coverage..."
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
-          go tool cover -html=coverage.out -o coverage.html
+          echo "🧪 Running core module CI workflow..."
+          nix develop -c dev core-ci
 
-      - name: Upload coverage reports
+      - name: Upload core coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-core
+          path: coverage-core.out
+
+  # Runtime module (depends on core)
+  test-runtime:
+    name: Test Runtime Module  
+    runs-on: ubuntu-latest
+    needs: [test-core]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Run runtime module CI
+        run: |
+          echo "⚡ Running runtime module CI workflow..."
+          nix develop -c dev runtime-ci
+
+      - name: Upload runtime coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-runtime
+          path: coverage-runtime.out
+
+  # Testing module (depends on core + runtime)
+  test-testing:
+    name: Test Testing Module
+    runs-on: ubuntu-latest
+    needs: [test-core, test-runtime]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Run testing module CI
+        run: |
+          echo "🧰 Running testing module CI workflow..."
+          nix develop -c dev testing-ci
+
+      - name: Upload testing coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-testing
+          path: coverage-testing.out
+
+  # CLI module (depends on all modules)  
+  test-cli:
+    name: Test CLI Module
+    runs-on: ubuntu-latest
+    needs: [test-core, test-runtime, test-testing]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Run CLI module CI
+        run: |
+          echo "🚀 Running CLI module CI workflow..."
+          nix develop -c dev cli-ci
+
+      - name: Upload CLI coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-cli
+          path: coverage-cli.out
+
+  # Aggregate coverage reports
+  aggregate-coverage:
+    name: Aggregate Coverage
+    runs-on: ubuntu-latest
+    needs: [test-core, test-runtime, test-testing, test-cli]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v8
+        with:
+          logger: pretty
+
+      - name: Download all coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-artifacts/
+
+      - name: Merge coverage reports using dev commands
+        run: |
+          echo "📊 Copying coverage files and merging..."
+          find coverage-artifacts/ -name "*.out" -exec cp {} . \;
+          nix develop -c dev coverage-reports
+
+      - name: Upload merged coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.out
           flags: unittests
           name: codecov-umbrella
 
-      - name: Archive coverage report
+      - name: Archive merged coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.html
+          name: coverage-report-merged
+          path: |
+            coverage.out
+            coverage.html
 
   # =============================================================================
   # 🔨 BUILD BINARIES - Core Deliverables (1-2m)
@@ -114,7 +233,7 @@ jobs:
   build-binaries:
     name: Build Binaries
     runs-on: ${{ matrix.os }}
-    needs: [format-lint]
+    needs: [format-check]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -147,7 +266,7 @@ jobs:
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
             -o devcmd-${{ matrix.goos }}-${{ matrix.goarch }} \
-            ./cmd/devcmd
+            ./cli/main.go
 
       - name: Test binary
         run: |
@@ -167,7 +286,7 @@ jobs:
   nix-core:
     name: Nix Core Packages
     runs-on: ${{ matrix.os }}
-    needs: [format-lint]
+    needs: [format-check]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -209,7 +328,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [format-lint, go-tests, build-binaries, nix-core]
+    needs: [format-check, module-lint, test-core, test-runtime, test-testing, test-cli, aggregate-coverage, build-binaries, nix-core]
     if: always()
     steps:
       - name: Check job statuses
@@ -218,8 +337,13 @@ jobs:
           echo "════════════════════════════════════════"
 
           jobs=(
-            "${{ needs.format-lint.result }}:Format & Lint"
-            "${{ needs.go-tests.result }}:Go Tests"
+            "${{ needs.format-check.result }}:Format Check"
+            "${{ needs.module-lint.result }}:Module Lint"
+            "${{ needs.test-core.result }}:Test Core"
+            "${{ needs.test-runtime.result }}:Test Runtime"
+            "${{ needs.test-testing.result }}:Test Testing"
+            "${{ needs.test-cli.result }}:Test CLI"
+            "${{ needs.aggregate-coverage.result }}:Coverage Report"
             "${{ needs.build-binaries.result }}:Build Binaries"
             "${{ needs.nix-core.result }}:Nix Core"
           )
@@ -343,7 +467,7 @@ jobs:
             CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
               -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -o "release/$BINARY_NAME" \
-              ./cmd/devcmd
+              ./cli/main.go
           done
 
 

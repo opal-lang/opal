@@ -1,212 +1,337 @@
-# Devcmd Development Commands
-# Showcasing real-world usage of our own tool
+# Devcmd Development Commands - Modular Architecture
+# Multi-module project with clean separation of concerns and dependency hierarchy
 
 # =============================================================================
 # PROJECT CONFIGURATION
 # =============================================================================
 
 var PROJECT = "devcmd"
-# Note: ANTLR grammar generation removed - now using custom lexer
 var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 var BUILD_TIME = "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-var GO_VERSION = "1.22"
+var GO_VERSION = "1.24.3"
 
 # =============================================================================
-# 🚀 QUICK START & CORE COMMANDS
+# 📦 CORE MODULE - Foundation (no dependencies)
 # =============================================================================
 
-# Project setup and initialization
+# Core module testing
+core-test: @workdir("core") { 
+    echo "🧪 Testing core module..."
+    go test -v ./... 
+}
+
+core-test-coverage: @workdir("core") { 
+    echo "📊 Testing core module with coverage..."
+    go test -race -coverprofile=../coverage-core.out -covermode=atomic ./... 
+}
+
+# Core module code quality
+core-lint: @workdir("core") { 
+    echo "🔍 Linting core module..."
+    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+}
+
+core-format: @workdir("core") { 
+    echo "📝 Formatting core module..."
+    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
+}
+
+# Core module utilities
+core-clean: @workdir("core") { 
+    echo "🧹 Cleaning core module..."
+    go clean -cache -testcache
+}
+
+core-deps: @workdir("core") { 
+    echo "📦 Managing core module dependencies..."
+    go mod download
+    go mod tidy
+}
+
+# Complete core module CI workflow
+core-ci: {
+    echo "🧪 Core module CI workflow..."
+    @cmd(core-format)
+    @cmd(core-lint)
+    @cmd(core-test-coverage)
+    echo "✅ Core module CI complete!"
+}
+
+# =============================================================================
+# ⚡ RUNTIME MODULE - Decorators & Execution (depends on core)
+# =============================================================================
+
+# Runtime module testing
+runtime-test: @workdir("runtime") { 
+    echo "⚡ Testing runtime module..."
+    go test -v ./... 
+}
+
+runtime-test-coverage: @workdir("runtime") { 
+    echo "📊 Testing runtime module with coverage..."
+    go test -race -coverprofile=../coverage-runtime.out -covermode=atomic ./... 
+}
+
+# Runtime module code quality
+runtime-lint: @workdir("runtime") { 
+    echo "🔍 Linting runtime module..."
+    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+}
+
+runtime-format: @workdir("runtime") { 
+    echo "📝 Formatting runtime module..."
+    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
+}
+
+# Runtime module utilities
+runtime-clean: @workdir("runtime") { 
+    echo "🧹 Cleaning runtime module..."
+    go clean -cache -testcache
+}
+
+runtime-deps: @workdir("runtime") { 
+    echo "📦 Managing runtime module dependencies..."
+    go mod download
+    go mod tidy
+}
+
+# Complete runtime module CI workflow (includes dependency validation)
+runtime-ci: {
+    echo "⚡ Runtime module CI workflow..."
+    @cmd(core-test)          # Ensure dependency is good
+    @cmd(runtime-format)
+    @cmd(runtime-lint)
+    @cmd(runtime-test-coverage)
+    echo "✅ Runtime module CI complete!"
+}
+
+# =============================================================================
+# 🧰 TESTING MODULE - Test Utilities (depends on core + runtime)
+# =============================================================================
+
+# Testing module testing
+testing-test: @workdir("testing") { 
+    echo "🧰 Testing testing module..."
+    go test -v ./... 
+}
+
+testing-test-coverage: @workdir("testing") { 
+    echo "📊 Testing testing module with coverage..."
+    go test -race -coverprofile=../coverage-testing.out -covermode=atomic ./... 
+}
+
+# Testing module code quality
+testing-lint: @workdir("testing") { 
+    echo "🔍 Linting testing module..."
+    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+}
+
+testing-format: @workdir("testing") { 
+    echo "📝 Formatting testing module..."
+    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
+}
+
+# Testing module utilities
+testing-clean: @workdir("testing") { 
+    echo "🧹 Cleaning testing module..."
+    go clean -cache -testcache
+}
+
+testing-deps: @workdir("testing") { 
+    echo "📦 Managing testing module dependencies..."
+    go mod download
+    go mod tidy
+}
+
+# Complete testing module CI workflow (includes dependency validation)
+testing-ci: {
+    echo "🧰 Testing module CI workflow..."
+    @cmd(core-test)          # Ensure dependencies are good
+    @cmd(runtime-test)
+    @cmd(testing-format)
+    @cmd(testing-lint)
+    @cmd(testing-test-coverage)
+    echo "✅ Testing module CI complete!"
+}
+
+# =============================================================================
+# 🚀 CLI MODULE - Main Application (depends on all modules)
+# =============================================================================
+
+# CLI module testing
+cli-test: @workdir("cli") { 
+    echo "🚀 Testing CLI module..."
+    go test -v ./... 
+}
+
+cli-test-coverage: @workdir("cli") { 
+    echo "📊 Testing CLI module with coverage..."
+    go test -race -coverprofile=../coverage-cli.out -covermode=atomic ./... 
+}
+
+# CLI module code quality
+cli-lint: @workdir("cli") { 
+    echo "🔍 Linting CLI module..."
+    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+}
+
+cli-format: @workdir("cli") { 
+    echo "📝 Formatting CLI module..."
+    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
+}
+
+# CLI module utilities
+cli-clean: @workdir("cli") { 
+    echo "🧹 Cleaning CLI module..."
+    go clean -cache -testcache
+}
+
+cli-deps: @workdir("cli") { 
+    echo "📦 Managing CLI module dependencies..."
+    go mod download
+    go mod tidy
+}
+
+# Component-specific CLI tests
+cli-test-lexer: @workdir("cli") { go test -v ./internal/lexer }
+cli-test-parser: @workdir("cli") { go test -v ./internal/parser }
+cli-test-engine: @workdir("cli") { go test -v ./internal/engine }
+
+# Complete CLI module CI workflow (includes all dependency validation)
+cli-ci: {
+    echo "🚀 CLI module CI workflow..."
+    @cmd(core-test)          # Ensure all dependencies are good
+    @cmd(runtime-test)
+    @cmd(testing-test)
+    @cmd(cli-format)
+    @cmd(cli-lint)
+    @cmd(cli-test-coverage)
+    echo "✅ CLI module CI complete!"
+}
+
+# =============================================================================
+# 🔄 GLOBAL ORCHESTRATION - Project-wide Commands
+# =============================================================================
+
+# Quick setup for new contributors
 setup: {
     echo "🔧 Setting up @var(PROJECT) development environment..."
-    echo "📦 Downloading Go dependencies..."
-    go mod download
-    go mod verify
-    echo "✅ Setup complete! Run 'dev test' to verify."
-}
-
-# Note: ANTLR grammar generation removed - now using custom lexer in pkgs/lexer/
-
-# Build the CLI
-build: {
-    echo "🔨 Building @var(PROJECT) CLI..."
-    # Note: Now using custom lexer - no parser generation needed
-    go build -ldflags="-s -w -X main.Version=@var(VERSION) -X main.BuildTime=@var(BUILD_TIME)" -o @var(PROJECT) ./cmd/@var(PROJECT)
-    echo "✅ Built: ./@var(PROJECT)"
-}
-
-# =============================================================================
-# 🧪 TESTING COMMANDS (ordered by execution speed)
-# =============================================================================
-
-test-quick: {
-    echo "⚡ Running quick checks..."
-    echo "🔍 Checking Go formatting..."
-    if command -v gofumpt >/dev/null 2>&1; then if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofumpt -l .; exit 1; fi; else if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofmt -l .; exit 1; fi; fi
-    echo "🔍 Checking Nix formatting..."
-    if command -v nixpkgs-fmt >/dev/null 2>&1; then nixpkgs-fmt --check . || (echo "❌ Run 'dev format' to fix"; exit 1); else echo "⚠️  nixpkgs-fmt not available, skipping Nix format check"; fi
-    dev lint
-    echo "✅ Quick checks passed!"
-}
-
-# Go unit tests with coverage
-test-go: {
-    echo "🧪 Running Go tests with coverage..."
-    # Note: Now using custom lexer - no parser generation needed
-    go test -race -coverprofile=coverage.out -covermode=atomic ./...
-    if command -v go >/dev/null 2>&1; then go tool cover -html=coverage.out -o coverage.html; echo "📊 Coverage report: coverage.html"; fi
-    echo "✅ Go tests passed!"
-}
-
-# Build and test binaries
-test-build: {
-    echo "🔨 Building and testing binaries..."
-    dev build
-    echo "🧪 Testing built binary..."
-    ./@var(PROJECT) --help
-    ./@var(PROJECT) --version || echo "⚠️  Version command not available"
-    echo "✅ Binary tests passed!"
-}
-
-# Nix package tests
-test-nix: {
-    echo "📦 Testing Nix packages..."
-    echo "Building core package..."
-    nix build .#@var(PROJECT) --print-build-logs
-    echo "Testing core package..."
-    ./result/bin/@var(PROJECT) --help
-    echo "Basic flake check..."
-    nix flake check --no-build
-    echo "✅ Nix core tests passed!"
-}
-
-# Complete test suite
-test-all: {
-    echo "🧪 Running complete test suite..."
-    dev test-quick
-    dev test-go
-    dev test-build
-    dev test-nix
-    echo "🎉 All tests passed!"
-}
-
-# Run basic Go tests (for quick feedback)
-test: {
-    echo "🧪 Running Go unit tests..."
-    # Note: Now using custom lexer - no parser generation needed
-    go test ./...
-}
-
-# Run parser tests only
-test-parser: {
-    echo "🧪 Running parser tests..."
-    go test -v ./pkgs/parser
-}
-
-# Run generator tests only
-test-generator: {
-    echo "🧪 Running generator tests..."
-    go test -v ./pkgs/generator
-}
-
-# Run tests with coverage (alias for test-go)
-cover: {
-    echo "📊 Running tests with coverage..."
-    dev test-go
-}
-
-# =============================================================================
-# 📝 CODE QUALITY COMMANDS
-# =============================================================================
-
-# Format all code
-format: {
-    echo "📝 Formatting all code..."
-    echo "Formatting Go code..."
+    echo "📦 Downloading Go dependencies for all modules..."
     @parallel {
-        if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi
-        if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo "⚠️  nixpkgs-fmt not available"; fi
+        @cmd(core-deps)
+        @cmd(runtime-deps)
+        @cmd(testing-deps)
+        @cmd(cli-deps)
     }
-    echo "✅ Code formatted!"
+    go work sync
+    echo "✅ Setup complete! Run 'dev ci' to verify everything works."
 }
 
-# Run linters
+# Test all modules respecting dependency hierarchy
+test: {
+    echo "🧪 Testing all modules with dependency awareness..."
+    @cmd(core-test)           # Foundation
+    @cmd(runtime-test)        # Depends on core
+    @cmd(testing-test)        # Depends on core + runtime  
+    @cmd(cli-test)            # Depends on all
+    echo "✅ All module tests passed!"
+}
+
+# Test all modules with coverage
+test-coverage: {
+    echo "📊 Running tests with coverage across all modules..."
+    @cmd(core-test-coverage)
+    @cmd(runtime-test-coverage)
+    @cmd(testing-test-coverage)
+    @cmd(cli-test-coverage)
+    @cmd(coverage-reports)
+    echo "✅ Coverage testing complete!"
+}
+
+# Generate coverage reports (only called after coverage tests)
+coverage-reports: {
+    echo "📊 Merging coverage reports..."
+    command -v gocovmerge >/dev/null 2>&1 && gocovmerge coverage-*.out > coverage.out && rm coverage-*.out || echo "⚠️  gocovmerge not available"
+    command -v go >/dev/null 2>&1 && go tool cover -html=coverage.out -o coverage.html && echo "📊 Coverage report: coverage.html"
+}
+
+# Format all modules
+format: {
+    echo "📝 Formatting all code across modules..."
+    @parallel {
+        @cmd(core-format)
+        @cmd(runtime-format)
+        @cmd(testing-format)
+        @cmd(cli-format)
+    }
+    # Also format Nix files
+    command -v nixpkgs-fmt >/dev/null 2>&1 && find . -name '*.nix' -exec nixpkgs-fmt {} + || echo "⚠️  nixpkgs-fmt not available"
+    echo "✅ All code formatted!"
+}
+
+# Lint all modules
 lint: {
-    echo "🔍 Running linters..."
-    if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run --timeout=5m; else echo "⚠️  golangci-lint not installed, running basic checks"; go vet ./...; go fmt ./...; fi
+    echo "🔍 Running linters across all modules..."
+    @parallel {
+        @cmd(core-lint)
+        @cmd(runtime-lint)
+        @cmd(testing-lint)
+        @cmd(cli-lint)
+    }
     echo "✅ Linting complete!"
 }
 
-# Quick checks (format + lint)
-check: {
-    echo "⚡ Running quick checks..."
-    dev format
-    dev lint
-    echo "✅ Quick checks passed"
-}
-
-# Clean build artifacts
+# Clean all modules
 clean: {
     echo "🧹 Cleaning generated files and artifacts..."
-    rm -f @var(PROJECT) coverage.out coverage.html
-    rm -rf result result-* artifacts/ release/
-    go clean -cache -modcache -testcache || echo "Go clean completed with warnings"
+    @parallel {
+        @cmd(core-clean)
+        @cmd(runtime-clean)
+        @cmd(testing-clean)
+        @cmd(cli-clean)
+    }
+    rm -f @var(PROJECT) coverage-core.out coverage-runtime.out coverage-testing.out coverage-cli.out coverage.out coverage.html
+    rm -rf result result-* build/ artifacts/
     echo "✅ Cleanup complete"
 }
 
+# Build the CLI (with full validation)
+build: {
+    echo "🔨 Building @var(PROJECT) CLI..."
+    echo "🧪 Running full CI to ensure quality..."
+    @cmd(ci)
+    echo "🔨 Building binary..."
+    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var(VERSION) -X main.BuildTime=@var(BUILD_TIME)" -o ../@var(PROJECT) ./main.go }
+    echo "✅ Built: ./@var(PROJECT)"
+}
+
+# Full CI workflow
+ci: {
+    echo "🔄 Full project CI workflow..."
+    @cmd(core-ci)
+    @cmd(runtime-ci)
+    @cmd(testing-ci)
+    @cmd(cli-ci)
+    echo "🎉 Full project CI complete!"
+}
+
+# Quick development iteration
+dev-quick: {
+    echo "⚡ Quick development checks..."
+    @cmd(format)
+    @cmd(test)
+    echo "✅ Quick checks passed!"
+}
+
 # =============================================================================
-# 📦 NIX INTEGRATION
+# 📦 NIX INTEGRATION  
 # =============================================================================
 
-# Build core Nix packages
+# Build with Nix
 nix-build: {
-    echo "📦 Building core Nix packages..."
+    echo "📦 Building with Nix..."
     nix build .#@var(PROJECT) --print-build-logs
-    echo "✅ Core packages built"
-}
-
-# Build all example CLIs
-examples: {
-    echo "🎯 Building all example CLIs..."
-    @parallel {
-        nix build .#basicDev --print-build-logs
-        nix build .#webDev --print-build-logs
-        nix build .#goProject --print-build-logs
-    }
-    @parallel {
-        nix build .#rustProject --print-build-logs
-        nix build .#dataScienceProject --print-build-logs
-        nix build .#devOpsProject --print-build-logs
-    }
-    echo "✅ All example CLIs built"
-}
-
-# Test example CLIs
-test-examples: {
-    echo "🧪 Testing example CLIs..."
-    echo "Building all examples..."
-    nix build .#basicDev .#webDev .#goProject .#rustProject .#dataScienceProject .#devOpsProject --print-build-logs
-    echo "Testing all examples..."
-    @parallel {
-        echo "Testing basicDev..."; nix run .#basicDev -- --help >/dev/null || echo "⚠️  basicDev help issues"
-        echo "Testing webDev..."; nix run .#webDev -- --help >/dev/null || echo "⚠️  webDev help issues"
-        echo "Testing goProject..."; nix run .#goProject -- --help >/dev/null || echo "⚠️  goProject help issues"
-    }
-    @parallel {
-        echo "Testing rustProject..."; nix run .#rustProject -- --help >/dev/null || echo "⚠️  rustProject help issues"
-        echo "Testing dataScienceProject..."; nix run .#dataScienceProject -- --help >/dev/null || echo "⚠️  dataScienceProject help issues"
-        echo "Testing devOpsProject..."; nix run .#devOpsProject -- --help >/dev/null || echo "⚠️  devOpsProject help issues"
-    }
-    echo "✅ Example CLI tests passed!"
-}
-
-# Run Nix-based tests
-nix-test: {
-    echo "🧪 Running Nix-based tests..."
-    echo "Running Go tests via Nix..."
-    nix develop --command go test ./...
-    echo "Building example tests..."
-    nix build .#test-examples --print-build-logs || echo "⚠️  Example tests not available"
-    echo "✅ Nix tests completed"
+    echo "✅ Nix build complete"
 }
 
 # Comprehensive Nix validation
@@ -216,251 +341,111 @@ nix-check: {
     echo "✅ Nix validation passed"
 }
 
-# Try example CLIs interactively
-try-examples: {
-    echo "🎯 Interactive Example CLI Testing"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "🔹 BasicDev CLI:"
-    nix run .#basicDev -- --help
-    echo ""
-    echo "🔹 WebDev CLI:"
-    nix run .#webDev -- --help
-    echo ""
-    echo "🔹 GoProject CLI:"
-    nix run .#goProject -- --help
-    echo ""
-    echo "🔹 RustProject CLI:"
-    nix run .#rustProject -- --help
-    echo ""
-    echo "🔹 DataScience CLI:"
-    nix run .#dataScienceProject -- --help
-    echo ""
-    echo "🔹 DevOps CLI:"
-    nix run .#devOpsProject -- --help
-    echo ""
-    echo "🎉 Try running specific commands like:"
-    echo "  nix run .#basicDev -- build"
-    echo "  nix run .#webDev -- install"
-    echo "  nix run .#goProject -- deps"
+# Test all example CLIs
+test-examples: {
+    echo "🎯 Testing example CLIs..."
+    @parallel {
+        nix build .#basicDev --print-build-logs
+        nix build .#webDev --print-build-logs
+        nix build .#goProject --print-build-logs
+    }
+    echo "Testing example functionality..."
+    @parallel {
+        nix run .#basicDev -- --help >/dev/null
+        nix run .#webDev -- --help >/dev/null
+        nix run .#goProject -- --help >/dev/null
+    }
+    echo "✅ Example CLI tests passed!"
 }
 
-# =============================================================================
-# 🔄 DEVELOPMENT WORKFLOWS
-# =============================================================================
-
-# Development workflow (fast iteration)
-dev-flow: {
-    echo "🔄 Running development workflow..."
-    dev setup
-    dev test-quick
-    dev test-go
-    dev build
-    echo "✅ Development workflow complete!"
-}
-
-# CI workflow (comprehensive testing - mirrors GitHub Actions)
-ci: {
-    echo "🔄 Running CI workflow (mirrors GitHub Actions)..."
-    echo ""
-    echo "Stage 1: Format & Lint..."
-    dev test-quick
-    echo ""
-    echo "Stage 2: Go Tests..."
-    dev test-go
-    echo ""
-    echo "Stage 3: Build Binaries..."
-    dev test-build
-    echo ""
-    echo "Stage 4: Nix Core..."
-    dev test-nix
-    echo ""
-    echo "Stage 5: Nix Tests..."
-    dev nix-test
-    echo ""
-    echo "🎉 CI workflow complete - ready for production!"
-}
-
-# Release preparation
-release: {
+# Release preparation with comprehensive testing
+release: @timeout(10m) {
     echo "📦 Running release preparation workflow..."
-    dev clean
-    dev setup
-    dev ci
-    dev nix-check
-    dev format
-    echo "📋 Release checklist:"
-    echo "  ✅ All tests passed"
-    echo "  ✅ Code formatted"
-    echo "  ✅ Nix packages validated"
-    echo ""
+    @cmd(clean)
+    @cmd(setup)
+    @cmd(ci)
+    @cmd(test-examples)
+    @cmd(format)
+    echo "📋 Release checklist complete!"
     echo "🚀 Ready for release!"
 }
 
 # =============================================================================
-# 📊 UTILITIES & STATUS
+# 📊 PROJECT STATUS & UTILITIES
 # =============================================================================
 
-# Show project status
+# Show detailed project information
 info: {
-    echo "📊 @var(PROJECT) Project Status"
+    echo "📊 @var(PROJECT) Multi-Module Project Status"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Project: @var(PROJECT)"
     echo "Version: @var(VERSION)"
     echo "Build time: @var(BUILD_TIME)"
     echo "Go version: @var(GO_VERSION)"
     echo ""
+    echo "Module Dependency Hierarchy:"
+    echo "  core/     - Foundation (AST, types, errors)"
+    echo "  ├── runtime/  - Decorators and execution contexts"
+    echo "  ├── testing/  - Test utilities and frameworks"
+    echo "  └── cli/      - Main CLI application"
+    echo ""
     echo "Statistics:"
     echo "  Go source files: $(find . -name '*.go' | wc -l)"
     echo "  Test files: $(find . -name '*_test.go' | wc -l)"
-    echo "  Nix files: $(find . -name '*.nix' | wc -l)"
-    echo ""
-    echo "Tools:"
-    echo "  Go: $(go version 2>/dev/null || echo 'Not installed')"
-    echo "  Nix: $(nix --version 2>/dev/null || echo 'Not installed')"
+    echo "  Modules: $(find . -name 'go.mod' | wc -l)"
     echo ""
     echo "Git status:"
-    git status --porcelain | head -10 || echo "Not a git repository"
+    git status --porcelain | head -5 || echo "Not a git repository"
 }
 
-# Show available Nix outputs
-nix-info: {
-    echo "📋 Available Nix flake outputs:"
-    nix flake show
-}
-
-# Show project status (alias for info)
-status: {
-    dev info
-}
-
-# =============================================================================
-# 🎭 EXAMPLE SHOWCASES
-# =============================================================================
-
-# Demonstrate example CLIs
-demo: {
-    echo "🎭 Devcmd Example Showcase"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "🔹 Basic Development CLI:"
-    nix run .#basicDev
-    echo ""
-    echo "🔹 Web Development CLI:"
-    nix run .#webDev
-    echo ""
-    echo "🔹 Go Project CLI:"
-    nix run .#goProject
-    echo ""
-    echo "Try running commands like:"
-    echo "  nix run .#basicDev -- build"
-    echo "  nix run .#webDev -- install"
-    echo "  nix run .#goProject -- deps"
-}
-
-# Validate our dogfooding setup
-validate: {
-    echo "🐕 Validating dogfooding setup..."
-    echo ""
-    echo "Testing variable expansion:"
-    echo "  PROJECT = @var(PROJECT)"
-    echo "  VERSION = @var(VERSION)"
-    echo ""
-    echo "Testing parallel execution:"
-    @parallel {
-        echo "✅ Task 1 complete"
-        echo "✅ Task 2 complete"
-        echo "✅ Task 3 complete"
-    }
-    echo ""
-    echo "Testing shell command substitution:"
-    echo "  Current time: $(date)"
-    echo "  Git branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
-    echo ""
-    echo "✅ Dogfooding validation complete!"
-}
-
-# =============================================================================
-# 🔧 DEVELOPMENT SHELLS (Nix)
-# =============================================================================
-
-# Enter basic development shell
-shell-basic: {
-    echo "🐚 Entering basic development shell..."
-    nix develop .#basic
-}
-
-# Enter web development shell
-shell-web: {
-    echo "🐚 Entering web development shell..."
-    nix develop .#web
-}
-
-# Enter Go development shell
-shell-go: {
-    echo "🐚 Entering Go development shell..."
-    nix develop .#go
-}
-
-# Enter data science shell
-shell-data: {
-    echo "🐚 Entering data science shell..."
-    nix develop .#data
-}
-
-# Enter test environment shell
-shell-test: {
-    echo "🐚 Entering test environment shell..."
-    nix develop .#testEnv
-}
+# Quick alias for info
+status: @cmd(info)
 
 # =============================================================================
 # 📋 HELP & DOCUMENTATION
 # =============================================================================
 
-# Show help with all available commands
+# Show comprehensive help
 help: {
-    echo "🔧 Devcmd Development Commands"
+    echo "🔧 Devcmd Multi-Module Development Commands"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "🚀 Quick Start:"
-    echo "  setup          - Initial project setup (deps only)"
-    echo "  build          - Build the CLI tool"
-    echo "  test           - Run Go unit tests"
-    echo "  ci             - Run full CI workflow locally"
-    echo ""
-    echo "📝 Development:"
-    echo "  format         - Format all code (Go + Nix)"
+    echo "🚀 Global Commands:"
+    echo "  setup          - Set up development environment"
+    echo "  build          - Build CLI (with full validation)"
+    echo "  ci             - Full project CI workflow"
+    echo "  test           - Test all modules (dependency order)"
+    echo "  test-coverage  - Tests with coverage reports"
+    echo "  format         - Format all code"
     echo "  lint           - Run all linters"
-    echo "  clean          - Clean generated files and artifacts"
+    echo "  clean          - Clean artifacts and caches"
     echo ""
-    echo "🧪 Testing (ordered by speed):"
-    echo "  test-quick     - Fast syntax/format checks"
-    echo "  test-go        - Go unit tests with coverage"
-    echo "  test-build     - Build and test binaries"
-    echo "  test-nix       - Nix package tests"
-    echo "  test-all       - Complete test suite"
+    echo "📦 Module-Specific Commands:"
+    echo "  core-ci        - Complete core module workflow"
+    echo "  runtime-ci     - Complete runtime module workflow"
+    echo "  testing-ci     - Complete testing module workflow"
+    echo "  cli-ci         - Complete CLI module workflow"
+    echo ""
+    echo "🧪 Module Testing:"
+    echo "  [module]-test           - Test specific module"
+    echo "  [module]-test-coverage  - Test with coverage"
+    echo "  [module]-lint           - Lint specific module"
+    echo "  [module]-format         - Format specific module"
     echo ""
     echo "📦 Nix Integration:"
-    echo "  nix-build      - Build core Nix packages"
+    echo "  nix-build      - Build with Nix"
     echo "  nix-check      - Comprehensive Nix validation"
+    echo "  test-examples  - Test example CLIs"
     echo ""
     echo "🔄 Workflows:"
-    echo "  dev-flow       - Development workflow"
-    echo "  ci             - CI workflow (mirrors GitHub Actions)"
-    echo "  release        - Release preparation workflow"
+    echo "  dev-quick      - Fast development iteration"
+    echo "  release        - Release preparation"
     echo ""
     echo "📊 Utilities:"
     echo "  info           - Show project status"
     echo "  status         - Show project status (alias)"
     echo "  help           - Show this help"
     echo ""
-    echo "🐚 Development Shells:"
-    echo "  shell-basic    - Enter basic development shell"
-    echo "  shell-web      - Enter web development shell"
-    echo "  shell-go       - Enter Go development shell"
-    echo "  shell-data     - Enter data science shell"
-    echo "  shell-test     - Enter test environment shell"
-    echo ""
+    echo "Module hierarchy: core → runtime → testing → cli"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }

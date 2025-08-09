@@ -36,6 +36,21 @@ go build -o mycli main.go
 - Decorator support for shell commands and parallel execution
 - Nix integration for development environments
 
+## Philosophy
+
+**devcmd is a simple task runner with some useful bells and whistles.**
+
+The core idea is declarative command definitions that work in multiple execution modes:
+- **Interpreter mode**: `devcmd run build` for development
+- **Generated mode**: `./mycli build` for distribution (no runtime dependencies)  
+- **Plan mode**: `devcmd plan build` or `./mycli --dry-run build` shows execution plans
+
+Being declarative enables powerful planning capabilities in **both modes** - you can see exactly what commands will run, which decorators will apply, and how execution will flow before actually running anything. This works whether you're using the devcmd interpreter or a generated standalone binary.
+
+Additional conveniences like `@workdir()`, `@parallel{}`, `@timeout()` decorators and module-aware workflows make it practical for real projects without adding complexity.
+
+The goal is to keep task definitions simple and readable while providing the tools needed for modern development workflows.
+
 ## Command Syntax
 
 ### Basic Commands
@@ -278,6 +293,98 @@ For complete syntax reference and language specification, see:
 ⚠️ **Early Development** - This project is experimental. The syntax and API may change.
 
 The goal is to get real usage and feedback to shape the direction. Your experience and suggestions are valuable!
+
+## Development
+
+### Setting Up the Development Environment
+
+This project uses Nix for reproducible development environments. The Nix environment automatically builds the development CLI from `commands.cli`.
+
+```bash
+# Enter the Nix development environment
+nix develop
+
+# This will:
+# - Install all required development tools (Go, golangci-lint, etc.)
+# - Build the 'dev' CLI from commands.cli automatically
+# - Make both 'devcmd' and 'dev' binaries available
+```
+
+**Requirements:**
+- Nix with flakes enabled
+- On first run, it will build the development environment (may take a few minutes)
+
+**Available binaries after `nix develop`:**
+- `devcmd` - The CLI generator (interpreter mode, requires `devcmd run <command>`)
+- `dev` - Compiled CLI from commands.cli (direct usage: `dev <command>`)
+
+### Project Architecture
+
+The project uses a multi-module Go workspace with clear separation of concerns:
+
+```
+core/     - Foundation module (AST, types, errors)
+├── runtime/  - Decorators and execution contexts (depends on core)
+├── testing/  - Test utilities and frameworks (depends on core + runtime)
+└── cli/      - Main CLI application (depends on all modules)
+```
+
+**Module Dependencies:**
+- **`core/`** - No external dependencies, provides foundational types
+- **`runtime/`** - Depends on `core/`, implements decorator system
+- **`testing/`** - Depends on `core/` + `runtime/`, provides test utilities  
+- **`cli/`** - Depends on all modules, contains lexer, parser, and engine
+
+This hierarchy ensures clean separation and allows independent development of each module while maintaining proper dependency order.
+
+### Development Commands
+
+```bash
+# Option 1: Use compiled dev CLI (recommended)
+nix develop -c dev build
+nix develop -c dev test  
+nix develop -c dev test-quick
+nix develop -c dev format
+nix develop -c dev lint
+nix develop -c dev ci
+
+# Option 2: Use devcmd in interpreter mode
+nix develop -c devcmd run build
+nix develop -c devcmd run test
+
+# Module-specific testing
+nix develop -c dev test-core      # Test core module only
+nix develop -c dev test-runtime   # Test runtime module only  
+nix develop -c dev test-testing   # Test testing module only
+nix develop -c dev test-cli       # Test CLI module only
+```
+
+### Maintaining Nix Packaging
+
+The project uses fixed-output derivations for reliable builds. When updating dependencies or making changes that affect the build, you may need to update SHA hashes:
+
+```bash
+# 1. If you get hash mismatch errors, temporarily use fake hash
+# Edit .nix/lib.nix and set:
+# outputHash = lib.fakeHash;
+
+# 2. Build to get the correct hash
+nix build
+
+# 3. Copy the correct hash from the error message
+# Update the outputHash in .nix/lib.nix with the real hash
+
+# 4. Build again to verify
+nix build
+```
+
+**When to update hashes:**
+- After updating Go dependencies (`go.mod` changes)
+- When adding new dependencies to the project
+- If you see "hash mismatch" errors during builds
+
+**Files that may need hash updates:**
+- `.nix/lib.nix` - Contains the `outputHash` for the fixed-output derivation
 
 ## Contributing
 

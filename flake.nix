@@ -20,7 +20,7 @@
           devcmdPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
 
           # Library functions with automatic system detection
-          devcmdLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev; };
+          devcmdLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
 
 
         in
@@ -33,7 +33,7 @@
 
           devShells = {
             # Main development shell with generated CLI
-            default = import ./.nix/development.nix { inherit pkgs self gitRev; };
+            default = import ./.nix/development.nix { inherit pkgs self gitRev system; };
           };
 
           # Library functions for other flakes (simplified interface)

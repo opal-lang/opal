@@ -1,61 +1,56 @@
-# Development environment for devcmd project
-# Dogfooding our own tool for development commands
-{ pkgs, self ? null, gitRev ? "dev" }:
+# Development environment for devcmd project - smart derivation approach
+{ pkgs, self ? null, gitRev ? "dev", system }:
 let
-  # Import our own library to create the development CLI
+  # Import our library to create the development CLI using fixed-output derivation
   devcmdLib = import ./lib.nix {
-    inherit pkgs self gitRev;
+    inherit pkgs self gitRev system;
     lib = pkgs.lib;
   };
-  # Generate the development CLI from our commands.cli file
-  devCLI =
-    if self != null then
-      devcmdLib.mkDevCLI
-        {
-          name = "dev";
-          binaryName = "dev"; # Explicitly set binary name for self-awareness
-          commandsFile = ../commands.cli;
-          version = "latest";
-          meta = {
-            description = "Devcmd development CLI - dogfooding our own tool";
-            longDescription = ''
-              This CLI is generated from commands.cli using devcmd itself.
-              It provides a streamlined development experience with all
-              necessary commands for building, testing, and maintaining devcmd.
-            '';
-          };
-        }
-    else
-      null;
+
+  # Create a shell script that generates the dev CLI on demand
+  devCLI = devcmdLib.mkDevCLI {
+    name = "devcmd-dev-cli";
+    binaryName = "dev";
+    commandsFile = ../commands.cli;
+    version = "dev-${gitRev}";
+  };
 in
 pkgs.mkShell {
   name = "devcmd-dev";
+
   buildInputs = with pkgs; [
-    # Core Go development
+    # Development tools
     go
     gopls
     golangci-lint
-    # Development tools
     git
     zsh
-    # Code formatting
     nixpkgs-fmt
     gofumpt
-  ] ++ pkgs.lib.optional (devCLI != null) devCLI;
+  ] ++ [
+    self.packages.${system}.devcmd # Include the devcmd binary itself
+    devCLI # Include the generated dev CLI
+  ];
+
   shellHook = ''
     echo "🔧 Devcmd Development Environment"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Build dev CLI if it doesn't exist or if commands.cli is newer
+    if [[ ! -f "./dev-compiled" ]] || [[ "commands.cli" -nt "./dev-compiled" ]]; then
+      echo "🔨 Building dev CLI..."
+      devcmd build --file commands.cli --binary dev -o ./dev-compiled
+      echo "✅ dev CLI ready"
+    else
+      echo "✅ dev CLI ready"
+    fi
+    
     echo ""
-    ${if devCLI != null then ''
-        dev help
-    '' else ''
-      echo "⚠️  Development CLI not available (missing self reference)"
-      echo "   To get the full experience: nix develop"
-      echo ""
-      echo "Manual commands:"
-      echo "  go build -o devcmd ./cmd/devcmd"
-      echo "  go test ./..."
-    ''}
+    echo "Available commands:"
+    echo "  devcmd - The devcmd CLI generator"
+    echo "  dev    - Development commands for this project"
+    echo ""
+    echo "Run 'dev help' to see available development commands"
     exec ${pkgs.zsh}/bin/zsh
   '';
 }

@@ -1,19 +1,31 @@
-# Package definition for devcmd
+# Package definition for devcmd CLI (built from cli module with Go workspace support)
 { pkgs, lib, version ? "dev" }:
 
 pkgs.buildGoModule rec {
   pname = "devcmd";
   inherit version;
 
-  src = ./..;
+  src = ./..; # repo root that contains go.work
+  modRoot = "cli"; # path to CLI module's go.mod
+  subPackages = [ "." ]; # build the main package
 
-  # Computed vendorHash for clean dependencies (no replace directive)
-  vendorHash = "sha256-D+GwlCwvxMg71a8jxF+zm5uiWsS4mj1W8Ynk35A2tFw=";
+  # Critical: Disable workspace mode for all build phases
+  GOWORK = "off";
 
-  subPackages = [ "cmd/devcmd" ];
+  # Override vendor phase to ensure clean vendoring without workspace/replace paths
+  overrideModAttrs = old: {
+    GOWORK = "off";
+    # Clean up go.mod to remove replace directives that would create store path references
+    postPatch = ''
+      # Remove replace directives that point to local paths
+      sed -i '/^replace.*=> \.\./d' go.mod
+    '';
+  };
 
-  # Enhanced build flags following CODE_GUIDELINES.md
-  # Note: -buildid= is set by default by buildGoModule, so we don't include it
+  # Vendor hash for CLI module dependencies
+  vendorHash = "sha256-gs1Ls/pkkTAJ9ANKo4XU+JpyefmR0SDLnqC3Fi0emTU=";
+
+  # Build with version info
   ldflags = [
     "-s"
     "-w"
@@ -21,21 +33,12 @@ pkgs.buildGoModule rec {
     "-X main.BuildTime=1970-01-01T00:00:00Z"
   ];
 
-  # Follow performance contracts from guidelines
-  # Verify build performance doesn't exceed reasonable bounds
-  postBuild = ''
-    echo "✅ devcmd build completed successfully"
+  # Rename binary from 'cli' to 'devcmd'
+  postInstall = ''
+    mv $out/bin/cli $out/bin/devcmd
   '';
 
-  doCheck = false;
-
-  # Ensure tests pass following CODE_GUIDELINES.md
-  checkPhase = ''
-    runHook preCheck
-    echo "Running devcmd tests..."
-    go test -v ./...
-    runHook postCheck
-  '';
+  doCheck = false; # Skip tests during build for now
 
   meta = with lib; {
     description = "Domain-specific language for generating development command CLIs";

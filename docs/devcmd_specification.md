@@ -359,8 +359,8 @@ build: npm run build && \   // : → CommandMode, \ + \n → stay in CommandMode
 
 Devcmd uses **Kotlin-style named parameters** for all decorators. Parameters can be specified by name or by position when unambiguous.
 
-### Function Decorators (Value Fetching)
-Function decorators fetch values and are used inline within shell commands. They return values that are substituted into the command text.
+### Value Decorators (Inline Value Substitution)
+Value decorators provide values for shell interpolation and are used inline within shell commands. They return values that are substituted into the command text at the exact location where they appear.
 
 ```devcmd
 // @var(name) - Variable substitution from Devcmd variables
@@ -376,15 +376,84 @@ deploy: kubectl config use-context @env(variable = "KUBE_CONTEXT", default = "lo
 setup: echo "API: @env("API_URL", default = "http://localhost:3000")"
 ```
 
-**Function Decorator Characteristics**:
-- Return values substituted into shell text
-- Used inline within command content
+**Value Decorator Characteristics**:
+- Return values substituted into shell text at exact position
+- Used inline within command content for variable expansion
 - Support both positional and named parameters
 - No braces required around the decorator itself
+- Execute in place during shell command composition
 
-**Standard Function Decorators**:
+**Standard Value Decorators**:
 - `@var(name)` - Substitutes Devcmd variable value
 - `@env(variable, default?)` - Substitutes environment variable with optional default
+
+### Action Decorators (Command Execution)
+Action decorators execute commands and return structured results that can be chained with shell operators. They perform actions rather than just providing values.
+
+```devcmd
+// @cmd(command) - Execute another command defined in the same CLI
+deploy: @cmd(build) && kubectl apply -f k8s/
+test: @cmd(build) && @cmd(lint) && npm test
+
+// Action decorators can be standalone or chained
+full-deploy: {
+    @cmd(build)                    // Standalone action
+    @cmd(test) && echo "Tests passed"  // Chained with shell operator
+    kubectl apply -f k8s/
+}
+
+// Action decorators return CommandResult for chaining
+check: @cmd(build) || (echo "Build failed" && exit 1)
+```
+
+#### Shell Chaining with ActionDecorators
+
+ActionDecorators support full shell chaining semantics with `&&`, `||`, `|`, and `>>` operators:
+
+```devcmd
+// AND chaining - next runs only if previous succeeds
+deploy: @cmd(build) && @cmd(test) && kubectl apply -f k8s/
+
+// OR chaining - next runs only if previous fails  
+verify: @cmd(test) || echo "Tests failed - check logs"
+
+// Pipe chaining - stdout feeds to next command
+logs: @cmd(get-logs) | grep ERROR | head -10
+
+// File append - stdout appends to file
+backup: @cmd(export-data) >> backup.txt
+```
+
+**Chaining Implementation**:
+- **Interpreter Mode**: Uses shell for native chaining execution
+- **Generator Mode**: Produces Go code with `CommandResult` logic that respects shell semantics
+- **Mixed Chaining**: ActionDecorators can be chained with regular shell commands
+- **Error Propagation**: Failed ActionDecorators properly terminate chains with `&&` or continue with `||`
+
+**Generated Code Example**:
+```go
+// devcmd: @cmd(build) && @cmd(test) || echo "failed"
+buildResult := executeBuild()
+if buildResult.Success() {
+    testResult := executeTest()
+    if testResult.Failed() {
+        return executeShellCommand("echo \"failed\"")
+    }
+    return testResult
+}
+return executeShellCommand("echo \"failed\"")
+```
+
+**Action Decorator Characteristics**:
+- Execute commands and return structured CommandResult objects
+- Can be standalone or chained with shell operators (&&, ||, |, >>)
+- Support Go-native conditional execution logic in generated code
+- Enable command composition and reusability
+- Support both positional and named parameters
+- Preserve shell chaining semantics across interpreter and generator modes
+
+**Standard Action Decorators**:
+- `@cmd(command)` - Execute another command defined in the same CLI
 
 ### Block Decorators (Command Wrapping)
 Block decorators wrap commands inside their block with enhancement functionality and always require explicit braces. **Newlines within block decorators create multiple commands.**
@@ -684,6 +753,65 @@ deploy: {
 
 ---
 
+## Execution Modes
+
+Devcmd supports three execution modes that handle the same command definitions with different execution strategies:
+
+### Interpreter Mode (Default)
+Commands are executed directly by the devcmd engine at runtime.
+
+```bash
+# Direct execution
+devcmd build
+devcmd test
+devcmd deploy
+```
+
+### Generated Mode (CLI Generation)
+Command definitions are compiled into standalone CLI binaries.
+
+```bash
+# Generate standalone CLI
+devcmd build -f commands.cli --binary mycli
+
+# Use generated CLI
+./mycli build
+./mycli --help
+```
+
+### Plan Mode (Dry-Run)
+Commands are analyzed and visualized without execution.
+
+```bash
+# Show execution plan
+devcmd --dry-run deploy
+
+# Generated CLI also supports dry-run
+./mycli --dry-run deploy
+```
+
+**Plan Mode Output Example:**
+```
+🔍 Execution Plan for: deploy
+
+deploy:
+└─ @when(ENV) {production}
+   ├─ echo "Deploying myapp to production"
+   ├─ kubectl apply -f k8s/prod/
+   └─ kubectl rollout status deployment/api
+```
+
+**Plan Mode Features:**
+- Shows resolved variable values
+- Displays conditional branch selection  
+- Visualizes decorator behavior
+- Safe exploration without side effects
+- Tree-structured execution flow
+
+For detailed information about execution modes, see [Execution Modes Documentation](execution_modes.md).
+
+---
+
 ## Complete Examples
 
 ### Basic Project Structure
@@ -701,6 +829,11 @@ var DEBOUNCE_DELAY = 500ms   // Duration type
 build: npm run build
 clean: rm -rf @var(DIST)
 lint: eslint @var(SRC) --fix
+
+// Action decorators for command chaining
+test: @cmd(build) && npm test
+check: @cmd(lint) && @cmd(test)
+full-check: @cmd(build) && @cmd(lint) && @cmd(test) && echo "All checks passed"
 
 // Environment variable usage in shell commands
 status: echo "Running in @env("NODE_ENV", default = "development") mode on port @var(PORT)"
@@ -916,5 +1049,9 @@ cleanup: @when(ENVIRONMENT) {
 11. **Type-safe decorator parameters** - decorator parameters have type requirements validated at compile-time
 12. **No nested function decorators** - only primitive types and identifiers allowed in parameters
 13. **Consistent newline behavior** - newlines create commands everywhere, with only backslash-newline as exception
+14. **Specialized decorator types** - Value decorators for inline substitution, Action decorators for command execution
+15. **Go-native chaining** - Action decorators return structured results for reliable operator chaining
+16. **Unified execution modes** - Same command definitions work across interpreter, generated, and plan modes
+17. **Command composition** - Action decorators enable reusable command building blocks
 
-This design keeps the language simple, predictable, and shell-friendly while providing powerful process management and workflow capabilities.
+This design keeps the language simple, predictable, and shell-friendly while providing powerful process management, workflow capabilities, and reliable command composition.

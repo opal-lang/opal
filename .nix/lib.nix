@@ -1,11 +1,7 @@
-# Minimal library functions for generating CLI packages from devcmd files
-{ pkgs, self, lib, gitRev }:
+# Library functions for generating CLI packages using shell scripts
+{ pkgs, self, lib, gitRev, system }:
 
 let
-  # Simple content hash for deterministic caching
-  mkContentHash = content:
-    builtins.hashString "sha256" (toString content);
-
   # Helper function to safely read files
   tryReadFile = path:
     if builtins.pathExists (toString path) then
@@ -14,10 +10,10 @@ let
 
 in
 rec {
-  # Generate a CLI package from devcmd commands (for standalone binaries)
+  # Generate a pre-compiled CLI binary
   mkDevCLI =
     {
-      # Package name (also used as binary name - follows Nix conventions)
+      # Package name 
       name
 
       # Binary name (defaults to "dev" if not specified)
@@ -34,7 +30,7 @@ rec {
     }:
 
     let
-      # Use the same content resolution logic as mkDevCommands
+      # Content resolution logic
       fileContent =
         if commandsFile != null then tryReadFile commandsFile
         else null;
@@ -47,8 +43,9 @@ rec {
       autoDetectContent =
         let
           candidates = [
-            ./commands.cli # Primary default
-            ./.commands.cli # Hidden
+            ../commands.cli # Look in parent directory (project root)
+            ./commands.cli # Look in current directory
+            ./.commands.cli # Hidden variant
           ];
 
           findFirst = paths:
@@ -68,58 +65,27 @@ rec {
         else throw "No commands content found for CLI '${name}'. Expected commands.cli file or explicit content.";
 
       processedContent = preProcess finalContent;
-      contentHash = mkContentHash processedContent;
 
-      # Cache-aware source naming
-      commandsSrc = pkgs.writeText "${name}-commands-${contentHash}.cli" processedContent;
-
-      # Get devcmd binary with better error handling
+      # Get devcmd binary
       devcmdBin =
-        if self != null then self.packages.${pkgs.system}.default
+        if self != null then self.packages.${system}.devcmd or self.packages.${system}.default
         else throw "Self reference required for CLI generation. Cannot build '${name}' without devcmd parser.";
 
-      # Simplified approach: Use devcmd build to handle everything
-      cliDerivation = pkgs.writeShellScriptBin binaryName ''
+      # Create a shell script that checks for existing binary first
+      cliScript = pkgs.writeShellScriptBin binaryName ''
+        #!/usr/bin/env bash
         set -euo pipefail
         
-        # Cache configuration
-        CACHE_DIR="$HOME/.cache/devcmd/${name}"
-        CONTENT_HASH="${contentHash}"
-        BINARY_PATH="$CACHE_DIR/bin/${binaryName}"
-        HASH_FILE="$CACHE_DIR/hash"
-        
-        # Check if cached binary exists and is current
-        if [[ -f "$BINARY_PATH" && -f "$HASH_FILE" ]]; then
-          if [[ "$(cat "$HASH_FILE" 2>/dev/null || echo "")" == "$CONTENT_HASH" ]]; then
-            # Cache hit - use existing binary
-            exec "$BINARY_PATH" "$@"
-          fi
+        # Check if compiled binary exists
+        BINARY_PATH="./${binaryName}-compiled"
+        if [[ -f "$BINARY_PATH" ]]; then
+          exec "$BINARY_PATH" "$@"
         fi
         
-        # Cache miss - use devcmd build to generate and compile everything
-        echo "🔨 Building ${name} CLI..."
-        mkdir -p "$CACHE_DIR/bin"
-        
-        # Ensure Go toolchain is available
-        if ! command -v go >/dev/null 2>&1; then
-          echo "❌ Error: Go toolchain not found. Please ensure Go is installed."
-          exit 1
-        fi
-        
-        # Use devcmd build to handle generation, module management, and compilation
-        ${devcmdBin}/bin/devcmd build \
-          --file "${commandsSrc}" \
-          --binary "${binaryName}" \
-          --output "$BINARY_PATH"
-        
-        # Cache the result
-        echo "$CONTENT_HASH" > "$HASH_FILE"
-        echo "✅ ${name} CLI built successfully"
-        
-        # Execute the built binary
-        exec "$BINARY_PATH" "$@"
+        echo "❌ ${binaryName} binary not found. Please run 'nix develop' to rebuild."
+        exit 1
       '';
 
     in
-    cliDerivation;
+    cliScript;
 }
