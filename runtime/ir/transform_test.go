@@ -210,7 +210,7 @@ func TestElementContentResolve(t *testing.T) {
 
 	// Mock value decorator for testing
 	mockVar := &mockValueDecorator{name: "var"}
-	registry.RegisterValue(mockVar)
+	_ = registry.RegisterValue(mockVar)
 
 	tests := []struct {
 		name    string
@@ -311,7 +311,7 @@ func TestElementContentResolve(t *testing.T) {
 func TestChainElementGetResolvedText(t *testing.T) {
 	registry := decorators.NewRegistry()
 	mockVar := &mockValueDecorator{name: "var"}
-	registry.RegisterValue(mockVar)
+	_ = registry.RegisterValue(mockVar)
 
 	t.Run("with structured content", func(t *testing.T) {
 		elem := ir.ChainElement{

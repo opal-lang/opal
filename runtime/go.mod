@@ -3,8 +3,8 @@ module github.com/aledsdavies/devcmd/runtime
 go 1.24.3
 
 require (
-	github.com/aledsdavies/devcmd/codegen v0.0.0
 	github.com/aledsdavies/devcmd/core v0.0.0
+	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.9.1
 )
 
@@ -19,4 +19,4 @@ require (
 
 replace github.com/aledsdavies/devcmd/core => ../core
 
-replace github.com/aledsdavies/devcmd/codegen => ../codegen
+

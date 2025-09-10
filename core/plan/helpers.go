@@ -72,7 +72,7 @@ func TruncateCommand(cmd string, maxLen int) string {
 // This is useful for decorators like @parallel that need to know the task count
 func CountTasks(step ExecutionStep) int {
 	// If no children, this is a leaf node that counts as 1 task
-	if step.Children == nil || len(step.Children) == 0 {
+	if len(step.Children) == 0 {
 		return 1
 	}
 
@@ -87,7 +87,7 @@ func CountTasks(step ExecutionStep) int {
 // CountLeafSteps counts only leaf steps (steps with no children)
 // This gives the number of actual executable commands
 func CountLeafSteps(step ExecutionStep) int {
-	if step.Children == nil || len(step.Children) == 0 {
+	if len(step.Children) == 0 {
 		return 1
 	}
 

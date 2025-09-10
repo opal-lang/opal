@@ -476,7 +476,7 @@ func (ep *ExecutionPlan) GraphHash() string {
 	})
 
 	for _, edge := range edges {
-		fmt.Fprintf(h, "edge:%s->%s:%s:%s\n", edge.FromID, edge.ToID, edge.Kind, edge.Label)
+		_, _ = fmt.Fprintf(h, "edge:%s->%s:%s:%s\n", edge.FromID, edge.ToID, edge.Kind, edge.Label)
 	}
 
 	// Hash context in sorted order (excluding non-deterministic fields)
@@ -489,7 +489,7 @@ func (ep *ExecutionPlan) GraphHash() string {
 	sort.Strings(keys)
 
 	for _, k := range keys {
-		fmt.Fprintf(h, "ctx:%s:%v\n", k, ep.Context[k])
+		_, _ = fmt.Fprintf(h, "ctx:%s:%v\n", k, ep.Context[k])
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))[:16] // Return first 16 hex chars
@@ -498,14 +498,14 @@ func (ep *ExecutionPlan) GraphHash() string {
 // hashStepsRecursive recursively hashes steps in a deterministic order
 func (ep *ExecutionPlan) hashStepsRecursive(h hash.Hash, steps []ExecutionStep) {
 	for _, step := range steps {
-		fmt.Fprintf(h, "step:%s:%s:%s:%s\n", step.ID, step.Type, step.Description, step.Command)
+		_, _ = fmt.Fprintf(h, "step:%s:%s:%s:%s\n", step.ID, step.Type, step.Description, step.Command)
 
 		if step.Decorator != nil {
-			fmt.Fprintf(h, "decorator:%s:%s\n", step.Decorator.Name, step.Decorator.Type)
+			_, _ = fmt.Fprintf(h, "decorator:%s:%s\n", step.Decorator.Name, step.Decorator.Type)
 		}
 
 		if step.Condition != nil {
-			fmt.Fprintf(h, "condition:%s:%s:%s\n",
+			_, _ = fmt.Fprintf(h, "condition:%s:%s:%s\n",
 				step.Condition.Variable,
 				step.Condition.Evaluation.CurrentValue,
 				step.Condition.Evaluation.SelectedBranch)
@@ -582,7 +582,7 @@ func (ep *ExecutionPlan) addDOTNodesRecursive(builder *strings.Builder, steps []
 			label = label[:47] + "..."
 		}
 
-		builder.WriteString(fmt.Sprintf("  \"%s\" [label=\"%s\"];\n", step.ID, label))
+		_, _ = fmt.Fprintf(builder, "  \"%s\" [label=\"%s\"];\n", step.ID, label)
 
 		// Process children
 		ep.addDOTNodesRecursive(builder, step.Children, prefix+"  ")

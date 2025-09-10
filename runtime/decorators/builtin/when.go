@@ -3,7 +3,6 @@ package builtin
 import (
 	"fmt"
 
-	"github.com/aledsdavies/devcmd/codegen"
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
 )
@@ -121,11 +120,11 @@ func (w *WhenDecorator) SelectBranch(ctx *decorators.Ctx, args []decorators.Deco
 	// Find matching branch
 	selectedBranch := w.selectBranch(value, branches)
 	if selectedBranch == "__NO_MATCH__" {
-		// No matching branch - succeed with no output (architectural requirement)
+		// No matching branch - return error
 		return decorators.CommandResult{
 			Stdout:   "",
-			Stderr:   "",
-			ExitCode: 0,
+			Stderr:   fmt.Sprintf("no matching branch for %s=\"%s\"", envVar, value),
+			ExitCode: 1,
 		}
 	}
 
@@ -206,54 +205,6 @@ func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorato
 }
 
 // ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GeneratePatternHint provides code generation hint for conditional execution
-func (w *WhenDecorator) GeneratePatternHint(ops codegen.GenOps, args []decorators.DecoratorParam, branches map[string]func(codegen.GenOps) codegen.TempResult) codegen.TempResult {
-	envVar, err := w.extractEnvVar(args)
-	if err != nil {
-		return ops.Literal(fmt.Sprintf("<error: %v>", err))
-	}
-
-	// Generate switch-like code for environment variable pattern matching
-	switchCode := fmt.Sprintf(`func() CommandResult {
-		value, exists := ctx.Env.Get(%q)
-		if !exists {
-			value = ""
-		}
-		
-		switch value {`, envVar)
-
-	// Generate cases for each branch
-	for pattern, branchGen := range branches {
-		branchCode := branchGen(ops)
-
-		if pattern == "default" {
-			// Wildcard is the default case
-			switchCode += fmt.Sprintf(`
-		default:
-			return %s`, branchCode.String())
-		} else {
-			switchCode += fmt.Sprintf(`
-		case %q:
-			return %s`, pattern, branchCode.String())
-		}
-	}
-
-	switchCode += `
-		}
-		
-		return CommandResult{
-			Stderr: fmt.Sprintf("no matching branch for %s=%%q", value),
-			ExitCode: 1,
-		}
-	}()`
-
-	return ops.Literal(switchCode)
-}
-
-// ================================================================================================
 // HELPER METHODS
 // ================================================================================================
 
@@ -264,21 +215,22 @@ func (w *WhenDecorator) extractEnvVar(params []decorators.DecoratorParam) (strin
 	}
 
 	var envVar string
-	if params[0].Name == "" {
+	switch params[0].Name {
+	case "":
 		// Positional parameter
 		if val, ok := params[0].Value.(string); ok {
 			envVar = val
 		} else {
 			return "", fmt.Errorf("@when environment variable must be a string, got %T", params[0].Value)
 		}
-	} else if params[0].Name == "env" {
+	case "env":
 		// Named parameter
 		if val, ok := params[0].Value.(string); ok {
 			envVar = val
 		} else {
 			return "", fmt.Errorf("@when env parameter must be a string")
 		}
-	} else {
+	default:
 		return "", fmt.Errorf("@when unknown parameter: %s", params[0].Name)
 	}
 
@@ -297,7 +249,7 @@ func (w *WhenDecorator) selectBranch(value string, branches map[string]decorator
 		return value
 	}
 
-	// If no exact match, look for wildcard
+	// If no exact match, look for default
 	if _, exists := branches["default"]; exists {
 		return "default"
 	}

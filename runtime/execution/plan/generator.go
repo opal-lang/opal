@@ -221,13 +221,29 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 			}
 
 			chainCommand := strings.Join(parts, " ")
+
+			// Build metadata with operator information
+			metadata := map[string]string{
+				"kind": "shell_chain",
+			}
+
+			// Add operator metadata for tests
+			switch element.OpNext {
+			case ir.ChainOpAppend:
+				metadata["op_next"] = ">>"
+			case ir.ChainOpAnd:
+				metadata["op_next"] = "&&"
+			case ir.ChainOpOr:
+				metadata["op_next"] = "||"
+			case ir.ChainOpPipe:
+				metadata["op_next"] = "|"
+			}
+
 			return plan.ExecutionStep{
 				Type:        plan.StepShell,
 				Description: chainCommand,
 				Command:     chainCommand,
-				Metadata: map[string]string{
-					"kind": "shell_chain",
-				},
+				Metadata:    metadata,
 			}
 		}
 
@@ -628,6 +644,28 @@ func (g *Generator) expandModuleImport(ctx *ir.Ctx, step *plan.ExecutionStep) {
 func (g *Generator) expandFileInclude(ctx *ir.Ctx, step *plan.ExecutionStep) {
 	includePath := step.Metadata["include_path"]
 	step.Description = fmt.Sprintf("%s <file expansion not yet implemented: %s>", step.Description, includePath)
+}
+
+// generateMixedChain handles chains that contain action decorators
+// These are broken down into individual steps for better readability
+func (g *Generator) generateMixedChain(ctx *ir.Ctx, chain []ir.ChainElement) plan.ExecutionStep {
+	// Create a parent "Command chain" step with individual children
+	var children []plan.ExecutionStep
+
+	for _, element := range chain {
+		childStep := g.generateChainElement(ctx, element)
+		children = append(children, childStep)
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: "Command chain",
+		Command:     "Command chain",
+		Children:    children,
+		Metadata: map[string]string{
+			"kind": "mixed_chain",
+		},
+	}
 }
 
 // toDecoratorContext converts execution context to decorator context

@@ -493,19 +493,6 @@ func createSourceSpan(pos ast.Position) *SourceSpan {
 	}
 }
 
-// formatParametersForShell formats parameters for shell text placeholder
-func formatParametersForShell(params []ast.NamedParameter) string {
-	var parts []string
-	for _, param := range params {
-		if param.Name == "" {
-			parts = append(parts, param.Value.String())
-		} else {
-			parts = append(parts, fmt.Sprintf("%s=%s", param.Name, param.Value.String()))
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
 // formatPatternName converts pattern to string name (simplified for now)
 func formatPatternName(pattern interface{}) string {
 	return fmt.Sprintf("%v", pattern)

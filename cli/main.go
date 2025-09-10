@@ -47,7 +47,6 @@ var (
 	outputDir    string
 	generateOnly bool
 	dryRun       bool
-	resolve      bool
 	noColor      bool
 
 	// Standardized UI control flags
@@ -361,7 +360,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 		// Ensure there's a newline at the end
 		if len(planOutput) > 0 && !strings.HasSuffix(planOutput, "\n") {
-			os.Stdout.WriteString("\n")
+			_, _ = os.Stdout.WriteString("\n")
 		}
 
 		if debug {

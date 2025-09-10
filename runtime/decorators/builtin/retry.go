@@ -117,7 +117,7 @@ func (r *RetryDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.Dec
 		// If successful, return immediately
 		if result.Success() {
 			if attempt > 1 && ctx.Debug {
-				fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry succeeded on attempt %d/%d\n", attempt, attempts)
+				_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry succeeded on attempt %d/%d\n", attempt, attempts)
 			}
 			return result
 		}
@@ -128,14 +128,14 @@ func (r *RetryDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.Dec
 		// If this was the last attempt, return the failure
 		if attempt == attempts {
 			if ctx.Debug {
-				fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry failed after %d attempts\n", attempts)
+				_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry failed after %d attempts\n", attempts)
 			}
 			break
 		}
 
 		// Wait before retrying (except on the last attempt)
 		if ctx.Debug {
-			fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry attempt %d/%d failed (exit code %d), retrying in %v\n",
+			_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] @retry attempt %d/%d failed (exit code %d), retrying in %v\n",
 				attempt, attempts, result.ExitCode, currentDelay)
 		}
 

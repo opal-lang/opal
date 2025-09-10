@@ -78,8 +78,7 @@ type Lexer struct {
 	commandBlockLevel int // Track the brace level where we entered a command block
 
 	// Function decorator state
-	inFunctionDecorator    bool // True when we're inside a function decorator sequence
-	functionDecoratorLevel int  // Counter for nested function decorators
+	inFunctionDecorator bool // True when we're inside a function decorator sequence
 
 	// Shell context tracking (maintained across decorator breaks in ShellMode)
 	shellBraceLevel    int  // Track ${...} parameter expansion braces globally

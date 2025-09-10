@@ -191,21 +191,22 @@ func (w *WorkdirDecorator) extractParameters(params []decorators.DecoratorParam)
 	}
 
 	// Extract path (first parameter)
-	if params[0].Name == "" {
+	switch params[0].Name {
+	case "":
 		// Positional parameter
 		if val, ok := params[0].Value.(string); ok {
 			path = val
 		} else {
 			return "", false, fmt.Errorf("@workdir path must be a string, got %T", params[0].Value)
 		}
-	} else if params[0].Name == "path" {
+	case "path":
 		// Named parameter
 		if val, ok := params[0].Value.(string); ok {
 			path = val
 		} else {
 			return "", false, fmt.Errorf("@workdir path parameter must be a string, got %T", params[0].Value)
 		}
-	} else {
+	default:
 		return "", false, fmt.Errorf("@workdir first parameter must be the path")
 	}
 

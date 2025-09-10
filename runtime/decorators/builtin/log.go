@@ -118,27 +118,16 @@ func (l *LogDecorator) Run(ctx *decorators.Ctx, args []decorators.DecoratorParam
 		}
 	}
 
-	// Output directly to terminal with newline for proper formatting
-	if level == "error" {
-		// Error level always goes to stderr (regardless of plain flag)
-		if ctx.Stderr != nil {
-			fmt.Fprintln(ctx.Stderr, processedMessage)
-		}
-		return decorators.CommandResult{
-			Stdout:   "",
-			Stderr:   processedMessage + "\n", // Include newline like echo
-			ExitCode: 0,                       // Log messages don't fail the command
-		}
-	} else {
-		// All other levels go to stdout
-		if ctx.Stdout != nil {
-			fmt.Fprintln(ctx.Stdout, processedMessage)
-		}
-		return decorators.CommandResult{
-			Stdout:   processedMessage + "\n", // Include newline like echo
-			Stderr:   "",
-			ExitCode: 0,
-		}
+	// All log levels go to stdout
+	if ctx.Stdout != nil {
+		_, _ = fmt.Fprintln(ctx.Stdout, processedMessage)
+	}
+
+	// Always add trailing newline (like echo command)
+	return decorators.CommandResult{
+		Stdout:   processedMessage + "\n",
+		Stderr:   "",
+		ExitCode: 0,
 	}
 }
 
@@ -159,29 +148,39 @@ func (l *LogDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorator
 		preview = lines[0] + " ..."
 	}
 
-	// Limit length to keep plans readable
-	if len(preview) > 80 {
-		preview = preview[:77] + "..."
-	}
-
 	// Remove color templates for plan display
 	cleanPreview := l.removeColorTemplates(preview)
 
-	// Use user-friendly format: Log:\n    [LEVEL] message
-	logLevel := strings.ToUpper(level)
-	if logLevel == "" {
-		logLevel = "INFO"
+	// Limit length for plans - need to account for prefix length
+	// Plan formatter truncates at 80 chars, so we aim for ~77 total
+	var maxMessageLength int
+	if plain {
+		// "Log (plain): " = 13 characters
+		maxMessageLength = 77 - 13
+	} else {
+		// "Log: [LEVEL] " varies by level, but INFO is 12 chars
+		levelUpper := strings.ToUpper(level)
+		prefixLength := len(fmt.Sprintf("Log: [%s] ", levelUpper))
+		maxMessageLength = 77 - prefixLength
 	}
 
-	description := fmt.Sprintf("Log: [%s] %s", logLevel, cleanPreview)
+	if len(cleanPreview) > maxMessageLength {
+		cleanPreview = cleanPreview[:maxMessageLength] + "..."
+	}
+
+	// Format according to test expectations
+	var description string
 	if plain {
 		description = fmt.Sprintf("Log (plain): %s", cleanPreview)
+	} else {
+		levelUpper := strings.ToUpper(level)
+		description = fmt.Sprintf("Log: [%s] %s", levelUpper, cleanPreview)
 	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepShell,
 		Description: description,
-		Command:     "", // Use Description for display
+		Command:     description, // Use the formatted description as the command for display
 		Metadata: map[string]string{
 			"decorator": "log",
 			"level":     level,

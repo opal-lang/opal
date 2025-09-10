@@ -184,7 +184,8 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.DecoratorParam) (
 	var err error
 
 	// Extract duration parameter
-	if params[0].Name == "" {
+	switch params[0].Name {
+	case "":
 		// Positional parameter
 		if val, ok := params[0].Value.(time.Duration); ok {
 			duration = val
@@ -197,7 +198,7 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.DecoratorParam) (
 		} else {
 			return 0, fmt.Errorf("@timeout duration must be a duration or string, got %T", params[0].Value)
 		}
-	} else if params[0].Name == "duration" {
+	case "duration":
 		// Named parameter
 		if val, ok := params[0].Value.(time.Duration); ok {
 			duration = val
@@ -210,7 +211,7 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.DecoratorParam) (
 		} else {
 			return 0, fmt.Errorf("@timeout duration parameter must be a duration or string, got %T", params[0].Value)
 		}
-	} else {
+	default:
 		return 0, fmt.Errorf("@timeout unknown parameter: %s", params[0].Name)
 	}
 

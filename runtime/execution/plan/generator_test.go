@@ -98,9 +98,7 @@ func TestPlanGenerator_ChainWithAndOperator(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `chain-test:
 └─ Execute 1 command steps
-   └─ Command chain
-      ├─ echo hello
-      └─ echo world`
+   └─ echo hello && echo world`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -144,9 +142,7 @@ func TestPlanGenerator_ChainWithOrOperator(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `or-test:
 └─ Execute 1 command steps
-   └─ Command chain
-      ├─ echo hello
-      └─ echo fallback`
+   └─ echo hello || echo fallback`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -190,9 +186,7 @@ func TestPlanGenerator_ChainWithPipeOperator(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `pipe-test:
 └─ Execute 1 command steps
-   └─ Command chain
-      ├─ echo hello
-      └─ grep hello`
+   └─ echo hello | grep hello`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -229,7 +223,7 @@ func TestPlanGenerator_ChainWithAppendOperator(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `append-test:
 └─ Execute 1 command steps
-   └─ echo hello`
+   └─ echo hello >> output.txt`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -383,11 +377,7 @@ func TestPlanGenerator_ComplexChainOperators(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `complex-chain:
 └─ Execute 1 command steps
-   └─ Command chain
-      ├─ echo start
-      ├─ echo middle
-      ├─ grep middle
-      └─ echo fallback`
+   └─ echo start && echo middle | grep middle || echo fallback`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -733,10 +723,7 @@ func TestPlanGenerator_ActionDecorator_LogInChain(t *testing.T) {
 	got := executionPlan.StringNoColor()
 	want := `log-chain-test:
 └─ Execute 1 command steps
-   └─ Command chain
-      ├─ Log: [INFO] Starting
-      ├─ echo test
-      └─ Log: [INFO] Done`
+   └─ @log(Starting) && echo test && @log(Done)`
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Plan output mismatch (-want +got):\n%s", diff)
@@ -1850,7 +1837,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					},
 				},
 			},
-			expected: `and-chain:
+			expected: `simple-AND-chain:
 └─ Execute 1 command steps
    └─ echo hello && echo world`,
 		},
@@ -1875,7 +1862,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					},
 				},
 			},
-			expected: `or-chain:
+			expected: `simple-OR-chain:
 └─ Execute 1 command steps
    └─ echo hello || echo fallback`,
 		},
@@ -1900,7 +1887,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					},
 				},
 			},
-			expected: `pipe-chain:
+			expected: `simple-PIPE-chain:
 └─ Execute 1 command steps
    └─ echo hello | grep hello`,
 		},
@@ -1943,7 +1930,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					},
 				},
 			},
-			expected: `complex-chain:
+			expected: `complex-multi-operator-chain:
 └─ Execute 1 command steps
    └─ echo start && echo middle | grep middle || echo fallback`,
 		},
@@ -1961,7 +1948,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					Target: "output.txt",
 				},
 			},
-			expected: `append-chain:
+			expected: `append-operator-chain:
 └─ Execute 1 command steps
    └─ echo hello >> output.txt`,
 		},
@@ -1993,7 +1980,7 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 					},
 				},
 			},
-			expected: `action-chain:
+			expected: `action-decorators-in-chain:
 └─ Execute 1 command steps
    └─ @log(starting) && echo middle && @log(done)`,
 		},
@@ -2102,7 +2089,7 @@ func TestPlanGenerator_MultipleStepsVsChains_CorrectSpec(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := createTestContext()
-			commandName := strings.ReplaceAll(tt.name, " ", "-")
+			var commandName string
 			if strings.Contains(tt.name, "multiple") {
 				commandName = "multi-step"
 			} else {

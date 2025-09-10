@@ -27,28 +27,28 @@ func NewPlanExecutor(registry *decorators.Registry, output io.Writer) *PlanExecu
 // ExecuteNode executes an IR node in plan mode (dry-run)
 func (e *PlanExecutor) ExecuteNode(ctx *ir.Ctx, node ir.Node) ir.CommandResult {
 	if ctx.Debug {
-		fmt.Fprintf(e.output, "[DEBUG PlanExecutor] ExecuteNode called with node type: %T\n", node)
+		_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] ExecuteNode called with node type: %T\n", node)
 	}
 
 	switch n := node.(type) {
 	case ir.CommandSeq:
 		if ctx.Debug {
-			fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing CommandSeq with %d steps\n", len(n.Steps))
+			_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing CommandSeq with %d steps\n", len(n.Steps))
 		}
 		return e.executeCommandSeq(ctx, n)
 	case ir.Wrapper:
 		if ctx.Debug {
-			fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing Wrapper: %s\n", n.Kind)
+			_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing Wrapper: %s\n", n.Kind)
 		}
 		return e.executeWrapper(ctx, n)
 	case ir.Pattern:
 		if ctx.Debug {
-			fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing Pattern: %s\n", n.Kind)
+			_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Processing Pattern: %s\n", n.Kind)
 		}
 		return e.executePattern(ctx, n)
 	default:
 		if ctx.Debug {
-			fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Unknown node type: %T\n", node)
+			_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Unknown node type: %T\n", node)
 		}
 		return ir.CommandResult{
 			Stderr:   fmt.Sprintf("Unknown node type: %T", node),
@@ -59,10 +59,10 @@ func (e *PlanExecutor) ExecuteNode(ctx *ir.Ctx, node ir.Node) ir.CommandResult {
 
 // executeCommandSeq shows a sequence of command steps
 func (e *PlanExecutor) executeCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) ir.CommandResult {
-	fmt.Fprintf(e.output, "📋 Plan: Executing %d command steps:\n", len(seq.Steps))
+	_, _ = fmt.Fprintf(e.output, "📋 Plan: Executing %d command steps:\n", len(seq.Steps))
 
 	for i, step := range seq.Steps {
-		fmt.Fprintf(e.output, "  Step %d: ", i+1)
+		_, _ = fmt.Fprintf(e.output, "  Step %d: ", i+1)
 		e.showStep(ctx, step)
 	}
 
@@ -73,7 +73,7 @@ func (e *PlanExecutor) executeCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) ir.Comm
 func (e *PlanExecutor) executeWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) ir.CommandResult {
 	_, exists := e.registry.GetBlock(wrapper.Kind)
 	if !exists {
-		fmt.Fprintf(e.output, "❌ Unknown block decorator: @%s\n", wrapper.Kind)
+		_, _ = fmt.Fprintf(e.output, "❌ Unknown block decorator: @%s\n", wrapper.Kind)
 		return ir.CommandResult{
 			Stderr:   fmt.Sprintf("Block decorator @%s not found", wrapper.Kind),
 			ExitCode: 1,
@@ -81,16 +81,16 @@ func (e *PlanExecutor) executeWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) ir.Comman
 	}
 
 	// Show the wrapper plan
-	fmt.Fprintf(e.output, "🔄 @%s", wrapper.Kind)
+	_, _ = fmt.Fprintf(e.output, "🔄 @%s", wrapper.Kind)
 	if len(wrapper.Params) > 0 {
-		fmt.Fprintf(e.output, "(%s)", e.formatParams(wrapper.Params))
+		_, _ = fmt.Fprintf(e.output, "(%s)", e.formatParams(wrapper.Params))
 	}
-	fmt.Fprintf(e.output, " {\n")
+	_, _ = fmt.Fprintf(e.output, " {\n")
 
 	// Show inner content with indentation
 	innerResult := e.executeCommandSeq(ctx, wrapper.Inner)
 
-	fmt.Fprintf(e.output, "}\n")
+	_, _ = fmt.Fprintf(e.output, "}\n")
 
 	return innerResult
 }
@@ -99,25 +99,25 @@ func (e *PlanExecutor) executeWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) ir.Comman
 func (e *PlanExecutor) executePattern(ctx *ir.Ctx, pattern ir.Pattern) ir.CommandResult {
 	_, exists := e.registry.GetPattern(pattern.Kind)
 	if !exists {
-		fmt.Fprintf(e.output, "❌ Unknown pattern decorator: @%s\n", pattern.Kind)
+		_, _ = fmt.Fprintf(e.output, "❌ Unknown pattern decorator: @%s\n", pattern.Kind)
 		return ir.CommandResult{
 			Stderr:   fmt.Sprintf("Pattern decorator @%s not found", pattern.Kind),
 			ExitCode: 1,
 		}
 	}
 
-	fmt.Fprintf(e.output, "🔀 @%s", pattern.Kind)
+	_, _ = fmt.Fprintf(e.output, "🔀 @%s", pattern.Kind)
 	if len(pattern.Params) > 0 {
-		fmt.Fprintf(e.output, "(%s)", e.formatParams(pattern.Params))
+		_, _ = fmt.Fprintf(e.output, "(%s)", e.formatParams(pattern.Params))
 	}
-	fmt.Fprintf(e.output, " {\n")
+	_, _ = fmt.Fprintf(e.output, " {\n")
 
 	for branchName, branchSeq := range pattern.Branches {
-		fmt.Fprintf(e.output, "  Branch '%s':\n", branchName)
+		_, _ = fmt.Fprintf(e.output, "  Branch '%s':\n", branchName)
 		e.executeCommandSeq(ctx, branchSeq)
 	}
 
-	fmt.Fprintf(e.output, "}\n")
+	_, _ = fmt.Fprintf(e.output, "}\n")
 
 	return ir.CommandResult{ExitCode: 0}
 }
@@ -125,7 +125,7 @@ func (e *PlanExecutor) executePattern(ctx *ir.Ctx, pattern ir.Pattern) ir.Comman
 // showStep displays a command step in plan format
 func (e *PlanExecutor) showStep(ctx *ir.Ctx, step ir.CommandStep) {
 	if len(step.Chain) == 0 {
-		fmt.Fprintf(e.output, "(empty)\n")
+		_, _ = fmt.Fprintf(e.output, "(empty)\n")
 		return
 	}
 
@@ -154,7 +154,7 @@ func (e *PlanExecutor) showStep(ctx *ir.Ctx, step ir.CommandStep) {
 		parts = append(parts, part)
 	}
 
-	fmt.Fprintf(e.output, "%s\n", strings.Join(parts, " "))
+	_, _ = fmt.Fprintf(e.output, "%s\n", strings.Join(parts, " "))
 }
 
 // showElement displays a single chain element

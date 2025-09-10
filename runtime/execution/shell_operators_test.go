@@ -2,7 +2,6 @@ package execution
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,9 +129,9 @@ func TestShellOperatorEdgeCases(t *testing.T) {
 		ctx := setupCtx()
 
 		// Create a temporary directory for testing
-		tempDir, err := ioutil.TempDir("", "devcmd_test_")
+		tempDir, err := os.MkdirTemp("", "devcmd_test_")
 		require.NoError(t, err)
-		defer os.RemoveAll(tempDir)
+		defer func() { _ = os.RemoveAll(tempDir) }()
 
 		testFile := filepath.Join(tempDir, "output.txt")
 
@@ -175,7 +174,7 @@ func TestShellOperatorEdgeCases(t *testing.T) {
 		assert.Equal(t, 0, result2.ExitCode, "Second append should succeed")
 
 		// Verify file contents
-		content, err := ioutil.ReadFile(testFile)
+		content, err := os.ReadFile(testFile)
 		require.NoError(t, err)
 		assert.Contains(t, string(content), "first", "File should contain first output")
 		assert.Contains(t, string(content), "second", "File should contain second output")

@@ -3,7 +3,6 @@ package builtin
 import (
 	"fmt"
 
-	"github.com/aledsdavies/devcmd/codegen"
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
 )
@@ -124,7 +123,7 @@ func (t *TryDecorator) SelectBranch(ctx *decorators.Ctx, args []decorators.Decor
 	// If main failed and we have a catch branch, execute it
 	if mainResult.Failed() && hasCatch {
 		if ctx.Debug {
-			fmt.Fprintf(ctx.Stderr, "[DEBUG] @try main failed (exit code %d), executing catch block\n", mainResult.ExitCode)
+			_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] @try main failed (exit code %d), executing catch block\n", mainResult.ExitCode)
 		}
 
 		catchResult := ctx.ExecSequential(catchBranch.Steps)
@@ -146,7 +145,7 @@ func (t *TryDecorator) SelectBranch(ctx *decorators.Ctx, args []decorators.Decor
 	// Always execute finally block if present
 	if hasFinally {
 		if ctx.Debug {
-			fmt.Fprintf(ctx.Stderr, "[DEBUG] @try executing finally block\n")
+			_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] @try executing finally block\n")
 		}
 
 		finallyResult := ctx.ExecSequential(finallyBranch.Steps)
@@ -217,73 +216,4 @@ func (t *TryDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorator
 			"hasFinally":     fmt.Sprintf("%t", hasFinally),
 		},
 	}
-}
-
-// ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GeneratePatternHint provides code generation hint for try/catch/finally execution
-func (t *TryDecorator) GeneratePatternHint(ops codegen.GenOps, args []decorators.DecoratorParam, branches map[string]func(codegen.GenOps) codegen.TempResult) codegen.TempResult {
-	// Generate try/catch/finally code
-	mainGen, hasMain := branches["main"]
-	if !hasMain {
-		return ops.Literal(`CommandResult{Stderr: "@try requires a 'main' branch", ExitCode: 1}`)
-	}
-
-	catchGen, hasCatch := branches["catch"]
-	finallyGen, hasFinally := branches["finally"]
-
-	tryCode := `func() CommandResult {
-		var mainResult CommandResult
-		var finalResult CommandResult
-		
-		// Execute main branch
-		mainResult = ` + mainGen(ops).String()
-
-	if hasCatch {
-		tryCode += `
-		
-		// If main failed, execute catch branch
-		if mainResult.Failed() {
-			catchResult := ` + catchGen(ops).String() + `
-			
-			// Catch result determines overall success/failure
-			finalResult = catchResult
-			
-			// Combine output from main and catch
-			finalResult.Stdout = mainResult.Stdout + catchResult.Stdout
-			finalResult.Stderr = mainResult.Stderr + catchResult.Stderr
-		} else {
-			finalResult = mainResult
-		}`
-	} else {
-		tryCode += `
-		
-		// No catch branch - use main result
-		finalResult = mainResult`
-	}
-
-	if hasFinally {
-		tryCode += `
-		
-		// Always execute finally branch
-		finallyResult := ` + finallyGen(ops).String() + `
-		
-		// Finally output is always included
-		finalResult.Stdout += finallyResult.Stdout
-		finalResult.Stderr += finallyResult.Stderr
-		
-		// Finally failure overrides overall result
-		if finallyResult.Failed() {
-			finalResult.ExitCode = finallyResult.ExitCode
-		}`
-	}
-
-	tryCode += `
-		
-		return finalResult
-	}()`
-
-	return ops.Literal(tryCode)
 }

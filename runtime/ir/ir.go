@@ -469,13 +469,13 @@ func ExecShell(ctx *Ctx, cmd string) CommandResult {
 
 	// Log debug output if enabled
 	if ctx.Debug {
-		fmt.Fprintf(ctx.Stderr, "[DEBUG] Command: %s\n", cmd)
-		fmt.Fprintf(ctx.Stderr, "[DEBUG] Exit Code: %d\n", exitCode)
+		_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Command: %s\n", cmd)
+		_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Exit Code: %d\n", exitCode)
 		if stdout.Len() > 0 {
-			fmt.Fprintf(ctx.Stderr, "[DEBUG] Stdout: %s\n", stdout.String())
+			_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Stdout: %s\n", stdout.String())
 		}
 		if stderr.Len() > 0 {
-			fmt.Fprintf(ctx.Stderr, "[DEBUG] Stderr: %s\n", stderr.String())
+			_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Stderr: %s\n", stderr.String())
 		}
 	}
 
@@ -544,9 +544,9 @@ func ExecShellWithInput(ctx *Ctx, cmd, input string) CommandResult {
 
 	// Log debug output if enabled
 	if ctx.Debug {
-		fmt.Fprintf(ctx.Stderr, "[DEBUG] Command (with input): %s\n", cmd)
-		fmt.Fprintf(ctx.Stderr, "[DEBUG] Input Length: %d bytes\n", len(input))
-		fmt.Fprintf(ctx.Stderr, "[DEBUG] Exit Code: %d\n", exitCode)
+		_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Command (with input): %s\n", cmd)
+		_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Input Length: %d bytes\n", len(input))
+		_, _ = fmt.Fprintf(ctx.Stderr, "[DEBUG] Exit Code: %d\n", exitCode)
 	}
 
 	return CommandResult{
@@ -563,7 +563,7 @@ func AppendToFile(filename, content string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file %s for append: %w", filename, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write content
 	_, err = file.WriteString(content)
@@ -624,7 +624,7 @@ func (ce *ChainElement) GetResolvedText(ctx *decorators.Ctx, registry *decorator
 func (ce *ChainElement) PlanDescription(ctx *decorators.Ctx, registry *decorators.Registry) string {
 	if ce.Content == nil {
 		// This should never happen in clean greenfield code
-		return fmt.Sprintf("<ERROR: shell element missing structured content>")
+		return "<ERROR: shell element missing structured content>"
 	}
 
 	var parts []string

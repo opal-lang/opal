@@ -12,6 +12,10 @@ AI_CONTEXT.local.md
 AI_CONTEXT.md
 .agent/
 
+# Work session tracking files (user-specific)
+WORK.md
+work.md
+
 # Cursor AI Editor
 .cursor/
 .cursorrules

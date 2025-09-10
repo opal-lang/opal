@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/codegen"
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
 )
@@ -120,7 +119,7 @@ func (c *ConfirmDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.D
 		prompt += " [y/N]: "
 	}
 
-	fmt.Fprint(ctx.Stderr, prompt)
+	_, _ = fmt.Fprint(ctx.Stderr, prompt)
 
 	// Read user response
 	scanner := bufio.NewScanner(os.Stdin)
@@ -134,15 +133,16 @@ func (c *ConfirmDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.D
 	response := strings.TrimSpace(strings.ToLower(scanner.Text()))
 
 	// Determine if user confirmed
-	confirmed := false
-	if response == "" {
+	var confirmed bool
+	switch response {
+	case "":
 		// User just pressed enter - use default
 		confirmed = defaultYes
-	} else if response == "y" || response == "yes" {
+	case "y", "yes":
 		confirmed = true
-	} else if response == "n" || response == "no" {
+	case "n", "no":
 		confirmed = false
-	} else {
+	default:
 		return decorators.CommandResult{
 			Stderr:   fmt.Sprintf("invalid response %q, please answer 'y' or 'n'", response),
 			ExitCode: 1,
@@ -187,65 +187,6 @@ func (c *ConfirmDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decor
 			"defaultYes": fmt.Sprintf("%t", defaultYes),
 		},
 	}
-}
-
-// ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GenerateBlockHint provides code generation hint for confirmation prompt
-func (c *ConfirmDecorator) GenerateBlockHint(ops codegen.GenOps, args []decorators.DecoratorParam, body func(codegen.GenOps) codegen.TempResult) codegen.TempResult {
-	message, defaultYes, err := c.extractParameters(args)
-	if err != nil {
-		return ops.Literal(fmt.Sprintf("<error: %v>", err))
-	}
-
-	innerResult := body(ops)
-
-	// Generate confirmation prompt code
-	confirmCode := fmt.Sprintf(`func() CommandResult {
-		// Display confirmation prompt
-		prompt := %q
-		if %t {
-			prompt += " [Y/n]: "
-		} else {
-			prompt += " [y/N]: "
-		}
-		
-		fmt.Fprint(os.Stderr, prompt)
-		
-		// Read user response
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			return CommandResult{Stderr: "failed to read user input", ExitCode: 1}
-		}
-		
-		response := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		
-		// Determine if user confirmed
-		confirmed := false
-		if response == "" {
-			confirmed = %t // defaultYes
-		} else if response == "y" || response == "yes" {
-			confirmed = true
-		} else if response == "n" || response == "no" {
-			confirmed = false
-		} else {
-			return CommandResult{
-				Stderr: fmt.Sprintf("invalid response %%q, please answer 'y' or 'n'", response),
-				ExitCode: 1,
-			}
-		}
-		
-		if !confirmed {
-			return CommandResult{Stdout: "Operation cancelled by user", ExitCode: 130}
-		}
-		
-		// User confirmed - execute commands
-		return %s
-	}()`, message, defaultYes, defaultYes, innerResult.String())
-
-	return ops.Literal(confirmCode)
 }
 
 // ================================================================================================

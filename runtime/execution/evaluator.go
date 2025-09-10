@@ -97,7 +97,7 @@ func (e *NodeEvaluator) ExecuteCommand(ctx *decorators.Ctx, commandName string) 
 	// Look up the command IR node from the context
 	if execCtx.Commands == nil {
 		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("Commands not available in execution context for @cmd"),
+			Stderr:   "Commands not available in execution context for @cmd",
 			ExitCode: 1,
 		}
 	}
@@ -598,7 +598,7 @@ func (e *NodeEvaluator) executeShellWithInput(ctx *ir.Ctx, command string, stdin
 // streamOutput reads from a pipe and writes to both a live output stream and a buffer
 // This enables real-time feedback while preserving output for the final result
 func (e *NodeEvaluator) streamOutput(pipe io.ReadCloser, liveOutput io.Writer, buffer *strings.Builder, debug bool, label string) {
-	defer pipe.Close()
+	defer func() { _ = pipe.Close() }()
 
 	scanner := bufio.NewScanner(pipe)
 	for scanner.Scan() {
@@ -606,7 +606,7 @@ func (e *NodeEvaluator) streamOutput(pipe io.ReadCloser, liveOutput io.Writer, b
 
 		// Write to live output for real-time feedback (if not quiet mode)
 		if liveOutput != nil {
-			liveOutput.Write([]byte(line))
+			_, _ = liveOutput.Write([]byte(line))
 		}
 
 		// Capture in buffer for final CommandResult
@@ -688,19 +688,6 @@ func (e *NodeEvaluator) shouldExecute(op ir.ChainOp, prevResult ir.CommandResult
 		return true // Always execute for append
 	default:
 		return true
-	}
-}
-
-// nodeToCommandSeq converts an IR node to a CommandSeq for decorators
-func (e *NodeEvaluator) nodeToCommandSeq(node ir.Node) decorators.CommandSeq {
-	switch n := node.(type) {
-	case ir.CommandSeq:
-		return e.convertToDecoratorCommandSeq(n)
-	default:
-		// For other node types, create a synthetic CommandSeq
-		return decorators.CommandSeq{
-			Steps: []decorators.CommandStep{}, // TODO: Implement conversion
-		}
 	}
 }
 
@@ -953,7 +940,7 @@ func (e *NodeEvaluator) appendToFile(filepath, content string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filepath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write content with newline if content doesn't end with one
 	if content != "" && !strings.HasSuffix(content, "\n") {

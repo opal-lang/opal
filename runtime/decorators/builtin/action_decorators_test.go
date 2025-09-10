@@ -40,7 +40,7 @@ func TestLogDecorator(t *testing.T) {
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: "Hello world"},
 			},
-			wantOut:  "Hello world",
+			wantOut:  "Hello world\n",
 			wantExit: 0,
 		},
 		{
@@ -49,7 +49,7 @@ func TestLogDecorator(t *testing.T) {
 				{Name: "", Value: "Error occurred"},
 				{Name: "level", Value: "error"},
 			},
-			wantOut:  "Error occurred",
+			wantOut:  "Error occurred\n",
 			wantExit: 0,
 		},
 		{
@@ -57,7 +57,7 @@ func TestLogDecorator(t *testing.T) {
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: "{green}Success!{/green}"},
 			},
-			wantOut:    "\033[32mSuccess!\033[0m",
+			wantOut:    "\033[32mSuccess!\033[0m\n",
 			wantExit:   0,
 			checkColor: true,
 		},
@@ -66,7 +66,7 @@ func TestLogDecorator(t *testing.T) {
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: "{red}Error:{/red} {yellow}Warning message{/yellow}"},
 			},
-			wantOut:    "\033[31mError:\033[0m \033[33mWarning message\033[0m",
+			wantOut:    "\033[31mError:\033[0m \033[33mWarning message\033[0m\n",
 			wantExit:   0,
 			checkColor: true,
 		},
@@ -128,8 +128,8 @@ func TestLogDecoratorDescribe(t *testing.T) {
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: "Building project"},
 			},
-			wantDesc:    "@log[plain](Building project)",
-			wantCommand: "Building project",
+			wantDesc:    "Log: [INFO] Building project",
+			wantCommand: "Log: [INFO] Building project",
 		},
 		{
 			name: "error level describe",
@@ -137,24 +137,24 @@ func TestLogDecoratorDescribe(t *testing.T) {
 				{Name: "", Value: "Build failed"},
 				{Name: "level", Value: "error"},
 			},
-			wantDesc:    "@log[plain](Build failed)",
-			wantCommand: "Build failed",
+			wantDesc:    "Log: [ERROR] Build failed",
+			wantCommand: "Log: [ERROR] Build failed",
 		},
 		{
 			name: "long message truncation",
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: strings.Repeat("a", 70)},
 			},
-			wantDesc:    "@log[plain](" + strings.Repeat("a", 57) + "...)",
-			wantCommand: strings.Repeat("a", 57) + "...",
+			wantDesc:    "Log: [INFO] " + strings.Repeat("a", 65) + "...",
+			wantCommand: "Log: [INFO] " + strings.Repeat("a", 65) + "...",
 		},
 		{
 			name: "message with color templates removed",
 			params: []decorators.DecoratorParam{
 				{Name: "", Value: "{green}Success message{/green}"},
 			},
-			wantDesc:    "@log[plain](Success message)",
-			wantCommand: "Success message",
+			wantDesc:    "Log: [INFO] Success message",
+			wantCommand: "Log: [INFO] Success message",
 		},
 	}
 
@@ -333,13 +333,13 @@ func TestActionDecoratorsInShellChain(t *testing.T) {
 		params1 := []decorators.DecoratorParam{{Name: "", Value: "Starting process"}}
 		result1 := log.Run(ctx, params1)
 		assert.Equal(t, 0, result1.ExitCode, "first log should succeed")
-		assert.Equal(t, "Starting process", result1.Stdout, "first log output")
+		assert.Equal(t, "Starting process\n", result1.Stdout, "first log output")
 
 		// Test second log in chain
 		params2 := []decorators.DecoratorParam{{Name: "", Value: "Process complete"}}
 		result2 := log.Run(ctx, params2)
 		assert.Equal(t, 0, result2.ExitCode, "second log should succeed")
-		assert.Equal(t, "Process complete", result2.Stdout, "second log output")
+		assert.Equal(t, "Process complete\n", result2.Stdout, "second log output")
 	})
 
 	t.Run("cmd in chain with shell commands", func(t *testing.T) {
@@ -388,8 +388,8 @@ func TestLogDecoratorQuietMode(t *testing.T) {
 
 		result := log.Run(ctx, params)
 		assert.Equal(t, 0, result.ExitCode, "should succeed")
-		assert.Equal(t, "Error message", result.Stderr, "quiet mode should show error logs")
-		assert.Equal(t, "", result.Stdout, "error goes to stderr")
+		assert.Equal(t, "Error message\n", result.Stdout, "quiet mode should show error logs")
+		assert.Equal(t, "", result.Stderr, "error goes to stdout")
 	})
 }
 
@@ -449,8 +449,8 @@ func TestLogDecoratorMultilineAndMultipleLogs(t *testing.T) {
 
 		resultError := log.Run(ctx, paramsError)
 		assert.Equal(t, 0, resultError.ExitCode, "error multiline should succeed")
-		assert.Equal(t, "Error:\nSomething\nWent wrong\n", resultError.Stderr, "error multiline goes to stderr")
-		assert.Equal(t, "", resultError.Stdout, "error doesn't go to stdout")
+		assert.Equal(t, "Error:\nSomething\nWent wrong\n", resultError.Stdout, "error multiline goes to stdout")
+		assert.Equal(t, "", resultError.Stderr, "error doesn't go to stderr")
 	})
 }
 
@@ -469,7 +469,7 @@ func TestLogDecoratorDescribeMultiline(t *testing.T) {
 		step := log.Describe(ctx, params)
 
 		// Should show first line with "..." indicating more content
-		expected := "Log:\n    [INFO] First line ..."
+		expected := "Log: [INFO] First line ..."
 		assert.Equal(t, expected, step.Description, "multiline should be truncated in describe")
 
 		// Metadata should indicate multiple lines
@@ -488,7 +488,7 @@ func TestLogDecoratorDescribeMultiline(t *testing.T) {
 		step := log.Describe(ctx, params)
 
 		// Should show first line with proper error level
-		expected := "Log:\n    [ERROR] Error occurred: ..."
+		expected := "Log: [ERROR] Error occurred: ..."
 		assert.Equal(t, expected, step.Description, "error multiline should be truncated in describe")
 
 		// Metadata should indicate error level and multiple lines

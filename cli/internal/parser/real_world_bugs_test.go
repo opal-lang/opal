@@ -146,7 +146,6 @@ test: {
 			t.Run(tt.name, func(t *testing.T) {
 				reader := strings.NewReader(tt.input)
 				program, err := Parse(reader)
-
 				if err != nil {
 					t.Errorf("%s should parse but got error: %v", tt.description, err)
 					t.Logf("⚠️  Parsing breaks at: %s", tt.name)

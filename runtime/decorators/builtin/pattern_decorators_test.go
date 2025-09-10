@@ -62,7 +62,7 @@ func TestWhenDecorator(t *testing.T) {
 						}},
 					},
 				},
-				"*": {
+				"default": {
 					Steps: []decorators.CommandStep{
 						{Chain: []decorators.ChainElement{
 							{Kind: decorators.ElementKindShell, Text: "echo unknown environment"},
@@ -73,7 +73,7 @@ func TestWhenDecorator(t *testing.T) {
 			envVars:      map[string]string{"ENV": "staging"},
 			wantOut:      "unknown environment\n",
 			wantExit:     0,
-			wantSelected: "*",
+			wantSelected: "default",
 		},
 		{
 			name: "missing environment variable uses wildcard",
@@ -88,7 +88,7 @@ func TestWhenDecorator(t *testing.T) {
 						}},
 					},
 				},
-				"*": {
+				"default": {
 					Steps: []decorators.CommandStep{
 						{Chain: []decorators.ChainElement{
 							{Kind: decorators.ElementKindShell, Text: "echo default"},
@@ -99,7 +99,7 @@ func TestWhenDecorator(t *testing.T) {
 			envVars:      map[string]string{}, // MISSING_VAR not set
 			wantOut:      "default\n",
 			wantExit:     0,
-			wantSelected: "*",
+			wantSelected: "default",
 		},
 		{
 			name: "empty environment variable matches empty string pattern",
@@ -235,11 +235,11 @@ func TestWhenDecoratorDescribe(t *testing.T) {
 				{Name: "", Value: "MISSING"},
 			},
 			branches: map[string]plan.ExecutionStep{
-				"*": {Description: "default branch"},
+				"default": {Description: "default branch"},
 			},
 			envVars:        map[string]string{},
-			wantDesc:       "@when(MISSING) → MISSING=<unset> (selected: *)",
-			wantSelected:   "*",
+			wantDesc:       "@when(MISSING) → MISSING=<unset> (selected: default)",
+			wantSelected:   "default",
 			wantEnvVar:     "MISSING",
 			wantCurrentVal: "",
 		},
