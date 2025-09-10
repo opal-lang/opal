@@ -17,7 +17,10 @@ func TestBasicCommands(t *testing.T) {
 			Name:  "command with special characters",
 			Input: "run: echo 'Hello, World!'",
 			Expected: Program(
-				Cmd("run", "echo 'Hello, World!'"),
+				Cmd("run", Shell(
+					Text("echo "),
+					StrPart("Hello, World!"),
+				)),
 			),
 		},
 		{
@@ -38,7 +41,10 @@ func TestBasicCommands(t *testing.T) {
 			Name:  "command with pipes",
 			Input: "process: echo hello | grep hello",
 			Expected: Program(
-				Cmd("process", "echo hello | grep hello"),
+				Cmd("process", Chain(
+					Shell(Text("echo hello")),
+					Pipe(Shell(Text(" grep hello"))),
+				)),
 			),
 		},
 		{
@@ -59,7 +65,11 @@ func TestBasicCommands(t *testing.T) {
 			Name:  "command with logical operators",
 			Input: "conditional: test -f file.txt && echo exists || echo missing",
 			Expected: Program(
-				Cmd("conditional", "test -f file.txt && echo exists || echo missing"),
+				Cmd("conditional", Chain(
+					Shell(Text("test -f file.txt")),
+					And(Shell(Text("echo exists"))),
+					Or(Shell(Text(" echo missing"))),
+				)),
 			),
 		},
 		{
@@ -80,7 +90,13 @@ func TestBasicCommands(t *testing.T) {
 			Name:  "command with tabs and mixed whitespace",
 			Input: "build:\t\techo\t\"building\" \t&& \tmake",
 			Expected: Program(
-				Cmd("build", "echo\t\"building\" \t&& \tmake"),
+				Cmd("build", Chain(
+					Shell(
+						Text("echo\t"),
+						StrPart("building"),
+					),
+					And(Shell(Text(" \tmake"))),
+				)),
 			),
 		},
 		{
@@ -230,7 +246,11 @@ func TestBlockCommands(t *testing.T) {
 			Input: "conditional: { test -f file.txt && echo exists || echo missing; echo checked }",
 			Expected: Program(
 				CmdBlock("conditional",
-					Shell("test -f file.txt && echo exists || echo missing; echo checked"),
+					Chain(
+						Shell(Text("test -f file.txt")),
+						And(Shell(Text("echo exists"))),
+						Or(Shell(Text(" echo missing; echo checked"))),
+					),
 				),
 			),
 		},
@@ -248,7 +268,15 @@ func TestBlockCommands(t *testing.T) {
 			Input: "deploy: { echo \"Deploying @var(APP_NAME) to @var(ENVIRONMENT)\"; kubectl apply -f @var(CONFIG_FILE) }",
 			Expected: Program(
 				CmdBlock("deploy",
-					Shell("echo \"Deploying ", At("var", Id("APP_NAME")), " to ", At("var", Id("ENVIRONMENT")), "\"; kubectl apply -f ", At("var", Id("CONFIG_FILE"))),
+					Shell(
+						Text("echo "),
+						StrPart("Deploying "),
+						At("var", Id("APP_NAME")),
+						StrPart(" to "),
+						At("var", Id("ENVIRONMENT")),
+						Text("; kubectl apply -f "),
+						At("var", Id("CONFIG_FILE")),
+					),
 				),
 			),
 		},
@@ -290,8 +318,11 @@ func TestBlockCommands(t *testing.T) {
 			Input: "complex: @timeout(30s) { npm run integration-tests && npm run e2e }",
 			Expected: Program(
 				CmdBlock("complex",
-					DecoratedShell(Decorator("timeout", Dur("30s")),
-						Text("npm run integration-tests && npm run e2e"),
+					BlockDecorator("timeout", Dur("30s"),
+						Chain(
+							Shell(Text("npm run integration-tests")),
+							And(Shell(Text(" npm run e2e"))),
+						),
 					),
 				),
 			),
@@ -335,12 +366,13 @@ func TestCommandsWithVariables(t *testing.T) {
 			Name:  "variable in quoted string - gets syntax sugar",
 			Input: "msg: echo \"Hello @var(NAME), welcome to @var(APP)!\"",
 			Expected: Program(
-				Cmd("msg", Simple(
-					Text("echo \"Hello "),
+				Cmd("msg", Shell(
+					Text("echo "),
+					StrPart("Hello "),
 					At("var", Id("NAME")),
-					Text(", welcome to "),
+					StrPart(", welcome to "),
 					At("var", Id("APP")),
-					Text("!\""),
+					StrPart("!"),
 				)),
 			),
 		},
@@ -361,10 +393,13 @@ func TestCommandsWithVariables(t *testing.T) {
 			Name:  "variable in complex shell command - gets syntax sugar",
 			Input: "check: test -f @var(CONFIG_FILE) && echo \"Config exists\" || echo \"Missing config\"",
 			Expected: Program(
-				Cmd("check", Simple(
-					Text("test -f "),
-					At("var", Id("CONFIG_FILE")),
-					Text(" && echo \"Config exists\" || echo \"Missing config\""),
+				Cmd("check", Chain(
+					Shell(
+						Text("test -f "),
+						At("var", Id("CONFIG_FILE")),
+					),
+					And(Shell(Text(" echo "), StrPart("Config exists"))),
+					Or(Shell(Text(" echo "), StrPart("Missing config"))),
 				)),
 			),
 		},
@@ -372,10 +407,13 @@ func TestCommandsWithVariables(t *testing.T) {
 			Name:  "variable with email-like text - gets syntax sugar",
 			Input: "notify: echo \"Build @var(STATUS)\" | mail admin@company.com",
 			Expected: Program(
-				Cmd("notify", Simple(
-					Text("echo \"Build "),
-					At("var", Id("STATUS")),
-					Text("\" | mail admin@company.com"),
+				Cmd("notify", Chain(
+					Shell(
+						Text("echo "),
+						StrPart("Build "),
+						At("var", Id("STATUS")),
+					),
+					Pipe(Shell(Text(" mail admin@company.com"))),
 				)),
 			),
 		},
@@ -425,13 +463,19 @@ format: {
 }`,
 		Expected: Program(
 			CmdBlock("format",
-				Shell("echo \"📝 Formatting all code...\""),
-				Shell("echo \"Formatting Go code...\""),
+				Shell(Text("echo "), StrPart("📝 Formatting all code...")),
+				Shell(Text("echo "), StrPart("Formatting Go code...")),
 				BlockDecorator("parallel",
-					"if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi",
-					"if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo \"⚠️  nixpkgs-fmt not available\"; fi",
+					Shell(Text("if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi")),
+					Shell(
+						Text("if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name "),
+						StrPart("*.nix"),
+						Text(" -exec nixpkgs-fmt {} +; else echo "),
+						StrPart("⚠️  nixpkgs-fmt not available"),
+						Text("; fi"),
+					),
 				),
-				Shell("echo \"✅ Code formatted!\""),
+				Shell(Text("echo "), StrPart("✅ Code formatted!")),
 			),
 		),
 	}

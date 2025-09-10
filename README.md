@@ -1,6 +1,6 @@
 # devcmd
 
-A simple tool for generating CLI commands from declarative definitions.
+A simple tool for running and generating CLI commands from declarative definitions.
 
 ## Quick Start
 
@@ -13,41 +13,55 @@ test: echo "Running tests..."
 clean: rm -rf build/
 ```
 
-Generate a CLI:
+Run commands directly (Interpreter Mode):
 
 ```bash
 # With Nix
-nix run github:aledsdavies/devcmd#basicDev -- --help
+nix run github:aledsdavies/devcmd -- run build
 
 # Or install directly
-go install github.com/aledsdavies/devcmd/cmd/devcmd@latest
-devcmd commands.cli > main.go
-go build -o mycli main.go
-./mycli --help
+go install github.com/aledsdavies/devcmd/cli@latest
+devcmd run build
+devcmd run test --dry-run  # Show execution plan
+```
+
+Generate standalone CLI (Coming Soon):
+
+```bash
+# CLI generation is being reworked with new IR system
+# Available in future release
+devcmd build --output mycli
+./mycli build
 ```
 
 ## Features
 
+**✅ Available Now (Interpreter Mode):**
 - Simple declarative syntax for command definitions
-- Generates standalone CLI binaries (no runtime dependencies)
+- Direct command execution with `devcmd run <command>`
 - Variable substitution with `@var(NAME)` syntax
-- Block commands for multi-step workflows
-- Background process management with watch/stop commands
-- Decorator support for shell commands and parallel execution
+- Shell operators: `&&`, `||`, `|`, `>>`
+- Plan generation with `--dry-run` mode
+- Standardized global flags (`--quiet`, `--verbose`, `--ci`, etc.)
 - Nix integration for development environments
+
+**🚧 Coming Soon (Generator Mode):**
+- Standalone CLI binary generation (no runtime dependencies)
+- Block commands and decorator support (@workdir, @timeout, @parallel)
+- Background process management with watch/stop commands
 
 ## Philosophy
 
 **devcmd is a simple task runner with some useful bells and whistles.**
 
 The core idea is declarative command definitions that work in multiple execution modes:
-- **Interpreter mode**: `devcmd run build` for development
-- **Generated mode**: `./mycli build` for distribution (no runtime dependencies)  
-- **Plan mode**: `devcmd plan build` or `./mycli --dry-run build` shows execution plans
+- **✅ Interpreter mode**: `devcmd run build` for development (available now)
+- **🚧 Generated mode**: `./mycli build` for distribution (coming soon)  
+- **✅ Plan mode**: `devcmd run build --dry-run` shows execution plans (available now)
 
-Being declarative enables powerful planning capabilities in **both modes** - you can see exactly what commands will run, which decorators will apply, and how execution will flow before actually running anything. This works whether you're using the devcmd interpreter or a generated standalone binary.
+Being declarative enables powerful planning capabilities - you can see exactly what commands will run and how execution will flow before actually running anything.
 
-Additional conveniences like `@workdir()`, `@parallel{}`, `@timeout()` decorators and module-aware workflows make it practical for real projects without adding complexity.
+The interpreter mode provides immediate productivity with shell commands, operators, and variables. Generator mode will add standalone binary generation and advanced decorator support.
 
 The goal is to keep task definitions simple and readable while providing the tools needed for modern development workflows.
 
@@ -88,10 +102,21 @@ stop dev: pkill -f "npm start"
 # mycli status     (shows running processes)
 ```
 
-### Advanced Features
+### Shell Operators & Variables
 
 ```bash
-# Parallel execution
+# Shell operators (available now)
+build: npm run build && npm run test
+deploy: npm run build || echo "Build failed"
+process: echo "data" | grep "pattern" | sort
+
+# Variable expansion (available now)
+var PORT = "8080"
+var ENV = "development"
+serve: python -m http.server @var(PORT)
+status: echo "Running in @var(ENV) mode"
+
+# Advanced features (coming soon)
 deploy: {
   echo "Building and deploying..."
   @parallel {
@@ -100,186 +125,103 @@ deploy: {
   }
   kubectl apply -f k8s/
 }
-
-# Shell command substitution and variables work normally
-timestamp: echo "Built at: $(date)"
-user: echo "Current user: $USER"
-backup: tar -czf backup-$(date +%Y%m%d).tar.gz ./data
-
-# Variable expansion
-var PORT = "8080"
-serve: python -m http.server @var(PORT)
 ```
 
 ## Installation & Usage
 
-### Option 1: Nix Development Shell
+### Option 1: Direct Installation
 
-Embed commands directly in your development environment:
+```bash
+# Install with Go
+go install github.com/aledsdavies/devcmd/cli@latest
+
+# Or run with Nix (no installation needed)
+nix run github:aledsdavies/devcmd -- run build
+
+# Use interpreter mode
+devcmd run build
+devcmd run test --dry-run
+devcmd run deploy --verbose
+```
+
+### Option 2: Nix Flake Integration
+
+Add devcmd to your project's development environment:
 
 ```nix
 {
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    devcmd.url = "github:aledsdavies/devcmd";
-  };
-
-  outputs = { nixpkgs, devcmd, ... }:
-    let pkgs = nixpkgs.legacyPackages.x86_64-linux;
-    in {
-      devShells.x86_64-linux.default = pkgs.mkShell {
-        buildInputs = with pkgs; [ go nodejs ];
-
-        shellHook = (devcmd.lib.mkDevCommands {
-          commandsFile = ./commands.cli;
-        }).shellHook;
-      };
+  inputs.devcmd.url = "github:aledsdavies/devcmd";
+  
+  outputs = { nixpkgs, devcmd, ... }: {
+    devShells.x86_64-linux.default = nixpkgs.legacyPackages.x86_64-linux.mkShell {
+      buildInputs = [ 
+        devcmd.packages.x86_64-linux.devcmd 
+      ];
     };
+  };
 }
 ```
 
 Usage:
 ```bash
 $ nix develop
-🚀 devcmd commands loaded from ./commands.cli
-
-$ build    # Commands available directly
-$ test
-$ dev start
+$ devcmd run build
+$ devcmd run test --dry-run
 ```
 
-### Option 2: Standalone CLI Binary
+## Current Examples
 
-Generate a distributable CLI:
-
-```nix
-{
-  inputs.devcmd.url = "github:aledsdavies/devcmd";
-
-  outputs = { devcmd, nixpkgs, ... }:
-    let pkgs = nixpkgs.legacyPackages.x86_64-linux;
-    in {
-      packages.x86_64-linux.default = devcmd.lib.mkDevCLI {
-        name = "mycli";
-        commandsFile = ./commands.cli;
-        version = "1.0.0";
-      };
-    };
-}
-```
-
-Usage:
-```bash
-$ nix build
-$ ./result/bin/mycli --help
-$ ./result/bin/mycli build
-$ ./result/bin/mycli dev start
-```
-
-### Option 3: Manual Installation
+Try interpreter mode with these examples:
 
 ```bash
-# Install devcmd
-go install github.com/aledsdavies/devcmd/cmd/devcmd@latest
+# Basic commands
+echo 'build: echo "Building project..."' > commands.cli
+echo 'test: echo "Running tests..."' >> commands.cli
+devcmd run build
 
-# Generate CLI
-devcmd commands.cli > main.go
-go build -o mycli main.go
+# With variables
+echo 'var NAME = "myproject"' > commands.cli
+echo 'greet: echo "Hello from @var(NAME)!"' >> commands.cli
+devcmd run greet
 
-# Use the CLI
-./mycli --help
-./mycli build
+# With operators
+echo 'ci: npm run build && npm test && npm run lint' > commands.cli
+devcmd run ci --dry-run  # See execution plan
 ```
 
-## Library API (Nix)
+## Available Commands
 
-### Generate Standalone CLI
-
-```nix
-devcmd.lib.mkDevCLI {
-  name = "mycli";                          # CLI binary name
-  commandsFile = ./commands.cli;           # Command definitions
-  version = "1.0.0";                       # Version string
-  meta = { description = "My CLI tool"; }; # Package metadata
-}
-```
-
-### Embed in Development Shell
-
-```nix
-devcmd.lib.mkDevCommands {
-  commandsFile = ./commands.cli;           # Command definitions
-  debug = true;                            # Enable debug output
-  extraShellHook = "echo Welcome!";        # Additional shell setup
-}
-```
-
-### Convenience Functions
-
-```nix
-# Quick CLI generation
-mydevCLI = devcmd.lib.quickCLI "mydev" ./commands.cli;
-
-# Auto-detect commands.cli
-mydevCLI = devcmd.lib.autoCLI "mydev";
-```
-
-## CLI Features
-
-Generated CLIs include:
-
-**Process Management:**
-```bash
-$ mycli status
-NAME            PID      STATUS     STARTED
-server          12345    running    14:32:15
-
-$ mycli dev logs
-[14:32:15] Starting server...
-
-$ mycli dev stop
-Stopping process server (PID: 12345)...
-```
-
-**Help & Discovery:**
-```bash
-$ mycli --help
-Available commands:
-  status              - Show running processes
-  build               - Build the project
-  dev start|stop|logs - Development server
-```
-
-## Examples
-
-Try the included examples:
+**Interpreter Mode Commands:**
 
 ```bash
-# Basic development CLI
-nix run github:aledsdavies/devcmd#basicDev -- --help
+# Help & Discovery
+devcmd --help                    # Show all available commands
+devcmd run --help                # Show run command options
 
-# Web development CLI
-nix run github:aledsdavies/devcmd#webDev -- install
-
-# Go project CLI
-nix run github:aledsdavies/devcmd#goProject -- build
+# Execution
+devcmd run <command>             # Execute a command
+devcmd run <command> --dry-run   # Show execution plan
+devcmd run <command> --verbose   # Detailed output
+devcmd run <command> --quiet     # Minimal output
 ```
 
-## Get Started
+**Standardized Global Flags:**
 
-Create a new project:
+Interpreter mode supports consistent global flags:
 
 ```bash
-# Initialize from template
-nix flake init -t github:aledsdavies/devcmd#basic
+# Output control
+devcmd run build --color=never --quiet    # CI-friendly output
+devcmd run test --verbose                 # Detailed debugging
 
-# Enter development shell
-nix develop
+# Interaction control  
+devcmd run deploy --yes --ci              # Automated execution
 
-# Try the CLI
-myproject --help
-myproject build
+# Plan mode (dry-run)
+devcmd run build --dry-run --verbose      # See execution plan
 ```
+
+**Available flags**: `--color`, `--quiet`, `--verbose`, `--interactive`, `--yes`, `--ci`, `--dry-run`
 
 ## Documentation
 
@@ -290,9 +232,19 @@ For complete syntax reference and language specification, see:
 
 ## Status
 
-⚠️ **Early Development** - This project is experimental. The syntax and API may change.
+**✅ Interpreter Mode (Available Now)**
+- Shell command execution with operators (`&&`, `||`, `|`, `>>`)
+- Variable substitution (`@var(NAME)`)
+- Plan generation (`--dry-run`)
+- Standardized global flags
+- Nix integration
 
-The goal is to get real usage and feedback to shape the direction. Your experience and suggestions are valuable!
+**🚧 Generator Mode (Coming Soon)**
+- Standalone CLI binary generation 
+- Advanced decorators (@workdir, @timeout, @parallel)
+- Process management features
+
+This is an early-stage project focused on interpreter mode reliability. Generator mode is being reworked with a new IR-based architecture for better consistency and features.
 
 ## Development
 
@@ -385,6 +337,28 @@ nix build
 
 **Files that may need hash updates:**
 - `.nix/lib.nix` - Contains the `outputHash` for the fixed-output derivation
+
+## Development Status
+
+**⚠️ Current State: Active Development (Phase 1)**
+
+This project is undergoing a major architectural overhaul to implement IR-based unified execution:
+
+**✅ Working Now:**
+- Basic interpreter mode: `./devcmd run simple-command`
+- Simple shell commands without operators
+- Clean TDD test harness
+
+**🚧 In Progress (Phase 1):**
+- Shell operators (`&&`, `||`, `|`, `>>`)
+- Decorators (`@workdir`, `@timeout`, `@cmd`, etc.)
+- Plan generation (`--dry-run`)
+
+**📋 Coming Next (Phase 2):**
+- Generated mode (standalone CLI binaries)
+- Full semantic equivalence between interpreter and generated modes
+
+The fundamental architecture is solid, but expect some commands to not work during this transition period.
 
 ## Contributing
 

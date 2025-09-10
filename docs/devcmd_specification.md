@@ -320,7 +320,7 @@ The lexer implements a **three-mode system** to handle the different parsing con
 
 **Pattern Identifier Rules**:
 - **@when**: Accepts any identifier for matching + `default` as wildcard
-- **@try**: Only accepts `main` (required), `error`, `finally`
+- **@try**: Only accepts `main` (required), `catch`, `finally`
 - Each pattern decorator defines its own valid pattern identifier set
 
 ### Mode Transition Examples
@@ -509,6 +509,50 @@ backup: @retry(attempts = 3, delay = 1s) {
 - `@retry(attempts, delay?)` - Wraps command sequence with retry logic on failure
 - `@debounce(delay, pattern?)` - Wraps command sequence with debounce execution
 
+### Nesting & Stacking Rules
+
+**What's allowed**
+
+* **Block→Block** (e.g. `@timeout{ @retry{ … } }`)
+* **Block→Pattern** and **Pattern→Block** (wrappers outside apply to the selected branch inside)
+* **Pattern→Pattern** (e.g. `@when{ production: @try{ … } }`)
+* **Action** and **Value** decorators anywhere inside command text/branches
+
+**What's not allowed**
+
+* **Inline chaining of blocks** on the same level without braces (must nest, not chain):
+  `@timeout(5m) @retry(3) { … }` ❌ (use `@timeout{ @retry{ … } }` instead).
+
+**Evaluation order (authoritative)**
+
+1. Parse to IR as a nested tree: `Wrapper{Inner CommandSeq}`, `Pattern{Branches map[string]CommandSeq}`, `CommandSeq{Steps []Step}`.
+2. **CommandSeq nesting**: Each decorator operates on CommandSeq and returns CommandResult. A decorator is just another CommandSeq with nesting.
+3. **Pattern selection** happens where it appears; the **selected branch CommandSeq** executes directly.
+4. Within a `CommandSeq`, steps run in order; `&&`, `||`, `|`, `>>` apply inside each step/chain with the same semantics in interpreter and generated modes.
+
+**Examples**
+
+```devcmd
+deploy: @timeout(5m) {               # outer wrapper
+  @retry(attempts=3) {               # inner wrapper
+    kubectl apply -f k8s/ && kubectl rollout status
+  }
+}
+
+policy: @when(ENV) {                  # pattern selects branch
+  prod:   @timeout(2m) { run-prod }   # wrapper inside selected branch
+  default: @retry(2) { run-staging }
+}
+
+mix: @timeout(1m) {
+  @when(MODE) {
+    A: @retry(2) { step-a1 
+                   step-a2 }
+    B: { step-b1 | filter >> out.log } # plain block inside branch
+  }
+}
+```
+
 ### Pattern Decorators (Conditional Branching)
 Pattern decorators enable conditional execution based on variable values or execution flow. **Each pattern branch supports multiple commands separated by newlines.**
 
@@ -527,7 +571,7 @@ deploy: @when(MODE) {
         kubectl rollout status              // Command 3
     }
     development: echo "Skipping deployment in dev mode"  // Single command
-    *: echo "Unknown mode: @var(MODE)"     // Wildcard pattern - single command
+    default: echo "Unknown mode: @var(MODE)"     // Wildcard pattern - single command
 }
 
 // @try - Exception handling with multiple commands per block
@@ -538,7 +582,7 @@ backup: @try {
         aws s3 cp backup.sql s3://backups/  // Command 3
         echo "Backup uploaded successfully" // Command 4
     }
-    error: {
+    catch: {
         echo "Backup failed: cleaning up..." // Command 1
         rm -f backup.sql                     // Command 2
         exit 1                               // Command 3
@@ -558,7 +602,7 @@ backup: @try {
 - Each command in a pattern branch executes sequentially
 
 **Pattern Syntax**:
-- **Identifier patterns**: Decorator-specific (e.g., `production`, `staging` for @when; `main`, `error`, `finally` for @try)
+- **Identifier patterns**: Decorator-specific (e.g., `production`, `staging` for @when; `main`, `catch`, `finally` for @try)
 - **Wildcard pattern**: `default` (only supported by @when, matches any value not explicitly handled)
 - **Branch syntax**: `pattern: command` or `pattern: { commands }`
 
@@ -567,8 +611,8 @@ backup: @try {
   - Accepts any identifier patterns + `default` wildcard
   - Example: `@when(ENV) { production: ..., staging: ..., default: ... }`
 - `@try` - Exception handling with fixed semantic blocks
-  - Only accepts: `main` (required), `error`, `finally` (at least one of error/finally required)
-  - Example: `@try { main: ..., error: ..., finally: ... }`
+  - Only accepts: `main` (required), `catch`, `finally` (at least one of catch/finally required)
+  - Example: `@try { main: ..., catch: ..., finally: ... }
 
 ### Nested Decorators (Explicit Block Syntax)
 Decorators can be nested using explicit block syntax. **Newlines create multiple commands at every nesting level.**
@@ -694,12 +738,46 @@ var CONFIG = { key: val } // Objects not supported
 ```
 
 **Type System Rules:**
-- **String**: Must be quoted with `"` or `'` or `` ` ``
+- **String**: Must be quoted with `"` or `'` or `` ` `` 
+  - **Single quotes** `'text'`: Literal strings (no value decorator expansion)
+  - **Double quotes** `"text"`: Interpolated strings (allows value decorator expansion)  
+  - **Backticks** `` `text` ``: Multi-line strings (allows value decorator expansion)
 - **Number**: Integer or decimal numbers (positive or negative)
 - **Duration**: Number followed by time unit (`ns`, `us`, `ms`, `s`, `m`, `h`)
 - **Boolean**: Exactly `true` or `false` (case-sensitive)
 
 All other data types are unsupported and will result in compilation errors.
+
+### String Interpolation
+
+**Value decorator expansion in strings:**
+```devcmd
+var NAME = "World"
+var PORT = 8080
+
+// ✅ Single quotes - literal (no expansion)
+literal: echo 'Hello @var(NAME) on port @var(PORT)'
+// Output: Hello @var(NAME) on port @var(PORT)
+
+// ✅ Double quotes - interpolated (value decorators expanded)  
+interpolated: echo "Hello @var(NAME) on port @var(PORT)"
+// Output: Hello World on port 8080
+
+// ✅ Backticks - multi-line strings (value decorators expanded)
+command: echo `Server @var(NAME) 
+running on @var(PORT)`
+// Output: Server World \n running on 8080
+
+// ✅ Mixed content with shell operators preserved literally inside strings
+complex: echo "Command: @var(NAME) | grep pattern" | actual-grep
+// String content: "Command: World | grep pattern" 
+// The | inside quotes is literal, the | outside is a shell pipe
+```
+
+**Supported value decorators in interpolated strings:**
+- `@var(NAME)` - Variable expansion
+- `@env(PATH)` - Environment variable expansion  
+- Any other registered value decorators
 
 ### Variable References
 Use `@var(NAME)` to reference variables in commands and `@env(variable)` to reference environment variables:
@@ -750,6 +828,122 @@ deploy: {
     echo "Success"; docker build -t myapp .                       // Command 2
 }
 ```
+
+---
+
+## Execution Semantics
+
+Understanding how commands execute and return results is essential for writing effective devcmd configurations.
+
+### Sequential vs Chain Execution
+
+Devcmd distinguishes between **sequential execution** (newline-separated) and **chain execution** (shell operators).
+
+#### Sequential Execution (Newlines)
+
+Commands separated by newlines execute in sequence, following standard shell semantics:
+
+```bash
+test: {
+    @log("Step 1")
+    @log("Step 2") 
+    @log("Step 3")
+}
+```
+
+**Live Output** (what user sees):
+```
+Step 1
+Step 2
+Step 3
+```
+
+**CommandResult** (return value):
+```json
+{
+  "stdout": "Step 3\n",
+  "stderr": "", 
+  "exitCode": 0
+}
+```
+
+**Key Point**: All commands execute and show live output, but CommandResult contains only the final command's result.
+
+#### Chain Execution (Shell Operators)
+
+Shell operators (`&&`, `||`, `|`) accumulate results differently:
+
+```bash
+test: @log("Starting") && echo "middle" && @log("Ending")
+```
+
+**Live Output**:
+```
+Starting
+middle
+Ending
+```
+
+**CommandResult**:
+```json
+{
+  "stdout": "Starting\nmiddle\nEnding\n",
+  "stderr": "",
+  "exitCode": 0
+}
+```
+
+**Key Point**: Shell chains accumulate output from all successful commands.
+
+### Action Decorators
+
+#### @log Decorator
+The efficient equivalent of `echo` with structured logging:
+
+```bash
+info: @log("Info message", level="info")      # → stdout
+error: @log("Error message", level="error")   # → stderr  
+simple: @log("Hello world")                   # → stdout (default)
+```
+
+- Includes newlines like `echo`
+- Error level messages go to stderr
+- Supports color formatting: `@log("{green}Success!{/green}")`
+
+#### @cmd Decorator
+Execute other commands by reference for composition and reuse:
+
+```bash
+build: echo "Building..."
+test: echo "Testing..."
+ci: @cmd(build) && @cmd(test) && echo "CI complete"
+```
+
+Enables clean command composition without repetition.
+
+### Variable Expansion
+
+#### Shell Variables
+Standard shell behavior - variables expand normally:
+```bash
+test: echo "User: $USER, Files: $(ls | wc -l)"
+```
+
+#### @var Variables  
+CLI variables expand consistently throughout devcmd syntax:
+```bash
+var PROJECT = "myapp"
+
+build: echo "Building @var(PROJECT)"     # → "Building myapp"
+log: @log("Building @var(PROJECT)")      # → "Building myapp"
+```
+
+### Output and Error Handling
+
+- **Live Output**: Users see all command output in real-time during execution
+- **CommandResult**: Contains the final result for programmatic use
+- **Exit Codes**: Determined by the last executed command
+- **Error Propagation**: Failed commands stop `&&` chains, continue with `||` chains
 
 ---
 
@@ -905,7 +1099,7 @@ dev: @when(MODE) {
         echo "Starting development server..."                // Command 1
         NODE_ENV=@env("NODE_ENV") webpack serve --mode @var(WEBPACK_MODE) --hot  // Command 2
     }
-    *: echo "Unknown mode: @var(MODE)"
+    default: echo "Unknown mode: @var(MODE)"
 }
 
 // Build process with error handling and multiple commands per branch
@@ -919,7 +1113,7 @@ build: @try {
         npm run optimize                                     // Command 4
         echo "Build complete"                                // Command 5
     }
-    error: {
+    catch: {
         echo "Build failed - cleaning up..."                // Command 1
         rm -rf dist                                          // Command 2
         npm run clean:cache                                  // Command 3
@@ -981,7 +1175,7 @@ deploy: @when(ENVIRONMENT) {
         echo "Staging deployment complete"                   // Command 5
     }
     development: echo "Skipping deployment in development mode"
-    *: {
+    default: {
         echo "Unknown environment: @var(ENVIRONMENT)"       // Command 1
         echo "Valid environments: production, staging, development"  // Command 2
         exit 1                                              // Command 3
@@ -995,7 +1189,7 @@ logs: @try {
         kubectl config current-context                       // Command 2
         kubectl logs -f deployment/api -n @var(NAMESPACE)    // Command 3
     }
-    error: {
+    catch: {
         echo "Failed to access logs - check cluster connection"  // Command 1
         kubectl cluster-info                                 // Command 2
         kubectl get pods -n @var(NAMESPACE)                  // Command 3
@@ -1024,7 +1218,7 @@ cleanup: @when(ENVIRONMENT) {
         [ "$confirm" = "DELETE" ] && \                         // Command 5 (with continuation)
                 echo "Production resources deleted"
     }
-    *: {
+    default: {
         kubectl delete deployment --all -n @var(NAMESPACE)      // Command 1
         kubectl delete service --all -n @var(NAMESPACE)         // Command 2
         echo "Resources cleaned up"                             // Command 3

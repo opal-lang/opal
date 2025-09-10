@@ -11,7 +11,13 @@ func TestAtSymbolInEmailAddresses(t *testing.T) {
 			Name:  "email in echo command",
 			Input: "notify: echo 'Build failed' | mail admin@company.com",
 			Expected: Program(
-				Cmd("notify", "echo 'Build failed' | mail admin@company.com"),
+				Cmd("notify", Chain(
+					Shell(
+						Text("echo "),
+						StrPart("Build failed"),
+					),
+					Pipe(Shell(Text(" mail admin@company.com"))),
+				)),
 			),
 		},
 		{
@@ -39,14 +45,26 @@ func TestAtSymbolInEmailAddresses(t *testing.T) {
 			Name:  "email with subdomain",
 			Input: "alert: echo 'Error' | mail ops@api.company.com",
 			Expected: Program(
-				Cmd("alert", "echo 'Error' | mail ops@api.company.com"),
+				Cmd("alert", Chain(
+					Shell(
+						Text("echo "),
+						StrPart("Error"),
+					),
+					Pipe(Shell(Text(" mail ops@api.company.com"))),
+				)),
 			),
 		},
 		{
 			Name:  "email with numbers",
 			Input: "notify: echo 'Build' | mail admin123@company123.com",
 			Expected: Program(
-				Cmd("notify", "echo 'Build' | mail admin123@company123.com"),
+				Cmd("notify", Chain(
+					Shell(
+						Text("echo "),
+						StrPart("Build"),
+					),
+					Pipe(Shell(Text(" mail admin123@company123.com"))),
+				)),
 			),
 		},
 		{
@@ -60,21 +78,30 @@ func TestAtSymbolInEmailAddresses(t *testing.T) {
 			Name:  "email in quoted string",
 			Input: "notify: echo \"Send to admin@company.com for help\"",
 			Expected: Program(
-				Cmd("notify", "echo \"Send to admin@company.com for help\""),
+				Cmd("notify", Shell(
+					Text("echo "),
+					StrPart("Send to admin@company.com for help"),
+				)),
 			),
 		},
 		{
 			Name:  "email in single quoted string",
 			Input: "notify: echo 'Contact admin@company.com'",
 			Expected: Program(
-				Cmd("notify", "echo 'Contact admin@company.com'"),
+				Cmd("notify", Shell(
+					Text("echo "),
+					StrPart("Contact admin@company.com"),
+				)),
 			),
 		},
 		{
 			Name:  "multiple emails in one command",
 			Input: "notify: echo 'Send to admin@company.com and dev@company.com'",
 			Expected: Program(
-				Cmd("notify", "echo 'Send to admin@company.com and dev@company.com'"),
+				Cmd("notify", Shell(
+					Text("echo "),
+					StrPart("Send to admin@company.com and dev@company.com"),
+				)),
 			),
 		},
 	}
@@ -91,7 +118,10 @@ func TestAtSymbolInSSHCommands(t *testing.T) {
 			Name:  "ssh user@host",
 			Input: "deploy: ssh deploy@server.com 'systemctl restart api'",
 			Expected: Program(
-				Cmd("deploy", "ssh deploy@server.com 'systemctl restart api'"),
+				Cmd("deploy", Shell(
+					Text("ssh deploy@server.com "),
+					StrPart("systemctl restart api"),
+				)),
 			),
 		},
 		{
@@ -126,7 +156,10 @@ func TestAtSymbolInSSHCommands(t *testing.T) {
 			Name:  "ssh with complex command",
 			Input: "remote-build: ssh build@ci.company.com 'cd /builds && make clean && make all'",
 			Expected: Program(
-				Cmd("remote-build", "ssh build@ci.company.com 'cd /builds && make clean && make all'"),
+				Cmd("remote-build", Shell(
+					Text("ssh build@ci.company.com "),
+					StrPart("cd /builds && make clean && make all"),
+				)),
 			),
 		},
 		{
@@ -147,14 +180,27 @@ func TestAtSymbolInSSHCommands(t *testing.T) {
 			Name:  "rsync with ssh options",
 			Input: "backup: rsync -av -e 'ssh -p 2222' ./ user@backup.com:/data/",
 			Expected: Program(
-				Cmd("backup", "rsync -av -e 'ssh -p 2222' ./ user@backup.com:/data/"),
+				Cmd("backup", Shell(
+					Text("rsync -av -e "),
+					StrPart("ssh -p 2222"),
+					Text(" ./ user@backup.com:/data/"),
+				)),
 			),
 		},
 		{
 			Name:  "multiple ssh commands",
 			Input: "multi-deploy: ssh app@server1.com 'restart-app' && ssh app@server2.com 'restart-app'",
 			Expected: Program(
-				Cmd("multi-deploy", "ssh app@server1.com 'restart-app' && ssh app@server2.com 'restart-app'"),
+				Cmd("multi-deploy", Chain(
+					Shell(
+						Text("ssh app@server1.com "),
+						StrPart("restart-app"),
+					),
+					And(Shell(
+						Text(" ssh app@server2.com "),
+						StrPart("restart-app"),
+					)),
+				)),
 			),
 		},
 	}
@@ -220,7 +266,10 @@ func TestAtSymbolInShellSubstitution(t *testing.T) {
 			Name:  "command substitution in string",
 			Input: "info: echo \"Current time is @(date) and user is @(whoami)\"",
 			Expected: Program(
-				Cmd("info", "echo \"Current time is @(date) and user is @(whoami)\""),
+				Cmd("info", Shell(
+					Text("echo "),
+					StrPart("Current time is @(date) and user is @(whoami)"),
+				)),
 			),
 		},
 	}
@@ -258,7 +307,10 @@ func TestAtSymbolInOtherContexts(t *testing.T) {
 			Name:  "at symbol in literal strings with emails - should be treated as literal text",
 			Input: "test: echo 'Contact @var(SUPPORT_USER) @ support@company.com'",
 			Expected: Program(
-				Cmd("test", "echo 'Contact @var(SUPPORT_USER) @ support@company.com'"),
+				Cmd("test", Shell(
+					Text("echo "),
+					StrPart("Contact @var(SUPPORT_USER) @ support@company.com"),
+				)),
 			),
 		},
 		{
@@ -272,10 +324,11 @@ func TestAtSymbolInOtherContexts(t *testing.T) {
 			Name:  "shell variables should work alongside @var",
 			Input: "mixed: echo \"User: $USER, Project: @var(PROJECT), Home: $HOME\"",
 			Expected: Program(
-				Cmd("mixed", Simple(
-					Text("echo \"User: $USER, Project: "),
+				Cmd("mixed", Shell(
+					Text("echo "),
+					StrPart("User: $USER, Project: "),
 					At("var", Id("PROJECT")),
-					Text(", Home: $HOME\""),
+					StrPart(", Home: $HOME"),
 				)),
 			),
 		},
@@ -283,10 +336,11 @@ func TestAtSymbolInOtherContexts(t *testing.T) {
 			Name:  "shell command substitution should work alongside @var",
 			Input: "commands: echo \"Time: $(date), Path: @var(SRC), Files: $(ls | wc -l)\"",
 			Expected: Program(
-				Cmd("commands", Simple(
-					Text("echo \"Time: $(date), Path: "),
+				Cmd("commands", Shell(
+					Text("echo "),
+					StrPart("Time: $(date), Path: "),
 					At("var", Id("SRC")),
-					Text(", Files: $(ls | wc -l)\""),
+					StrPart(", Files: $(ls | wc -l)"),
 				)),
 			),
 		},
@@ -322,7 +376,10 @@ func TestAtSymbolInOtherContexts(t *testing.T) {
 			Name:  "at symbol in time specifications",
 			Input: "schedule: at 15:30@monday echo 'Weekly reminder'",
 			Expected: Program(
-				Cmd("schedule", "at 15:30@monday echo 'Weekly reminder'"),
+				Cmd("schedule", Shell(
+					Text("at 15:30@monday echo "),
+					StrPart("Weekly reminder"),
+				)),
 			),
 		},
 		{
@@ -360,10 +417,11 @@ func TestMixedAtSymbolScenarios(t *testing.T) {
 			Name:  "ssh and @var decorator",
 			Input: "deploy: ssh @var(DEPLOY_USER)@server.com 'restart-app'",
 			Expected: Program(
-				Cmd("deploy", Simple(
+				Cmd("deploy", Shell(
 					Text("ssh "),
 					At("var", Id("DEPLOY_USER")),
-					Text("@server.com 'restart-app'"),
+					Text("@server.com "),
+					StrPart("restart-app"),
 				)),
 			),
 		},
@@ -385,12 +443,12 @@ func TestMixedAtSymbolScenarios(t *testing.T) {
 			Name:  "git with email author and @var tag",
 			Input: "commit: git commit --author=\"@var(AUTHOR_NAME) <author@company.com>\" -m \"@var(COMMIT_MSG)\"",
 			Expected: Program(
-				Cmd("commit", Simple(
-					Text("git commit --author=\""),
+				Cmd("commit", Shell(
+					Text("git commit --author="),
 					At("var", Id("AUTHOR_NAME")),
-					Text(" <author@company.com>\" -m \""),
+					StrPart(" <author@company.com>"),
+					Text(" -m "),
 					At("var", Id("COMMIT_MSG")),
-					Text("\""),
 				)),
 			),
 		},
@@ -398,10 +456,17 @@ func TestMixedAtSymbolScenarios(t *testing.T) {
 			Name:  "docker run with @var user and email notification",
 			Input: "run-container: docker run --user @var(USER_ID) myapp && echo 'Started' | mail admin@company.com",
 			Expected: Program(
-				Cmd("run-container", Simple(
-					Text("docker run --user "),
-					At("var", Id("USER_ID")),
-					Text(" myapp && echo 'Started' | mail admin@company.com"),
+				Cmd("run-container", Chain(
+					Shell(
+						Text("docker run --user "),
+						At("var", Id("USER_ID")),
+						Text("myapp"),
+					),
+					And(Shell(
+						Text(" echo "),
+						StrPart("Started"),
+					)),
+					Pipe(Shell(Text(" mail admin@company.com"))),
 				)),
 			),
 		},
@@ -409,12 +474,19 @@ func TestMixedAtSymbolScenarios(t *testing.T) {
 			Name:  "ssh tunnel with @var ports and email alert",
 			Input: "secure-tunnel: ssh -L @var(LOCAL_PORT):localhost:@var(REMOTE_PORT) user@gateway.com || echo 'Tunnel failed' | mail ops@company.com",
 			Expected: Program(
-				Cmd("secure-tunnel", Simple(
-					Text("ssh -L "),
-					At("var", Id("LOCAL_PORT")),
-					Text(":localhost:"),
-					At("var", Id("REMOTE_PORT")),
-					Text(" user@gateway.com || echo 'Tunnel failed' | mail ops@company.com"),
+				Cmd("secure-tunnel", Chain(
+					Shell(
+						Text("ssh -L "),
+						At("var", Id("LOCAL_PORT")),
+						Text(":localhost:"),
+						At("var", Id("REMOTE_PORT")),
+						Text("user@gateway.com"),
+					),
+					Or(Shell(
+						Text(" echo "),
+						StrPart("Tunnel failed"),
+					)),
+					Pipe(Shell(Text(" mail ops@company.com"))),
 				)),
 			),
 		},
@@ -422,10 +494,11 @@ func TestMixedAtSymbolScenarios(t *testing.T) {
 			Name:  "curl with auth URL and @var token",
 			Input: "api-test: curl -H \"Authorization: Bearer @var(API_TOKEN)\" https://user:pass@api.service.com/test",
 			Expected: Program(
-				Cmd("api-test", Simple(
-					Text("curl -H \"Authorization: Bearer "),
+				Cmd("api-test", Shell(
+					Text("curl -H "),
+					StrPart("Authorization: Bearer "),
 					At("var", Id("API_TOKEN")),
-					Text("\" https://user:pass@api.service.com/test"),
+					Text(" https://user:pass@api.service.com/test"),
 				)),
 			),
 		},
@@ -443,7 +516,10 @@ func TestAtSymbolEdgeCases(t *testing.T) {
 			Name:  "multiple consecutive @ symbols",
 			Input: "weird: echo '@@@@'",
 			Expected: Program(
-				Cmd("weird", "echo '@@@@'"),
+				Cmd("weird", Shell(
+					Text("echo "),
+					StrPart("@@@@"),
+				)),
 			),
 		},
 		{
@@ -485,7 +561,10 @@ func TestAtSymbolEdgeCases(t *testing.T) {
 			Name:  "at symbol in quoted context - should be treated as literal text",
 			Input: "quoted: echo 'Building @var(PROJECT) version @var(VERSION)'",
 			Expected: Program(
-				Cmd("quoted", "echo 'Building @var(PROJECT) version @var(VERSION)'"),
+				Cmd("quoted", Shell(
+					Text("echo "),
+					StrPart("Building @var(PROJECT) version @var(VERSION)"),
+				)),
 			),
 		},
 		{
@@ -527,7 +606,11 @@ func TestAtSymbolEdgeCases(t *testing.T) {
 			Name:  "at symbol in regex patterns",
 			Input: "regex: grep '@[a-zA-Z]+@[a-zA-Z.]+' emails.txt",
 			Expected: Program(
-				Cmd("regex", "grep '@[a-zA-Z]+@[a-zA-Z.]+' emails.txt"),
+				Cmd("regex", Shell(
+					Text("grep "),
+					StrPart("@[a-zA-Z]+@[a-zA-Z.]+"),
+					Text(" emails.txt"),
+				)),
 			),
 		},
 	}

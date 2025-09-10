@@ -194,21 +194,8 @@ func (de *DecoratorElement) AddChild(child PlanElement) *DecoratorElement {
 
 // Build converts the decorator element to an execution step
 func (de *DecoratorElement) Build() ExecutionStep {
-	var stepType StepType
-	switch de.name {
-	case "timeout":
-		stepType = StepTimeout
-	case "parallel":
-		stepType = StepParallel
-	case "retry":
-		stepType = StepRetry
-	case "when":
-		stepType = StepConditional
-	case "try":
-		stepType = StepTryCatch
-	default:
-		stepType = StepSequence
-	}
+	// All decorators use StepDecorator now - plugin friendly!
+	stepType := StepDecorator
 
 	description := de.description
 	if description == "" {
@@ -316,7 +303,7 @@ func (ce *ConditionalElement) Build() ExecutionStep {
 	}
 
 	return ExecutionStep{
-		Type:        StepConditional,
+		Type:        StepDecorator,
 		Description: "Conditional execution based on " + ce.variable,
 		Condition: &ConditionInfo{
 			Variable: ce.variable,
@@ -377,7 +364,7 @@ func (pe *ParallelElement) Build() ExecutionStep {
 	}
 
 	return ExecutionStep{
-		Type:        StepParallel,
+		Type:        StepDecorator,
 		Description: description,
 		Timing: &TimingInfo{
 			ConcurrencyLimit: pe.concurrency,

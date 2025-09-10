@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/aledsdavies/devcmd/cli/internal/builtins" // Import for decorator registration
 	"github.com/aledsdavies/devcmd/core/types"
+	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin" // Import for decorator registration
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -173,7 +173,9 @@ func TestCoreStructure(t *testing.T) {
 				{types.NUMBER, "8080"},
 				{types.IDENTIFIER, "HOST"},
 				{types.EQUALS, "="},
-				{types.STRING, "localhost"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "localhost"},
+				{types.STRING_END, "\""},
 				{types.RPAREN, ")"},
 				{types.EOF, ""},
 			},
@@ -188,7 +190,9 @@ func TestCoreStructure(t *testing.T) {
 				{types.AT, "@"},
 				{types.IDENTIFIER, "workdir"},
 				{types.LPAREN, "("},
-				{types.STRING, "core"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "core"},
+				{types.STRING_END, "\""},
 				{types.RPAREN, ")"},
 				{types.LBRACE, "{"},
 				{types.SHELL_TEXT, "pwd"},
@@ -226,7 +230,9 @@ func TestCoreStructure(t *testing.T) {
 				{types.AT, "@"},
 				{types.IDENTIFIER, "workdir"},
 				{types.LPAREN, "("},
-				{types.STRING, "core"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "core"},
+				{types.STRING_END, "\""},
 				{types.RPAREN, ")"},
 				{types.LBRACE, "{"},
 				{types.SHELL_TEXT, "go test"},
@@ -247,7 +253,8 @@ func TestCoreStructure(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "test-core"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " && "},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " "},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "cmd"},
 				{types.LPAREN, "("},
@@ -276,9 +283,15 @@ func TestLiteralTypes(t *testing.T) {
 			name:  "string types",
 			input: `"double" 'single' ` + "`backtick`",
 			expected: []tokenExpectation{
-				{types.STRING, "double"},
-				{types.STRING, "single"},
-				{types.STRING, "backtick"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "double"},
+				{types.STRING_END, "\""},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "single"},
+				{types.STRING_END, "'"},
+				{types.STRING_START, "`"},
+				{types.STRING_TEXT, "backtick"},
+				{types.STRING_END, "`"},
 				{types.EOF, ""},
 			},
 		},
@@ -334,6 +347,91 @@ func TestLiteralTypes(t *testing.T) {
 	}
 }
 
+func TestStringQuoteTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "double quoted string",
+			input: `"hello world"`,
+			expected: []tokenExpectation{
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "hello world"},
+				{types.STRING_END, "\""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "single quoted string",
+			input: `'hello world'`,
+			expected: []tokenExpectation{
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "hello world"},
+				{types.STRING_END, "'"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "backtick string",
+			input: "`hello world`",
+			expected: []tokenExpectation{
+				{types.STRING_START, "`"},
+				{types.STRING_TEXT, "hello world"},
+				{types.STRING_END, "`"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "double quotes with @var should tokenize properly",
+			input: `"Building @var(PROJECT)"`,
+			expected: []tokenExpectation{
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Building "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "PROJECT"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "\""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "single quotes with @var should remain literal",
+			input: `'Building @var(PROJECT)'`,
+			expected: []tokenExpectation{
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "Building @var(PROJECT)"},
+				{types.STRING_END, "'"},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "backticks with @var should tokenize properly",
+			input: "`Building @var(PROJECT)`",
+			expected: []tokenExpectation{
+				{types.STRING_START, "`"},
+				{types.STRING_TEXT, "Building "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "PROJECT"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "`"},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
+}
+
 func TestShellContentHandling(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -357,7 +455,11 @@ func TestShellContentHandling(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "process"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "cat file | grep pattern | sort"},
+				{types.SHELL_TEXT, "cat file"},
+				{types.PIPE, "|"},
+				{types.SHELL_TEXT, "grep pattern"},
+				{types.PIPE, "|"},
+				{types.SHELL_TEXT, " sort"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -368,7 +470,11 @@ func TestShellContentHandling(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "deploy"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "npm build && npm test || exit 1"},
+				{types.SHELL_TEXT, "npm build"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, "npm test"},
+				{types.OR, "||"},
+				{types.SHELL_TEXT, " exit 1"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -394,9 +500,15 @@ func TestShellContentHandling(t *testing.T) {
 				{types.IDENTIFIER, "test"},
 				{types.COLON, ":"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, "echo \"line1\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "line1"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
-				{types.SHELL_TEXT, "echo \"line2\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "line2"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -465,7 +577,10 @@ world'`,
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "build"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo 'hello \\\nworld'"}, // Preserved in single quotes
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "hello \\\nworld"}, // Preserved in single quotes
+				{types.STRING_END, "'"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -477,7 +592,10 @@ world"`,
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "build"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "hello world"`}, // Processed in double quotes
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "hello \\\nworld"}, // Raw content preserved in STRING_TEXT
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -488,7 +606,10 @@ world"`,
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "build"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo `hello world`"}, // Should be processed in backticks
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "`"},
+				{types.STRING_TEXT, "hello \\\nworld"}, // Raw content preserved in STRING_TEXT
+				{types.STRING_END, "`"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -559,7 +680,9 @@ func TestPatternDecorators(t *testing.T) {
 				{types.IDENTIFIER, "prod"},
 				{types.COLON, ":"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, "npm run build && npm run deploy"},
+				{types.SHELL_TEXT, "npm run build"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " npm run deploy"},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.IDENTIFIER, "dev"},
@@ -569,7 +692,11 @@ func TestPatternDecorators(t *testing.T) {
 				{types.IDENTIFIER, "default"},
 				{types.COLON, ":"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, "echo \"Unknown env: $ENV\"; exit 1"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Unknown env: $ENV"},
+				{types.STRING_END, "\""},
+				{types.SHELL_TEXT, "; exit 1"},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.RBRACE, "}"},
@@ -595,11 +722,17 @@ func TestPatternDecorators(t *testing.T) {
 				{types.SHELL_END, ""},
 				{types.IDENTIFIER, "error"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"failed\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "failed"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.IDENTIFIER, "finally"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"done\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "done"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -746,7 +879,10 @@ func TestPatternDecorators(t *testing.T) {
 				{types.RBRACE, "}"},
 				{types.IDENTIFIER, "default"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"Unknown environment\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Unknown environment"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -784,12 +920,18 @@ func TestPatternDecorators(t *testing.T) {
 				{types.NUMBER, "3"},
 				{types.RPAREN, ")"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, "echo \"Retrying...\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Retrying..."},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.IDENTIFIER, "finally"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"Done\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Done"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -1032,7 +1174,9 @@ func TestComments(t *testing.T) {
 				{types.VAR, "var"},
 				{types.IDENTIFIER, "PYTHON"},
 				{types.EQUALS, "="},
-				{types.STRING, "python3"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "python3"},
+				{types.STRING_END, "\""},
 				{types.EOF, ""},
 			},
 		},
@@ -1053,7 +1197,10 @@ func TestComments(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "commit"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "git commit -m \"Fix issue #123\""}, // # should be part of shell text
+				{types.SHELL_TEXT, "git commit -m "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Fix issue #123"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1065,11 +1212,16 @@ func TestComments(t *testing.T) {
 				{types.VAR, "var"},
 				{types.IDENTIFIER, "PYTHON"},
 				{types.EQUALS, "="},
-				{types.STRING, "python3"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "python3"},
+				{types.STRING_END, "\""},
 				{types.COMMENT, "# Data science project development"},
 				{types.IDENTIFIER, "setup"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"Setting up...\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Setting up..."},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1176,7 +1328,8 @@ func TestVarInShellText(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "DIR"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " && pwd"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " pwd"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1209,13 +1362,15 @@ func TestVarInShellText(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "test"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "Hello `},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Hello "},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "var"},
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "NAME"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, `"`},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1232,7 +1387,8 @@ func TestVarInShellText(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "FILE"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " | grep pattern"},
+				{types.PIPE, "|"},
+				{types.SHELL_TEXT, " grep pattern"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1269,7 +1425,8 @@ func TestVarInShellText(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "DIR"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " && make"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " make"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1284,7 +1441,9 @@ func TestVarInShellText(t *testing.T) {
 				{types.AT, "@"},
 				{types.IDENTIFIER, "env"},
 				{types.LPAREN, "("},
-				{types.STRING, "NODE_ENV"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "NODE_ENV"},
+				{types.STRING_END, "\""},
 				{types.RPAREN, ")"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
@@ -1305,7 +1464,9 @@ func TestVarInShellText(t *testing.T) {
 				{types.AT, "@"},
 				{types.IDENTIFIER, "env"},
 				{types.LPAREN, "("},
-				{types.STRING, "ENV_VAR"},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "ENV_VAR"},
+				{types.STRING_END, "\""},
 				{types.RPAREN, ")"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
@@ -1340,7 +1501,8 @@ func TestVarInShellText(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "DIR"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " | wc -l)"},
+				{types.PIPE, "|"},
+				{types.SHELL_TEXT, " wc -l)"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1411,13 +1573,15 @@ func TestVarInShellText(t *testing.T) {
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "SRC"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " && npm run build:"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " npm run build:"},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "var"},
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "ENV"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, " && cp -r dist/* "},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " cp -r dist/* "},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "var"},
 				{types.LPAREN, "("},
@@ -1439,13 +1603,15 @@ func TestVarInShellText(t *testing.T) {
 				{types.IDENTIFIER, "test"},
 				{types.COLON, ":"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, `echo "Building `},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Building "},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "var"},
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "APP"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, `"`},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.SHELL_TEXT, "cd "},
 				{types.AT, "@"},
@@ -1493,13 +1659,14 @@ func TestVarInShellText(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "test"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "var"},
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "PORT"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, `"`},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1510,13 +1677,392 @@ func TestVarInShellText(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "test"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
 				{types.AT, "@"},
 				{types.IDENTIFIER, "env"},
 				{types.LPAREN, "("},
 				{types.IDENTIFIER, "HOME"},
 				{types.RPAREN, ")"},
-				{types.SHELL_TEXT, `"`},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
+}
+
+// TestStringInShellCommands tests the correct tokenization of strings within shell commands
+// Strings should be treated as atomic units - operators inside strings should NOT be tokenized
+func TestStringInShellCommands(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "string with pipe operator should be atomic",
+			input: `process: echo "hello | world" | grep hello`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "process"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},          // Shell text before string
+				{types.STRING_START, "\""},           // STRING_START token
+				{types.STRING_TEXT, "hello | world"}, // STRING_TEXT - | inside is literal
+				{types.STRING_END, "\""},             // STRING_END token
+				{types.PIPE, "|"},                    // Pipe operator outside string is tokenized
+				{types.SHELL_TEXT, " grep hello"},    // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "string with && operator should be atomic",
+			input: `test: echo "build && test" && echo done`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},           // STRING_START token
+				{types.STRING_TEXT, "build && test"}, // STRING_TEXT - && inside is literal
+				{types.STRING_END, "\""},             // STRING_END token
+				{types.AND, "&&"},                    // The actual && operator outside string
+				{types.SHELL_TEXT, " echo done"},     // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "string with multiple operators should be atomic",
+			input: `complex: echo "cmd1 && cmd2 | grep pattern" > output.txt`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "complex"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},                         // STRING_START token
+				{types.STRING_TEXT, "cmd1 && cmd2 | grep pattern"}, // STRING_TEXT - operators inside are literal
+				{types.STRING_END, "\""},                           // STRING_END token
+				{types.SHELL_TEXT, " > output.txt"},                // Shell redirection outside string
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "single quoted string with operators should be atomic",
+			input: `process: echo 'hello && world' && echo done`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "process"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "hello && world"}, // STRING token - && inside should not be tokenized
+				{types.STRING_END, "'"},
+				{types.AND, "&&"},                // The actual && operator outside string
+				{types.SHELL_TEXT, " echo done"}, // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "backtick string with operators should be atomic",
+			input: "process: echo `hello | world` | grep hello",
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "process"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "`"},            // STRING_START token
+				{types.STRING_TEXT, "hello | world"}, // STRING_TEXT - | inside is literal
+				{types.STRING_END, "`"},              // STRING_END token
+				{types.PIPE, "|"},                    // The actual pipe operator outside string
+				{types.SHELL_TEXT, " grep hello"},    // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "string with @var should be atomic but @var should be tokenized separately",
+			input: `test: echo "Value: @var(NAME)" | grep pattern`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},          // STRING_START token
+				{types.STRING_TEXT, "Value: "},      // STRING_TEXT before decorator
+				{types.AT, "@"},                     // @ token
+				{types.IDENTIFIER, "var"},           // var identifier
+				{types.LPAREN, "("},                 // ( token
+				{types.IDENTIFIER, "NAME"},          // NAME identifier
+				{types.RPAREN, ")"},                 // ) token
+				{types.STRING_END, "\""},            // STRING_END token
+				{types.PIPE, "|"},                   // Shell operator outside string
+				{types.SHELL_TEXT, " grep pattern"}, // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "multiple strings with operators between",
+			input: `test: echo "first | string" && echo "second && string"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},              // First STRING_START
+				{types.STRING_TEXT, "first | string"},   // First STRING_TEXT - | inside is literal
+				{types.STRING_END, "\""},                // First STRING_END
+				{types.AND, "&&"},                       // The actual && operator between strings
+				{types.SHELL_TEXT, " echo "},            // Shell text between operator and string
+				{types.STRING_START, "\""},              // Second STRING_START
+				{types.STRING_TEXT, "second && string"}, // Second STRING_TEXT - && inside is literal
+				{types.STRING_END, "\""},                // Second STRING_END
+				{types.SHELL_END, ""},                   // Missing SHELL_END token
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "string in command substitution",
+			input: `test: echo $(cat "file | with | pipes") | grep pattern`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo $(cat "},
+				{types.STRING_START, "\""},                 // STRING_START token
+				{types.STRING_TEXT, "file | with | pipes"}, // STRING_TEXT - pipes inside are literal
+				{types.STRING_END, "\""},                   // STRING_END token
+				{types.SHELL_TEXT, ")"},                    // Closing paren
+				{types.PIPE, "|"},                          // Shell operator outside string
+				{types.SHELL_TEXT, " grep pattern"},        // Remaining shell text
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "complex real-world example",
+			input: `deploy: echo "Building app && running tests" && npm run build:prod | tee "build && test.log"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "deploy"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},                           // First STRING_START
+				{types.STRING_TEXT, "Building app && running tests"}, // First STRING_TEXT - operators inside are literal
+				{types.STRING_END, "\""},                             // First STRING_END
+				{types.AND, "&&"},                                    // First shell operator
+				{types.SHELL_TEXT, "npm run build:prod"},             // Shell text (no leading space)
+				{types.PIPE, "|"},                                    // Second shell operator
+				{types.SHELL_TEXT, " tee "},                          // Shell text before final string
+				{types.STRING_START, "\""},                           // Second STRING_START
+				{types.STRING_TEXT, "build && test.log"},             // Second STRING_TEXT - operators inside are literal
+				{types.STRING_END, "\""},                             // Second STRING_END
+				{types.SHELL_END, ""},                                // Missing SHELL_END token
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "nested quotes with decorators - single quotes inside double quotes",
+			input: `test: echo "Current context: @env('KUBE_CONTEXT'), Project: @var(KUBE_CONTEXT)"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Current context: "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "env"},
+				{types.LPAREN, "("},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "KUBE_CONTEXT"}, // Single quoted string inside double quotes
+				{types.STRING_END, "'"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, ", Project: "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "KUBE_CONTEXT"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
+}
+
+// TestValueDecoratorsInStrings tests that value decorators are properly tokenized within interpolated strings
+func TestValueDecoratorsInStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "simple @var in double quoted string",
+			input: `test: echo "Hello @var(NAME)"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},    // Start of string
+				{types.STRING_TEXT, "Hello "}, // Text part
+				{types.AT, "@"},               // Value decorator
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NAME"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "\""}, // End of string
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "@var at start of string",
+			input: `test: echo "@var(NAME) says hello"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NAME"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, " says hello"},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "@var at end of string",
+			input: `test: echo "Hello @var(NAME)"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Hello "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NAME"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "multiple @var in string",
+			input: `test: echo "@var(GREETING) @var(NAME)!"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "GREETING"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, " "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NAME"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, "!"},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "@env in double quoted string",
+			input: `test: echo "Path: @env(PATH)"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Path: "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "env"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "PATH"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "\""},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "@var should NOT be expanded in single quoted string",
+			input: `test: echo 'Hello @var(NAME)'`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "Hello @var(NAME)"}, // Single quoted - should be atomic
+				{types.STRING_END, "'"},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name: "value decorators should be expanded in backtick multi-line string",
+			input: `test: echo ` + "`" + `Hello @var(NAME)
+on port @var(PORT)` + "`",
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "`"},
+				{types.STRING_TEXT, "Hello "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "NAME"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, "\non port "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "PORT"},
+				{types.RPAREN, ")"},
+				{types.STRING_END, "`"},
+				{types.SHELL_END, ""},
+				{types.EOF, ""},
+			},
+		},
+		{
+			name:  "string with both @var and operators (operators should be literal)",
+			input: `test: echo "Command: @var(CMD) | grep pattern"`,
+			expected: []tokenExpectation{
+				{types.IDENTIFIER, "test"},
+				{types.COLON, ":"},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Command: "},
+				{types.AT, "@"},
+				{types.IDENTIFIER, "var"},
+				{types.LPAREN, "("},
+				{types.IDENTIFIER, "CMD"},
+				{types.RPAREN, ")"},
+				{types.STRING_TEXT, " | grep pattern"}, // Operators inside string are literal text
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1612,7 +2158,12 @@ func TestBlockDecoratorShellContent(t *testing.T) {
 				{types.NUMBER, "3"},
 				{types.RPAREN, ")"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, "npm test && echo \"success\""},
+				{types.SHELL_TEXT, "npm test"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "success"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -1702,19 +2253,36 @@ format: {
 		{types.IDENTIFIER, "format"},
 		{types.COLON, ":"},
 		{types.LBRACE, "{"},
-		{types.SHELL_TEXT, "echo \"📝 Formatting all code...\""},
+		{types.SHELL_TEXT, "echo "},
+		{types.STRING_START, "\""},
+		{types.STRING_TEXT, "📝 Formatting all code..."},
+		{types.STRING_END, "\""},
 		{types.SHELL_END, ""},
-		{types.SHELL_TEXT, "echo \"Formatting Go code...\""},
+		{types.SHELL_TEXT, "echo "},
+		{types.STRING_START, "\""},
+		{types.STRING_TEXT, "Formatting Go code..."},
+		{types.STRING_END, "\""},
 		{types.SHELL_END, ""},
 		{types.AT, "@"},
 		{types.IDENTIFIER, "parallel"},
 		{types.LBRACE, "{"},
 		{types.SHELL_TEXT, "if command -v gofumpt >/dev/null 2>&1; then gofumpt -w .; else go fmt ./...; fi"},
 		{types.SHELL_END, ""},
-		{types.SHELL_TEXT, "if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name '*.nix' -exec nixpkgs-fmt {} +; else echo \"⚠️  nixpkgs-fmt not available\"; fi"},
+		{types.SHELL_TEXT, "if command -v nixpkgs-fmt >/dev/null 2>&1; then find . -name "},
+		{types.STRING_START, "'"},
+		{types.STRING_TEXT, "*.nix"},
+		{types.STRING_END, "'"},
+		{types.SHELL_TEXT, " -exec nixpkgs-fmt {} +; else echo "},
+		{types.STRING_START, "\""},
+		{types.STRING_TEXT, "⚠️  nixpkgs-fmt not available"},
+		{types.STRING_END, "\""},
+		{types.SHELL_TEXT, "; fi"},
 		{types.SHELL_END, ""},
 		{types.RBRACE, "}"},
-		{types.SHELL_TEXT, "echo \"✅ Code formatted!\""},
+		{types.SHELL_TEXT, "echo "},
+		{types.STRING_START, "\""},
+		{types.STRING_TEXT, "✅ Code formatted!"},
+		{types.STRING_END, "\""},
 		{types.SHELL_END, ""},
 		{types.RBRACE, "}"},
 		{types.EOF, ""},
@@ -1757,7 +2325,10 @@ func TestSpecialCharacters(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "valid"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "This works"`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "This works"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1768,7 +2339,10 @@ func TestSpecialCharacters(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "special-chars"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "Special: !#\$%^&*()"`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Special: !#\\$%^&*()"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1779,7 +2353,10 @@ func TestSpecialCharacters(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "unicode"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "Hello 世界"`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Hello 世界"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1790,7 +2367,10 @@ func TestSpecialCharacters(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "single-quote"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo 'Special: !#$%^&*()'`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "Special: !#$%^&*()"},
+				{types.STRING_END, "'"},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1801,7 +2381,20 @@ func TestSpecialCharacters(t *testing.T) {
 			expected: []tokenExpectation{
 				{types.IDENTIFIER, "mixed"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, `echo "Before" && echo 'Special: !@#$%' && echo "After"`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Before"},
+				{types.STRING_END, "\""},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " echo "},
+				{types.STRING_START, "'"},
+				{types.STRING_TEXT, "Special: !@#$%"},
+				{types.STRING_END, "'"},
+				{types.AND, "&&"},
+				{types.SHELL_TEXT, " echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "After"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.EOF, ""},
 			},
@@ -1835,7 +2428,10 @@ func TestNamedParameters(t *testing.T) {
 				{types.NUMBER, "3"},
 				{types.RPAREN, ")"},
 				{types.LBRACE, "{"},
-				{types.SHELL_TEXT, `echo "task"`},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "task"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},
@@ -1868,10 +2464,16 @@ func TestNamedParameters(t *testing.T) {
 				{types.LBRACE, "{"},
 				{types.IDENTIFIER, "development"},
 				{types.COLON, ":"},
-				{types.SHELL_TEXT, "echo \"Dev environment\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Dev environment"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
-				{types.SHELL_TEXT, "echo \"Always execute\""},
+				{types.SHELL_TEXT, "echo "},
+				{types.STRING_START, "\""},
+				{types.STRING_TEXT, "Always execute"},
+				{types.STRING_END, "\""},
 				{types.SHELL_END, ""},
 				{types.RBRACE, "}"},
 				{types.EOF, ""},

@@ -10,8 +10,9 @@ func TestComplexShellCommands(t *testing.T) {
 			Name:  "simple shell command substitution",
 			Input: `test-simple: echo "$(date)"`,
 			Expected: Program(
-				Cmd("test-simple", Simple(
-					Text(`echo "$(date)"`),
+				Cmd("test-simple", Shell(
+					Text("echo "),
+					StrPart("$(date)"),
 				)),
 			),
 		},
@@ -19,8 +20,12 @@ func TestComplexShellCommands(t *testing.T) {
 			Name:  "shell command with test and command substitution",
 			Input: `test-condition: if [ "$(echo test)" = "test" ]; then echo ok; fi`,
 			Expected: Program(
-				Cmd("test-condition", Simple(
-					Text(`if [ "$(echo test)" = "test" ]; then echo ok; fi`),
+				Cmd("test-condition", Shell(
+					Text("if [ "),
+					StrPart("$(echo test)"),
+					Text(" = "),
+					StrPart("test"),
+					Text(" ]; then echo ok; fi"),
 				)),
 			),
 		},
@@ -30,10 +35,15 @@ func TestComplexShellCommands(t *testing.T) {
 test-mixed: cd @var(SRC) && echo "files: $(ls | wc -l)"`,
 			Expected: Program(
 				Var("SRC", Str("./src")),
-				Cmd("test-mixed", Simple(
-					Text("cd "),
-					At("var", Id("SRC")),
-					Text(` && echo "files: $(ls | wc -l)"`),
+				Cmd("test-mixed", Chain(
+					Shell(
+						Text("cd "),
+						At("var", Id("SRC")),
+					),
+					And(Shell(
+						Text(" echo "),
+						StrPart("files: $(ls | wc -l)"),
+					)),
 				)),
 			),
 		},
@@ -41,8 +51,12 @@ test-mixed: cd @var(SRC) && echo "files: $(ls | wc -l)"`,
 			Name:  "simplified version of failing command",
 			Input: `test-format: if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "issues"; fi`,
 			Expected: Program(
-				Cmd("test-format", Simple(
-					Text(`if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "issues"; fi`),
+				Cmd("test-format", Shell(
+					Text("if [ "),
+					StrPart("$(gofumpt -l . | wc -l)"),
+					Text(" -gt 0 ]; then echo "),
+					StrPart("issues"),
+					Text("; fi"),
 				)),
 			),
 		},
@@ -57,9 +71,23 @@ backup: {
 			Expected: Program(
 				Var("KUBE_NAMESPACE", Str("default")),
 				CmdBlock("backup",
-					Shell(`echo "Creating backup..."`),
-					Shell(`DATE=$(date +%Y%m%d-%H%M%S); echo "Backup timestamp: $DATE"`),
-					Shell("(which kubectl && kubectl exec deployment/database -n ", At("var", Id("KUBE_NAMESPACE")), ` -- pg_dump myapp > backup-$(date +%Y%m%d-%H%M%S).sql) || echo "No database"`),
+					Shell(
+						Text("echo "),
+						StrPart("Creating backup..."),
+					),
+					Shell(Text("DATE=$(date +%Y%m%d-%H%M%S); echo "), StrPart("Backup timestamp: $DATE")),
+					Chain(
+						Shell(Text("(which kubectl")),
+						And(Shell(
+							Text(" kubectl exec deployment/database -n "),
+							At("var", Id("KUBE_NAMESPACE")),
+							Text("-- pg_dump myapp > backup-$(date +%Y%m%d-%H%M%S).sql)"),
+						)),
+						Or(Shell(
+							Text(" echo "),
+							StrPart("No database"),
+						)),
+					),
 				),
 			),
 		},
@@ -77,13 +105,44 @@ backup: {
 			Expected: Program(
 				CmdBlock("test-quick",
 					// Each line in the block becomes a separate shell command
-					Shell(`echo "⚡ Running quick checks..."`),
-					Shell(`echo "🔍 Checking Go formatting..."`),
-					Shell(`if command -v gofumpt >/dev/null 2>&1; then if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofumpt -l .; exit 1; fi; else if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then echo "❌ Go formatting issues:"; gofmt -l .; exit 1; fi; fi`),
-					Shell(`echo "🔍 Checking Nix formatting..."`),
-					Shell(`if command -v nixpkgs-fmt >/dev/null 2>&1; then nixpkgs-fmt --check . || (echo "❌ Run 'dev format' to fix"; exit 1); else echo "⚠️  nixpkgs-fmt not available, skipping Nix format check"; fi`),
-					Shell(`dev lint`),
-					Shell(`echo "✅ Quick checks passed!"`),
+					Shell(
+						Text("echo "),
+						StrPart("⚡ Running quick checks..."),
+					),
+					Shell(
+						Text("echo "),
+						StrPart("🔍 Checking Go formatting..."),
+					),
+					Shell(
+						Text("if command -v gofumpt >/dev/null 2>&1; then if [ "),
+						StrPart("$(gofumpt -l . | wc -l)"),
+						Text(" -gt 0 ]; then echo "),
+						StrPart("❌ Go formatting issues:"),
+						Text("; gofumpt -l .; exit 1; fi; else if [ "),
+						StrPart("$(gofmt -l . | wc -l)"),
+						Text(" -gt 0 ]; then echo "),
+						StrPart("❌ Go formatting issues:"),
+						Text("; gofmt -l .; exit 1; fi; fi"),
+					),
+					Shell(
+						Text("echo "),
+						StrPart("🔍 Checking Nix formatting..."),
+					),
+					Chain(
+						Shell(Text("if command -v nixpkgs-fmt >/dev/null 2>&1; then nixpkgs-fmt --check .")),
+						Or(Shell(
+							Text(" (echo "),
+							StrPart("❌ Run 'dev format' to fix"),
+							Text("; exit 1); else echo "),
+							StrPart("⚠️  nixpkgs-fmt not available, skipping Nix format check"),
+							Text("; fi"),
+						)),
+					),
+					Shell(Text("dev lint")),
+					Shell(
+						Text("echo "),
+						StrPart("✅ Quick checks passed!"),
+					),
 				),
 			),
 		},
@@ -114,10 +173,15 @@ test-var: cd @var(DIR)`,
 test-var-cmd: cd @var(DIR) && echo "$(pwd)"`,
 			Expected: Program(
 				Var("DIR", Str("/project")),
-				Cmd("test-var-cmd", Simple(
-					Text("cd "),
-					At("var", Id("DIR")),
-					Text(` && echo "$(pwd)"`),
+				Cmd("test-var-cmd", Chain(
+					Shell(
+						Text("cd "),
+						At("var", Id("DIR")),
+					),
+					And(Shell(
+						Text(" echo "),
+						StrPart("$(pwd)"),
+					)),
 				)),
 			),
 		},
@@ -127,12 +191,21 @@ test-var-cmd: cd @var(DIR) && echo "$(pwd)"`,
 test-multi-var: if [ -d @var(SRC) ] && [ "$(ls @var(SRC) | wc -l)" -gt 0 ]; then echo "Source dir has files"; fi`,
 			Expected: Program(
 				Var("SRC", Str("./src")),
-				Cmd("test-multi-var", Simple(
-					Text("if [ -d "),
-					At("var", Id("SRC")),
-					Text(` ] && [ "$(ls `),
-					At("var", Id("SRC")),
-					Text(` | wc -l)" -gt 0 ]; then echo "Source dir has files"; fi`),
+				Cmd("test-multi-var", Chain(
+					Shell(
+						Text("if [ -d "),
+						At("var", Id("SRC")),
+						Text("]"),
+					),
+					And(Shell(
+						Text(" [ "),
+						StrPart("$(ls "),
+						At("var", Id("SRC")),
+						StrPart(" | wc -l)"),
+						Text(" -gt 0 ]; then echo "),
+						StrPart("Source dir has files"),
+						Text("; fi"),
+					)),
 				)),
 			),
 		},
@@ -225,14 +298,20 @@ func TestLineContinuationEdgeCases(t *testing.T) {
 			Name:  "continuation in middle of quoted string",
 			Input: `test: echo "hello \` + "\n" + `world"`,
 			Expected: Program(
-				Cmd("test", Simple(Text(`echo "hello world"`))),
+				Cmd("test", Simple(
+					Text("echo "),
+					StrPart("hello \\\nworld"),
+				)),
 			),
 		},
 		{
 			Name:  "continuation in single quotes (should be literal)",
 			Input: "test: echo 'hello \\\nworld'",
 			Expected: Program(
-				Cmd("test", Simple(Text("echo 'hello \\\nworld'"))),
+				Cmd("test", Simple(
+					Text("echo "),
+					StrPart("hello \\\nworld"),
+				)),
 			),
 		},
 		{
@@ -273,10 +352,9 @@ build: cd @var(DIR) \
 && make`,
 			Expected: Program(
 				Var("DIR", Str("/project")),
-				Cmd("build", Simple(
-					Text("cd "),
-					At("var", Id("DIR")),
-					Text(" && make"),
+				Cmd("build", Chain(
+					Shell(Text("cd "), At("var", Id("DIR"))),
+					And(Shell(Text(" make"))),
 				)),
 			),
 		},
@@ -284,7 +362,11 @@ build: cd @var(DIR) \
 			Name:  "multiple line continuations",
 			Input: "complex: echo start \\\n&& echo middle \\\n&& echo end",
 			Expected: Program(
-				Cmd("complex", Simple(Text("echo start && echo middle && echo end"))),
+				Cmd("complex", Chain(
+					Shell(Text("echo start")),
+					And(Shell(Text("echo middle"))),
+					And(Shell(Text(" echo end"))),
+				)),
 			),
 		},
 		{

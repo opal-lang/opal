@@ -45,6 +45,7 @@ ai-*.md
 *-ai-context*
 .agent-*
 agent.md
+AGENTS.md
 context.md
 .context/
 

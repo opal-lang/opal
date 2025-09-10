@@ -284,7 +284,7 @@ var (
 	production: node services/%s%d/server.js --port %d --env production
 	staging: node services/%s%d/server.js --port %d --env staging
 	development: nodemon services/%s%d/server.js --port %d --env development
-	*: echo "Unknown environment"
+	default: echo "Unknown environment"
 }
 
 watch %s%d: nodemon services/%s%d/server.js --port %d --watch
@@ -382,7 +382,7 @@ deploy: @when(ENV) {
 	production: kubectl apply -f k8s/prod.yaml
 	staging: kubectl apply -f k8s/staging.yaml
 	development: echo "Local development, no deployment"
-	*: echo "Unknown environment"
+	default: echo "Unknown environment"
 }`,
 			"Pattern matching with @when decorator",
 		},
@@ -506,7 +506,7 @@ func TestValidNestedDecoratorPerformance(t *testing.T) {
 		kubectl apply -f k8s/staging/
 	}
 	development: echo "Local development"
-	*: echo "Unknown environment"
+	default: echo "Unknown environment"
 }
 
 ci: @try {
@@ -583,7 +583,7 @@ flaky: @retry(3) {
 env-deploy: @when(ENV) {
 	prod: kubectl apply -f prod.yaml
 	dev: echo "Development mode"
-	*: echo "Unknown environment"
+	default: echo "Unknown environment"
 }
 
 safe-deploy: @try {

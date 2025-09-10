@@ -2,12 +2,14 @@ package lexer
 
 import (
 	"io"
+	"log/slog"
+	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/types"
-	"github.com/aledsdavies/devcmd/runtime/decorators"
 )
 
 // ASCII character lookup tables for fast classification
@@ -67,12 +69,17 @@ type Lexer struct {
 	// Simple three-mode system
 	mode LexerMode
 
+	// Debug logger
+	logger *slog.Logger
+
 	// Minimal context tracking
 	braceLevel        int // Track brace nesting for mode transitions
 	patternBraceLevel int // Track the brace level where we entered pattern decorator
+	commandBlockLevel int // Track the brace level where we entered a command block
 
 	// Function decorator state
-	inFunctionDecorator bool // True when we're inside a function decorator sequence
+	inFunctionDecorator    bool // True when we're inside a function decorator sequence
+	functionDecoratorLevel int  // Counter for nested function decorators
 
 	// Shell context tracking (maintained across decorator breaks in ShellMode)
 	shellBraceLevel    int  // Track ${...} parameter expansion braces globally
@@ -84,6 +91,20 @@ type Lexer struct {
 	shellInSingleQuote bool
 	shellInDoubleQuote bool
 	shellInBacktick    bool
+
+	// Interpolated string state tracking
+	inInterpolatedString bool      // True when we're inside an interpolated string (between STRING_START and STRING_END)
+	interpolatedQuote    rune      // The quote character of the current interpolated string (" or `)
+	preInterpolatedMode  LexerMode // The mode we were in before entering interpolated string
+	inStringDecorator    bool      // True when we're parsing a decorator inside a string
+
+	// Literal string state (for simple quoted strings in decorator parameters)
+	inLiteralString bool      // True when we're inside a literal string (no interpolation)
+	literalQuote    rune      // The quote character of the current literal string
+	originalMode    LexerMode // The original mode before any LanguageMode transitions (for proper restoration)
+
+	// Token queue for complex tokenization scenarios
+	tokenQueue []types.Token // Queue of tokens to return before continuing normal parsing
 
 	// SHELL_END position tracking - the end position of the last shell content
 	shellEndPosition int
@@ -115,11 +136,34 @@ func New(reader io.Reader) *Lexer {
 		data = []byte{}
 	}
 
+	// Create debug logger - check if DEVCMD_DEBUG_LEXER environment variable is set
+	logLevel := slog.LevelInfo
+	if os.Getenv("DEVCMD_DEBUG_LEXER") != "" {
+		logLevel = slog.LevelDebug
+	}
+
+	// Custom lexer-friendly handler
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// Remove timestamp for cleaner output
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			// Simplify level display
+			if a.Key == slog.LevelKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
+
 	l := &Lexer{
 		input:  string(data),
 		line:   1,
 		column: 0,            // Will be incremented to 1 by initial readChar()
 		mode:   LanguageMode, // Start in LanguageMode
+		logger: logger,
 	}
 	l.readChar()
 	return l
@@ -248,6 +292,13 @@ func (l *Lexer) TokenizeToSlice() []types.Token {
 
 // NextToken returns the next token from the input
 func (l *Lexer) NextToken() types.Token {
+	// Check token queue first
+	if len(l.tokenQueue) > 0 {
+		token := l.tokenQueue[0]
+		l.tokenQueue = l.tokenQueue[1:]
+		return token
+	}
+
 	// Prevent infinite loops, but allow SHELL_END transitions
 	if l.position == l.lastPosition && l.line == l.lastLine && l.column == l.lastColumn && !l.needsShellEnd {
 		// We haven't advanced - force EOF to prevent infinite loop
@@ -257,7 +308,36 @@ func (l *Lexer) NextToken() types.Token {
 	l.lastLine = l.line
 	l.lastColumn = l.column
 
+	// Check if we're inside a literal string (decorator parameters)
+	if l.inLiteralString {
+		return l.lexLiteralStringContent()
+	}
+
+	// Check if we're inside an interpolated string
+	// BUT allow LanguageMode to take precedence when parsing decorators within strings
+	if l.inInterpolatedString && !l.inStringDecorator {
+		return l.lexInterpolatedStringContent()
+	}
+
 	// Dispatch based on current mode
+	// Debug logging for mode transitions and current state
+	if l.position < len(l.input) {
+		nextChars := ""
+		end := l.position + 10
+		if end > len(l.input) {
+			end = len(l.input)
+		}
+		nextChars = strings.ReplaceAll(l.input[l.position:end], "\n", "\\n")
+		l.logger.Debug("[LEXER] Token dispatch",
+			"mode", l.mode,
+			"ch", string(l.ch),
+			"next", nextChars,
+			"braceLevel", l.braceLevel,
+			"inInterpolatedString", l.inInterpolatedString,
+			"inStringDecorator", l.inStringDecorator,
+			"inFunctionDecorator", l.inFunctionDecorator)
+	}
+
 	switch l.mode {
 	case LanguageMode:
 		return l.lexLanguageMode()
@@ -288,6 +368,13 @@ func (l *Lexer) createToken(tokenType types.TokenType, value string, start, line
 
 // lexLanguageMode handles top-level parsing and decorator parsing
 func (l *Lexer) lexLanguageMode() types.Token {
+	l.logger.Debug("[LEXER] Entering LanguageMode",
+		"position", l.position,
+		"ch", string(l.ch),
+		"braceLevel", l.braceLevel,
+		"inFunctionDecorator", l.inFunctionDecorator,
+		"inStringDecorator", l.inStringDecorator)
+
 	l.skipWhitespace()
 
 	start := l.position
@@ -315,8 +402,8 @@ func (l *Lexer) lexLanguageMode() types.Token {
 
 	case ':':
 		l.readChar()
-		// Transition to ShellMode after colon (ShellMode can handle both simple and complex shell content)
-		l.mode = ShellMode
+		// Transition to CommandMode after colon (CommandMode will decide between decorators and shell content)
+		l.mode = CommandMode
 		return l.createToken(types.COLON, ":", start, startLine, startColumn)
 
 	case '=':
@@ -335,23 +422,45 @@ func (l *Lexer) lexLanguageMode() types.Token {
 		l.readChar()
 		// Check if we're ending a function decorator sequence
 		if l.inFunctionDecorator {
+			l.logger.Debug("[LEXER] Ending function decorator",
+				"inStringDecorator", l.inStringDecorator,
+				"inInterpolatedString", l.inInterpolatedString,
+				"currentMode", l.mode)
+
 			l.inFunctionDecorator = false
-			l.mode = ShellMode // Return to ShellMode to continue with shell text with maintained context
-			// Check if this decorator is the last shell token before newline (command end)
-			// Skip whitespace to see what comes next
-			pos := l.position
-			ch := l.ch
-			for ch == ' ' || ch == '\t' {
-				pos++
-				if pos >= len(l.input) {
-					ch = 0
-					break
+			l.originalMode = 0 // Reset originalMode when function decorator ends
+
+			// Check if we're in a decorator within a string - return to string parsing
+			if l.inStringDecorator {
+				l.inStringDecorator = false
+				l.logger.Debug("[LEXER] Ended decorator in string - staying in LanguageMode for string continuation")
+				// Stay in LanguageMode but next call to NextToken will continue string parsing
+				// since inInterpolatedString is still true
+			} else {
+				// Return to the original mode we were in before the function decorator
+				if l.originalMode != 0 {
+					l.mode = l.originalMode
+				} else {
+					l.mode = ShellMode // Fallback if originalMode wasn't set
 				}
-				ch = rune(l.input[pos])
-			}
-			// If next non-whitespace is newline, EOF, or closing brace (but not inside shell parameter expansion), this decorator ends the command
-			if ch == '\n' || ch == 0 || (ch == '}' && l.shellBraceLevel == 0) {
-				l.needsShellEnd = true
+				l.logger.Debug("[LEXER] Ended decorator - transitioning to original mode",
+					"newMode", l.mode, "originalMode", l.originalMode)
+				// Check if this decorator is the last shell token before newline (command end)
+				// Skip whitespace to see what comes next
+				pos := l.position
+				ch := l.ch
+				for ch == ' ' || ch == '\t' {
+					pos++
+					if pos >= len(l.input) {
+						ch = 0
+						break
+					}
+					ch = rune(l.input[pos])
+				}
+				// If next non-whitespace is newline, EOF, or closing brace (but not inside shell parameter expansion), this decorator ends the command
+				if ch == '\n' || ch == 0 || (ch == '}' && l.shellBraceLevel == 0) {
+					l.needsShellEnd = true
+				}
 			}
 		}
 		return l.createToken(types.RPAREN, ")", start, startLine, startColumn)
@@ -375,6 +484,10 @@ func (l *Lexer) lexLanguageMode() types.Token {
 		if l.braceLevel <= 0 {
 			l.mode = LanguageMode
 			l.patternBraceLevel = 0 // Clear pattern context
+			l.commandBlockLevel = 0 // Clear command block context
+		} else if l.commandBlockLevel > 0 && l.braceLevel >= l.commandBlockLevel {
+			// We're still inside a command block, return to CommandMode
+			l.mode = CommandMode
 		}
 		// Otherwise stay in current mode - parent context will handle mode transitions
 		return l.createToken(types.RBRACE, "}", start, startLine, startColumn)
@@ -387,6 +500,11 @@ func (l *Lexer) lexLanguageMode() types.Token {
 		return l.lexDecorator(start, startLine, startColumn)
 
 	case '"', '\'', '`':
+		// When inside a string decorator, use simple literal string parsing
+		// to avoid nested interpolated string contexts
+		if l.inStringDecorator {
+			return l.lexLiteralStringInDecorator(l.ch, start, startLine, startColumn)
+		}
 		return l.lexString(l.ch, start, startLine, startColumn)
 
 	case '#':
@@ -435,6 +553,13 @@ func (l *Lexer) lexLanguageMode() types.Token {
 // lexCommandMode handles shell content parsing inside command bodies
 // Recognizes: Shell text, Line continuations, Decorators, Block boundaries
 func (l *Lexer) lexCommandMode() types.Token {
+	l.logger.Debug("[LEXER] Entering CommandMode",
+		"position", l.position,
+		"ch", string(l.ch),
+		"braceLevel", l.braceLevel,
+		"commandBlockLevel", l.commandBlockLevel,
+		"patternBraceLevel", l.patternBraceLevel)
+
 	l.skipWhitespace()
 
 	start := l.position
@@ -466,6 +591,10 @@ func (l *Lexer) lexCommandMode() types.Token {
 		if l.braceLevel <= 0 {
 			l.mode = LanguageMode
 			l.patternBraceLevel = 0 // Clear pattern context
+			l.commandBlockLevel = 0 // Clear command block context
+		} else if l.commandBlockLevel > 0 && l.braceLevel >= l.commandBlockLevel {
+			// We're still inside a command block, stay in CommandMode
+			l.mode = CommandMode
 		} else if l.isInPatternContext() && l.braceLevel == l.patternBraceLevel {
 			// Only return to PatternMode if we're back to the exact pattern brace level
 			// (exiting a pattern branch block, not a nested block within the pattern)
@@ -478,11 +607,20 @@ func (l *Lexer) lexCommandMode() types.Token {
 		// Opening brace in command mode - start new block
 		l.readChar()
 		l.braceLevel++
+		// Track that we're entering a command block
+		if l.commandBlockLevel == 0 {
+			l.commandBlockLevel = l.braceLevel
+		}
 		return l.createToken(types.LBRACE, "{", start, startLine, startColumn)
 
 	case '@':
 		// Handle Decorator path: check if Block or Pattern decorator
 		return l.lexDecoratorInCommand(start, startLine, startColumn)
+
+	case ')':
+		// Closing parenthesis in command mode (e.g., end of function decorator)
+		l.readChar()
+		return l.createToken(types.RPAREN, ")", start, startLine, startColumn)
 
 	default:
 		// Handle Shell path: all other content as shell text
@@ -540,7 +678,7 @@ func (l *Lexer) lexDecoratorInCommand(start, startLine, startColumn int) types.T
 		if decorators.IsDecorator(identifier) {
 			// Handle different decorator types appropriately
 			if decorators.IsBlockDecorator(identifier) || decorators.IsPatternDecorator(identifier) {
-				// Switch to LanguageMode for block/pattern decorator parsing
+				// Block and pattern decorators need LanguageMode for proper IDENTIFIER parsing
 				l.mode = LanguageMode
 
 				// Advance past @ character (don't restore position)
@@ -556,6 +694,7 @@ func (l *Lexer) lexDecoratorInCommand(start, startLine, startColumn int) types.T
 				// Check if followed by parentheses for function decorators
 				if l.ch == '(' {
 					// This is a function decorator - switch to LanguageMode for the decorator sequence
+					l.originalMode = l.mode // Save the original mode before switching to LanguageMode
 					l.mode = LanguageMode
 					l.inFunctionDecorator = true
 
@@ -644,6 +783,15 @@ func (l *Lexer) lexPatternMode() types.Token {
 
 // lexShellMode handles complex shell content with decorator expansion and maintained shell context
 func (l *Lexer) lexShellMode() types.Token {
+	l.logger.Debug("[LEXER] Entering ShellMode",
+		"position", l.position,
+		"ch", string(l.ch),
+		"braceLevel", l.braceLevel,
+		"needsShellEnd", l.needsShellEnd,
+		"shellBraceLevel", l.shellBraceLevel,
+		"shellInSingleQuote", l.shellInSingleQuote,
+		"shellInDoubleQuote", l.shellInDoubleQuote)
+
 	// Check if we need to emit SHELL_END first
 	if l.needsShellEnd {
 		l.needsShellEnd = false
@@ -821,6 +969,7 @@ func (l *Lexer) lexDecoratorInShell(start, startLine, startColumn int) types.Tok
 				// Check if followed by parentheses for function decorators
 				if l.ch == '(' {
 					// This is a function decorator - switch to LanguageMode for the decorator sequence
+					l.originalMode = l.mode // Save the original mode before switching to LanguageMode
 					l.mode = LanguageMode
 					l.inFunctionDecorator = true
 
@@ -848,6 +997,26 @@ func (l *Lexer) lexDecoratorInShell(start, startLine, startColumn int) types.Tok
 	return l.lexShellTextWithContext(start, startLine, startColumn)
 }
 
+// checkShellOperator checks if the current position starts a shell operator
+// Returns the token type and length if found, otherwise returns ILLEGAL and 0
+func (l *Lexer) checkShellOperator() (types.TokenType, int) {
+	if l.ch == '&' && l.peekChar() == '&' {
+		return types.AND, 2
+	}
+	if l.ch == '|' {
+		next := l.peekChar()
+		if next == '|' {
+			return types.OR, 2
+		}
+		// Single pipe
+		return types.PIPE, 1
+	}
+	if l.ch == '>' && l.peekChar() == '>' {
+		return types.APPEND, 2
+	}
+	return types.ILLEGAL, 0
+}
+
 // lexShellTextWithContext handles shell content in ShellMode with maintained global context
 func (l *Lexer) lexShellTextWithContext(start, startLine, startColumn int) types.Token {
 	var result strings.Builder
@@ -857,6 +1026,16 @@ func (l *Lexer) lexShellTextWithContext(start, startLine, startColumn int) types
 	inBacktick := l.shellInBacktick
 
 	for l.ch != 0 {
+		// Check for quoted strings first - these should be extracted as STRING tokens
+		if (l.ch == '"' || l.ch == '\'' || l.ch == '`') && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			// If we have accumulated shell text, return it first
+			if result.Len() > 0 {
+				text := result.String()
+				return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+			}
+			// Extract the string as a separate STRING token
+			return l.lexString(l.ch, l.position, l.line, l.column)
+		}
 
 		// Stop at newline (unless line continuation or inside quotes)
 		if l.ch == '\n' {
@@ -905,6 +1084,36 @@ func (l *Lexer) lexShellTextWithContext(start, startLine, startColumn int) types
 			} else {
 				// This is a block boundary - only break if we're not inside any shell constructs
 				break
+			}
+		}
+
+		// Check for shell operators when not inside quotes
+		if !inSingleQuote && !inDoubleQuote && !inBacktick {
+			if opType, opLen := l.checkShellOperator(); opType != types.ILLEGAL {
+				// Found a shell operator - return shell text so far if we have any
+				if result.Len() > 0 {
+					text := strings.TrimSpace(result.String())
+					if text != "" {
+						// Save quote state before returning
+						l.shellInSingleQuote = inSingleQuote
+						l.shellInDoubleQuote = inDoubleQuote
+						l.shellInBacktick = inBacktick
+						return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+					}
+				}
+				// No shell text before operator - return the operator token
+				operatorStart := l.position
+				operatorLine, operatorColumn := l.line, l.column
+				operatorValue := l.input[l.position : l.position+opLen]
+				// Advance past the operator
+				for i := 0; i < opLen; i++ {
+					l.readChar()
+				}
+				// Save quote state before returning
+				l.shellInSingleQuote = inSingleQuote
+				l.shellInDoubleQuote = inDoubleQuote
+				l.shellInBacktick = inBacktick
+				return l.createToken(opType, operatorValue, operatorStart, operatorLine, operatorColumn)
 			}
 		}
 
@@ -1081,6 +1290,16 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 	}
 
 	for l.ch != 0 {
+		// Check for quoted strings first - these should be extracted as STRING tokens
+		if (l.ch == '"' || l.ch == '\'' || l.ch == '`') && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			// If we have accumulated shell text, return it first
+			if result.Len() > 0 {
+				text := result.String()
+				return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+			}
+			// Extract the string as a separate STRING token
+			return l.lexString(l.ch, l.position, l.line, l.column)
+		}
 
 		// Stop at newline (unless line continuation or inside quotes)
 		if l.ch == '\n' {
@@ -1130,6 +1349,28 @@ func (l *Lexer) lexShellText(start, startLine, startColumn int) types.Token {
 			} else {
 				// This is a block boundary - only break if we're not inside any shell constructs
 				break
+			}
+		}
+
+		// Check for shell operators when not inside quotes
+		if !inSingleQuote && !inDoubleQuote && !inBacktick {
+			if opType, opLen := l.checkShellOperator(); opType != types.ILLEGAL {
+				// Found a shell operator - return shell text so far if we have any
+				if result.Len() > 0 {
+					text := strings.TrimSpace(result.String())
+					if text != "" {
+						return l.createToken(types.SHELL_TEXT, text, start, startLine, startColumn)
+					}
+				}
+				// No shell text before operator - return the operator token
+				operatorStart := l.position
+				operatorLine, operatorColumn := l.line, l.column
+				operatorValue := l.input[l.position : l.position+opLen]
+				// Advance past the operator
+				for i := 0; i < opLen; i++ {
+					l.readChar()
+				}
+				return l.createToken(opType, operatorValue, operatorStart, operatorLine, operatorColumn)
 			}
 		}
 
@@ -1306,33 +1547,336 @@ func (l *Lexer) lexIdentifierOrKeyword(start, startLine, startColumn int) types.
 }
 
 // lexString handles string literals (quoted strings)
+// All strings now use the unified STRING_START/TEXT/END token system
 func (l *Lexer) lexString(quote rune, start, startLine, startColumn int) types.Token {
-	// Skip opening quote
-	l.readChar()
-	contentStart := l.position
+	// Both single and double quotes now use the same tokenization system
+	// Single quotes disable interpolation, double quotes enable it
+	return l.lexInterpolatedStringStart(quote, start, startLine, startColumn)
+}
 
-	for l.ch != quote && l.ch != 0 {
-		if l.ch == '\\' {
-			// Handle escape sequences
-			l.readChar() // Skip backslash
-			if l.ch != 0 {
-				l.readChar() // Skip escaped character
-			}
-		} else {
+// lexInterpolatedStringStart handles the beginning of interpolated strings (double quotes and backticks)
+func (l *Lexer) lexInterpolatedStringStart(quote rune, start, startLine, startColumn int) types.Token {
+	l.logger.Debug("[LEXER] Starting interpolated string",
+		"quote", string(quote),
+		"currentMode", l.mode,
+		"position", l.position,
+		"braceLevel", l.braceLevel)
+
+	// Return STRING_START token with the opening quote
+	quoteStr := string(quote)
+	l.readChar() // Skip the opening quote
+
+	// Set state for interpolated string parsing
+	l.inInterpolatedString = true
+	l.interpolatedQuote = quote
+	// Use originalMode if we're inside a function decorator, otherwise use current mode
+	if l.inFunctionDecorator && l.originalMode != 0 {
+		l.preInterpolatedMode = l.originalMode
+	} else {
+		l.preInterpolatedMode = l.mode
+	}
+
+	l.logger.Debug("[LEXER] Set interpolated string state",
+		"inInterpolatedString", l.inInterpolatedString,
+		"interpolatedQuote", string(l.interpolatedQuote),
+		"preInterpolatedMode", l.preInterpolatedMode)
+
+	// Create STRING_START token
+	token := l.createToken(types.STRING_START, quoteStr, start, startLine, startColumn)
+
+	// Set the string type based on quote character
+	switch quote {
+	case '"':
+		token.StringType = types.DoubleQuoted
+	case '\'':
+		token.StringType = types.SingleQuoted
+	case '`':
+		token.StringType = types.Backtick
+	}
+
+	// Store the raw quote character
+	token.Raw = quoteStr
+
+	return token
+}
+
+// lexInterpolatedStringContent parses content inside interpolated strings
+func (l *Lexer) lexInterpolatedStringContent() types.Token {
+	start := l.position
+	startLine, startColumn := l.line, l.column
+
+	// Check for closing quote first
+	if l.ch == l.interpolatedQuote {
+		return l.lexInterpolatedStringEnd(start, startLine, startColumn)
+	}
+
+	// Check for EOF
+	if l.ch == 0 {
+		// Unterminated string
+		l.inInterpolatedString = false
+		return l.createToken(types.ILLEGAL, "Unterminated string", start, startLine, startColumn)
+	}
+
+	// Check for value decorator (@)
+	if l.ch == '@' {
+		// Look ahead to check if this is a value decorator (@var or @env)
+		savedPos := l.position
+		savedReadPos := l.readPos
+		savedCh := l.ch
+		savedLine := l.line
+		savedColumn := l.column
+
+		// Skip @
+		l.readChar()
+
+		// Check if followed by identifier
+		if (l.ch >= 128 || !isIdentStart[l.ch]) && (l.ch < 128 || (!unicode.IsLetter(l.ch) && l.ch != '_')) {
+			// Not an identifier after @, treat as regular text
+			l.position = savedPos
+			l.readPos = savedReadPos
+			l.ch = savedCh
+			l.line = savedLine
+			l.column = savedColumn
+			return l.lexStringText(start, startLine, startColumn)
+		}
+
+		// Read the identifier
+		identStart := l.position
+		for (l.ch < 128 && isIdentPart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch))) {
 			l.readChar()
+		}
+		identifier := l.input[identStart:l.position]
+
+		// Check if this is a registered value decorator
+		if decorators.IsValueDecorator(identifier) && l.ch == '(' {
+			// It's a valid value decorator, restore position and parse it
+			l.position = savedPos
+			l.readPos = savedReadPos
+			l.ch = savedCh
+			l.line = savedLine
+			l.column = savedColumn
+			return l.lexDecoratorInInterpolatedString(start, startLine, startColumn)
+		}
+
+		// Not a value decorator, treat @ as regular text
+		l.position = savedPos
+		l.readPos = savedReadPos
+		l.ch = savedCh
+		l.line = savedLine
+		l.column = savedColumn
+		return l.lexStringText(start, startLine, startColumn)
+	}
+
+	// Parse regular text content
+	return l.lexStringText(start, startLine, startColumn)
+}
+
+// lexInterpolatedStringEnd handles the closing quote of interpolated strings
+func (l *Lexer) lexInterpolatedStringEnd(start, startLine, startColumn int) types.Token {
+	l.logger.Debug("[LEXER] Ending interpolated string",
+		"quote", string(l.interpolatedQuote),
+		"currentMode", l.mode,
+		"preInterpolatedMode", l.preInterpolatedMode,
+		"inStringDecorator", l.inStringDecorator,
+		"position", l.position)
+
+	quoteStr := string(l.interpolatedQuote)
+	l.readChar() // Skip the closing quote
+
+	// Reset interpolated string state and restore previous mode
+	l.inInterpolatedString = false
+	l.interpolatedQuote = 0
+
+	// If we're still inside a function decorator, stay in LanguageMode
+	// Otherwise, restore to the original mode
+	if l.inFunctionDecorator {
+		l.mode = LanguageMode
+	} else {
+		l.mode = l.preInterpolatedMode
+	}
+
+	l.logger.Debug("[LEXER] Mode restored after string end",
+		"newMode", l.mode,
+		"preInterpolatedMode", l.preInterpolatedMode,
+		"inFunctionDecorator", l.inFunctionDecorator,
+		"inInterpolatedString", l.inInterpolatedString,
+		"braceLevel", l.braceLevel)
+
+	// Check if we're at the end of a shell command and should emit SHELL_END next
+	if l.mode == ShellMode {
+		// Skip whitespace to see what comes next
+		pos := l.position
+		ch := l.ch
+		for ch == ' ' || ch == '\t' {
+			pos++
+			if pos >= len(l.input) {
+				ch = 0
+				break
+			}
+			ch = rune(l.input[pos])
+		}
+		// If next non-whitespace is newline, EOF, or closing brace, this ends the shell command
+		if ch == '\n' || ch == 0 || (ch == '}' && l.braceLevel > 0) {
+			l.needsShellEnd = true
 		}
 	}
 
-	if l.ch == 0 {
-		// Unterminated string
-		return l.createToken(types.ILLEGAL, "unterminated string", start, startLine, startColumn)
+	// Create STRING_END token
+	token := l.createToken(types.STRING_END, quoteStr, start, startLine, startColumn)
+	token.Raw = quoteStr
+
+	return token
+}
+
+// lexStringText parses text content within interpolated strings (until @ or closing quote)
+func (l *Lexer) lexStringText(start, startLine, startColumn int) types.Token {
+	// Read until we hit the closing quote or a potential decorator
+	for l.ch != 0 && l.ch != l.interpolatedQuote {
+		// Only check for interpolation in double quotes and backticks, not single quotes
+		if l.ch == '@' && (l.interpolatedQuote == '"' || l.interpolatedQuote == '`') {
+			// Check if this is really a decorator
+			savedPos := l.position
+			savedReadPos := l.readPos
+			savedCh := l.ch
+
+			// Skip @
+			l.readChar()
+
+			// Check if it's var or env followed by (
+			if l.ch == 'v' || l.ch == 'e' {
+				identStart := l.position
+				for (l.ch < 128 && isIdentPart[l.ch]) || (l.ch >= 128 && (unicode.IsLetter(l.ch) || unicode.IsDigit(l.ch))) {
+					l.readChar()
+				}
+				identifier := l.input[identStart:l.position]
+
+				if decorators.IsValueDecorator(identifier) && l.ch == '(' {
+					// It's a registered value decorator, stop here
+					l.position = savedPos
+					l.readPos = savedReadPos
+					l.ch = savedCh
+					break
+				}
+			}
+
+			// Not a decorator, restore and continue
+			l.position = savedPos
+			l.readPos = savedReadPos
+			l.ch = savedCh
+		}
+		l.readChar()
 	}
 
-	// Extract content without quotes
-	value := l.input[contentStart:l.position]
-	l.readChar() // Skip closing quote
+	text := l.input[start:l.position]
 
-	return l.createToken(types.STRING, value, start, startLine, startColumn)
+	// Fix position tracking: if we started with column 0, adjust to 1 (1-based indexing)
+	if startColumn == 0 {
+		startColumn = 1
+	}
+
+	return l.createToken(types.STRING_TEXT, text, start, startLine, startColumn)
+}
+
+// lexDecoratorInInterpolatedString handles decorators within interpolated strings
+// by switching to LanguageMode for proper parameter parsing
+func (l *Lexer) lexDecoratorInInterpolatedString(start, startLine, startColumn int) types.Token {
+	l.logger.Debug("[LEXER] Found decorator in interpolated string",
+		"currentMode", l.mode,
+		"preInterpolatedMode", l.preInterpolatedMode,
+		"position", l.position,
+		"ch", string(l.ch))
+
+	// Switch to LanguageMode for decorator parsing - this allows full parameter parsing
+	// including quoted strings, named parameters, etc.
+	l.mode = LanguageMode
+	l.inFunctionDecorator = true
+	l.inStringDecorator = true // Flag that we're in a decorator within a string
+
+	l.logger.Debug("[LEXER] Set flags for decorator in string",
+		"mode", l.mode,
+		"inFunctionDecorator", l.inFunctionDecorator,
+		"inStringDecorator", l.inStringDecorator)
+
+	// Return the AT token, subsequent calls will parse the decorator normally
+	l.readChar() // Skip @
+	return l.createToken(types.AT, "@", start, startLine, startColumn)
+}
+
+// lexLiteralStringInDecorator handles quoted strings within decorator parameters
+// This avoids creating nested interpolated string contexts
+func (l *Lexer) lexLiteralStringInDecorator(quote rune, start, startLine, startColumn int) types.Token {
+	l.logger.Debug("[LEXER] Parsing literal string in decorator",
+		"quote", string(quote),
+		"position", l.position)
+
+	// Return STRING_START token with the opening quote
+	quoteStr := string(quote)
+	l.readChar() // Skip the opening quote
+
+	// Create STRING_START token
+	token := l.createToken(types.STRING_START, quoteStr, start, startLine, startColumn)
+
+	// Set the string type based on quote character
+	switch quote {
+	case '"':
+		token.StringType = types.DoubleQuoted
+	case '\'':
+		token.StringType = types.SingleQuoted
+	case '`':
+		token.StringType = types.Backtick
+	}
+
+	token.Raw = quoteStr
+
+	// Set state for simple string parsing (no interpolation)
+	l.inLiteralString = true
+	l.literalQuote = quote
+
+	return token
+}
+
+// lexLiteralStringContent handles the content inside literal strings (no interpolation)
+func (l *Lexer) lexLiteralStringContent() types.Token {
+	start := l.position
+	startLine, startColumn := l.line, l.column
+
+	// Check for closing quote first
+	if l.ch == l.literalQuote {
+		return l.lexLiteralStringEnd(start, startLine, startColumn)
+	}
+
+	// Check for EOF
+	if l.ch == 0 {
+		// Unterminated string
+		l.inLiteralString = false
+		return l.createToken(types.ILLEGAL, "Unterminated string", start, startLine, startColumn)
+	}
+
+	// Read until we hit the closing quote (no interpolation checks)
+	for l.ch != 0 && l.ch != l.literalQuote {
+		l.readChar()
+	}
+
+	text := l.input[start:l.position]
+
+	// Fix position tracking: if we started with column 0, adjust to 1 (1-based indexing)
+	if startColumn == 0 {
+		startColumn = 1
+	}
+
+	return l.createToken(types.STRING_TEXT, text, start, startLine, startColumn)
+}
+
+// lexLiteralStringEnd handles the closing quote of a literal string
+func (l *Lexer) lexLiteralStringEnd(start, startLine, startColumn int) types.Token {
+	quoteStr := string(l.literalQuote)
+	l.readChar() // Skip the closing quote
+
+	// Reset literal string state
+	l.inLiteralString = false
+	l.literalQuote = 0
+
+	return l.createToken(types.STRING_END, quoteStr, start, startLine, startColumn)
 }
 
 // lexNumber handles number literals (using fast ASCII lookups)

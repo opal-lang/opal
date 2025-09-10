@@ -55,14 +55,22 @@ const (
 	RBRACE   // }
 	ASTERISK // * (wildcard in patterns)
 
+	// Shell operators
+	AND    // &&
+	OR     // ||
+	PIPE   // |
+	APPEND // >>
+
 	// Literals and Content
-	IDENTIFIER // command names, variable names, decorator names, patterns
-	SHELL_TEXT // shell command text
-	SHELL_END  // marks end of shell content
-	NUMBER     // 8080, 3.14, -100
-	STRING     // "hello", 'world', `template`
-	DURATION   // 30s, 5m, 1h
-	BOOLEAN    // true, false
+	IDENTIFIER   // command names, variable names, decorator names, patterns
+	SHELL_TEXT   // shell command text
+	SHELL_END    // marks end of shell content
+	NUMBER       // 8080, 3.14, -100
+	STRING_START // opening quote for strings (" for interpolated, ' for literal)
+	STRING_TEXT  // text content within strings
+	STRING_END   // closing quote for strings (" or ')
+	DURATION     // 30s, 5m, 1h
+	BOOLEAN      // true, false
 
 	// Comments
 	COMMENT           // #
@@ -71,27 +79,34 @@ const (
 
 // Pre-computed token name lookup for fast debugging
 var tokenNames = [...]string{
-	EOF:               "EOF",
-	ILLEGAL:           "ILLEGAL",
-	VAR:               "VAR",
-	WATCH:             "WATCH",
-	STOP:              "STOP",
-	WHEN:              "WHEN",
-	TRY:               "TRY",
-	AT:                "AT",
-	COLON:             "COLON",
-	EQUALS:            "EQUALS",
-	COMMA:             "COMMA",
-	LPAREN:            "LPAREN",
-	RPAREN:            "RPAREN",
-	LBRACE:            "LBRACE",
-	RBRACE:            "RBRACE",
-	ASTERISK:          "ASTERISK",
-	IDENTIFIER:        "IDENTIFIER",
-	SHELL_TEXT:        "SHELL_TEXT",
-	SHELL_END:         "SHELL_END",
-	NUMBER:            "NUMBER",
-	STRING:            "STRING",
+	EOF:        "EOF",
+	ILLEGAL:    "ILLEGAL",
+	VAR:        "VAR",
+	WATCH:      "WATCH",
+	STOP:       "STOP",
+	WHEN:       "WHEN",
+	TRY:        "TRY",
+	AT:         "AT",
+	COLON:      "COLON",
+	EQUALS:     "EQUALS",
+	COMMA:      "COMMA",
+	LPAREN:     "LPAREN",
+	RPAREN:     "RPAREN",
+	LBRACE:     "LBRACE",
+	RBRACE:     "RBRACE",
+	ASTERISK:   "ASTERISK",
+	AND:        "AND",
+	OR:         "OR",
+	PIPE:       "PIPE",
+	APPEND:     "APPEND",
+	IDENTIFIER: "IDENTIFIER",
+	SHELL_TEXT: "SHELL_TEXT",
+	SHELL_END:  "SHELL_END",
+	NUMBER:     "NUMBER",
+
+	STRING_START:      "STRING_START",
+	STRING_TEXT:       "STRING_TEXT",
+	STRING_END:        "STRING_END",
 	DURATION:          "DURATION",
 	BOOLEAN:           "BOOLEAN",
 	COMMENT:           "COMMENT",

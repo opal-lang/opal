@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/runtime/decorators"
-	"github.com/aledsdavies/devcmd/runtime/execution"
+	"github.com/aledsdavies/devcmd/core/decorators"
+	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/devcmd/runtime/ast"
 	"github.com/google/go-cmp/cmp"
 
 	// Import builtins to register decorators
-	_ "github.com/aledsdavies/devcmd/cli/internal/builtins"
+	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin"
 )
 
 // init registers any test-specific decorators not in decorators
@@ -32,31 +32,32 @@ func (d *DebounceDecorator) Description() string {
 
 func (d *DebounceDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
-		{Name: "delay", Type: ast.DurationType, Required: true, Description: "Debounce delay"},
+		{Name: "delay", Type: decorators.ArgTypeDuration, Required: true, Description: "Debounce delay"},
 	}
 }
 
-func (d *DebounceDecorator) ExecuteInterpreter(ctx execution.InterpreterContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
-}
-
-func (d *DebounceDecorator) ExecuteGenerator(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult("// debounce")
-}
-
-func (d *DebounceDecorator) GenerateTemplate(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) (*execution.TemplateResult, error) {
-	return &execution.TemplateResult{
-		Template: nil,
-		Data:     "// debounce template",
-	}, nil
-}
-
-func (d *DebounceDecorator) ExecutePlan(ctx execution.PlanContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
+func (d *DebounceDecorator) Examples() []decorators.Example {
+	return []decorators.Example{
+		{Code: "@debounce(500ms) { echo hello }", Description: "Debounce with 500ms delay"},
+	}
 }
 
 func (d *DebounceDecorator) ImportRequirements() decorators.ImportRequirement {
 	return decorators.ImportRequirement{}
+}
+
+// BlockDecorator interface methods
+func (d *DebounceDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+	// Test implementation - just execute the inner content
+	return ctx.ExecSequential(inner.Steps)
+}
+
+func (d *DebounceDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: "debounce",
+		Children:    []plan.ExecutionStep{inner},
+	}
 }
 
 // CwdDecorator - test implementation
@@ -66,31 +67,40 @@ func (c *CwdDecorator) Name() string        { return "cwd" }
 func (c *CwdDecorator) Description() string { return "Changes working directory for command execution" }
 func (c *CwdDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
-		{Name: "directory", Type: ast.StringType, Required: true, Description: "Working directory"},
+		{Name: "directory", Type: decorators.ArgTypeString, Required: true, Description: "Working directory"},
 	}
 }
 
-func (c *CwdDecorator) ExecuteInterpreter(ctx execution.InterpreterContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
-}
-
-func (c *CwdDecorator) ExecuteGenerator(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult("// cwd")
-}
-
-func (c *CwdDecorator) GenerateTemplate(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) (*execution.TemplateResult, error) {
-	return &execution.TemplateResult{
-		Template: nil,
-		Data:     "// cwd template",
-	}, nil
-}
-
-func (c *CwdDecorator) ExecutePlan(ctx execution.PlanContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
+func (c *CwdDecorator) Examples() []decorators.Example {
+	return []decorators.Example{
+		{Code: "@cwd(/path/to/dir) { commands }", Description: "Change directory for command execution"},
+	}
 }
 
 func (c *CwdDecorator) ImportRequirements() decorators.ImportRequirement {
 	return decorators.ImportRequirement{}
+}
+
+// BlockDecorator interface methods
+func (c *CwdDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+	// Get directory parameter
+	dir, err := decorators.ExtractString(args, "directory", "")
+	if err != nil {
+		return decorators.CommandResult{Stderr: err.Error(), ExitCode: 1}
+	}
+
+	// Change working directory in context and execute inner commands
+	newCtx := ctx.WithWorkDir(dir)
+	return newCtx.ExecSequential(inner.Steps)
+}
+
+func (c *CwdDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+	dir, _ := decorators.ExtractString(args, "directory", "")
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: fmt.Sprintf("change directory to %s", dir),
+		Children:    []plan.ExecutionStep{inner},
+	}
 }
 
 // WatchFilesDecorator - test implementation
@@ -103,31 +113,42 @@ func (w *WatchFilesDecorator) Description() string {
 
 func (w *WatchFilesDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
-		{Name: "pattern", Type: ast.StringType, Required: true, Description: "File pattern to watch"},
+		{Name: "pattern", Type: decorators.ArgTypeString, Required: true, Description: "File pattern to watch"},
 	}
 }
 
-func (w *WatchFilesDecorator) ExecuteInterpreter(ctx execution.InterpreterContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
-}
-
-func (w *WatchFilesDecorator) ExecuteGenerator(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult("// watch-files")
-}
-
-func (w *WatchFilesDecorator) GenerateTemplate(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) (*execution.TemplateResult, error) {
-	return &execution.TemplateResult{
-		Template: nil,
-		Data:     "// watch-files template",
-	}, nil
-}
-
-func (w *WatchFilesDecorator) ExecutePlan(ctx execution.PlanContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
+func (w *WatchFilesDecorator) Examples() []decorators.Example {
+	return []decorators.Example{
+		{Code: "@watch-files(*.go) { commands }", Description: "Watch Go files for changes"},
+	}
 }
 
 func (w *WatchFilesDecorator) ImportRequirements() decorators.ImportRequirement {
 	return decorators.ImportRequirement{}
+}
+
+// BlockDecorator interface methods
+func (w *WatchFilesDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+	// Get pattern parameter
+	pattern, err := decorators.ExtractString(args, "pattern", "")
+	if err != nil {
+		return decorators.CommandResult{Stderr: err.Error(), ExitCode: 1}
+	}
+
+	// Simulate file watching (in real implementation would set up file watcher)
+	if ctx.DryRun {
+		return decorators.CommandResult{Stdout: fmt.Sprintf("Would watch files matching: %s", pattern)}
+	}
+	return ctx.ExecSequential(inner.Steps)
+}
+
+func (w *WatchFilesDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+	pattern, _ := decorators.ExtractString(args, "pattern", "")
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: fmt.Sprintf("watch files matching %s", pattern),
+		Children:    []plan.ExecutionStep{inner},
+	}
 }
 
 // OffsetDecorator - test implementation
@@ -140,31 +161,42 @@ func (o *OffsetDecorator) Description() string {
 
 func (o *OffsetDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
-		{Name: "value", Type: ast.NumberType, Required: true, Description: "Offset value"},
+		{Name: "value", Type: decorators.ArgTypeInt, Required: true, Description: "Offset value"},
 	}
 }
 
-func (o *OffsetDecorator) ExecuteInterpreter(ctx execution.InterpreterContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
-}
-
-func (o *OffsetDecorator) ExecuteGenerator(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult("// offset")
-}
-
-func (o *OffsetDecorator) GenerateTemplate(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) (*execution.TemplateResult, error) {
-	return &execution.TemplateResult{
-		Template: nil,
-		Data:     "// offset template",
-	}, nil
-}
-
-func (o *OffsetDecorator) ExecutePlan(ctx execution.PlanContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
+func (o *OffsetDecorator) Examples() []decorators.Example {
+	return []decorators.Example{
+		{Code: "@offset(5) { commands }", Description: "Apply numeric offset to execution"},
+	}
 }
 
 func (o *OffsetDecorator) ImportRequirements() decorators.ImportRequirement {
 	return decorators.ImportRequirement{}
+}
+
+// BlockDecorator interface methods
+func (o *OffsetDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+	// Get offset value parameter
+	offset, err := decorators.ExtractInt(args, "value", 0)
+	if err != nil {
+		return decorators.CommandResult{Stderr: err.Error(), ExitCode: 1}
+	}
+
+	// Apply offset (in real implementation would modify execution behavior)
+	if ctx.DryRun {
+		return decorators.CommandResult{Stdout: fmt.Sprintf("Would apply offset: %d", offset)}
+	}
+	return ctx.ExecSequential(inner.Steps)
+}
+
+func (o *OffsetDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+	offset, _ := decorators.ExtractInt(args, "value", 0)
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: fmt.Sprintf("apply offset %d", offset),
+		Children:    []plan.ExecutionStep{inner},
+	}
 }
 
 // FactorDecorator - test implementation
@@ -177,31 +209,42 @@ func (f *FactorDecorator) Description() string {
 
 func (f *FactorDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
-		{Name: "multiplier", Type: ast.NumberType, Required: true, Description: "Scaling factor"},
+		{Name: "multiplier", Type: decorators.ArgTypeFloat, Required: true, Description: "Scaling factor"},
 	}
 }
 
-func (f *FactorDecorator) ExecuteInterpreter(ctx execution.InterpreterContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
-}
-
-func (f *FactorDecorator) ExecuteGenerator(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult("// factor")
-}
-
-func (f *FactorDecorator) GenerateTemplate(ctx execution.GeneratorContext, params []ast.NamedParameter, content []ast.CommandContent) (*execution.TemplateResult, error) {
-	return &execution.TemplateResult{
-		Template: nil,
-		Data:     "// factor template",
-	}, nil
-}
-
-func (f *FactorDecorator) ExecutePlan(ctx execution.PlanContext, params []ast.NamedParameter, content []ast.CommandContent) *execution.ExecutionResult {
-	return execution.NewSuccessResult(nil)
+func (f *FactorDecorator) Examples() []decorators.Example {
+	return []decorators.Example{
+		{Code: "@factor(2.5) { commands }", Description: "Apply scaling factor to execution"},
+	}
 }
 
 func (f *FactorDecorator) ImportRequirements() decorators.ImportRequirement {
 	return decorators.ImportRequirement{}
+}
+
+// BlockDecorator interface methods
+func (f *FactorDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+	// Get multiplier parameter
+	multiplier, err := decorators.ExtractFloat(args, "multiplier", 1.0)
+	if err != nil {
+		return decorators.CommandResult{Stderr: err.Error(), ExitCode: 1}
+	}
+
+	// Apply scaling factor (in real implementation would modify execution behavior)
+	if ctx.DryRun {
+		return decorators.CommandResult{Stdout: fmt.Sprintf("Would apply scaling factor: %.2f", multiplier)}
+	}
+	return ctx.ExecSequential(inner.Steps)
+}
+
+func (f *FactorDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+	multiplier, _ := decorators.ExtractFloat(args, "multiplier", 1.0)
+	return plan.ExecutionStep{
+		Type:        plan.StepSequence,
+		Description: fmt.Sprintf("apply scaling factor %.2f", multiplier),
+		Children:    []plan.ExecutionStep{inner},
+	}
 }
 
 // registerTestOnlyDecorators registers decorators that are only used for testing
@@ -247,6 +290,20 @@ type ExpectedShellContent struct {
 }
 
 func (s ExpectedShellContent) IsExpectedCommandContent() bool { return true }
+
+// ExpectedShellChain represents a sequence of shell commands connected by operators
+type ExpectedShellChain struct {
+	Elements []ExpectedShellChainElement
+}
+
+func (s ExpectedShellChain) IsExpectedCommandContent() bool { return true }
+
+// ExpectedShellChainElement represents a single element in a shell chain
+type ExpectedShellChainElement struct {
+	Content  ExpectedShellContent // The shell command content
+	Operator string               // The operator following this element ("&&", "||", "|", ">>", "")
+	Target   string               // For ">>" operator, the target file (optional)
+}
 
 // ExpectedBlockDecoratorContent removed - use ExpectedBlockDecorator instead
 
@@ -299,6 +356,7 @@ type ExpectedShellPart struct {
 	Type              string
 	Text              string
 	FunctionDecorator *ExpectedFunctionDecorator
+	ActionDecorator   *ExpectedFunctionDecorator
 }
 
 type ExpectedDecorator struct {
@@ -316,6 +374,8 @@ func (f ExpectedFunctionDecorator) IsExpectedCommandContent() bool { return true
 type ExpectedExpression struct {
 	Type  string
 	Value string
+	// For string interpolation (unified string system)
+	Parts []ExpectedShellPart `json:"parts,omitempty"`
 	// For function decorators
 	Name string               `json:"name,omitempty"`
 	Args []ExpectedExpression `json:"args,omitempty"`
@@ -561,6 +621,39 @@ func Text(text string) ExpectedShellPart {
 	}
 }
 
+// StrPart creates a string literal part within shell content
+func StrPart(value string) ExpectedShellPart {
+	return ExpectedShellPart{
+		Type: "string",
+		Text: value, // Use Text field for the string value
+	}
+}
+
+// StrWithParts creates a string expression with interpolated parts for decorator arguments
+// This represents a StringLiteral with Parts[] for string interpolation
+func StrWithParts(parts ...interface{}) ExpectedExpression {
+	var expectedParts []ExpectedShellPart
+	for _, part := range parts {
+		switch p := part.(type) {
+		case ExpectedShellPart:
+			expectedParts = append(expectedParts, p)
+		case string:
+			expectedParts = append(expectedParts, StrPart(p))
+		default:
+			// Convert other types to shell parts
+			expectedParts = append(expectedParts, ExpectedShellPart{
+				Type: "unknown",
+				Text: fmt.Sprintf("%v", p),
+			})
+		}
+	}
+
+	return ExpectedExpression{
+		Type:  "string_with_parts",
+		Parts: expectedParts,
+	}
+}
+
 // At creates a function decorator within shell content: @var(NAME)
 // Only valid for function decorators like @var()
 func At(name string, args ...interface{}) ExpectedShellPart {
@@ -578,12 +671,31 @@ func At(name string, args ...interface{}) ExpectedShellPart {
 		decoratorArgs = append(decoratorArgs, toDecoratorArgument(name, arg))
 	}
 
+	// Determine the correct decorator type
+	var decoratorType string
+	var funcDecorator *ExpectedFunctionDecorator
+	var actionDecorator *ExpectedFunctionDecorator
+
+	funcDecorator = &ExpectedFunctionDecorator{
+		Name: name,
+		Args: decoratorArgs,
+	}
+
+	if decorators.IsValueDecorator(name) {
+		decoratorType = "value_decorator"
+	} else if decorators.IsActionDecorator(name) {
+		decoratorType = "action_decorator"
+		actionDecorator = funcDecorator
+		funcDecorator = nil
+	} else {
+		// Fallback to value_decorator for unknown types
+		decoratorType = "value_decorator"
+	}
+
 	return ExpectedShellPart{
-		Type: "value_decorator",
-		FunctionDecorator: &ExpectedFunctionDecorator{
-			Name: name,
-			Args: decoratorArgs,
-		},
+		Type:              decoratorType,
+		FunctionDecorator: funcDecorator,
+		ActionDecorator:   actionDecorator,
 	}
 }
 
@@ -711,6 +823,85 @@ func Shell(parts ...interface{}) ExpectedCommandContent {
 	return ExpectedShellContent{
 		Parts: toShellParts(parts...),
 	}
+}
+
+// Chain creates a shell chain with operators
+func Chain(elements ...interface{}) ExpectedCommandContent {
+	if len(elements) == 0 {
+		return ExpectedShellChain{Elements: []ExpectedShellChainElement{}}
+	}
+
+	var chainElements []ExpectedShellChainElement
+
+	for i, elem := range elements {
+		var content ExpectedShellContent
+
+		switch e := elem.(type) {
+		case ExpectedShellChainElement:
+			content = e.Content
+			// For chain elements, the operator applies to the PREVIOUS element
+			if i > 0 {
+				chainElements[i-1].Operator = e.Operator
+				chainElements[i-1].Target = e.Target
+			}
+		case ExpectedShellContent:
+			content = e
+		default:
+			// Convert other types to shell content first
+			content = Shell(e).(ExpectedShellContent)
+		}
+
+		chainElements = append(chainElements, ExpectedShellChainElement{
+			Content:  content,
+			Operator: "", // Will be set by next element if any
+		})
+	}
+
+	return ExpectedShellChain{
+		Elements: chainElements,
+	}
+}
+
+// ChainElement creates a shell chain element with an operator
+func ChainElement(content interface{}, operator string, target ...string) ExpectedShellChainElement {
+	var shellContent ExpectedShellContent
+	switch c := content.(type) {
+	case ExpectedShellContent:
+		shellContent = c
+	default:
+		shellContent = Shell(c).(ExpectedShellContent)
+	}
+
+	elem := ExpectedShellChainElement{
+		Content:  shellContent,
+		Operator: operator,
+	}
+
+	if len(target) > 0 {
+		elem.Target = target[0]
+	}
+
+	return elem
+}
+
+// Pipe creates a pipe operator chain element: cmd1 | cmd2
+func Pipe(content interface{}) ExpectedShellChainElement {
+	return ChainElement(content, "|")
+}
+
+// And creates a logical AND chain element: cmd1 && cmd2
+func And(content interface{}) ExpectedShellChainElement {
+	return ChainElement(content, "&&")
+}
+
+// Or creates a logical OR chain element: cmd1 || cmd2
+func Or(content interface{}) ExpectedShellChainElement {
+	return ChainElement(content, "||")
+}
+
+// Append creates an append redirect chain element: cmd >> file
+func Append(content interface{}, target string) ExpectedShellChainElement {
+	return ChainElement(content, ">>", target)
 }
 
 // DecoratedShell creates decorated shell content: @timeout(30s) npm run build
@@ -863,6 +1054,11 @@ func toCommandBody(v interface{}) ExpectedCommandBody {
 		}
 	case ExpectedPatternDecorator:
 		// Pattern decorators ALWAYS require explicit blocks per spec
+		return ExpectedCommandBody{
+			Content: []ExpectedCommandContent{val},
+		}
+	case ExpectedShellChain:
+		// Shell chains should be preserved as-is in command body
 		return ExpectedCommandBody{
 			Content: []ExpectedCommandContent{val},
 		}
@@ -1025,7 +1221,7 @@ func expressionToComparable(expr ast.Expression) interface{} {
 	case *ast.StringLiteral:
 		return map[string]interface{}{
 			"Type":  "string",
-			"Value": e.Value,
+			"Value": e.String(),
 		}
 	case *ast.NumberLiteral:
 		return map[string]interface{}{
@@ -1121,6 +1317,11 @@ func shellPartToComparable(part ast.ShellPart) interface{} {
 			"Type": "text",
 			"Text": p.Text,
 		}
+	case *ast.TextStringPart:
+		return map[string]interface{}{
+			"Type":  "string",
+			"Value": p.Text,
+		}
 	case *ast.ValueDecorator:
 		args := make([]interface{}, len(p.Args))
 		for i, arg := range p.Args {
@@ -1161,11 +1362,21 @@ func expectedShellPartToComparable(part ExpectedShellPart) interface{} {
 	switch part.Type {
 	case "text":
 		result["Text"] = part.Text
+	case "string":
+		result["Value"] = part.Text // String content stored in Text field
 	case "value_decorator":
 		if part.FunctionDecorator != nil {
 			args := expectedArgsToNamedParams(part.FunctionDecorator.Name, part.FunctionDecorator.Args)
 			result["ValueDecorator"] = map[string]interface{}{
 				"Name": part.FunctionDecorator.Name,
+				"Args": args,
+			}
+		}
+	case "action_decorator":
+		if part.ActionDecorator != nil {
+			args := expectedArgsToNamedParams(part.ActionDecorator.Name, part.ActionDecorator.Args)
+			result["ActionDecorator"] = map[string]interface{}{
+				"Name": part.ActionDecorator.Name,
 				"Args": args,
 			}
 		}
@@ -1220,6 +1431,42 @@ func commandContentToComparable(content ast.CommandContent) interface{} {
 		return map[string]interface{}{
 			"Type":  "shell",
 			"Parts": parts,
+		}
+	case *ast.ShellChain:
+		// Preserve ShellChain structure with proper operator semantics
+		elements := make([]interface{}, len(c.Elements))
+		for i, element := range c.Elements {
+			elementMap := map[string]interface{}{
+				"Content": map[string]interface{}{
+					"Type": "shell",
+					"Parts": func() []interface{} {
+						parts := make([]interface{}, len(element.Content.Parts))
+						for j, part := range element.Content.Parts {
+							parts[j] = shellPartToComparable(part)
+						}
+						return parts
+					}(),
+				},
+				"Operator": element.Operator,
+			}
+			if element.Target != "" {
+				elementMap["Target"] = element.Target
+			}
+			elements[i] = elementMap
+		}
+		return map[string]interface{}{
+			"Type":     "chain",
+			"Elements": elements,
+		}
+	case *ast.ActionDecorator:
+		args := make([]interface{}, len(c.Args))
+		for i, arg := range c.Args {
+			args[i] = namedParameterToComparable(arg)
+		}
+		return map[string]interface{}{
+			"Type": "action_decorator",
+			"Name": c.Name,
+			"Args": args,
 		}
 	// ast.BlockDecoratorContent removed - functionality moved to BlockDecorator
 	case *ast.BlockDecorator:
@@ -1289,6 +1536,22 @@ func expectedCommandContentToComparable(content ExpectedCommandContent) interfac
 		return map[string]interface{}{
 			"Type":  "shell",
 			"Parts": parts,
+		}
+	case ExpectedShellChain:
+		elements := make([]interface{}, len(c.Elements))
+		for i, element := range c.Elements {
+			elementMap := map[string]interface{}{
+				"Content":  expectedCommandContentToComparable(element.Content),
+				"Operator": element.Operator,
+			}
+			if element.Target != "" {
+				elementMap["Target"] = element.Target
+			}
+			elements[i] = elementMap
+		}
+		return map[string]interface{}{
+			"Type":     "chain",
+			"Elements": elements,
 		}
 	case ExpectedBlockDecorator:
 		args := expectedArgsToNamedParams(c.Name, c.Args)

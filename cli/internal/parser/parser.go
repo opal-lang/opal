@@ -3,13 +3,15 @@ package parser
 import (
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/aledsdavies/devcmd/cli/internal/lexer"
-	"github.com/aledsdavies/devcmd/core/ast"
+	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/types"
-	"github.com/aledsdavies/devcmd/runtime/decorators"
+	"github.com/aledsdavies/devcmd/runtime/ast"
 )
 
 // Parser implements a fast, spec-compliant recursive descent parser for the Devcmd language.
@@ -26,6 +28,9 @@ type Parser struct {
 
 	// program is the AST being built during parsing (for variable type lookups)
 	program *ast.Program
+
+	// logger for debug output
+	logger *slog.Logger
 }
 
 // Parse tokenizes and parses the input from an io.Reader into a complete AST.
@@ -38,10 +43,33 @@ func Parse(reader io.Reader) (*ast.Program, error) {
 	}
 	input := string(data)
 
+	// Create debug logger - check if DEVCMD_DEBUG_PARSER environment variable is set
+	logLevel := slog.LevelInfo
+	if os.Getenv("DEVCMD_DEBUG_PARSER") != "" {
+		logLevel = slog.LevelDebug
+	}
+
+	// Custom parser-friendly handler
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// Remove timestamp for cleaner parser output
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			// Simplify level display
+			if a.Key == slog.LevelKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
+
 	lex := lexer.New(strings.NewReader(input))
 	p := &Parser{
 		input:  input, // Store the raw input
 		tokens: lex.TokenizeToSlice(),
+		logger: logger,
 	}
 	program := p.parseProgram()
 
@@ -107,17 +135,20 @@ func (p *Parser) parseProgram() *ast.Program {
 // parseCommandDecl parses a full command declaration.
 // CommandDecl = { Decorator }* [ "watch" | "stop" ] IDENTIFIER ":" CommandBody
 func (p *Parser) parseCommandDecl() (*ast.CommandDecl, error) {
+	p.logger.Debug("→ parseCommandDecl", "token", p.current().Type.String())
 	startPos := p.current()
 
 	// 1. Parse command type (watch, stop, or regular)
 	cmdType := ast.Command
 	var typeToken *types.Token
 	if p.match(types.WATCH) {
+		p.logger.Debug("  found WATCH")
 		cmdType = ast.WatchCommand
 		token := p.current()
 		typeToken = &token
 		p.advance()
 	} else if p.match(types.STOP) {
+		p.logger.Debug("  found STOP")
 		cmdType = ast.StopCommand
 		token := p.current()
 		typeToken = &token
@@ -125,24 +156,32 @@ func (p *Parser) parseCommandDecl() (*ast.CommandDecl, error) {
 	}
 
 	// 2. Parse command name
+	p.logger.Debug("  parsing name", "token", p.current().Type.String())
 	nameToken, err := p.consume(types.IDENTIFIER, "expected command name")
 	if err != nil {
+		p.logger.Debug("  ✗ name failed", "error", err)
 		return nil, err
 	}
 	name := nameToken.Value
+	p.logger.Debug("  ✓ name", "value", name)
 
 	// 3. Parse colon
+	p.logger.Debug("  parsing colon", "token", p.current().Type.String())
 	colonToken, err := p.consume(types.COLON, "expected ':' after command name")
 	if err != nil {
+		p.logger.Debug("  ✗ colon failed", "error", err)
 		return nil, err
 	}
 
 	// 4. Parse command body (this will handle post-colon decorators and syntax sugar)
+	p.logger.Debug("  parsing body", "token", p.current().Type.String())
 	body, err := p.parseCommandBody()
 	if err != nil {
+		p.logger.Debug("  ✗ body failed", "error", err)
 		return nil, err
 	}
 
+	p.logger.Debug("← parseCommandDecl ✓", "name", name)
 	return &ast.CommandDecl{
 		Name:       name,
 		Type:       cmdType,
@@ -159,17 +198,20 @@ func (p *Parser) parseCommandDecl() (*ast.CommandDecl, error) {
 // **FIXED**: Now properly implements syntax sugar equivalence as per spec.
 // CommandBody = "{" CommandContent "}" | DecoratorSugar | CommandContent
 func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
+	p.logger.Debug("  → parseBody", "token", p.current().Type.String())
 	startPos := p.current()
 
 	// **FIXED**: Check for decorator syntax sugar: @decorator(args) { ... }
 	// This should be equivalent to: { @decorator(args) { ... } }
 	if p.match(types.AT) {
+		p.logger.Debug("    decorator syntax sugar")
 		// Save position in case we need to backtrack
 		savedPos := p.pos
 
 		// Try to parse a single decorator after the colon
 		decorator, err := p.parseDecorator()
 		if err != nil {
+			p.logger.Debug("    ✗ decorator failed", "error", err)
 			return nil, err
 		}
 
@@ -248,9 +290,11 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 
 	// Explicit block: { ... }
 	if p.match(types.LBRACE) {
+		p.logger.Debug("    explicit block")
 		openBrace, _ := p.consume(types.LBRACE, "") // already checked
 		contentItems, err := p.parseBlockContent()  // Parse multiple content items
 		if err != nil {
+			p.logger.Debug("    ✗ block content failed", "error", err)
 			return nil, err
 		}
 		closeBrace, err := p.consume(types.RBRACE, "expected '}' to close command block")
@@ -277,10 +321,13 @@ func (p *Parser) parseCommandBody() (*ast.CommandBody, error) {
 	}
 
 	// Simple command (no braces, ends at newline)
+	p.logger.Debug("    simple command", "token", p.current().Type.String())
 	content, err := p.parseCommandContent(false) // Pass inBlock=false
 	if err != nil {
+		p.logger.Debug("    ✗ simple content failed", "error", err)
 		return nil, err
 	}
+	p.logger.Debug("  ← parseBody ✓")
 	return &ast.CommandBody{
 		Content: []ast.CommandContent{content},
 		Pos:     ast.Position{Line: startPos.Line, Column: startPos.Column},
@@ -295,7 +342,7 @@ func (p *Parser) isSimpleShellContent(contentItems []ast.CommandContent) bool {
 		return false
 	}
 
-	// Must be shell content without decorators
+	// Must be shell content without decorators (shell chains are not simple)
 	if shell, ok := contentItems[0].(*ast.ShellContent); ok {
 		// Check if it contains only text parts or value/action decorators (no block decorators)
 		for _, part := range shell.Parts {
@@ -319,8 +366,10 @@ func (p *Parser) isSimpleShellContent(contentItems []ast.CommandContent) bool {
 // shell text, decorators, or pattern content.
 // It is context-aware via the `inBlock` parameter.
 func (p *Parser) parseCommandContent(inBlock bool) (ast.CommandContent, error) {
+	p.logger.Debug("      → parseContent", "token", p.current().Type.String())
 	// Check for pattern decorators (@when, @try)
 	if p.isPatternDecorator() {
+		p.logger.Debug("        pattern decorator")
 		return p.parsePatternContent()
 	}
 
@@ -359,6 +408,7 @@ func (p *Parser) parseCommandContent(inBlock bool) (ast.CommandContent, error) {
 	}
 
 	// Otherwise, it must be shell content.
+	p.logger.Debug("        shell content")
 	return p.parseShellContent(inBlock)
 }
 
@@ -541,7 +591,9 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 		}
 
 		// Check for block decorators
+		p.logger.Debug("      🔍 parseBlockContent: checking decorator", "pos", p.pos, "token", p.current().Type.String(), "value", p.current().Value)
 		if p.isBlockDecorator() {
+			p.logger.Debug("      ✅ parseBlockContent: found block decorator", "decorator", p.tokens[p.pos+1].Value)
 			decorator, err := p.parseDecorator()
 			if err != nil {
 				return nil, err
@@ -552,15 +604,19 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 			case *ast.BlockDecorator:
 				// Parse the block content for block decorators
 				if p.match(types.LBRACE) {
+					p.logger.Debug("      📦 parseBlockContent: parsing block decorator content", "decorator", d.Name)
 					p.advance() // consume '{'
 					nestedContent, err := p.parseBlockContent()
 					if err != nil {
+						p.logger.Debug("      ❌ parseBlockContent: nested content failed", "decorator", d.Name, "error", err)
 						return nil, err
 					}
 					_, err = p.consume(types.RBRACE, "expected '}' after block decorator content")
 					if err != nil {
+						p.logger.Debug("      ❌ parseBlockContent: missing closing brace", "decorator", d.Name, "error", err)
 						return nil, err
 					}
+					p.logger.Debug("      ✅ parseBlockContent: block decorator complete", "decorator", d.Name, "contentCount", len(nestedContent))
 					d.Content = nestedContent
 				} else {
 					// Parse single shell content
@@ -582,14 +638,23 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 
 		// **CRITICAL FIX**: Parse consecutive SHELL_TEXT tokens and decorator sequences as separate commands
 		// This implements the spec requirement: "newlines create multiple commands everywhere"
-		if p.match(types.SHELL_TEXT) || p.match(types.AT) {
+		// NOTE: Check for @ tokens that are NOT block/pattern decorators (those are handled above)
+		if p.match(types.SHELL_TEXT) || (p.match(types.AT) && !p.isBlockDecorator() && !p.isPatternDecorator()) {
+			p.logger.Debug("      🛠️ parseBlockContent: parsing shell content", "token", p.current().Type.String(), "value", p.current().Value)
 			shellContent, err := p.parseShellContent(true)
 			if err != nil {
 				return nil, err
 			}
 
 			// Only add non-empty shell content
-			if len(shellContent.Parts) > 0 {
+			isEmpty := false
+			if sc, ok := shellContent.(*ast.ShellContent); ok {
+				isEmpty = len(sc.Parts) == 0
+			} else if chain, ok := shellContent.(*ast.ShellChain); ok {
+				isEmpty = len(chain.Elements) == 0
+			}
+
+			if !isEmpty {
 				contentItems = append(contentItems, shellContent)
 			}
 			continue
@@ -604,16 +669,39 @@ func (p *Parser) parseBlockContent() ([]ast.CommandContent, error) {
 
 // parseShellContent parses a complete shell command from the new lexer token sequences
 // Handles: SHELL_TEXT + AT + IDENTIFIER + LPAREN + params + RPAREN + SHELL_TEXT + ... + SHELL_END
-func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
+// Also handles shell operators (&&, ||, |, >>) and creates ShellChain when operators are present
+func (p *Parser) parseShellContent(inBlock bool) (ast.CommandContent, error) {
+	p.logger.Debug("    → parseShell", "token", p.current().Type.String())
 	startPos := p.current()
+
+	// Check if this is a shell chain (has operators) by looking ahead
+	if p.isShellChain() {
+		p.logger.Debug("      shell chain")
+		return p.parseShellChain()
+	}
+
+	// Parse simple shell content (no operators)
 	var parts []ast.ShellPart
+	p.logger.Debug("      simple shell")
 
 	// Parse all parts of the shell command until SHELL_END
 	for !p.match(types.SHELL_END) && !p.isAtEnd() && !p.match(types.RBRACE) {
+		p.logger.Debug("      part", "token", p.current().Type.String())
 		if p.match(types.SHELL_TEXT) {
 			// Add shell text part
 			parts = append(parts, &ast.TextPart{Text: p.current().Value})
 			p.advance()
+		} else if p.match(types.STRING_START) {
+			// Handle strings within shell content - parse as string literal and add as text part
+			p.logger.Debug("        string literal")
+			stringLit, err := p.parseStringLiteral()
+			if err != nil {
+				return nil, err
+			}
+			// Use StringPart components directly in shell content since they now implement ShellPart
+			for _, part := range stringLit.Parts {
+				parts = append(parts, part)
+			}
 		} else if p.match(types.AT) {
 			// Parse decorator in shell context - this can return ValueDecorator or ActionDecorator
 			decorator, err := p.parseShellDecorator()
@@ -623,6 +711,7 @@ func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
 			parts = append(parts, decorator)
 		} else {
 			// Unexpected token - stop parsing
+			p.logger.Debug("        unexpected, stopping", "token", p.current().Type.String())
 			break
 		}
 	}
@@ -630,6 +719,115 @@ func (p *Parser) parseShellContent(inBlock bool) (*ast.ShellContent, error) {
 	// Consume SHELL_END if present
 	if p.match(types.SHELL_END) {
 		p.advance()
+	}
+
+	return &ast.ShellContent{
+		Parts: parts,
+		Pos:   ast.Position{Line: startPos.Line, Column: startPos.Column},
+	}, nil
+}
+
+// isShellChain checks if the upcoming tokens represent a shell chain with operators
+func (p *Parser) isShellChain() bool {
+	// Look ahead to find shell operators
+	pos := p.pos
+	for pos < len(p.tokens) {
+		token := p.tokens[pos]
+		if token.Type == types.AND || token.Type == types.OR ||
+			token.Type == types.PIPE || token.Type == types.APPEND {
+			return true
+		}
+		if token.Type == types.SHELL_END || token.Type == types.RBRACE || token.Type == types.EOF {
+			break
+		}
+		pos++
+	}
+	return false
+}
+
+// parseShellChain parses a shell chain with operators (&&, ||, |, >>)
+func (p *Parser) parseShellChain() (*ast.ShellChain, error) {
+	startPos := p.current()
+	var elements []ast.ShellChainElement
+
+	for {
+		// Parse the current shell content element
+		content, err := p.parseShellContentElement()
+		if err != nil {
+			return nil, err
+		}
+
+		element := ast.ShellChainElement{
+			Content: content,
+			Pos:     ast.Position{Line: startPos.Line, Column: startPos.Column},
+		}
+
+		// Check for operator after this element
+		if p.match(types.AND) || p.match(types.OR) || p.match(types.PIPE) || p.match(types.APPEND) {
+			operator := p.current().Value
+			element.Operator = operator
+			p.advance()
+
+			// For >> operator, parse the target file if it's the next SHELL_TEXT
+			if operator == ">>" && p.match(types.SHELL_TEXT) {
+				element.Target = p.current().Value
+				p.advance()
+			}
+		}
+
+		elements = append(elements, element)
+
+		// If no operator, we're done with the chain
+		if element.Operator == "" {
+			break
+		}
+	}
+
+	// Consume SHELL_END if present
+	if p.match(types.SHELL_END) {
+		p.advance()
+	}
+
+	return &ast.ShellChain{
+		Elements: elements,
+		Pos:      ast.Position{Line: startPos.Line, Column: startPos.Column},
+	}, nil
+}
+
+// parseShellContentElement parses a single shell content element (before an operator)
+func (p *Parser) parseShellContentElement() (*ast.ShellContent, error) {
+	startPos := p.current()
+	var parts []ast.ShellPart
+
+	// Parse parts until we hit an operator, SHELL_END, or block end
+	for !p.match(types.SHELL_END) && !p.isAtEnd() && !p.match(types.RBRACE) &&
+		!p.match(types.AND) && !p.match(types.OR) && !p.match(types.PIPE) && !p.match(types.APPEND) {
+
+		if p.match(types.SHELL_TEXT) {
+			// Add shell text part
+			parts = append(parts, &ast.TextPart{Text: p.current().Value})
+			p.advance()
+		} else if p.match(types.AT) {
+			// Parse decorator in shell context
+			decorator, err := p.parseShellDecorator()
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, decorator)
+		} else if p.current().Type == types.STRING_START {
+			// Handle strings within shell content - preserve as string parts
+			stringLit, err := p.parseStringLiteral()
+			if err != nil {
+				return nil, err
+			}
+			// Add string parts directly to shell parts (they implement both interfaces)
+			for _, part := range stringLit.Parts {
+				parts = append(parts, part)
+			}
+		} else {
+			// Unexpected token - stop parsing
+			break
+		}
 	}
 
 	return &ast.ShellContent{
@@ -681,9 +879,8 @@ func (p *Parser) parseVariableValue() (ast.Expression, error) {
 
 	// Handle standard literals only - no unquoted strings allowed
 	switch startToken.Type {
-	case types.STRING:
-		p.advance()
-		return &ast.StringLiteral{Value: startToken.Value, Raw: startToken.Raw, StringToken: startToken}, nil
+	case types.STRING_START:
+		return p.parseStringLiteral()
 	case types.NUMBER:
 		p.advance()
 		return &ast.NumberLiteral{Value: startToken.Value, Token: startToken}, nil
@@ -819,7 +1016,8 @@ func (p *Parser) parseShellDecorator() (ast.ShellPart, error) {
 		}
 	}
 
-	// In shell context, both ValueDecorator and ActionDecorator are allowed
+	// In shell context, ValueDecorator, ActionDecorator, and BlockDecorator are allowed per specification
+	// See devcmd_specification.md examples: @parallel { ... }, @timeout(30s) { ... }
 	switch decoratorType {
 	case decorators.ValueType:
 		return &ast.ValueDecorator{
@@ -837,8 +1035,19 @@ func (p *Parser) parseShellDecorator() (ast.ShellPart, error) {
 			AtToken:   atToken,
 			NameToken: nameToken,
 		}, nil
+	case decorators.BlockType:
+		// Block decorators are allowed in shell context per specification
+		// Examples: setup: @parallel { ... }, server: @timeout(30s) { ... }
+		return &ast.BlockDecorator{
+			Name:      decoratorName,
+			Args:      params,
+			Content:   nil, // Will be filled by caller
+			Pos:       ast.Position{Line: startPos.Line, Column: startPos.Column},
+			AtToken:   atToken,
+			NameToken: nameToken,
+		}, nil
 	default:
-		return nil, fmt.Errorf("decorator @%s cannot be used in shell context (line %d:%d) - only value and action decorators are allowed", decoratorName, startPos.Line, startPos.Column)
+		return nil, fmt.Errorf("decorator @%s cannot be used in shell context (line %d:%d) - only value, action, and block decorators are allowed", decoratorName, startPos.Line, startPos.Column)
 	}
 }
 
@@ -1021,13 +1230,131 @@ func (p *Parser) parseParameter(paramSchema []decorators.ParameterSchema, positi
 	}
 }
 
+// parseStringLiteral parses string literals with support for interpolation
+func (p *Parser) parseStringLiteral() (*ast.StringLiteral, error) {
+	if p.current().Type == types.STRING_START {
+		// Double quotes/backticks: "text@var(X)more" → multiple parts (with interpolation)
+		startTok := p.current()
+		p.advance()
+
+		var parts []ast.StringPart
+		var allTokens []types.Token
+		allTokens = append(allTokens, startTok)
+
+		// Parse sequence: STRING_TEXT, decorators, STRING_TEXT, ..., STRING_END
+		for p.current().Type != types.STRING_END && !p.isAtEnd() {
+			if p.current().Type == types.STRING_TEXT {
+				tok := p.current()
+				parts = append(parts, &ast.TextStringPart{Text: tok.Value})
+				allTokens = append(allTokens, tok)
+				p.advance()
+			} else if p.current().Type == types.AT {
+				// Parse @var() or @env() within string
+				decorator, err := p.parseValueDecorator()
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, decorator)
+				// Add decorator tokens to allTokens
+				allTokens = append(allTokens, decorator.TokenRange().All...)
+			} else {
+				return nil, p.NewSyntaxError(fmt.Sprintf("unexpected token %s in string literal", p.current().Type.String()))
+			}
+		}
+
+		endTok, err := p.consume(types.STRING_END, "expected closing quote")
+		if err != nil {
+			return nil, err
+		}
+		allTokens = append(allTokens, endTok)
+
+		// Build raw string from start to end tokens
+		raw := p.input[startTok.Span.Start.Offset:endTok.Span.End.Offset]
+
+		return &ast.StringLiteral{
+			Parts:       parts,
+			Raw:         raw,
+			StringToken: startTok,
+			Tokens:      ast.TokenRange{All: allTokens, Start: startTok, End: endTok},
+		}, nil
+	}
+
+	return nil, p.NewSyntaxError(fmt.Sprintf("expected string literal, got %s", p.current().Type.String()))
+}
+
+// parseValueDecorator parses a value decorator in string context (only @var, @env allowed)
+func (p *Parser) parseValueDecorator() (*ast.ValueDecorator, error) {
+	startPos := p.current()
+	atToken, _ := p.consume(types.AT, "expected '@'")
+
+	// Get decorator name
+	var nameToken types.Token
+	var err error
+
+	if p.current().Type == types.IDENTIFIER {
+		nameToken, err = p.consume(types.IDENTIFIER, "expected decorator name")
+	} else {
+		return nil, p.NewSyntaxError("expected decorator name after '@'")
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	decoratorName := nameToken.Value
+	if nameToken.Type != types.IDENTIFIER {
+		decoratorName = strings.ToLower(nameToken.Value)
+	}
+
+	// Check if decorator exists in registry and is a value decorator
+	decorator, decoratorType, err := decorators.GetAny(decoratorName)
+	if err != nil {
+		return nil, p.NewInvalidError("unknown decorator @" + decoratorName)
+	}
+
+	// Only value decorators are allowed in string literals
+	if decoratorType != decorators.ValueType {
+		return nil, p.NewInvalidError(fmt.Sprintf("decorator @%s cannot be used in string literals - only value decorators like @var and @env are allowed", decoratorName))
+	}
+
+	// Get parameter schema from decorator
+	paramSchema := decorator.ParameterSchema()
+
+	// Parse parameters according to schema
+	var params []ast.NamedParameter
+	var openParen, closeParen *types.Token
+
+	if p.match(types.LPAREN) {
+		openParenTok := p.current()
+		openParen = &openParenTok
+		p.advance() // consume '('
+		params, err = p.parseParameterList(paramSchema)
+		if err != nil {
+			return nil, err
+		}
+		closeParenTok, err := p.consume(types.RPAREN, "expected ')' after decorator arguments")
+		if err != nil {
+			return nil, err
+		}
+		closeParen = &closeParenTok
+	}
+
+	return &ast.ValueDecorator{
+		Name:       decoratorName,
+		Args:       params,
+		Pos:        ast.Position{Line: startPos.Line, Column: startPos.Column},
+		AtToken:    atToken,
+		NameToken:  nameToken,
+		OpenParen:  openParen,
+		CloseParen: closeParen,
+	}, nil
+}
+
 // parseValue parses a literal value (string, number, duration, boolean, identifier)
 func (p *Parser) parseValue() (ast.Expression, error) {
 	switch p.current().Type {
-	case types.STRING:
-		tok := p.current()
-		p.advance()
-		return &ast.StringLiteral{Value: tok.Value, Raw: tok.Raw, StringToken: tok}, nil
+	case types.STRING_START:
+		return p.parseStringLiteral()
 	case types.NUMBER:
 		tok := p.current()
 		p.advance()
@@ -1054,7 +1381,7 @@ func (p *Parser) parseValue() (ast.Expression, error) {
 func (p *Parser) parseParameterValue(schema *decorators.ParameterSchema, paramName string) (ast.Expression, error) {
 	// If we have schema information, validate the type
 	if schema != nil {
-		return p.parseValueWithTypeCheck(schema.Type, paramName)
+		return p.parseValueWithTypeCheck(p.convertArgTypeToExpressionType(schema.Type), paramName)
 	}
 
 	// Fallback to general value parsing if no schema
@@ -1066,13 +1393,11 @@ func (p *Parser) parseValueWithTypeCheck(expectedType types.ExpressionType, para
 	currentToken := p.current()
 
 	switch currentToken.Type {
-	case types.STRING:
+	case types.STRING_START:
 		if expectedType != types.StringType {
 			return nil, p.NewTypeError(paramName, expectedType, p.current())
 		}
-		tok := p.current()
-		p.advance()
-		return &ast.StringLiteral{Value: tok.Value, Raw: tok.Raw, StringToken: tok}, nil
+		return p.parseStringLiteral()
 
 	case types.NUMBER:
 		if expectedType != types.NumberType {
@@ -1263,6 +1588,7 @@ func (p *Parser) isPatternDecorator() bool {
 // isBlockDecorator checks if the current position starts a block decorator.
 func (p *Parser) isBlockDecorator() bool {
 	if p.current().Type != types.AT {
+		p.logger.Debug("        ❌ isBlockDecorator: not AT", "token", p.current().Type.String())
 		return false
 	}
 	if p.pos+1 < len(p.tokens) {
@@ -1272,12 +1598,20 @@ func (p *Parser) isBlockDecorator() bool {
 		if nextToken.Type == types.IDENTIFIER {
 			name = nextToken.Value
 		} else {
+			p.logger.Debug("        ❌ isBlockDecorator: next not IDENTIFIER", "next", nextToken.Type.String())
 			return false
 		}
 
 		// Use the decorator registry to check for block decorators
-		return decorators.IsBlockDecorator(name)
+		result := decorators.IsBlockDecorator(name)
+		if result {
+			p.logger.Debug("        ✅ isBlockDecorator: found", "decorator", name)
+		} else {
+			p.logger.Debug("        ❌ isBlockDecorator: not block", "name", name)
+		}
+		return result
 	}
+	p.logger.Debug("        ❌ isBlockDecorator: no next token")
 	return false
 }
 
@@ -1291,18 +1625,44 @@ func (p *Parser) addError(err error) {
 func (p *Parser) synchronize() {
 	p.advance()
 	for !p.isAtEnd() {
-		// NEWLINE tokens no longer exist - removed synchronization point
-		// A new top-level keyword is also a good place.
+		// Synchronization points for error recovery:
+
+		// 1. Top-level keywords
 		switch p.current().Type {
 		case types.VAR, types.WATCH, types.STOP:
 			return
+
+		// 2. Commands: IDENTIFIER followed by COLON (command declaration)
+		case types.IDENTIFIER:
+			if !p.isAtEnd() && p.pos < len(p.tokens)-1 && p.tokens[p.pos+1].Type == types.COLON {
+				return // Found "command-name:"
+			}
+
+		// 3. Block and Pattern decorators on potential new lines
+		case types.AT:
+			if !p.isAtEnd() && p.pos < len(p.tokens)-1 && p.tokens[p.pos+1].Type == types.IDENTIFIER {
+				decoratorName := p.tokens[p.pos+1].Value
+				// Check if this is a registered block or pattern decorator
+				if _, decoratorType, err := decorators.GetAny(decoratorName); err == nil {
+					switch decoratorType {
+					case decorators.BlockType, decorators.PatternType:
+						return // Found @parallel, @timeout, @when, etc.
+					}
+				}
+			}
+
+		// 4. Block boundaries - closing braces are good recovery points
+		case types.RBRACE:
+			p.advance() // consume the }
+			return
 		}
+
 		p.advance()
 	}
 }
 
 // validateDecoratorParameters validates parameters against the decorator's schema
-func (p *Parser) validateDecoratorParameters(decorator decorators.Decorator, params []ast.NamedParameter, decoratorName string) error {
+func (p *Parser) validateDecoratorParameters(decorator decorators.DecoratorBase, params []ast.NamedParameter, decoratorName string) error {
 	schema := decorator.ParameterSchema()
 
 	// Check required parameters
@@ -1334,7 +1694,7 @@ func (p *Parser) validateDecoratorParameters(decorator decorators.Decorator, par
 			if schemaParam.Name == paramName {
 				found = true
 				// Validate parameter type
-				if err := p.validateParameterType(param.Value, schemaParam.Type, paramName, decoratorName); err != nil {
+				if err := p.validateParameterType(param.Value, p.convertArgTypeToExpressionType(schemaParam.Type), paramName, decoratorName); err != nil {
 					return err
 				}
 				break
@@ -1389,6 +1749,27 @@ func (p *Parser) validateParameterType(value ast.Expression, expectedType ast.Ex
 	}
 
 	return nil
+}
+
+// convertArgTypeToExpressionType converts decorators.ArgType to ast.ExpressionType for parser compatibility
+func (p *Parser) convertArgTypeToExpressionType(argType decorators.ArgType) ast.ExpressionType {
+	switch argType {
+	case decorators.ArgTypeString:
+		return ast.StringType
+	case decorators.ArgTypeBool:
+		return ast.BooleanType
+	case decorators.ArgTypeInt, decorators.ArgTypeFloat:
+		return ast.NumberType
+	case decorators.ArgTypeDuration:
+		return ast.DurationType
+	case decorators.ArgTypeIdentifier:
+		return ast.IdentifierType
+	case decorators.ArgTypeList, decorators.ArgTypeMap, decorators.ArgTypeAny:
+		// For complex types, use string as fallback for now
+		return ast.StringType
+	default:
+		return ast.StringType
+	}
 }
 
 // getVariableType looks up a variable's type from the program's variable declarations

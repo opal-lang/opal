@@ -1,0 +1,21 @@
+# Simple example for testing plan generation
+hello: echo "Hello World!"
+
+test-chain: echo "first" && echo "second" || echo "fallback"
+
+test-decorators: @workdir("/tmp") {
+    echo "Testing in temp dir"
+    ls -la
+}
+
+test-parallel: @parallel {
+    echo "Task A"
+    echo "Task B" 
+    echo "Task C"
+}
+
+test-logs: {
+    @log("Starting test sequence...")
+    echo "Running main command"
+    @log("Test complete!")
+}

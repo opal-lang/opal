@@ -1,20 +1,6 @@
-# Development environment for devcmd project - smart derivation approach
+# Development environment for devcmd project - interpreter mode only
 { pkgs, self ? null, gitRev ? "dev", system }:
-let
-  # Import our library to create the development CLI using fixed-output derivation
-  devcmdLib = import ./lib.nix {
-    inherit pkgs self gitRev system;
-    lib = pkgs.lib;
-  };
 
-  # Create a shell script that generates the dev CLI on demand
-  devCLI = devcmdLib.mkDevCLI {
-    name = "devcmd-dev-cli";
-    binaryName = "dev";
-    commandsFile = ../commands.cli;
-    version = "dev-${gitRev}";
-  };
-in
 pkgs.mkShell {
   name = "devcmd-dev";
 
@@ -27,30 +13,30 @@ pkgs.mkShell {
     zsh
     nixpkgs-fmt
     gofumpt
-  ] ++ [
+  ] ++ (if self != null then [
     self.packages.${system}.devcmd # Include the devcmd binary itself
-    devCLI # Include the generated dev CLI
-  ];
+  ] else []);
 
   shellHook = ''
-    echo "🔧 Devcmd Development Environment"
+    echo "🔧 Devcmd Development Environment (Interpreter Mode)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    # Build dev CLI if it doesn't exist or if commands.cli is newer
-    if [[ ! -f "./dev-compiled" ]] || [[ "commands.cli" -nt "./dev-compiled" ]]; then
-      echo "🔨 Building dev CLI..."
-      devcmd build --file commands.cli --binary dev -o ./dev-compiled
-      echo "✅ dev CLI ready"
-    else
-      echo "✅ dev CLI ready"
-    fi
-    
     echo ""
-    echo "Available commands:"
-    echo "  devcmd - The devcmd CLI generator"
-    echo "  dev    - Development commands for this project"
+    echo "Available tools:"
+    echo "  devcmd     - The devcmd CLI generator (interpreter mode)"
+    echo "  go         - Go compiler and tools"
+    echo "  gofumpt    - Go formatter"
+    echo "  golangci-lint - Go linter"
+    echo "  nixpkgs-fmt   - Nix formatter"
     echo ""
-    echo "Run 'dev help' to see available development commands"
-    exec ${pkgs.zsh}/bin/zsh
+    echo "Development commands (run manually):"
+    echo "  go fmt ./...                    - Format Go code"
+    echo "  gofumpt -w .                   - Format with gofumpt"
+    echo "  golangci-lint run              - Run linter"
+    echo "  go test -v ./...               - Run tests"
+    echo "  cd cli && go build -o devcmd . - Build CLI"
+    echo ""
+    echo "Interpreter mode usage:"
+    echo "  ./cli/devcmd run <command> -f commands.cli"
+    echo ""
   '';
 }

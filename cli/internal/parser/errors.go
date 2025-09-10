@@ -9,11 +9,74 @@ import (
 
 // ParseError represents a parsing error with location and context information
 type ParseError struct {
-	Type    ErrorType
-	Message string
-	Token   types.Token
-	Input   string
-	Context string
+	Type        ErrorType
+	Message     string
+	Token       types.Token
+	Input       string
+	Context     string
+	OpenedAt    *types.Token // For bracket mismatch errors
+	Suggestions []string     // Possible fixes
+}
+
+// BracketTracker tracks opening brackets and their context for better error reporting
+type BracketTracker struct {
+	stack []BracketInfo
+}
+
+type BracketInfo struct {
+	Type    types.TokenType // LBRACE, LPAREN
+	Token   types.Token     // Opening token with position
+	Context string          // "command block", "decorator args", etc.
+}
+
+// Push adds an opening bracket to the tracker
+func (bt *BracketTracker) Push(tokenType types.TokenType, token types.Token, context string) {
+	bt.stack = append(bt.stack, BracketInfo{
+		Type:    tokenType,
+		Token:   token,
+		Context: context,
+	})
+}
+
+// Pop removes the last opening bracket, returns error if mismatch
+func (bt *BracketTracker) Pop(expected types.TokenType, closingToken types.Token) error {
+	if len(bt.stack) == 0 {
+		return fmt.Errorf("unexpected '%s' at %d:%d - no matching opening bracket",
+			closingToken.Value, closingToken.Line, closingToken.Column)
+	}
+
+	top := bt.stack[len(bt.stack)-1]
+	bt.stack = bt.stack[:len(bt.stack)-1]
+
+	if !isMatchingBracket(top.Type, expected) {
+		return fmt.Errorf("mismatched brackets: '%s' opened at %d:%d but '%s' found at %d:%d",
+			top.Token.Value, top.Token.Line, top.Token.Column,
+			closingToken.Value, closingToken.Line, closingToken.Column)
+	}
+
+	return nil
+}
+
+// GetUnclosedBrackets returns all unclosed brackets for error reporting
+func (bt *BracketTracker) GetUnclosedBrackets() []BracketInfo {
+	return bt.stack
+}
+
+// IsEmpty returns true if all brackets are closed
+func (bt *BracketTracker) IsEmpty() bool {
+	return len(bt.stack) == 0
+}
+
+// Helper function to check if brackets match
+func isMatchingBracket(opening, closing types.TokenType) bool {
+	switch opening {
+	case types.LBRACE:
+		return closing == types.RBRACE
+	case types.LPAREN:
+		return closing == types.RPAREN
+	default:
+		return false
+	}
 }
 
 // ErrorType represents different categories of parsing errors
