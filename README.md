@@ -34,21 +34,40 @@ devcmd build --output mycli
 ./mycli build
 ```
 
+## Current Status - IR Refactoring in Progress
+
+**🔄 Active Development:** The project is currently undergoing a major IR (Intermediate Representation) architecture refactoring to improve reliability and enable advanced features.
+
+**✅ What's Working Now:**
+- Plan generation with `--dry-run` mode (fully functional)
+- String parsing and variable substitution (`@var(NAME)`, `@env(VAR)`)
+- Tree visualization with ANSI colors
+- Complex string interpolation including nested quotes
+
+**🚧 What's Being Rebuilt:**
+- Interpreter execution mode (temporarily broken during refactor)
+- Generated CLI mode (being rebuilt on new IR foundation)
+- Some complex decorator combinations
+
+**🎯 Focus:** The refactoring provides a solid foundation for both execution modes with better reliability, testing, and advanced features.
+
 ## Features
 
-**✅ Available Now (Interpreter Mode):**
+**✅ Available Now (Plan Generation):**
 - Simple declarative syntax for command definitions
-- Direct command execution with `devcmd run <command>`
+- Rich execution plans with `devcmd run <command> --dry-run`
 - Variable substitution with `@var(NAME)` syntax
 - Shell operators: `&&`, `||`, `|`, `>>`
-- Plan generation with `--dry-run` mode
 - Standardized global flags (`--quiet`, `--verbose`, `--ci`, etc.)
 - Nix integration for development environments
 
-**🚧 Coming Soon (Generator Mode):**
+**🚧 Coming Soon (Post-Refactor):**
+- Reliable interpreter mode execution
 - Standalone CLI binary generation (no runtime dependencies)
-- Block commands and decorator support (@workdir, @timeout, @parallel)
+- Full decorator support (@workdir, @timeout, @parallel)
 - Background process management with watch/stop commands
+
+**🎯 Current Focus:** The project is in active development focusing on a robust IR (Intermediate Representation) architecture. Plan generation and dry-run functionality are fully working, while execution modes are being rebuilt on the new foundation.
 
 ## Philosophy
 
@@ -232,19 +251,26 @@ For complete syntax reference and language specification, see:
 
 ## Status
 
-**✅ Interpreter Mode (Available Now)**
-- Shell command execution with operators (`&&`, `||`, `|`, `>>`)
-- Variable substitution (`@var(NAME)`)
-- Plan generation (`--dry-run`)
+**🔄 IR Architecture Refactoring (Active Development)**
+- Major architectural improvements in progress
+- Focus on reliability and advanced features
+- Plan generation fully functional for testing new features
+
+**✅ What's Working (Available Now)**
+- Plan generation with `--dry-run` mode
+- Variable substitution (`@var(NAME)`, `@env(VAR)`)
+- String interpolation including nested quotes
+- Tree visualization with colors
 - Standardized global flags
 - Nix integration
 
-**🚧 Generator Mode (Coming Soon)**
+**🚧 What's Being Rebuilt**
+- Interpreter execution mode 
 - Standalone CLI binary generation 
 - Advanced decorators (@workdir, @timeout, @parallel)
 - Process management features
 
-This is an early-stage project focused on interpreter mode reliability. Generator mode is being reworked with a new IR-based architecture for better consistency and features.
+The refactoring provides a solid IR foundation that will enable both interpreter and generator modes with better reliability, testing, and advanced features once completed.
 
 ## Development
 
