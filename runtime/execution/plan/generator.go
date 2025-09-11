@@ -646,28 +646,6 @@ func (g *Generator) expandFileInclude(ctx *ir.Ctx, step *plan.ExecutionStep) {
 	step.Description = fmt.Sprintf("%s <file expansion not yet implemented: %s>", step.Description, includePath)
 }
 
-// generateMixedChain handles chains that contain action decorators
-// These are broken down into individual steps for better readability
-func (g *Generator) generateMixedChain(ctx *ir.Ctx, chain []ir.ChainElement) plan.ExecutionStep {
-	// Create a parent "Command chain" step with individual children
-	var children []plan.ExecutionStep
-
-	for _, element := range chain {
-		childStep := g.generateChainElement(ctx, element)
-		children = append(children, childStep)
-	}
-
-	return plan.ExecutionStep{
-		Type:        plan.StepSequence,
-		Description: "Command chain",
-		Command:     "Command chain",
-		Children:    children,
-		Metadata: map[string]string{
-			"kind": "mixed_chain",
-		},
-	}
-}
-
 // toDecoratorContext converts execution context to decorator context
 func (g *Generator) toDecoratorContext(ctx *ir.Ctx) *decorators.Ctx {
 	var ui *decorators.UIConfig
