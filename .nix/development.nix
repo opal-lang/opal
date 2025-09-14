@@ -13,9 +13,7 @@ pkgs.mkShell {
     zsh
     nixpkgs-fmt
     gofumpt
-  ] ++ (if self != null then [
-    self.packages.${system}.devcmd # Include the devcmd binary itself
-  ] else []);
+  ]; # Removed devcmd package dependency to avoid build issues
 
   shellHook = ''
     echo "🔧 Devcmd Development Environment (Interpreter Mode)"
