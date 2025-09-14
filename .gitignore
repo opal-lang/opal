@@ -570,3 +570,4 @@ local.*
 # Added by cargo
 
 /target
+vendor/
