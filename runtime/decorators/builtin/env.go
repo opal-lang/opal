@@ -150,13 +150,6 @@ func (e *EnvDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorator
 }
 
 // ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GenerateHint would provide code generation hint - @env is ALWAYS runtime
-// TODO: Implement GenerateHint with []decorators.DecoratorParam when codegen is needed
-
-// ================================================================================================
 // HELPER METHODS
 // ================================================================================================
 
@@ -191,6 +184,6 @@ func (e *EnvDecorator) extractDecoratorParameters(params []decorators.DecoratorP
 	return key, defaultValue, allowEmpty, nil
 }
 
-// extractParameters extracts the environment variable key, default value, and allowEmpty flag (legacy for codegen)
+// extractParameters extracts the environment variable key, default value, and allowEmpty flag
 // Legacy extractParameters method disabled - used AST types
 // TODO: Remove when GenerateHint is properly updated

@@ -25,13 +25,14 @@ devcmd run build
 devcmd run test --dry-run  # Show execution plan
 ```
 
-Generate standalone CLI (Coming Soon):
+Execute commands with plan visualization:
 
 ```bash
-# CLI generation is being reworked with new IR system
-# Available in future release
-devcmd build --output mycli
-./mycli build
+# See execution plan without running  
+devcmd build --dry-run
+
+# Run commands directly
+devcmd build
 ```
 
 ## Current Status - IR Refactoring in Progress
@@ -63,9 +64,9 @@ devcmd build --output mycli
 
 **🚧 Coming Soon (Post-Refactor):**
 - Reliable interpreter mode execution
-- Standalone CLI binary generation (no runtime dependencies)
 - Full decorator support (@workdir, @timeout, @parallel)
 - Background process management with watch/stop commands
+- Standalone CLI binary generation (Phase 2)
 
 **🎯 Current Focus:** The project is in active development focusing on a robust IR (Intermediate Representation) architecture. Plan generation and dry-run functionality are fully working, while execution modes are being rebuilt on the new foundation.
 
@@ -74,13 +75,13 @@ devcmd build --output mycli
 **devcmd is a simple task runner with some useful bells and whistles.**
 
 The core idea is declarative command definitions that work in multiple execution modes:
-- **✅ Interpreter mode**: `devcmd run build` for development (available now)
-- **🚧 Generated mode**: `./mycli build` for distribution (coming soon)  
-- **✅ Plan mode**: `devcmd run build --dry-run` shows execution plans (available now)
+- **✅ Interpreter mode**: `devcmd build` for running commands (available now)
+- **✅ Plan mode**: `devcmd build --dry-run` shows execution plans (available now)  
+- **📋 Generator mode**: `./mycli build` standalone binaries (planned for future)
 
 Being declarative enables powerful planning capabilities - you can see exactly what commands will run and how execution will flow before actually running anything.
 
-The interpreter mode provides immediate productivity with shell commands, operators, and variables. Generator mode will add standalone binary generation and advanced decorator support.
+The interpreter mode provides immediate productivity with shell commands, operators, and variables, while plan mode gives you visibility into execution flow. Generator mode will eventually create standalone binaries with no runtime dependencies.
 
 The goal is to keep task definitions simple and readable while providing the tools needed for modern development workflows.
 
@@ -380,8 +381,8 @@ This project is undergoing a major architectural overhaul to implement IR-based 
 - Decorators (`@workdir`, `@timeout`, `@cmd`, etc.)
 - Plan generation (`--dry-run`)
 
-**📋 Coming Next (Phase 2):**
-- Generated mode (standalone CLI binaries)
+**📋 Future Roadmap (Phase 2):**
+- Generated mode (standalone CLI binaries) 
 - Full semantic equivalence between interpreter and generated modes
 
 The fundamental architecture is solid, but expect some commands to not work during this transition period.

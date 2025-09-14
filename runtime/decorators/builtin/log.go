@@ -191,13 +191,6 @@ func (l *LogDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorator
 }
 
 // ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GenerateHint would provide code generation hint for log output
-// TODO: Implement GenerateHint with []decorators.DecoratorParam when codegen is needed
-
-// ================================================================================================
 // HELPER METHODS
 // ================================================================================================
 
@@ -238,7 +231,7 @@ func (l *LogDecorator) extractDecoratorParameters(params []decorators.DecoratorP
 	return message, level, plain, nil
 }
 
-// extractParameters extracts message, level, and plain flag from AST parameters (legacy for codegen)
+// extractParameters extracts message, level, and plain flag from AST parameters
 // Legacy extractParameters method disabled - used AST types
 // TODO: Remove when GenerateHint is properly updated
 

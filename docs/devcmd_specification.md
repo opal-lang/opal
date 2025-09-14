@@ -961,14 +961,14 @@ devcmd test
 devcmd deploy
 ```
 
-### Generated Mode (CLI Generation)
-Command definitions are compiled into standalone CLI binaries.
+### Generated Mode (Phase 2 Roadmap)
+Future: Command definitions will be compiled into standalone CLI binaries.
 
 ```bash
-# Generate standalone CLI
-devcmd build -f commands.cli --binary mycli
+# Future capability - not yet implemented  
+devcmd generate -f commands.cli --binary mycli
 
-# Use generated CLI
+# Use generated CLI (future)
 ./mycli build
 ./mycli --help
 ```

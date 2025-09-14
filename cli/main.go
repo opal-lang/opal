@@ -40,12 +40,7 @@ var (
 // Global flags
 var (
 	commandsFile string
-	templateFile string
-	binaryName   string
-	output       string
 	debug        bool
-	outputDir    string
-	generateOnly bool
 	dryRun       bool
 	noColor      bool
 
@@ -148,37 +143,15 @@ func getInputReader() (io.Reader, func() error, error) {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "devcmd [flags]",
-	Short: "Generate Go CLI applications from command definitions",
-	Long: `devcmd generates standalone Go CLI executables from simple command definition files.
-It reads .cli files containing command definitions and outputs Go source code or compiled binaries.
+	Use:   "devcmd <command> [args...]",
+	Short: "Execute commands from command definition files",
+	Long: `devcmd executes commands defined in .cli files with powerful plan visualization.
+Use --dry-run to see what would execute without running it.
 By default, it looks for commands.cli in the current directory.`,
-	Args:          cobra.NoArgs,
-	RunE:          generateCommand,
+	Args:          cobra.MinimumNArgs(1),
+	RunE:          runCommand,
 	SilenceUsage:  true, // Don't show usage on execution errors
 	SilenceErrors: true, // Don't let Cobra print errors, we'll handle them
-}
-
-var buildCmd = &cobra.Command{
-	Use:   "build [flags]",
-	Short: "Build CLI binary from command definitions",
-	Long: `Build a compiled Go CLI binary from command definitions.
-This generates the Go source code and compiles it into an executable binary.
-By default, it looks for commands.cli in the current directory.`,
-	Args:         cobra.NoArgs,
-	RunE:         buildCommand,
-	SilenceUsage: true, // Don't show usage on execution errors
-}
-
-var runCmd = &cobra.Command{
-	Use:   "run <command> [args...]",
-	Short: "Run a command directly from command definitions",
-	Long: `Execute a command directly from the CLI file without compilation.
-This interprets and runs the command immediately, useful for development and testing.
-By default, it looks for commands.cli in the current directory.`,
-	Args:         cobra.MinimumNArgs(1),
-	RunE:         runCommand,
-	SilenceUsage: true, // Don't show usage on execution errors
 }
 
 var versionCmd = &cobra.Command{
@@ -195,10 +168,7 @@ var versionCmd = &cobra.Command{
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVarP(&commandsFile, "file", "f", "commands.cli", "Path to commands file")
-	rootCmd.PersistentFlags().StringVar(&templateFile, "template", "", "Custom template file for generation")
-	rootCmd.PersistentFlags().StringVar(&binaryName, "binary", "dev", "Binary name for the generated CLI")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug output")
-	rootCmd.PersistentFlags().StringVar(&outputDir, "output-dir", "", "Directory to write generated files (default: stdout for main.go only)")
 
 	// Standardized UI control flags (persistent across all commands)
 	rootCmd.PersistentFlags().StringVar(&colorMode, "color", "auto", "Control colored output: auto, always, never")
@@ -224,28 +194,11 @@ func init() {
 		processStandardizedFlags()
 	}
 
-	// Build command specific flags
-	buildCmd.Flags().StringVarP(&output, "output", "o", "", "Output binary path (default: ./<binary-name>)")
-	buildCmd.Flags().BoolVar(&generateOnly, "generate-only", false, "Generate code only without building binary")
-
-	// Run command specific flags
-	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
-	runCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output in dry-run mode")
+	// Main command flags (moved from run subcommand)
+	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
 
 	// Add subcommands
-	rootCmd.AddCommand(buildCmd)
-	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(versionCmd)
-}
-
-func generateCommand(cmd *cobra.Command, args []string) error {
-	// TODO: Implement IR-based code generation
-	return fmt.Errorf("code generation not yet implemented with new IR-based engine")
-}
-
-func buildCommand(cmd *cobra.Command, args []string) error {
-	// TODO: Implement IR-based build command
-	return fmt.Errorf("build command not yet implemented with new IR-based engine")
 }
 
 func runCommand(cmd *cobra.Command, args []string) error {

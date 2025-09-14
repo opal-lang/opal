@@ -42,14 +42,12 @@ This module contains the CLI application that users interact with:
 ## CLI Commands
 
 ### Main Commands
-- `devcmd run <command>`: Execute a command from commands.cli
-- `devcmd build`: Generate standalone binary
-- `devcmd list`: List available commands
+- `devcmd <command>`: Execute a command from commands.cli
+- `devcmd version`: Show version information
 
 ### Options  
 - `--dry-run`: Show execution plan without running
 - `--file/-f`: Specify custom commands file
-- `--binary`: Set output binary name
 - `--no-color`: Disable colored output
 
 ## Usage Examples
@@ -64,8 +62,8 @@ devcmd run deploy --dry-run
 # Use custom commands file
 devcmd run test -f my-commands.cli
 
-# Generate standalone binary
-devcmd build --binary my-tool
+# Show execution plan  
+devcmd build --dry-run
 ```
 
 ## Architecture

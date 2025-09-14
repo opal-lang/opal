@@ -289,7 +289,7 @@ func shouldPrompt(ctx *decorators.Ctx) bool {
 
 ## Environment Variable Fallbacks
 
-For generated CLIs, environment variables provide fallback configuration:
+For future generated CLIs, environment variables will provide fallback configuration:
 
 | Flag | Environment Variable | Example |
 |------|---------------------|---------|

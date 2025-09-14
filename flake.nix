@@ -66,20 +66,6 @@
           formatter = pkgs.nixpkgs-fmt;
         }) // {
 
-      # Templates for other projects
-      templates = {
-        default = {
-          path = ./template/basic;
-          description = "Basic project with devcmd CLI (using @var() syntax for variables)";
-        };
-
-        basic = {
-          path = ./template/basic;
-          description = "Basic development commands template with @var() variable expansion";
-        };
-
-      };
-
       # Overlay for use in other flakes
       overlays.default = final: prev: {
         # Core devcmd package

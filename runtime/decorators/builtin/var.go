@@ -131,13 +131,6 @@ func (v *VarDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorator
 }
 
 // ================================================================================================
-// OPTIONAL CODE GENERATION HINT
-// ================================================================================================
-
-// GenerateHint would provide optional code generation hint using the lightweight codegen module
-// TODO: Implement GenerateHint with []decorators.DecoratorParam when codegen is needed
-
-// ================================================================================================
 // HELPER METHODS
 // ================================================================================================
 
@@ -160,6 +153,6 @@ func (v *VarDecorator) extractDecoratorVariableName(params []decorators.Decorato
 	return varName, nil
 }
 
-// extractVariableName extracts the variable name from AST parameters (legacy for codegen)
+// extractVariableName extracts the variable name from AST parameters
 // Legacy extractVariableName method disabled - used AST types
 // TODO: Remove when GenerateHint is properly updated
