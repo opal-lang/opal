@@ -1,6 +1,6 @@
 module github.com/aledsdavies/devcmd/cli
 
-go 1.24.3
+go 1.25.0
 
 require (
 	github.com/aledsdavies/devcmd/core v0.0.0
@@ -21,5 +21,3 @@ require (
 replace github.com/aledsdavies/devcmd/core => ../core
 
 replace github.com/aledsdavies/devcmd/runtime => ../runtime
-
-

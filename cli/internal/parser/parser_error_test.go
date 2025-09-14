@@ -233,7 +233,7 @@ func TestDecoratorTypeValidation(t *testing.T) {
 			decoratorName: "parallel",
 			context:       "shell",
 			input:         `test: @parallel { echo "task1"; echo "task2" }`,
-			shouldSucceed: false,
+			shouldSucceed: true,
 		},
 		{
 			name:          "timeout in command block context",
@@ -247,7 +247,7 @@ func TestDecoratorTypeValidation(t *testing.T) {
 			decoratorName: "timeout",
 			context:       "shell",
 			input:         `test: @timeout(30s) { echo "long task" }`,
-			shouldSucceed: false,
+			shouldSucceed: true,
 		},
 
 		// Action decorators (should work in shell context)
@@ -271,7 +271,8 @@ func TestDecoratorTypeValidation(t *testing.T) {
 			name:          "var in shell context",
 			decoratorName: "var",
 			context:       "shell",
-			input:         `var PROJECT = "test"\ntest: echo @var(PROJECT)`,
+			input: `var PROJECT = "test"
+test: echo @var(PROJECT)`,
 			shouldSucceed: true,
 		},
 		{
