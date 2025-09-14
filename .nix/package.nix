@@ -11,6 +11,9 @@ pkgs.buildGoModule rec {
 
   # Critical: Disable workspace mode for all build phases
   GOWORK = "off";
+  
+  # Fix Go build cache permissions
+  HOME = "/tmp";
 
   # Override vendor phase to ensure clean vendoring without workspace/replace paths
   overrideModAttrs = old: {
@@ -19,11 +22,13 @@ pkgs.buildGoModule rec {
     postPatch = ''
       # Remove replace directives that point to local paths
       sed -i '/^replace.*=> \.\./d' go.mod
+      # Sync vendor directory after cleaning go.mod
+      go mod vendor
     '';
   };
 
   # Vendor hash for CLI module dependencies  
-  vendorHash = "sha256-+Evy3Ajla7IlRpc/xcdBOGUxjGuWmiixNatvL44ABns=";
+  vendorHash = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
 
   # Build with version info
   ldflags = [
