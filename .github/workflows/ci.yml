@@ -178,7 +178,7 @@ jobs:
           
           # Test interpreter mode with simple command
           echo 'test: echo "CI test successful"' > test.cli
-          ./devcmd run test -f test.cli
+          ./devcmd test -f test.cli
 
   # Aggregate coverage reports
   aggregate-coverage:

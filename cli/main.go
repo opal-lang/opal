@@ -120,8 +120,9 @@ func getInputReader() (io.Reader, func() error, error) {
 	// (This means user ran: echo "commands" | devcmd run cmd)
 	if commandsFile == "commands.cli" { // default value - check if stdin has piped data
 		stat, err := os.Stdin.Stat()
-		if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 && stat.Size() > 0 {
-			// Data is being piped to stdin and there's actual content
+		if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
+			// Data is being piped to stdin (pipe, file redirect, etc.)
+			// Note: We don't check stat.Size() > 0 because pipes report 0 size even with data
 			return os.Stdin, func() error { return nil }, nil
 		}
 	}
