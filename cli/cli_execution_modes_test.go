@@ -23,9 +23,6 @@ func TestCLIExecutionModes(t *testing.T) {
 	t.Run("StdinMode", func(t *testing.T) {
 		t.Run("ExplicitStdinFlag", func(t *testing.T) {
 			// Test: devcmd -f - test-cmd
-			oldCommandsFile := commandsFile
-			commandsFile = "-"
-			defer func() { commandsFile = oldCommandsFile }()
 
 			// Mock stdin with command content
 			oldStdin := os.Stdin
@@ -42,7 +39,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			defer func() { os.Stdin = oldStdin }()
 
 			// Test getInputReader
-			reader, closeFunc, err := getInputReader()
+			reader, closeFunc, err := getInputReader("-")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -55,9 +52,6 @@ func TestCLIExecutionModes(t *testing.T) {
 		t.Run("PipedInputWithDefaultFile", func(t *testing.T) {
 			// Test: echo "commands" | devcmd test-cmd
 			// This should use stdin when data is piped and default file is used
-			oldCommandsFile := commandsFile
-			commandsFile = "commands.cli" // default value
-			defer func() { commandsFile = oldCommandsFile }()
 
 			// Create a pipe to simulate piped input
 			oldStdin := os.Stdin
@@ -74,7 +68,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			defer func() { os.Stdin = oldStdin }()
 
 			// Test getInputReader
-			reader, closeFunc, err := getInputReader()
+			reader, closeFunc, err := getInputReader("commands.cli")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -86,9 +80,6 @@ func TestCLIExecutionModes(t *testing.T) {
 
 		t.Run("NoPipedData", func(t *testing.T) {
 			// Test that when no data is piped, it doesn't try to read from stdin
-			oldCommandsFile := commandsFile
-			commandsFile = "commands.cli" // default value
-			defer func() { commandsFile = oldCommandsFile }()
 
 			// Create temp directory for testing
 			tempDir := t.TempDir()
@@ -99,7 +90,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			defer func() { _ = os.Chdir(oldWd) }()
 
 			// No commands.cli file exists, and no piped data
-			_, _, err = getInputReader()
+			_, _, err = getInputReader("commands.cli")
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "commands.cli")
 		})
@@ -114,11 +105,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			err := os.WriteFile(testFile, []byte(sampleCommands), 0o644)
 			require.NoError(t, err)
 
-			oldCommandsFile := commandsFile
-			commandsFile = testFile
-			defer func() { commandsFile = oldCommandsFile }()
-
-			reader, closeFunc, err := getInputReader()
+			reader, closeFunc, err := getInputReader(testFile)
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -130,11 +117,7 @@ func TestCLIExecutionModes(t *testing.T) {
 
 		t.Run("NonExistentFile", func(t *testing.T) {
 			// Test error handling for non-existent file
-			oldCommandsFile := commandsFile
-			commandsFile = "/does/not/exist.cli"
-			defer func() { commandsFile = oldCommandsFile }()
-
-			_, _, err := getInputReader()
+			_, _, err := getInputReader("/does/not/exist.cli")
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "error opening file")
 			assert.Contains(t, err.Error(), "/does/not/exist.cli")
@@ -158,11 +141,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = os.Chdir(oldWd) }()
 
-			oldCommandsFile := commandsFile
-			commandsFile = "./path/to/commands.cli"
-			defer func() { commandsFile = oldCommandsFile }()
-
-			reader, closeFunc, err := getInputReader()
+			reader, closeFunc, err := getInputReader("./path/to/commands.cli")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -189,11 +168,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = os.Chdir(oldWd) }()
 
-			oldCommandsFileVar := commandsFile
-			commandsFile = "commands.cli" // default value
-			defer func() { commandsFile = oldCommandsFileVar }()
-
-			reader, closeFunc, err := getInputReader()
+			reader, closeFunc, err := getInputReader("commands.cli")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -214,11 +189,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = os.Chdir(oldWd) }()
 
-			oldCommandsFileVar := commandsFile
-			commandsFile = "commands.cli" // default value
-			defer func() { commandsFile = oldCommandsFileVar }()
-
-			_, _, err = getInputReader()
+			_, _, err = getInputReader("commands.cli")
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "commands.cli")
 		})
@@ -229,10 +200,6 @@ func TestCLIExecutionModes(t *testing.T) {
 func TestGetInputReaderEdgeCases(t *testing.T) {
 	t.Run("EmptyStdin", func(t *testing.T) {
 		// Test behavior with empty stdin
-		oldCommandsFile := commandsFile
-		commandsFile = "-"
-		defer func() { commandsFile = oldCommandsFile }()
-
 		oldStdin := os.Stdin
 		r, w, err := os.Pipe()
 		require.NoError(t, err)
@@ -241,7 +208,7 @@ func TestGetInputReaderEdgeCases(t *testing.T) {
 
 		defer func() { os.Stdin = oldStdin }()
 
-		reader, closeFunc, err := getInputReader()
+		reader, closeFunc, err := getInputReader("-")
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
@@ -266,11 +233,7 @@ func TestGetInputReaderEdgeCases(t *testing.T) {
 		err := os.WriteFile(testFile, []byte(largeContent), 0o644)
 		require.NoError(t, err)
 
-		oldCommandsFile := commandsFile
-		commandsFile = testFile
-		defer func() { commandsFile = oldCommandsFile }()
-
-		reader, closeFunc, err := getInputReader()
+		reader, closeFunc, err := getInputReader(testFile)
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
@@ -288,11 +251,7 @@ func TestGetInputReaderEdgeCases(t *testing.T) {
 		err := os.WriteFile(testFile, []byte("test: echo hello"), 0o644)
 		require.NoError(t, err)
 
-		oldCommandsFile := commandsFile
-		commandsFile = testFile
-		defer func() { commandsFile = oldCommandsFile }()
-
-		reader, closeFunc, err := getInputReader()
+		reader, closeFunc, err := getInputReader(testFile)
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
@@ -316,9 +275,6 @@ func TestStdinDetection(t *testing.T) {
 		// This validates the condition: (stat.Mode()&os.ModeCharDevice) == 0 && stat.Size() > 0
 
 		// When using default file and stdin has piped data, should use stdin
-		oldCommandsFile := commandsFile
-		commandsFile = "commands.cli"
-		defer func() { commandsFile = oldCommandsFile }()
 
 		// Create a pipe to simulate piped input with actual data
 		oldStdin := os.Stdin
@@ -334,7 +290,7 @@ func TestStdinDetection(t *testing.T) {
 
 		defer func() { os.Stdin = oldStdin }()
 
-		reader, closeFunc, err := getInputReader()
+		reader, closeFunc, err := getInputReader("commands.cli")
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
@@ -354,11 +310,7 @@ func TestFileCloseHandling(t *testing.T) {
 		err := os.WriteFile(testFile, []byte("test: echo hello"), 0o644)
 		require.NoError(t, err)
 
-		oldCommandsFile := commandsFile
-		commandsFile = testFile
-		defer func() { commandsFile = oldCommandsFile }()
-
-		reader, closeFunc, err := getInputReader()
+		reader, closeFunc, err := getInputReader(testFile)
 		require.NoError(t, err)
 
 		// Read some content
@@ -372,11 +324,7 @@ func TestFileCloseHandling(t *testing.T) {
 	})
 
 	t.Run("StdinCloseIsNoOp", func(t *testing.T) {
-		oldCommandsFile := commandsFile
-		commandsFile = "-"
-		defer func() { commandsFile = oldCommandsFile }()
-
-		_, closeFunc, err := getInputReader()
+		_, closeFunc, err := getInputReader("-")
 		require.NoError(t, err)
 
 		// Closing stdin should be a no-op and not error

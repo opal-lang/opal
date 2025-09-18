@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/runtime/ast"
+	"github.com/aledsdavies/devcmd/core/ast"
 )
 
 // RecursionError represents a recursion detection error with cycle information

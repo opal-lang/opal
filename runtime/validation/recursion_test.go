@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/cli/internal/parser"
+	"github.com/aledsdavies/devcmd/runtime/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

@@ -1,7 +1,6 @@
 package builtin
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -73,92 +72,29 @@ func (t *TimeoutDecorator) Examples() []decorators.Example {
 	}
 }
 
-// ImportRequirements returns the dependencies needed for code generation
-func (t *TimeoutDecorator) ImportRequirements() decorators.ImportRequirement {
-	return decorators.ImportRequirement{
-		StandardLibrary: []string{"context", "time"},
-		ThirdParty:      []string{},
-		GoModules:       map[string]string{},
-	}
-}
-
-// ================================================================================================
-// BLOCK DECORATOR METHODS
-// ================================================================================================
-
-// Wrap executes the inner commands with timeout
-func (t *TimeoutDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
+// Describe generates a plan step showing timeout configuration
+func (t *TimeoutDecorator) Describe(ctx decorators.Context, args []decorators.Param, inner plan.ExecutionStep) plan.ExecutionStep {
 	duration, err := t.extractDuration(args)
 	if err != nil {
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("@timeout parameter error: %v", err),
-			ExitCode: 1,
+		return plan.ExecutionStep{
+			Type:        "error",
+			Description: fmt.Sprintf("@timeout parameter error: %v", err),
 		}
 	}
 
-	// Create a context with timeout
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), duration)
-	defer cancel()
-
-	// Channel to receive the result from inner execution
-	resultChan := make(chan decorators.CommandResult, 1)
-
-	// Execute inner commands in a goroutine
-	go func() {
-		defer func() {
-			// Recover from panics to prevent the timeout goroutine from crashing
-			if r := recover(); r != nil {
-				resultChan <- decorators.CommandResult{
-					Stderr:   fmt.Sprintf("panic during execution: %v", r),
-					ExitCode: 1,
-				}
-			}
-		}()
-
-		result := ctx.ExecSequential(inner.Steps)
-		resultChan <- result
-	}()
-
-	// Wait for either completion or timeout
-	select {
-	case result := <-resultChan:
-		// Execution completed successfully
-		return result
-
-	case <-timeoutCtx.Done():
-		// Timeout occurred
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("command timed out after %v", duration),
-			ExitCode: 124, // Standard timeout exit code
-		}
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: fmt.Sprintf("@timeout {%s timeout}", duration),
+		Children:    []plan.ExecutionStep{inner},
+		Timing: &plan.TimingInfo{
+			Timeout: &duration,
+		},
+		Metadata: map[string]string{
+			"decorator": "timeout",
+			"type":      "block",
+			"timeout":   duration.String(),
+		},
 	}
-}
-
-// Describe returns description for dry-run display
-func (t *TimeoutDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
-	duration, err := t.extractDuration(args)
-	if err != nil {
-		return plan.NewErrorStep("timeout", err)
-	}
-
-	// Create timeout step using core helpers
-	step := plan.NewDecoratorStep("timeout", plan.StepDecorator)
-	step.Description = fmt.Sprintf("@timeout(%v)", duration)
-
-	// Add metadata for display formatting (matches test expectations)
-	plan.AddMetadata(&step, "info", fmt.Sprintf("{%s timeout}", duration))
-	plan.AddMetadata(&step, "duration", duration.String())
-	plan.AddMetadata(&step, "seconds", fmt.Sprintf("%.0f", duration.Seconds()))
-
-	// Add timing information
-	step.Timing = &plan.TimingInfo{
-		Timeout: &duration,
-	}
-
-	// Set children
-	plan.SetChildren(&step, []plan.ExecutionStep{inner})
-
-	return step
 }
 
 // ================================================================================================
@@ -172,7 +108,7 @@ func (t *TimeoutDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decor
 // ================================================================================================
 
 // extractDuration extracts and validates the timeout duration
-func (t *TimeoutDecorator) extractDuration(params []decorators.DecoratorParam) (time.Duration, error) {
+func (t *TimeoutDecorator) extractDuration(params []decorators.Param) (time.Duration, error) {
 	// Default timeout
 	defaultDuration := 30 * time.Second
 
@@ -184,35 +120,35 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.DecoratorParam) (
 	var err error
 
 	// Extract duration parameter
-	switch params[0].Name {
+	switch params[0].GetName() {
 	case "":
 		// Positional parameter
-		if val, ok := params[0].Value.(time.Duration); ok {
+		if val, ok := params[0].GetValue().(time.Duration); ok {
 			duration = val
-		} else if val, ok := params[0].Value.(string); ok {
+		} else if val, ok := params[0].GetValue().(string); ok {
 			// Fallback for string values
 			duration, err = time.ParseDuration(val)
 			if err != nil {
 				return 0, fmt.Errorf("invalid duration format %q: %w (use format like '30s', '5m', '1h')", val, err)
 			}
 		} else {
-			return 0, fmt.Errorf("@timeout duration must be a duration or string, got %T", params[0].Value)
+			return 0, fmt.Errorf("@timeout duration must be a duration or string, got %T", params[0].GetValue())
 		}
 	case "duration":
 		// Named parameter
-		if val, ok := params[0].Value.(time.Duration); ok {
+		if val, ok := params[0].GetValue().(time.Duration); ok {
 			duration = val
-		} else if val, ok := params[0].Value.(string); ok {
+		} else if val, ok := params[0].GetValue().(string); ok {
 			// Fallback for string values
 			duration, err = time.ParseDuration(val)
 			if err != nil {
 				return 0, fmt.Errorf("invalid duration format %q: %w (use format like '30s', '5m', '1h')", val, err)
 			}
 		} else {
-			return 0, fmt.Errorf("@timeout duration parameter must be a duration or string, got %T", params[0].Value)
+			return 0, fmt.Errorf("@timeout duration parameter must be a duration or string, got %T", params[0].GetValue())
 		}
 	default:
-		return 0, fmt.Errorf("@timeout unknown parameter: %s", params[0].Name)
+		return 0, fmt.Errorf("@timeout unknown parameter: %s", params[0].GetName())
 	}
 
 	// Use default if zero value

@@ -1,4 +1,4 @@
-package ir
+package transform
 
 import (
 	"fmt"
@@ -6,28 +6,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aledsdavies/devcmd/core/ast"
 	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/runtime/ast"
+	"github.com/aledsdavies/devcmd/core/ir"
 )
 
 // ================================================================================================
 // AST TO IR TRANSFORMATION
 // ================================================================================================
 
-// TransformCommand converts an AST CommandDecl to IR Node
-func TransformCommand(cmd *ast.CommandDecl) (Node, error) {
+// TransformCommand converts an AST CommandDecl to IR ir.Node
+func TransformCommand(cmd *ast.CommandDecl) (ir.Node, error) {
 	return transformCommandBody(&cmd.Body)
 }
 
-// transformCommandBody converts a CommandBody to IR Node
-func transformCommandBody(body *ast.CommandBody) (Node, error) {
-	// Handle single content case - might be Pattern or Wrapper node
+// transformCommandBody converts a CommandBody to IR ir.Node
+func transformCommandBody(body *ast.CommandBody) (ir.Node, error) {
+	// Handle single content case - might be ir.Pattern or ir.Wrapper node
 	if len(body.Content) == 1 {
 		return transformCommandContent(body.Content[0])
 	}
 
-	// Multiple content items - combine into CommandSeq
-	var steps []CommandStep
+	// Multiple content items - combine into ir.CommandSeq
+	var steps []ir.CommandStep
 
 	for _, content := range body.Content {
 		node, err := transformCommandContent(content)
@@ -35,26 +36,26 @@ func transformCommandBody(body *ast.CommandBody) (Node, error) {
 			return nil, fmt.Errorf("error transforming command content: %w", err)
 		}
 
-		// Convert Node to CommandSeq and add steps
+		// Convert ir.Node to ir.CommandSeq and add steps
 		switch n := node.(type) {
-		case CommandSeq:
+		case ir.CommandSeq:
 			steps = append(steps, n.Steps...)
-		case Wrapper:
+		case ir.Wrapper:
 			// Block decorators can't be mixed with other content in command body
 			return nil, fmt.Errorf("block decorators must be the only content in a command")
-		case Pattern:
-			// Pattern decorators can't be mixed with other content in command body
+		case ir.Pattern:
+			// ir.Pattern decorators can't be mixed with other content in command body
 			return nil, fmt.Errorf("pattern decorators must be the only content in a command")
 		default:
 			return nil, fmt.Errorf("unknown node type: %T", node)
 		}
 	}
 
-	return CommandSeq{Steps: steps}, nil
+	return ir.CommandSeq{Steps: steps}, nil
 }
 
-// transformCommandContent converts CommandContent to Node (properly handling Pattern nodes)
-func transformCommandContent(content ast.CommandContent) (Node, error) {
+// transformCommandContent converts CommandContent to ir.Node (properly handling ir.Pattern nodes)
+func transformCommandContent(content ast.CommandContent) (ir.Node, error) {
 	switch c := content.(type) {
 	case *ast.ShellContent:
 		step, err := transformShellContent(c)
@@ -62,18 +63,18 @@ func transformCommandContent(content ast.CommandContent) (Node, error) {
 			return nil, err
 		}
 		if step == nil {
-			return CommandSeq{Steps: []CommandStep{}}, nil
+			return ir.CommandSeq{Steps: []ir.CommandStep{}}, nil
 		}
-		return CommandSeq{Steps: []CommandStep{*step}}, nil
+		return ir.CommandSeq{Steps: []ir.CommandStep{*step}}, nil
 	case *ast.ShellChain:
 		step, err := transformShellChain(c)
 		if err != nil {
 			return nil, err
 		}
 		if step == nil {
-			return CommandSeq{Steps: []CommandStep{}}, nil
+			return ir.CommandSeq{Steps: []ir.CommandStep{}}, nil
 		}
-		return CommandSeq{Steps: []CommandStep{*step}}, nil
+		return ir.CommandSeq{Steps: []ir.CommandStep{*step}}, nil
 	case *ast.BlockDecorator:
 		return transformBlockDecoratorToWrapper(c)
 	case *ast.PatternDecorator:
@@ -84,30 +85,30 @@ func transformCommandContent(content ast.CommandContent) (Node, error) {
 			return nil, err
 		}
 		if step == nil {
-			return CommandSeq{Steps: []CommandStep{}}, nil
+			return ir.CommandSeq{Steps: []ir.CommandStep{}}, nil
 		}
-		return CommandSeq{Steps: []CommandStep{*step}}, nil
+		return ir.CommandSeq{Steps: []ir.CommandStep{*step}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported command content type: %T", content)
 	}
 }
 
-// transformShellContent converts ShellContent to CommandStep with structured content
-func transformShellContent(shell *ast.ShellContent) (*CommandStep, error) {
-	var elements []ChainElement
-	var contentParts []ContentPart
+// transformShellContent converts ShellContent to ir.CommandStep with structured content
+func transformShellContent(shell *ast.ShellContent) (*ir.CommandStep, error) {
+	var elements []ir.ChainElement
+	var contentParts []ir.ContentPart
 
 	for _, part := range shell.Parts {
 		switch p := part.(type) {
 		case *ast.TextPart:
-			contentParts = append(contentParts, ContentPart{
-				Kind: PartKindLiteral,
+			contentParts = append(contentParts, ir.ContentPart{
+				Kind: ir.PartKindLiteral,
 				Text: p.Text,
 				Span: createSourceSpan(p.Position()),
 			})
 		case *ast.TextStringPart:
-			contentParts = append(contentParts, ContentPart{
-				Kind: PartKindLiteral,
+			contentParts = append(contentParts, ir.ContentPart{
+				Kind: ir.PartKindLiteral,
 				Text: p.Text,
 				Span: createSourceSpan(p.Position()),
 			})
@@ -118,8 +119,8 @@ func transformShellContent(shell *ast.ShellContent) (*CommandStep, error) {
 				return nil, fmt.Errorf("error transforming value decorator args: %w", err)
 			}
 
-			contentParts = append(contentParts, ContentPart{
-				Kind:          PartKindDecorator,
+			contentParts = append(contentParts, ir.ContentPart{
+				Kind:          ir.PartKindDecorator,
 				DecoratorName: p.Name,
 				DecoratorArgs: args,
 				Span:          createSourceSpan(p.Position()),
@@ -131,8 +132,8 @@ func transformShellContent(shell *ast.ShellContent) (*CommandStep, error) {
 				return nil, fmt.Errorf("error transforming action decorator args: %w", err)
 			}
 
-			actionElement := ChainElement{
-				Kind: ElementKindAction,
+			actionElement := ir.ChainElement{
+				Kind: ir.ElementKindAction,
 				Name: p.Name,
 				Args: args,
 				Span: createSourceSpan(p.Position()),
@@ -145,13 +146,13 @@ func transformShellContent(shell *ast.ShellContent) (*CommandStep, error) {
 
 	// Add shell element with structured content if we have content parts
 	if len(contentParts) > 0 {
-		shellElement := ChainElement{
-			Kind:    ElementKindShell,
-			Content: &ElementContent{Parts: contentParts},
+		shellElement := ir.ChainElement{
+			Kind:    ir.ElementKindShell,
+			Content: &ir.ElementContent{Parts: contentParts},
 			Span:    createSourceSpan(shell.Position()),
 		}
 		// Insert shell element at the beginning
-		elements = append([]ChainElement{shellElement}, elements...)
+		elements = append([]ir.ChainElement{shellElement}, elements...)
 	}
 
 	// If we have no elements, this might be an empty shell content
@@ -159,31 +160,31 @@ func transformShellContent(shell *ast.ShellContent) (*CommandStep, error) {
 		return nil, nil // Skip empty content
 	}
 
-	return &CommandStep{
+	return &ir.CommandStep{
 		Chain: elements,
 		Span:  createSourceSpan(shell.Position()),
 	}, nil
 }
 
-// transformShellChain converts ShellChain to CommandStep with chained elements
-func transformShellChain(chain *ast.ShellChain) (*CommandStep, error) {
-	var elements []ChainElement
+// transformShellChain converts ShellChain to ir.CommandStep with chained elements
+func transformShellChain(chain *ast.ShellChain) (*ir.CommandStep, error) {
+	var elements []ir.ChainElement
 
 	for i, element := range chain.Elements {
 		// Transform the shell content of this element to structured content
-		var contentParts []ContentPart
+		var contentParts []ir.ContentPart
 
 		for _, part := range element.Content.Parts {
 			switch p := part.(type) {
 			case *ast.TextPart:
-				contentParts = append(contentParts, ContentPart{
-					Kind: PartKindLiteral,
+				contentParts = append(contentParts, ir.ContentPart{
+					Kind: ir.PartKindLiteral,
 					Text: p.Text,
 					Span: createSourceSpan(p.Position()),
 				})
 			case *ast.TextStringPart:
-				contentParts = append(contentParts, ContentPart{
-					Kind: PartKindLiteral,
+				contentParts = append(contentParts, ir.ContentPart{
+					Kind: ir.PartKindLiteral,
 					Text: p.Text,
 					Span: createSourceSpan(p.Position()),
 				})
@@ -193,8 +194,8 @@ func transformShellChain(chain *ast.ShellChain) (*CommandStep, error) {
 					return nil, fmt.Errorf("error transforming value decorator args in chain element %d: %w", i, err)
 				}
 
-				contentParts = append(contentParts, ContentPart{
-					Kind:          PartKindDecorator,
+				contentParts = append(contentParts, ir.ContentPart{
+					Kind:          ir.PartKindDecorator,
 					DecoratorName: p.Name,
 					DecoratorArgs: args,
 					Span:          createSourceSpan(p.Position()),
@@ -205,133 +206,133 @@ func transformShellChain(chain *ast.ShellChain) (*CommandStep, error) {
 		}
 
 		// Create chain element with structured content
-		chainElement := ChainElement{
-			Kind:    ElementKindShell,
-			Content: &ElementContent{Parts: contentParts},
+		chainElement := ir.ChainElement{
+			Kind:    ir.ElementKindShell,
+			Content: &ir.ElementContent{Parts: contentParts},
 			Span:    createSourceSpan(element.Position()),
 		}
 
-		// Set the operator for this element (from the AST ShellChainElement.Operator)
+		// Set the operator for this element (from the AST Shell ChainElement.Operator)
 		if element.Operator != "" {
 			switch element.Operator {
 			case "&&":
-				chainElement.OpNext = ChainOpAnd
+				chainElement.OpNext = ir.ChainOpAnd
 			case "||":
-				chainElement.OpNext = ChainOpOr
+				chainElement.OpNext = ir.ChainOpOr
 			case "|":
-				chainElement.OpNext = ChainOpPipe
+				chainElement.OpNext = ir.ChainOpPipe
 			case ">>":
-				chainElement.OpNext = ChainOpAppend
+				chainElement.OpNext = ir.ChainOpAppend
 				chainElement.Target = element.Target // Set target file for append
 			default:
 				return nil, fmt.Errorf("unsupported shell operator: %s", element.Operator)
 			}
 		} else {
-			chainElement.OpNext = ChainOpNone // No operator (last element)
+			chainElement.OpNext = ir.ChainOpNone // No operator (last element)
 		}
 
 		elements = append(elements, chainElement)
 	}
 
-	return &CommandStep{
+	return &ir.CommandStep{
 		Chain: elements,
 		Span:  createSourceSpan(chain.Position()),
 	}, nil
 }
 
-// transformBlockDecoratorToWrapper converts BlockDecorator to Wrapper node
-func transformBlockDecoratorToWrapper(block *ast.BlockDecorator) (Wrapper, error) {
+// transformBlockDecoratorToWrapper converts BlockDecorator to ir.Wrapper node
+func transformBlockDecoratorToWrapper(block *ast.BlockDecorator) (ir.Wrapper, error) {
 	// Transform parameters
 	params, err := transformParameters(block.Args)
 	if err != nil {
-		return Wrapper{}, fmt.Errorf("error transforming block decorator parameters: %w", err)
+		return ir.Wrapper{}, fmt.Errorf("error transforming block decorator parameters: %w", err)
 	}
 
 	// Transform inner content to steps
-	var steps []CommandStep
+	var steps []ir.CommandStep
 	for _, content := range block.Content {
 		node, err := transformCommandContent(content)
 		if err != nil {
-			return Wrapper{}, fmt.Errorf("error transforming block decorator inner content: %w", err)
+			return ir.Wrapper{}, fmt.Errorf("error transforming block decorator inner content: %w", err)
 		}
 
-		// Convert Node to CommandSeq steps
+		// Convert ir.Node to ir.CommandSeq steps
 		switch n := node.(type) {
-		case CommandSeq:
+		case ir.CommandSeq:
 			steps = append(steps, n.Steps...)
-		case Wrapper:
-			// Nested block decorators need to be converted to CommandStep with InnerSteps
-			wrapperStep := CommandStep{
-				Chain: []ChainElement{{
-					Kind:       ElementKindBlock,
+		case ir.Wrapper:
+			// Nested block decorators need to be converted to ir.CommandStep with InnerSteps
+			wrapperStep := ir.CommandStep{
+				Chain: []ir.ChainElement{{
+					Kind:       ir.ElementKindBlock,
 					Name:       n.Kind,
 					Args:       convertParamsToDecoratorParams(n.Params),
-					InnerSteps: n.Inner.Steps, // Use CommandSeq.Steps directly
+					InnerSteps: n.Inner.Steps, // Use ir.CommandSeq.Steps directly
 				}},
 			}
 			steps = append(steps, wrapperStep)
-		case Pattern:
-			return Wrapper{}, fmt.Errorf("pattern decorators not allowed inside block decorators")
+		case ir.Pattern:
+			return ir.Wrapper{}, fmt.Errorf("pattern decorators not allowed inside block decorators")
 		default:
-			return Wrapper{}, fmt.Errorf("unknown node type in block decorator: %T", node)
+			return ir.Wrapper{}, fmt.Errorf("unknown node type in block decorator: %T", node)
 		}
 	}
 
-	// Return actual Wrapper node
-	return Wrapper{
+	// Return actual ir.Wrapper node
+	return ir.Wrapper{
 		Kind:   block.Name,
 		Params: params,
-		Inner:  CommandSeq{Steps: steps},
+		Inner:  ir.CommandSeq{Steps: steps},
 	}, nil
 }
 
-// transformPatternDecoratorToPattern converts PatternDecorator to Pattern node
-func transformPatternDecoratorToPattern(pattern *ast.PatternDecorator) (Pattern, error) {
+// transformPatternDecoratorToPattern converts PatternDecorator to ir.Pattern node
+func transformPatternDecoratorToPattern(pattern *ast.PatternDecorator) (ir.Pattern, error) {
 	// Transform parameters
 	params, err := transformParameters(pattern.Args)
 	if err != nil {
-		return Pattern{}, fmt.Errorf("error transforming pattern decorator parameters: %w", err)
+		return ir.Pattern{}, fmt.Errorf("error transforming pattern decorator parameters: %w", err)
 	}
 
 	// Transform branches
-	branches := make(map[string]CommandSeq)
+	branches := make(map[string]ir.CommandSeq)
 	for _, branch := range pattern.Patterns {
-		// Transform pattern content to CommandSeq
-		var steps []CommandStep
+		// Transform pattern content to ir.CommandSeq
+		var steps []ir.CommandStep
 		for _, content := range branch.Commands {
 			node, err := transformCommandContent(content)
 			if err != nil {
-				return Pattern{}, fmt.Errorf("error transforming pattern branch content: %w", err)
+				return ir.Pattern{}, fmt.Errorf("error transforming pattern branch content: %w", err)
 			}
 
-			// Convert Node to CommandSeq steps
+			// Convert ir.Node to ir.CommandSeq steps
 			switch n := node.(type) {
-			case CommandSeq:
+			case ir.CommandSeq:
 				steps = append(steps, n.Steps...)
-			case Wrapper:
-				// Block decorators inside pattern branches need to be converted to CommandStep with InnerSteps
-				wrapperStep := CommandStep{
-					Chain: []ChainElement{{
-						Kind:       ElementKindBlock,
+			case ir.Wrapper:
+				// Block decorators inside pattern branches need to be converted to ir.CommandStep with InnerSteps
+				wrapperStep := ir.CommandStep{
+					Chain: []ir.ChainElement{{
+						Kind:       ir.ElementKindBlock,
 						Name:       n.Kind,
 						Args:       convertParamsToDecoratorParams(n.Params),
-						InnerSteps: n.Inner.Steps, // Use CommandSeq.Steps directly
+						InnerSteps: n.Inner.Steps, // Use ir.CommandSeq.Steps directly
 					}},
 				}
 				steps = append(steps, wrapperStep)
-			case Pattern:
-				return Pattern{}, fmt.Errorf("pattern decorators inside pattern branches not yet supported (would require complex nested evaluation)")
+			case ir.Pattern:
+				return ir.Pattern{}, fmt.Errorf("pattern decorators inside pattern branches not yet supported (would require complex nested evaluation)")
 			default:
-				return Pattern{}, fmt.Errorf("unknown node type in pattern branch: %T", node)
+				return ir.Pattern{}, fmt.Errorf("unknown node type in pattern branch: %T", node)
 			}
 		}
 
 		branchName := formatPatternName(branch.Pattern)
-		branches[branchName] = CommandSeq{Steps: steps}
+		branches[branchName] = ir.CommandSeq{Steps: steps}
 	}
 
-	// Return actual Pattern node (not CommandStep)
-	return Pattern{
+	// Return actual ir.Pattern node (not ir.CommandStep)
+	return ir.Pattern{
 		Kind:     pattern.Name,
 		Params:   params,
 		Branches: branches,
@@ -339,7 +340,7 @@ func transformPatternDecoratorToPattern(pattern *ast.PatternDecorator) (Pattern,
 }
 
 // transformActionDecorator converts ActionDecorator to action element
-func transformActionDecorator(action *ast.ActionDecorator) (*CommandStep, error) {
+func transformActionDecorator(action *ast.ActionDecorator) (*ir.CommandStep, error) {
 	// Transform parameters
 	params, err := transformParameters(action.Args)
 	if err != nil {
@@ -347,15 +348,15 @@ func transformActionDecorator(action *ast.ActionDecorator) (*CommandStep, error)
 	}
 
 	// Create action element
-	actionElement := ChainElement{
-		Kind: ElementKindAction,
+	actionElement := ir.ChainElement{
+		Kind: ir.ElementKindAction,
 		Name: action.Name,
 		Args: convertParamsToDecoratorParams(params),
 		Span: createSourceSpan(action.Position()),
 	}
 
-	return &CommandStep{
-		Chain: []ChainElement{actionElement},
+	return &ir.CommandStep{
+		Chain: []ir.ChainElement{actionElement},
 		Span:  createSourceSpan(action.Position()),
 	}, nil
 }
@@ -430,8 +431,8 @@ func transformExpression(expr ast.Expression) (interface{}, error) {
 }
 
 // transformDecoratorArgs directly converts AST NamedParameter to DecoratorParam
-func transformDecoratorArgs(astArgs []ast.NamedParameter) ([]decorators.DecoratorParam, error) {
-	params := make([]decorators.DecoratorParam, 0, len(astArgs))
+func transformDecoratorArgs(astArgs []ast.NamedParameter) ([]decorators.Param, error) {
+	params := make([]decorators.Param, 0, len(astArgs))
 
 	for _, arg := range astArgs {
 		value, err := transformExpression(arg.Value)
@@ -439,9 +440,9 @@ func transformDecoratorArgs(astArgs []ast.NamedParameter) ([]decorators.Decorato
 			return nil, fmt.Errorf("transforming argument expression: %w", err)
 		}
 
-		param := decorators.DecoratorParam{
-			Name:  arg.Name,
-			Value: value,
+		param := decorators.Param{
+			ParamName:  arg.Name,
+			ParamValue: value,
 		}
 		params = append(params, param)
 	}
@@ -450,16 +451,16 @@ func transformDecoratorArgs(astArgs []ast.NamedParameter) ([]decorators.Decorato
 }
 
 // convertParamsToDecoratorParams converts map parameters to DecoratorParam slice
-func convertParamsToDecoratorParams(params map[string]interface{}) []decorators.DecoratorParam {
-	var result []decorators.DecoratorParam
+func convertParamsToDecoratorParams(params map[string]interface{}) []decorators.Param {
+	var result []decorators.Param
 
 	// Handle positional parameters first (those with _pos_ prefix)
 	for i := 0; ; i++ {
 		key := fmt.Sprintf("_pos_%d", i)
 		if value, exists := params[key]; exists {
-			result = append(result, decorators.DecoratorParam{
-				Name:  "", // Empty name for positional
-				Value: value,
+			result = append(result, decorators.Param{
+				ParamName:  "", // Empty name for positional
+				ParamValue: value,
 			})
 		} else {
 			break
@@ -469,9 +470,9 @@ func convertParamsToDecoratorParams(params map[string]interface{}) []decorators.
 	// Handle named parameters
 	for key, value := range params {
 		if !strings.HasPrefix(key, "_pos_") {
-			result = append(result, decorators.DecoratorParam{
-				Name:  key,
-				Value: value,
+			result = append(result, decorators.Param{
+				ParamName:  key,
+				ParamValue: value,
 			})
 		}
 	}
@@ -484,8 +485,8 @@ func convertParamsToDecoratorParams(params map[string]interface{}) []decorators.
 // ================================================================================================
 
 // createSourceSpan converts AST Position to IR SourceSpan
-func createSourceSpan(pos ast.Position) *SourceSpan {
-	return &SourceSpan{
+func createSourceSpan(pos ast.Position) *ir.SourceSpan {
+	return &ir.SourceSpan{
 		File:   "", // File path would be set by caller
 		Line:   pos.Line,
 		Column: pos.Column,

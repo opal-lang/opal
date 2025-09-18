@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/cli/internal/lexer"
+	"github.com/aledsdavies/devcmd/core/ast"
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/types"
-	"github.com/aledsdavies/devcmd/runtime/ast"
+	"github.com/aledsdavies/devcmd/runtime/lexer"
 )
 
 // Parser implements a fast, spec-compliant recursive descent parser for the Devcmd language.
@@ -1796,12 +1796,10 @@ func (p *Parser) getVariableType(varName string) (ast.ExpressionType, bool) {
 	return ast.StringType, false // Return any type since it wasn't found
 }
 
-// validatePatternBranches validates pattern branches against the decorator's pattern schema
+// validatePatternBranches validates pattern branches using the decorator's own validation logic
 func (p *Parser) validatePatternBranches(decorator decorators.PatternDecorator, patterns []ast.PatternBranch, decoratorName string) error {
-	schema := decorator.PatternSchema()
-
-	// Track which patterns are provided
-	providedPatterns := make(map[string]bool)
+	// Extract pattern names
+	var patternNames []string
 	for _, patternBranch := range patterns {
 		var patternName string
 
@@ -1815,35 +1813,17 @@ func (p *Parser) validatePatternBranches(decorator decorators.PatternDecorator, 
 			return fmt.Errorf("unknown pattern type for @%s decorator", decoratorName)
 		}
 
-		// Check for wildcard
-		if patternName == "default" {
-			if !schema.AllowsWildcard {
-				return fmt.Errorf("@%s decorator does not allow 'default' wildcard pattern", decoratorName)
-			}
-		} else {
-			// Check if this specific pattern is allowed
-			if !schema.AllowsAnyIdentifier && len(schema.AllowedPatterns) > 0 {
-				allowed := false
-				for _, allowedPattern := range schema.AllowedPatterns {
-					if patternName == allowedPattern {
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
-					return fmt.Errorf("unknown pattern '%s' for @%s decorator", patternName, decoratorName)
-				}
-			}
-		}
-
-		providedPatterns[patternName] = true
+		patternNames = append(patternNames, patternName)
 	}
 
-	// Check for missing required patterns
-	for _, requiredPattern := range schema.RequiredPatterns {
-		if !providedPatterns[requiredPattern] {
-			return fmt.Errorf("missing required pattern '%s' for @%s decorator", requiredPattern, decoratorName)
+	// Let the decorator validate its own patterns
+	if errs := decorator.Validate(patternNames); len(errs) > 0 {
+		// Combine all validation errors
+		var errMsgs []string
+		for _, err := range errs {
+			errMsgs = append(errMsgs, err.Error())
 		}
+		return fmt.Errorf("@%s validation errors: %s", decoratorName, strings.Join(errMsgs, "; "))
 	}
 
 	return nil

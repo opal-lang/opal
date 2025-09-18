@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/runtime/ir"
+	"github.com/aledsdavies/devcmd/core/ir"
+	"github.com/aledsdavies/devcmd/runtime/execution/context"
 )
 
 // PlanExecutor handles dry-run/plan execution mode
@@ -25,7 +26,7 @@ func NewPlanExecutor(registry *decorators.Registry, output io.Writer) *PlanExecu
 }
 
 // ExecuteNode executes an IR node in plan mode (dry-run)
-func (e *PlanExecutor) ExecuteNode(ctx *ir.Ctx, node ir.Node) ir.CommandResult {
+func (e *PlanExecutor) ExecuteNode(ctx *context.Ctx, node ir.Node) context.CommandResult {
 	if ctx.Debug {
 		_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] ExecuteNode called with node type: %T\n", node)
 	}
@@ -50,7 +51,7 @@ func (e *PlanExecutor) ExecuteNode(ctx *ir.Ctx, node ir.Node) ir.CommandResult {
 		if ctx.Debug {
 			_, _ = fmt.Fprintf(e.output, "[DEBUG PlanExecutor] Unknown node type: %T\n", node)
 		}
-		return ir.CommandResult{
+		return context.CommandResult{
 			Stderr:   fmt.Sprintf("Unknown node type: %T", node),
 			ExitCode: 1,
 		}
@@ -58,7 +59,7 @@ func (e *PlanExecutor) ExecuteNode(ctx *ir.Ctx, node ir.Node) ir.CommandResult {
 }
 
 // executeCommandSeq shows a sequence of command steps
-func (e *PlanExecutor) executeCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) ir.CommandResult {
+func (e *PlanExecutor) executeCommandSeq(ctx *context.Ctx, seq ir.CommandSeq) context.CommandResult {
 	_, _ = fmt.Fprintf(e.output, "📋 Plan: Executing %d command steps:\n", len(seq.Steps))
 
 	for i, step := range seq.Steps {
@@ -66,15 +67,15 @@ func (e *PlanExecutor) executeCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) ir.Comm
 		e.showStep(ctx, step)
 	}
 
-	return ir.CommandResult{ExitCode: 0}
+	return context.CommandResult{ExitCode: 0}
 }
 
 // executeWrapper shows a block decorator plan
-func (e *PlanExecutor) executeWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) ir.CommandResult {
+func (e *PlanExecutor) executeWrapper(ctx *context.Ctx, wrapper ir.Wrapper) context.CommandResult {
 	_, exists := e.registry.GetBlock(wrapper.Kind)
 	if !exists {
 		_, _ = fmt.Fprintf(e.output, "❌ Unknown block decorator: @%s\n", wrapper.Kind)
-		return ir.CommandResult{
+		return context.CommandResult{
 			Stderr:   fmt.Sprintf("Block decorator @%s not found", wrapper.Kind),
 			ExitCode: 1,
 		}
@@ -96,11 +97,11 @@ func (e *PlanExecutor) executeWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) ir.Comman
 }
 
 // executePattern shows a pattern decorator plan
-func (e *PlanExecutor) executePattern(ctx *ir.Ctx, pattern ir.Pattern) ir.CommandResult {
+func (e *PlanExecutor) executePattern(ctx *context.Ctx, pattern ir.Pattern) context.CommandResult {
 	_, exists := e.registry.GetPattern(pattern.Kind)
 	if !exists {
 		_, _ = fmt.Fprintf(e.output, "❌ Unknown pattern decorator: @%s\n", pattern.Kind)
-		return ir.CommandResult{
+		return context.CommandResult{
 			Stderr:   fmt.Sprintf("Pattern decorator @%s not found", pattern.Kind),
 			ExitCode: 1,
 		}
@@ -119,11 +120,11 @@ func (e *PlanExecutor) executePattern(ctx *ir.Ctx, pattern ir.Pattern) ir.Comman
 
 	_, _ = fmt.Fprintf(e.output, "}\n")
 
-	return ir.CommandResult{ExitCode: 0}
+	return context.CommandResult{ExitCode: 0}
 }
 
 // showStep displays a command step in plan format
-func (e *PlanExecutor) showStep(ctx *ir.Ctx, step ir.CommandStep) {
+func (e *PlanExecutor) showStep(ctx *context.Ctx, step ir.CommandStep) {
 	if len(step.Chain) == 0 {
 		_, _ = fmt.Fprintf(e.output, "(empty)\n")
 		return
@@ -158,7 +159,7 @@ func (e *PlanExecutor) showStep(ctx *ir.Ctx, step ir.CommandStep) {
 }
 
 // showElement displays a single chain element
-func (e *PlanExecutor) showElement(ctx *ir.Ctx, element ir.ChainElement) string {
+func (e *PlanExecutor) showElement(ctx *context.Ctx, element ir.ChainElement) string {
 	switch element.Kind {
 	case ir.ElementKindShell:
 		return e.showShellElement(ctx, element)
@@ -172,16 +173,34 @@ func (e *PlanExecutor) showElement(ctx *ir.Ctx, element ir.ChainElement) string 
 }
 
 // showShellElement displays a shell element with structured content
-func (e *PlanExecutor) showShellElement(ctx *ir.Ctx, element ir.ChainElement) string {
+func (e *PlanExecutor) showShellElement(ctx *context.Ctx, element ir.ChainElement) string {
 	if element.Content == nil {
 		return "<missing content>"
 	}
 
 	// Convert execution context to decorator context for content resolution
-	decorCtx := e.toDecoratorContext(ctx)
 
-	// Show plan description with value decorator resolution using ChainElement method
-	return element.PlanDescription(decorCtx, e.registry)
+	// Create a simple description based on element type
+	if element.Content != nil {
+		// For shell elements with structured content, show resolved content
+		var result strings.Builder
+		for _, part := range element.Content.Parts {
+			switch part.Kind {
+			case ir.PartKindLiteral:
+				result.WriteString(part.Text)
+			case ir.PartKindDecorator:
+				result.WriteString("@" + part.DecoratorName + "(...)")
+			}
+		}
+		return result.String()
+	}
+
+	// For action/block elements, show name with args
+	if element.Name != "" {
+		return fmt.Sprintf("@%s(...)", element.Name)
+	}
+
+	return "shell command"
 }
 
 // formatParams formats wrapper parameters for display
@@ -198,37 +217,35 @@ func (e *PlanExecutor) formatParams(params map[string]interface{}) string {
 }
 
 // formatDecoratorArgs formats decorator arguments for display
-func (e *PlanExecutor) formatDecoratorArgs(args []decorators.DecoratorParam) string {
+func (e *PlanExecutor) formatDecoratorArgs(args []decorators.Param) string {
 	if len(args) == 0 {
 		return ""
 	}
 
 	var parts []string
 	for _, arg := range args {
-		if arg.Name != "" {
-			parts = append(parts, fmt.Sprintf("%s=%v", arg.Name, arg.Value))
+		if arg.GetName() != "" {
+			parts = append(parts, fmt.Sprintf("%s=%v", arg.GetName(), arg.GetValue()))
 		} else {
-			parts = append(parts, fmt.Sprintf("%v", arg.Value))
+			parts = append(parts, fmt.Sprintf("%v", arg.GetValue()))
 		}
 	}
 	return strings.Join(parts, ", ")
 }
 
 // toDecoratorContext converts execution context to decorator context
-func (e *PlanExecutor) toDecoratorContext(ctx *ir.Ctx) *decorators.Ctx {
-	var ui *decorators.UIConfig
+//
+//nolint:unused // Helper function for future context conversion needs
+func (e *PlanExecutor) toDecoratorContext(ctx *context.Ctx) *context.Ctx {
+	var ui *context.UIConfig
 	if ctx.UIConfig != nil {
-		ui = &decorators.UIConfig{
-			ColorMode:   ctx.UIConfig.ColorMode,
-			Quiet:       ctx.UIConfig.Quiet,
-			Verbose:     ctx.UIConfig.Verbose,
-			Interactive: ctx.UIConfig.Interactive,
+		ui = &context.UIConfig{
+			NoColor:     ctx.UIConfig.NoColor,
 			AutoConfirm: ctx.UIConfig.AutoConfirm,
-			CI:          ctx.UIConfig.CI,
 		}
 	}
 
-	return &decorators.Ctx{
+	return &context.Ctx{
 		Env:     ctx.Env,
 		Vars:    ctx.Vars,
 		WorkDir: ctx.WorkDir,

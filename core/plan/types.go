@@ -52,13 +52,13 @@ const (
 	EdgeParallel  EdgeKind = "parallel"   // Parallel execution
 )
 
-// StepType defines the core semantic types of execution steps
-// This is intentionally minimal to support plugin-friendly architecture
+// StepType defines generic step types for plan visualization
+// This is intentionally minimal and generic to support any decorator
 type StepType string
 
 const (
 	StepShell     StepType = "shell"     // Direct shell command execution
-	StepDecorator StepType = "decorator" // Any decorator (timeout, parallel, retry, etc.)
+	StepDecorator StepType = "decorator" // Any decorator (uses metadata for specifics)
 	StepSequence  StepType = "sequence"  // Sequential command group
 )
 
@@ -101,32 +101,17 @@ type TimingInfo struct {
 	ConcurrencyLimit int            `json:"concurrency_limit,omitempty"`
 }
 
-// ExecutionMode represents different modes of command execution
-type ExecutionMode string
-
-const (
-	ModeSequential    ExecutionMode = "sequential"     // Default sequential execution
-	ModeParallel      ExecutionMode = "parallel"       // Concurrent execution
-	ModeConditional   ExecutionMode = "conditional"    // Branch-based execution
-	ModeErrorHandling ExecutionMode = "error_handling" // Try/catch/finally patterns
-	ModeRetry         ExecutionMode = "retry"          // Retry with backoff
-	ModeTimeout       ExecutionMode = "timeout"        // Time-bounded execution
-	// Plugins can define their own execution modes
-)
+// ExecutionMode is removed - decorators define their own behavior via metadata
+// This makes the plan system truly generic and decorator-agnostic
 
 // PlanSummary provides a high-level overview of the execution plan
 type PlanSummary struct {
-	TotalSteps        int                   `json:"total_steps"`
-	ShellCommands     int                   `json:"shell_commands"`
-	ExecutionModes    map[ExecutionMode]int `json:"execution_modes"` // Mode -> count
-	DecoratorsUsed    []string              `json:"decorators_used"` // Decorator names for reference
-	EstimatedDuration *time.Duration        `json:"estimated_duration,omitempty"`
-	RequiredImports   []string              `json:"required_imports"`
-
-	// Legacy fields for backward compatibility - can be removed later
-	ConditionalBranches int  `json:"conditional_branches,omitempty"`
-	ParallelSections    int  `json:"parallel_sections,omitempty"`
-	HasErrorHandling    bool `json:"has_error_handling,omitempty"`
+	TotalSteps        int            `json:"total_steps"`
+	ShellCommands     int            `json:"shell_commands"`
+	DecoratorsUsed    []string       `json:"decorators_used"` // Decorator names for reference
+	EstimatedDuration *time.Duration `json:"estimated_duration,omitempty"`
+	RequiredImports   []string       `json:"required_imports"`
+	Metadata          map[string]any `json:"metadata,omitempty"` // Generic metadata from decorators
 }
 
 // ANSI color codes
@@ -386,24 +371,19 @@ func (ep *ExecutionPlan) countStepsRecursive(steps []ExecutionStep, summary *Pla
 			summary.ShellCommands++
 		}
 
-		// Use execution mode approach - fully plugin-friendly!
+		// Collect decorator metadata generically
 		if step.Type == StepDecorator {
-			// Decorators declare their execution mode via metadata
-			if modeStr := step.Metadata["execution_mode"]; modeStr != "" {
-				mode := ExecutionMode(modeStr)
-				if summary.ExecutionModes == nil {
-					summary.ExecutionModes = make(map[ExecutionMode]int)
-				}
-				summary.ExecutionModes[mode]++
-
-				// Maintain legacy fields for backward compatibility
-				switch mode {
-				case ModeParallel:
-					summary.ParallelSections++
-				case ModeConditional:
-					summary.ConditionalBranches++
-				case ModeErrorHandling:
-					summary.HasErrorHandling = true
+			// Decorators provide their own metadata for summary
+			if decoratorName := step.Metadata["decorator"]; decoratorName != "" {
+				// Aggregate any custom metadata the decorator provides
+				for key, value := range step.Metadata {
+					if key != "decorator" { // Skip the name itself
+						if summary.Metadata == nil {
+							summary.Metadata = make(map[string]any)
+						}
+						// Simple aggregation - decorators can extend this pattern
+						summary.Metadata[key] = value
+					}
 				}
 			}
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/devcmd/runtime/execution/context"
 )
 
 // Register the @parallel decorator on package import
@@ -83,64 +84,26 @@ func (p *ParallelDecorator) Examples() []decorators.Example {
 	}
 }
 
-// ImportRequirements returns the dependencies needed for code generation
-func (p *ParallelDecorator) ImportRequirements() decorators.ImportRequirement {
-	return decorators.ImportRequirement{
-		StandardLibrary: []string{"sync", "runtime"},
-		ThirdParty:      []string{},
-		GoModules:       map[string]string{},
-	}
-}
+// Note: ImportRequirements removed - will be added back when code generation is implemented
 
 // ================================================================================================
 // BLOCK DECORATOR METHODS
 // ================================================================================================
 
 // WrapCommands executes multiple steps in parallel using the documented API
-func (p *ParallelDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, commands decorators.CommandSeq) decorators.CommandResult {
-	// Calculate default concurrency based on CPU cores
-	defaultConcurrency := ctx.NumCPU * 2
-	maxConcurrency := 50
-	if defaultConcurrency > maxConcurrency {
-		defaultConcurrency = maxConcurrency
+func (p *ParallelDecorator) WrapCommands(ctx decorators.Context, args []decorators.Param, commands interface{}) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return context.CommandResult{
+		Stdout:   "",
+		Stderr:   "runtime execution not implemented yet - use plan mode",
+		ExitCode: 1,
 	}
-
-	mode, _, err := p.extractParameters(args, defaultConcurrency)
-	if err != nil {
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("@parallel parameter error: %v", err),
-			ExitCode: 1,
-		}
-	}
-
-	// Convert mode string to ParallelMode enum
-	var parallelMode decorators.ParallelMode
-	switch mode {
-	case "fail-fast":
-		parallelMode = decorators.ParallelModeFailFast
-	case "immediate":
-		parallelMode = decorators.ParallelModeFailImmediate
-	case "all":
-		parallelMode = decorators.ParallelModeAll
-	default:
-		parallelMode = decorators.ParallelModeFailFast
-	}
-
-	// Use the documented context helper method for parallel execution
-	result := ctx.ExecParallel(commands.Steps, parallelMode)
-
-	// Add parallel execution marker for debugging
-	if result.Stdout != "" {
-		result.Stdout = fmt.Sprintf("[parallel] %s", result.Stdout)
-	}
-
-	return result
 }
 
 // Describe returns description for dry-run display
-func (p *ParallelDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+func (p *ParallelDecorator) Describe(ctx decorators.Context, args []decorators.Param, inner plan.ExecutionStep) plan.ExecutionStep {
 	// Calculate default concurrency based on CPU cores
-	defaultConcurrency := ctx.NumCPU * 2
+	defaultConcurrency := ctx.SystemInfo().GetNumCPU() * 2
 	maxConcurrency := 50
 	if defaultConcurrency > maxConcurrency {
 		defaultConcurrency = maxConcurrency
@@ -159,7 +122,7 @@ func (p *ParallelDecorator) Describe(ctx *decorators.Ctx, args []decorators.Deco
 	taskCount := plan.CountParallelTasks(inner)
 
 	// Calculate effective concurrency: min(user_setting, task_count, cpu_cores)
-	cpuCores := ctx.NumCPU
+	cpuCores := ctx.SystemInfo().GetNumCPU()
 	effectiveConcurrency := plan.MinInt(userConcurrency, taskCount, cpuCores)
 
 	// Format description
@@ -204,26 +167,26 @@ func (p *ParallelDecorator) Describe(ctx *decorators.Ctx, args []decorators.Deco
 // ================================================================================================
 
 // extractParameters extracts and validates parallel execution parameters
-func (p *ParallelDecorator) extractParameters(params []decorators.DecoratorParam, defaultConcurrency int) (mode string, concurrency int, err error) {
+func (p *ParallelDecorator) extractParameters(params []decorators.Param, defaultConcurrency int) (mode string, concurrency int, err error) {
 	// Set defaults
 	mode = "fail-fast"
 	concurrency = defaultConcurrency
 
 	// Extract optional parameters
 	for _, param := range params {
-		switch param.Name {
+		switch param.GetName() {
 		case "mode":
-			if val, ok := param.Value.(string); ok {
+			if val, ok := param.GetValue().(string); ok {
 				mode = val
 			} else {
-				return "", 0, fmt.Errorf("@parallel mode parameter must be a string, got %T", param.Value)
+				return "", 0, fmt.Errorf("@parallel mode parameter must be a string, got %T", param.GetValue())
 			}
 		case "concurrency":
-			if val, ok := param.Value.(int); ok {
+			if val, ok := param.GetValue().(int); ok {
 				concurrency = val
-			} else if val, ok := param.Value.(float64); ok {
+			} else if val, ok := param.GetValue().(float64); ok {
 				concurrency = int(val)
-			} else if val, ok := param.Value.(string); ok {
+			} else if val, ok := param.GetValue().(string); ok {
 				// Try to parse string as integer
 				if parsed, err := strconv.Atoi(val); err == nil {
 					concurrency = parsed
@@ -231,10 +194,10 @@ func (p *ParallelDecorator) extractParameters(params []decorators.DecoratorParam
 					return "", 0, fmt.Errorf("@parallel concurrency parameter must be a number, got string %q", val)
 				}
 			} else {
-				return "", 0, fmt.Errorf("@parallel concurrency parameter must be a number, got %T", param.Value)
+				return "", 0, fmt.Errorf("@parallel concurrency parameter must be a number, got %T", param.GetValue())
 			}
 		default:
-			return "", 0, fmt.Errorf("@parallel unknown parameter: %s", param.Name)
+			return "", 0, fmt.Errorf("@parallel unknown parameter: %s", param.GetName())
 		}
 	}
 

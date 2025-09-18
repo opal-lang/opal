@@ -10,10 +10,84 @@ import (
 // DECORATOR PARAMETER TYPES - Self-contained parameter abstraction for decorators
 // ================================================================================================
 
-// DecoratorParam represents a parameter passed to a decorator
-type DecoratorParam struct {
-	Name  string      `json:"name"`  // Parameter name (empty for positional)
-	Value interface{} `json:"value"` // Parameter value
+// Param is the concrete implementation of Param interface
+type Param struct {
+	ParamName  string      `json:"name"`  // Parameter name (empty for positional)
+	ParamValue interface{} `json:"value"` // Parameter value
+}
+
+// GetName returns the parameter name (empty for positional parameters)
+func (p Param) GetName() string {
+	return p.ParamName
+}
+
+// GetValue returns the raw parameter value
+func (p Param) GetValue() any {
+	return p.ParamValue
+}
+
+// AsString converts the parameter value to a string
+func (p Param) AsString() string {
+	if str, ok := p.ParamValue.(string); ok {
+		return str
+	}
+	return fmt.Sprintf("%v", p.ParamValue)
+}
+
+// AsBool converts the parameter value to a boolean
+func (p Param) AsBool() bool {
+	switch v := p.ParamValue.(type) {
+	case bool:
+		return v
+	case string:
+		val, _ := strconv.ParseBool(v)
+		return val
+	}
+	return false
+}
+
+// AsInt converts the parameter value to an integer
+func (p Param) AsInt() int {
+	switch v := p.ParamValue.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		val, _ := strconv.Atoi(v)
+		return val
+	}
+	return 0
+}
+
+// AsFloat converts the parameter value to a float64
+func (p Param) AsFloat() float64 {
+	switch v := p.ParamValue.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case string:
+		val, _ := strconv.ParseFloat(v, 64)
+		return val
+	}
+	return 0.0
+}
+
+// NewParam creates a new parameter with the given name and value
+func NewParam(name string, value any) Param {
+	return Param{ParamName: name, ParamValue: value}
+}
+
+// NewPositionalParam creates a new positional parameter with the given value
+func NewPositionalParam(value any) Param {
+	return Param{ParamName: "", ParamValue: value}
 }
 
 // ================================================================================================
@@ -21,47 +95,30 @@ type DecoratorParam struct {
 // ================================================================================================
 
 // ExtractString extracts a string parameter by name, with optional default value
-func ExtractString(params []DecoratorParam, name string, defaultVal string) (string, error) {
+func ExtractString(params []Param, name string, defaultVal string) (string, error) {
 	for _, param := range params {
-		if param.Name == name {
-			if str, ok := param.Value.(string); ok {
-				return str, nil
-			}
-			return fmt.Sprintf("%v", param.Value), nil // Convert to string
+		if param.GetName() == name {
+			return param.AsString(), nil
 		}
 	}
 	return defaultVal, nil
 }
 
 // ExtractInt extracts an integer parameter by name, with optional default value
-func ExtractInt(params []DecoratorParam, name string, defaultVal int) (int, error) {
+func ExtractInt(params []Param, name string, defaultVal int) (int, error) {
 	for _, param := range params {
-		if param.Name == name {
-			switch v := param.Value.(type) {
-			case int:
-				return v, nil
-			case int64:
-				return int(v), nil
-			case float64:
-				return int(v), nil
-			case string:
-				if val, err := strconv.Atoi(v); err == nil {
-					return val, nil
-				}
-				return 0, fmt.Errorf("parameter '%s': cannot convert '%s' to integer", name, v)
-			default:
-				return 0, fmt.Errorf("parameter '%s': expected integer, got %T", name, v)
-			}
+		if param.GetName() == name {
+			return param.AsInt(), nil
 		}
 	}
 	return defaultVal, nil
 }
 
 // ExtractBool extracts a boolean parameter by name, with optional default value
-func ExtractBool(params []DecoratorParam, name string, defaultVal bool) (bool, error) {
+func ExtractBool(params []Param, name string, defaultVal bool) (bool, error) {
 	for _, param := range params {
-		if param.Name == name {
-			switch v := param.Value.(type) {
+		if param.GetName() == name {
+			switch v := param.GetValue().(type) {
 			case bool:
 				return v, nil
 			case string:
@@ -78,10 +135,10 @@ func ExtractBool(params []DecoratorParam, name string, defaultVal bool) (bool, e
 }
 
 // ExtractDuration extracts a duration parameter by name, with optional default value
-func ExtractDuration(params []DecoratorParam, name string, defaultVal time.Duration) (time.Duration, error) {
+func ExtractDuration(params []Param, name string, defaultVal time.Duration) (time.Duration, error) {
 	for _, param := range params {
-		if param.Name == name {
-			switch v := param.Value.(type) {
+		if param.GetName() == name {
+			switch v := param.GetValue().(type) {
 			case time.Duration:
 				return v, nil
 			case string:
@@ -102,10 +159,10 @@ func ExtractDuration(params []DecoratorParam, name string, defaultVal time.Durat
 }
 
 // ExtractFloat extracts a float64 parameter by name, with optional default value
-func ExtractFloat(params []DecoratorParam, name string, defaultVal float64) (float64, error) {
+func ExtractFloat(params []Param, name string, defaultVal float64) (float64, error) {
 	for _, param := range params {
-		if param.Name == name {
-			switch v := param.Value.(type) {
+		if param.GetName() == name {
+			switch v := param.GetValue().(type) {
 			case float64:
 				return v, nil
 			case float32:
@@ -128,12 +185,12 @@ func ExtractFloat(params []DecoratorParam, name string, defaultVal float64) (flo
 }
 
 // ExtractPositional extracts a positional parameter by index (0-based)
-func ExtractPositional(params []DecoratorParam, index int) (interface{}, error) {
+func ExtractPositional(params []Param, index int) (interface{}, error) {
 	positionalCount := 0
 	for _, param := range params {
-		if param.Name == "" { // Positional parameter
+		if param.GetName() == "" { // Positional parameter
 			if positionalCount == index {
-				return param.Value, nil
+				return param.GetValue(), nil
 			}
 			positionalCount++
 		}
@@ -142,7 +199,7 @@ func ExtractPositional(params []DecoratorParam, index int) (interface{}, error) 
 }
 
 // ExtractPositionalString extracts a positional string parameter by index
-func ExtractPositionalString(params []DecoratorParam, index int, defaultVal string) (string, error) {
+func ExtractPositionalString(params []Param, index int, defaultVal string) (string, error) {
 	value, err := ExtractPositional(params, index)
 	if err != nil {
 		return defaultVal, nil // Return default if not found
@@ -155,9 +212,9 @@ func ExtractPositionalString(params []DecoratorParam, index int, defaultVal stri
 }
 
 // HasParam checks if a parameter with the given name exists
-func HasParam(params []DecoratorParam, name string) bool {
+func HasParam(params []Param, name string) bool {
 	for _, param := range params {
-		if param.Name == name {
+		if param.GetName() == name {
 			return true
 		}
 	}
@@ -165,15 +222,15 @@ func HasParam(params []DecoratorParam, name string) bool {
 }
 
 // ParamCount returns the total number of parameters
-func ParamCount(params []DecoratorParam) int {
+func ParamCount(params []Param) int {
 	return len(params)
 }
 
 // PositionalCount returns the number of positional parameters
-func PositionalCount(params []DecoratorParam) int {
+func PositionalCount(params []Param) int {
 	count := 0
 	for _, param := range params {
-		if param.Name == "" {
+		if param.GetName() == "" {
 			count++
 		}
 	}
@@ -181,10 +238,10 @@ func PositionalCount(params []DecoratorParam) int {
 }
 
 // NamedCount returns the number of named parameters
-func NamedCount(params []DecoratorParam) int {
+func NamedCount(params []Param) int {
 	count := 0
 	for _, param := range params {
-		if param.Name != "" {
+		if param.GetName() != "" {
 			count++
 		}
 	}

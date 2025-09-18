@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/runtime/ir"
+	"github.com/aledsdavies/devcmd/core/ir"
+	"github.com/aledsdavies/devcmd/runtime/execution/context"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -396,8 +397,8 @@ func TestPlanGenerator_ActionDecorator_NotFound(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "nonexistent",
-						Args: []decorators.DecoratorParam{
-							{Name: "message", Value: "test"},
+						Args: []decorators.Param{
+							decorators.NewParam("message", "test"),
 						},
 					},
 				},
@@ -465,8 +466,8 @@ func TestPlanGenerator_ActionDecorator_Cmd(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "cmd",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "build"},
+						Args: []decorators.Param{
+							decorators.NewPositionalParam("build"),
 						},
 					},
 				},
@@ -507,8 +508,8 @@ func TestPlanGenerator_ActionDecorator_Log(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Starting build"},
+						Args: []decorators.Param{
+							decorators.NewPositionalParam("Starting build"),
 						},
 					},
 				},
@@ -541,8 +542,8 @@ func TestPlanGenerator_ActionDecorator_LogMultiline(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Line 1\nLine 2\nLine 3"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Line 1\nLine 2\nLine 3"},
 						},
 					},
 				},
@@ -575,9 +576,9 @@ func TestPlanGenerator_ActionDecorator_LogWithLevel(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Error occurred"},
-							{Name: "level", Value: "error"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Error occurred"},
+							{ParamName: "level", ParamValue: "error"},
 						},
 					},
 				},
@@ -610,9 +611,9 @@ func TestPlanGenerator_ActionDecorator_LogPlain(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Simple message"},
-							{Name: "plain", Value: true},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Simple message"},
+							{ParamName: "plain", ParamValue: true},
 						},
 					},
 				},
@@ -645,8 +646,8 @@ func TestPlanGenerator_ActionDecorator_MultipleLogs(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "First message"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "First message"},
 						},
 					},
 				},
@@ -656,8 +657,8 @@ func TestPlanGenerator_ActionDecorator_MultipleLogs(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Second message"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Second message"},
 						},
 					},
 				},
@@ -691,8 +692,8 @@ func TestPlanGenerator_ActionDecorator_LogInChain(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Starting"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Starting"},
 						},
 						OpNext: ir.ChainOpAnd,
 					},
@@ -708,8 +709,8 @@ func TestPlanGenerator_ActionDecorator_LogInChain(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "Done"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "Done"},
 						},
 					},
 				},
@@ -742,8 +743,8 @@ func TestPlanGenerator_ActionDecorator_LogWithColorTags(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "{green}Success!{/green}"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "{green}Success!{/green}"},
 						},
 					},
 				},
@@ -777,8 +778,8 @@ func TestPlanGenerator_ActionDecorator_LogLongMessage(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "log",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: longMessage},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: longMessage},
 						},
 					},
 				},
@@ -813,8 +814,8 @@ func TestPlanGenerator_BlockDecorator_Timeout(t *testing.T) {
 					{
 						Kind: ir.ElementKindBlock,
 						Name: "timeout",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "30s"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "30s"},
 						},
 						InnerSteps: []ir.CommandStep{
 							{
@@ -870,7 +871,7 @@ func TestPlanGenerator_BlockDecorator_Parallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{},
+								Args: []decorators.Param{},
 								InnerSteps: []ir.CommandStep{
 									{
 										Chain: []ir.ChainElement{
@@ -919,7 +920,7 @@ func TestPlanGenerator_BlockDecorator_Parallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{},
+								Args: []decorators.Param{},
 								InnerSteps: []ir.CommandStep{
 									{
 										Chain: []ir.ChainElement{
@@ -955,7 +956,7 @@ func TestPlanGenerator_BlockDecorator_Parallel(t *testing.T) {
 							{
 								Kind:       ir.ElementKindBlock,
 								Name:       "parallel",
-								Args:       []decorators.DecoratorParam{},
+								Args:       []decorators.Param{},
 								InnerSteps: []ir.CommandStep{},
 							},
 						},
@@ -977,8 +978,8 @@ func TestPlanGenerator_BlockDecorator_Parallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{
-									{Name: "concurrency", Value: 3},
+								Args: []decorators.Param{
+									{ParamName: "concurrency", ParamValue: 3},
 								},
 								InnerSteps: []ir.CommandStep{
 									{
@@ -1067,8 +1068,8 @@ func TestPlanGenerator_BlockDecorator_Parallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{
-									{Name: "concurrency", Value: "5"},
+								Args: []decorators.Param{
+									{ParamName: "concurrency", ParamValue: "5"},
 								},
 								InnerSteps: []ir.CommandStep{
 									{
@@ -1143,15 +1144,15 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{},
+								Args: []decorators.Param{},
 								InnerSteps: []ir.CommandStep{
 									{
 										Chain: []ir.ChainElement{
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "core-deps"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "core-deps"},
 												},
 											},
 										},
@@ -1161,8 +1162,8 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "runtime-deps"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "runtime-deps"},
 												},
 											},
 										},
@@ -1190,15 +1191,15 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{},
+								Args: []decorators.Param{},
 								InnerSteps: []ir.CommandStep{
 									{
 										Chain: []ir.ChainElement{
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "build"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "build"},
 												},
 											},
 										},
@@ -1238,8 +1239,8 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{
-									{Name: "mode", Value: "all"},
+								Args: []decorators.Param{
+									{ParamName: "mode", ParamValue: "all"},
 								},
 								InnerSteps: []ir.CommandStep{
 									{
@@ -1247,8 +1248,8 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 											{
 												Kind: ir.ElementKindAction,
 												Name: "log",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "Starting task 1"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "Starting task 1"},
 												},
 											},
 										},
@@ -1258,8 +1259,8 @@ func TestPlanGenerator_BlockDecorator_ParallelWithActionDecorators(t *testing.T)
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "test-all"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "test-all"},
 												},
 											},
 										},
@@ -1305,8 +1306,8 @@ func TestPlanGenerator_BlockDecorator_Retry(t *testing.T) {
 					{
 						Kind: ir.ElementKindBlock,
 						Name: "retry",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "3"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "3"},
 						},
 						InnerSteps: []ir.CommandStep{
 							{
@@ -1355,8 +1356,8 @@ func TestPlanGenerator_BlockDecorator_Workdir(t *testing.T) {
 					{
 						Kind: ir.ElementKindBlock,
 						Name: "workdir",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "/tmp"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "/tmp"},
 						},
 						InnerSteps: []ir.CommandStep{
 							{
@@ -1472,8 +1473,8 @@ func TestPlanGenerator_MultipleDecorators(t *testing.T) {
 					{
 						Kind: ir.ElementKindBlock,
 						Name: "timeout",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "30s"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "30s"},
 						},
 						InnerSteps: []ir.CommandStep{
 							{
@@ -1481,15 +1482,15 @@ func TestPlanGenerator_MultipleDecorators(t *testing.T) {
 									{
 										Kind: ir.ElementKindBlock,
 										Name: "parallel",
-										Args: []decorators.DecoratorParam{},
+										Args: []decorators.Param{},
 										InnerSteps: []ir.CommandStep{
 											{
 												Chain: []ir.ChainElement{
 													{
 														Kind: ir.ElementKindAction,
 														Name: "log",
-														Args: []decorators.DecoratorParam{
-															{Name: "", Value: "task1"},
+														Args: []decorators.Param{
+															{ParamName: "", ParamValue: "task1"},
 														},
 													},
 												},
@@ -1499,8 +1500,8 @@ func TestPlanGenerator_MultipleDecorators(t *testing.T) {
 													{
 														Kind: ir.ElementKindAction,
 														Name: "log",
-														Args: []decorators.DecoratorParam{
-															{Name: "", Value: "task2"},
+														Args: []decorators.Param{
+															{ParamName: "", ParamValue: "task2"},
 														},
 													},
 												},
@@ -1575,8 +1576,8 @@ func TestPlanGenerator_CommandCallingParallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindAction,
 								Name: "log",
-								Args: []decorators.DecoratorParam{
-									{Name: "", Value: "Setting up development environment..."},
+								Args: []decorators.Param{
+									{ParamName: "", ParamValue: "Setting up development environment..."},
 								},
 							},
 						},
@@ -1586,15 +1587,15 @@ func TestPlanGenerator_CommandCallingParallel(t *testing.T) {
 							{
 								Kind: ir.ElementKindBlock,
 								Name: "parallel",
-								Args: []decorators.DecoratorParam{},
+								Args: []decorators.Param{},
 								InnerSteps: []ir.CommandStep{
 									{
 										Chain: []ir.ChainElement{
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "core-deps"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "core-deps"},
 												},
 											},
 										},
@@ -1604,8 +1605,8 @@ func TestPlanGenerator_CommandCallingParallel(t *testing.T) {
 											{
 												Kind: ir.ElementKindAction,
 												Name: "cmd",
-												Args: []decorators.DecoratorParam{
-													{Name: "", Value: "runtime-deps"},
+												Args: []decorators.Param{
+													{ParamName: "", ParamValue: "runtime-deps"},
 												},
 											},
 										},
@@ -1629,8 +1630,8 @@ func TestPlanGenerator_CommandCallingParallel(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "cmd",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "setup"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "setup"},
 						},
 					},
 				},
@@ -1708,8 +1709,8 @@ func TestPlanGenerator_CommandCallingPatternDecorator(t *testing.T) {
 									{
 										Kind: ir.ElementKindAction,
 										Name: "cmd",
-										Args: []decorators.DecoratorParam{
-											{Name: "", Value: "backup-db"},
+										Args: []decorators.Param{
+											{ParamName: "", ParamValue: "backup-db"},
 										},
 									},
 								},
@@ -1735,8 +1736,8 @@ func TestPlanGenerator_CommandCallingPatternDecorator(t *testing.T) {
 									{
 										Kind: ir.ElementKindAction,
 										Name: "log",
-										Args: []decorators.DecoratorParam{
-											{Name: "", Value: "Deployment failed, cleaning up"},
+										Args: []decorators.Param{
+											{ParamName: "", ParamValue: "Deployment failed, cleaning up"},
 										},
 									},
 								},
@@ -1746,8 +1747,8 @@ func TestPlanGenerator_CommandCallingPatternDecorator(t *testing.T) {
 									{
 										Kind: ir.ElementKindAction,
 										Name: "cmd",
-										Args: []decorators.DecoratorParam{
-											{Name: "", Value: "cleanup"},
+										Args: []decorators.Param{
+											{ParamName: "", ParamValue: "cleanup"},
 										},
 									},
 								},
@@ -1769,8 +1770,8 @@ func TestPlanGenerator_CommandCallingPatternDecorator(t *testing.T) {
 					{
 						Kind: ir.ElementKindAction,
 						Name: "cmd",
-						Args: []decorators.DecoratorParam{
-							{Name: "", Value: "deploy"},
+						Args: []decorators.Param{
+							{ParamName: "", ParamValue: "deploy"},
 						},
 					},
 				},
@@ -1958,8 +1959,8 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 				{
 					Kind: ir.ElementKindAction,
 					Name: "log",
-					Args: []decorators.DecoratorParam{
-						{Name: "", Value: "starting"},
+					Args: []decorators.Param{
+						{ParamName: "", ParamValue: "starting"},
 					},
 					OpNext: ir.ChainOpAnd,
 				},
@@ -1975,8 +1976,8 @@ func TestPlanGenerator_ShellChaining_SpecBehavior(t *testing.T) {
 				{
 					Kind: ir.ElementKindAction,
 					Name: "log",
-					Args: []decorators.DecoratorParam{
-						{Name: "", Value: "done"},
+					Args: []decorators.Param{
+						{ParamName: "", ParamValue: "done"},
 					},
 				},
 			},
@@ -2267,8 +2268,8 @@ func TestPlanGenerator_ShellChaining_CorrectSpecBehavior(t *testing.T) {
 				{
 					Kind: ir.ElementKindAction,
 					Name: "log",
-					Args: []decorators.DecoratorParam{
-						{Name: "", Value: "starting"},
+					Args: []decorators.Param{
+						{ParamName: "", ParamValue: "starting"},
 					},
 					OpNext: ir.ChainOpAnd,
 				},
@@ -2284,8 +2285,8 @@ func TestPlanGenerator_ShellChaining_CorrectSpecBehavior(t *testing.T) {
 				{
 					Kind: ir.ElementKindAction,
 					Name: "log",
-					Args: []decorators.DecoratorParam{
-						{Name: "", Value: "done"},
+					Args: []decorators.Param{
+						{ParamName: "", ParamValue: "done"},
 					},
 				},
 			},
@@ -2420,15 +2421,24 @@ func TestPlanGenerator_MultipleStepsVsChains(t *testing.T) {
 }
 
 // Helper function to create a test context
-func createTestContext() *ir.Ctx {
-	return &ir.Ctx{
+func createTestContext() *context.Ctx {
+	return &context.Ctx{
 		DryRun: true,
 		Vars:   make(map[string]string),
-		Env: &ir.EnvSnapshot{
+		Env: ir.EnvSnapshot{
 			Values: make(map[string]string),
+		},
+		SysInfo: context.SystemInfoSnapshot{
+			NumCPU:   4, // Deterministic value for tests
+			MemoryMB: 8192,
+			OS:       "linux",
+			Arch:     "amd64",
+			Hostname: "test-host",
+			TempDir:  "/tmp",
+			HomeDir:  "/home/test",
+			UserName: "test",
 		},
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
-		NumCPU: 4, // Deterministic value for tests
 	}
 }

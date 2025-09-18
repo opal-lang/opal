@@ -5,8 +5,9 @@ import (
 	"strings"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
+	"github.com/aledsdavies/devcmd/core/ir"
 	"github.com/aledsdavies/devcmd/core/plan"
-	"github.com/aledsdavies/devcmd/runtime/ir"
+	"github.com/aledsdavies/devcmd/runtime/execution/context"
 )
 
 // PlanExpansionResolver implements decorators.ExpansionResolver for plan generation
@@ -33,6 +34,28 @@ func (r *PlanExpansionResolver) ResolveCommand(name string) (interface{}, error)
 		return nil, fmt.Errorf("no command resolver available")
 	}
 	return r.baseCommandResolver.GetCommand(name)
+}
+
+// resolveElementContent creates a display string from structured content
+func (g *Generator) resolveElementContent(content *ir.ElementContent) string {
+	if content == nil {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, part := range content.Parts {
+		switch part.Kind {
+		case ir.PartKindLiteral:
+			result.WriteString(part.Text)
+		case ir.PartKindDecorator:
+			// For plan generation, show decorator call syntax
+			result.WriteString("@" + part.DecoratorName)
+			if len(part.DecoratorArgs) > 0 {
+				result.WriteString("(...)")
+			}
+		}
+	}
+	return result.String()
 }
 
 // CommandResolver is the old interface name - kept for backward compatibility
@@ -69,7 +92,7 @@ func (g *Generator) SetCommandResolver(resolver CommandResolver) {
 
 // GenerateFromIR generates an ExecutionPlan from an IR node
 // This is the main entry point called from the engine
-func (g *Generator) GenerateFromIR(ctx *ir.Ctx, node ir.Node, commandName string) *plan.ExecutionPlan {
+func (g *Generator) GenerateFromIR(ctx *context.Ctx, node ir.Node, commandName string) *plan.ExecutionPlan {
 	if ctx.Debug {
 		fmt.Printf("[DEBUG PlanGenerator] GenerateFromIR called for command: %s, node type: %T\n", commandName, node)
 	}
@@ -126,7 +149,7 @@ func (g *Generator) GenerateFromIR(ctx *ir.Ctx, node ir.Node, commandName string
 }
 
 // generateStep converts an IR node to an ExecutionStep
-func (g *Generator) generateStep(ctx *ir.Ctx, node ir.Node) plan.ExecutionStep {
+func (g *Generator) generateStep(ctx *context.Ctx, node ir.Node) plan.ExecutionStep {
 	switch n := node.(type) {
 	case ir.CommandSeq:
 		return g.generateCommandSeq(ctx, n)
@@ -143,7 +166,7 @@ func (g *Generator) generateStep(ctx *ir.Ctx, node ir.Node) plan.ExecutionStep {
 }
 
 // generateCommandSeq generates a sequence of command steps
-func (g *Generator) generateCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) plan.ExecutionStep {
+func (g *Generator) generateCommandSeq(ctx *context.Ctx, seq ir.CommandSeq) plan.ExecutionStep {
 	step := plan.ExecutionStep{
 		Type:        plan.StepSequence,
 		Description: fmt.Sprintf("Execute %d command steps", len(seq.Steps)),
@@ -160,7 +183,7 @@ func (g *Generator) generateCommandSeq(ctx *ir.Ctx, seq ir.CommandSeq) plan.Exec
 }
 
 // generateCommandStep generates a single command step (chain of elements)
-func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) plan.ExecutionStep {
+func (g *Generator) generateCommandStep(ctx *context.Ctx, cmdStep ir.CommandStep) plan.ExecutionStep {
 	if len(cmdStep.Chain) == 0 {
 		return plan.ExecutionStep{
 			Type:        plan.StepShell,
@@ -174,26 +197,20 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 		// Check if single element has operators (like >> output.txt)
 		if element.OpNext != "" {
 			// Treat single element with operators as a chain too
-			decorCtx := g.toDecoratorContext(ctx)
 
 			var elementText string
 			if element.Kind == ir.ElementKindShell && element.Content != nil {
-				resolvedText, err := element.Content.Resolve(decorCtx, g.registry)
-				if err != nil {
-					elementText = fmt.Sprintf("<error: %v>", err)
-				} else {
-					elementText = resolvedText
-				}
+				elementText = g.resolveElementContent(element.Content)
 			} else if element.Kind == ir.ElementKindAction {
 				elementText = fmt.Sprintf("@%s", element.Name)
 				if len(element.Args) > 0 {
 					elementText += "("
 					var argParts []string
 					for _, arg := range element.Args {
-						if arg.Name == "" {
-							argParts = append(argParts, fmt.Sprintf("%v", arg.Value))
+						if arg.GetName() == "" {
+							argParts = append(argParts, fmt.Sprintf("%v", arg.GetValue()))
 						} else {
-							argParts = append(argParts, fmt.Sprintf("%s=%v", arg.Name, arg.Value))
+							argParts = append(argParts, fmt.Sprintf("%s=%v", arg.GetName(), arg.GetValue()))
 						}
 					}
 					elementText += strings.Join(argParts, ", ") + ")"
@@ -253,7 +270,6 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 
 	// Multiple elements - treat as a single shell chain command per spec
 	// Shell operators like && || | should be one command, not separate steps
-	decorCtx := g.toDecoratorContext(ctx)
 
 	// Build the complete chain command string
 	var parts []string
@@ -262,12 +278,7 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 
 		// Get the text for this element
 		if element.Kind == ir.ElementKindShell && element.Content != nil {
-			resolvedText, err := element.Content.Resolve(decorCtx, g.registry)
-			if err != nil {
-				elementText = fmt.Sprintf("<error: %v>", err)
-			} else {
-				elementText = resolvedText
-			}
+			elementText = g.resolveElementContent(element.Content)
 		} else if element.Kind == ir.ElementKindAction {
 			// For action decorators in chains, show the decorator syntax
 			elementText = fmt.Sprintf("@%s", element.Name)
@@ -275,10 +286,10 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 				elementText += "("
 				var argParts []string
 				for _, arg := range element.Args {
-					if arg.Name == "" {
-						argParts = append(argParts, fmt.Sprintf("%v", arg.Value))
+					if arg.GetName() == "" {
+						argParts = append(argParts, fmt.Sprintf("%v", arg.GetValue()))
 					} else {
-						argParts = append(argParts, fmt.Sprintf("%s=%v", arg.Name, arg.Value))
+						argParts = append(argParts, fmt.Sprintf("%s=%v", arg.GetName(), arg.GetValue()))
 					}
 				}
 				elementText += strings.Join(argParts, ", ") + ")"
@@ -323,7 +334,7 @@ func (g *Generator) generateCommandStep(ctx *ir.Ctx, cmdStep ir.CommandStep) pla
 }
 
 // generateChainElement generates a single chain element
-func (g *Generator) generateChainElement(ctx *ir.Ctx, element ir.ChainElement) plan.ExecutionStep {
+func (g *Generator) generateChainElement(ctx *context.Ctx, element ir.ChainElement) plan.ExecutionStep {
 	switch element.Kind {
 	case ir.ElementKindShell:
 		return g.generateShellElement(ctx, element)
@@ -340,9 +351,8 @@ func (g *Generator) generateChainElement(ctx *ir.Ctx, element ir.ChainElement) p
 }
 
 // generateShellElement generates a shell command element
-func (g *Generator) generateShellElement(ctx *ir.Ctx, element ir.ChainElement) plan.ExecutionStep {
+func (g *Generator) generateShellElement(ctx *context.Ctx, element ir.ChainElement) plan.ExecutionStep {
 	// Convert execution context to decorator context
-	decorCtx := g.toDecoratorContext(ctx)
 
 	// Get resolved command text using structured content
 	var command string
@@ -350,14 +360,8 @@ func (g *Generator) generateShellElement(ctx *ir.Ctx, element ir.ChainElement) p
 
 	if element.Content != nil {
 		// Use the new structured content system
-		resolvedText, err := element.Content.Resolve(decorCtx, g.registry)
-		if err != nil {
-			command = fmt.Sprintf("<error resolving content: %v>", err)
-			description = command
-		} else {
-			command = resolvedText
-			description = element.PlanDescription(decorCtx, g.registry)
-		}
+		command = g.resolveElementContent(element.Content)
+		description = command
 	} else {
 		// Fallback for old-style elements (should not happen in new code)
 		command = "<missing structured content>"
@@ -375,7 +379,7 @@ func (g *Generator) generateShellElement(ctx *ir.Ctx, element ir.ChainElement) p
 }
 
 // generateActionElement generates an action decorator element
-func (g *Generator) generateActionElement(ctx *ir.Ctx, element ir.ChainElement) plan.ExecutionStep {
+func (g *Generator) generateActionElement(ctx *context.Ctx, element ir.ChainElement) plan.ExecutionStep {
 	decorator, exists := g.registry.GetAction(element.Name)
 	if !exists {
 		return plan.ExecutionStep{
@@ -388,14 +392,13 @@ func (g *Generator) generateActionElement(ctx *ir.Ctx, element ir.ChainElement) 
 	}
 
 	// Convert execution context to decorator context
-	decorCtx := g.toDecoratorContext(ctx)
 
 	// Use decorator's Describe method for plan generation
-	return decorator.Describe(decorCtx, element.Args)
+	return decorator.Describe(ctx, element.Args)
 }
 
 // generateBlockElement generates a block decorator element
-func (g *Generator) generateBlockElement(ctx *ir.Ctx, element ir.ChainElement) plan.ExecutionStep {
+func (g *Generator) generateBlockElement(ctx *context.Ctx, element ir.ChainElement) plan.ExecutionStep {
 	decorator, exists := g.registry.GetBlock(element.Name)
 	if !exists {
 		return plan.ExecutionStep{
@@ -421,14 +424,13 @@ func (g *Generator) generateBlockElement(ctx *ir.Ctx, element ir.ChainElement) p
 	}
 
 	// Convert execution context to decorator context
-	decorCtx := g.toDecoratorContext(ctx)
 
 	// Use decorator's Describe method for plan generation
-	return decorator.Describe(decorCtx, element.Args, innerStep)
+	return decorator.Describe(ctx, element.Args, innerStep)
 }
 
 // generateWrapper generates a wrapper (block decorator) step
-func (g *Generator) generateWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) plan.ExecutionStep {
+func (g *Generator) generateWrapper(ctx *context.Ctx, wrapper ir.Wrapper) plan.ExecutionStep {
 	decorator, exists := g.registry.GetBlock(wrapper.Kind)
 	if !exists {
 		return plan.ExecutionStep{
@@ -450,23 +452,19 @@ func (g *Generator) generateWrapper(ctx *ir.Ctx, wrapper ir.Wrapper) plan.Execut
 	innerStep.Metadata["original_step_count"] = fmt.Sprintf("%d", len(wrapper.Inner.Steps))
 
 	// Convert parameters to decorator format
-	var args []decorators.DecoratorParam
+	var args []decorators.Param
 	for name, value := range wrapper.Params {
-		args = append(args, decorators.DecoratorParam{
-			Name:  name,
-			Value: value,
-		})
+		args = append(args, decorators.NewParam(name, value))
 	}
 
 	// Convert execution context to decorator context
-	decorCtx := g.toDecoratorContext(ctx)
 
 	// Use decorator's Describe method for plan generation
-	return decorator.Describe(decorCtx, args, innerStep)
+	return decorator.Describe(ctx, args, innerStep)
 }
 
 // generatePattern generates a pattern decorator step
-func (g *Generator) generatePattern(ctx *ir.Ctx, pattern ir.Pattern) plan.ExecutionStep {
+func (g *Generator) generatePattern(ctx *context.Ctx, pattern ir.Pattern) plan.ExecutionStep {
 	decorator, exists := g.registry.GetPattern(pattern.Kind)
 	if !exists {
 		return plan.ExecutionStep{
@@ -474,7 +472,7 @@ func (g *Generator) generatePattern(ctx *ir.Ctx, pattern ir.Pattern) plan.Execut
 			Description: fmt.Sprintf("Unknown pattern: @%s", pattern.Kind),
 			Metadata: map[string]string{
 				"decorator":      pattern.Kind,
-				"execution_mode": string(plan.ModeConditional),
+				"execution_mode": "conditional",
 				"error":          "decorator_not_found",
 			},
 		}
@@ -487,19 +485,15 @@ func (g *Generator) generatePattern(ctx *ir.Ctx, pattern ir.Pattern) plan.Execut
 	}
 
 	// Convert parameters to decorator format
-	var args []decorators.DecoratorParam
+	var args []decorators.Param
 	for name, value := range pattern.Params {
-		args = append(args, decorators.DecoratorParam{
-			Name:  name,
-			Value: value,
-		})
+		args = append(args, decorators.NewParam(name, value))
 	}
 
 	// Convert execution context to decorator context
-	decorCtx := g.toDecoratorContext(ctx)
 
-	// Use decorator's Describe method for plan generation
-	return decorator.Describe(decorCtx, args, branches)
+	// Use decorator's Describe method for plan generation with context
+	return decorator.Describe(ctx, args, branches)
 }
 
 // generateSummary generates plan summary information
@@ -532,16 +526,13 @@ func (g *Generator) countSteps(steps []plan.ExecutionStep, summary *plan.PlanSum
 
 			// Use execution mode for categorization - works with any decorator
 			if modeStr := step.Metadata["execution_mode"]; modeStr != "" {
-				mode := plan.ExecutionMode(modeStr)
+				mode := modeStr
 
 				// Legacy field updates for backward compatibility
 				switch mode {
-				case plan.ModeParallel:
-					summary.ParallelSections++
-				case plan.ModeConditional:
-					summary.ConditionalBranches++
-				case plan.ModeErrorHandling:
-					summary.HasErrorHandling = true
+				case "parallel":
+				case "conditional":
+				case "error_handling":
 				}
 			}
 
@@ -565,13 +556,13 @@ func (g *Generator) addDecoratorToSummary(decoratorName string, summary *plan.Pl
 }
 
 // expandCommandReferences recursively expands steps based on expansion hints in metadata
-func (g *Generator) expandCommandReferences(ctx *ir.Ctx, executionPlan *plan.ExecutionPlan) {
+func (g *Generator) expandCommandReferences(ctx *context.Ctx, executionPlan *plan.ExecutionPlan) {
 	// Recursively expand all steps based on their expansion hints
 	g.expandStepsRecursive(ctx, executionPlan.Steps)
 }
 
 // expandStepsRecursive recursively processes steps to expand based on expansion hints
-func (g *Generator) expandStepsRecursive(ctx *ir.Ctx, steps []plan.ExecutionStep) {
+func (g *Generator) expandStepsRecursive(ctx *context.Ctx, steps []plan.ExecutionStep) {
 	for i := range steps {
 		step := &steps[i]
 
@@ -597,7 +588,7 @@ func (g *Generator) expandStepsRecursive(ctx *ir.Ctx, steps []plan.ExecutionStep
 }
 
 // expandCommandReference expands a command reference using the command resolver
-func (g *Generator) expandCommandReference(ctx *ir.Ctx, step *plan.ExecutionStep) {
+func (g *Generator) expandCommandReference(ctx *context.Ctx, step *plan.ExecutionStep) {
 	cmdName := step.Metadata["command_name"]
 	if cmdName == "" {
 		step.Description = fmt.Sprintf("%s <error: no command_name in metadata>", step.Description)
@@ -629,47 +620,45 @@ func (g *Generator) expandCommandReference(ctx *ir.Ctx, step *plan.ExecutionStep
 }
 
 // expandTemplateInclude expands a template include (placeholder for future implementation)
-func (g *Generator) expandTemplateInclude(ctx *ir.Ctx, step *plan.ExecutionStep) {
+func (g *Generator) expandTemplateInclude(ctx *context.Ctx, step *plan.ExecutionStep) {
 	templatePath := step.Metadata["template_path"]
 	step.Description = fmt.Sprintf("%s <template expansion not yet implemented: %s>", step.Description, templatePath)
 }
 
 // expandModuleImport expands a module import (placeholder for future implementation)
-func (g *Generator) expandModuleImport(ctx *ir.Ctx, step *plan.ExecutionStep) {
+func (g *Generator) expandModuleImport(ctx *context.Ctx, step *plan.ExecutionStep) {
 	moduleName := step.Metadata["module_name"]
 	step.Description = fmt.Sprintf("%s <module expansion not yet implemented: %s>", step.Description, moduleName)
 }
 
 // expandFileInclude expands a file include (placeholder for future implementation)
-func (g *Generator) expandFileInclude(ctx *ir.Ctx, step *plan.ExecutionStep) {
+func (g *Generator) expandFileInclude(ctx *context.Ctx, step *plan.ExecutionStep) {
 	includePath := step.Metadata["include_path"]
 	step.Description = fmt.Sprintf("%s <file expansion not yet implemented: %s>", step.Description, includePath)
 }
 
 // toDecoratorContext converts execution context to decorator context
-func (g *Generator) toDecoratorContext(ctx *ir.Ctx) *decorators.Ctx {
-	var ui *decorators.UIConfig
+//
+//nolint:unused // Helper function for future context conversion needs
+func (g *Generator) toDecoratorContext(ctx *context.Ctx) *context.Ctx {
+	var ui *context.UIConfig
 	if ctx.UIConfig != nil {
-		ui = &decorators.UIConfig{
-			ColorMode:   ctx.UIConfig.ColorMode,
-			Quiet:       ctx.UIConfig.Quiet,
-			Verbose:     ctx.UIConfig.Verbose,
-			Interactive: ctx.UIConfig.Interactive,
+		ui = &context.UIConfig{
+			NoColor:     ctx.UIConfig.NoColor,
 			AutoConfirm: ctx.UIConfig.AutoConfirm,
-			CI:          ctx.UIConfig.CI,
 		}
 	}
 
-	return &decorators.Ctx{
+	return &context.Ctx{
 		Env:     ctx.Env,
 		Vars:    ctx.Vars,
 		WorkDir: ctx.WorkDir,
+		SysInfo: ctx.SysInfo,
 		Stdout:  ctx.Stdout,
 		Stderr:  ctx.Stderr,
 		Stdin:   ctx.Stdin,
 		DryRun:  ctx.DryRun,
 		Debug:   ctx.Debug,
 		UI:      ui,
-		NumCPU:  ctx.NumCPU,
 	}
 }

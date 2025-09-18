@@ -2,11 +2,11 @@ package builtin
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/devcmd/runtime/execution/context"
 )
 
 // Register the @workdir decorator on package import
@@ -80,65 +80,24 @@ func (w *WorkdirDecorator) Examples() []decorators.Example {
 }
 
 // ImportRequirements returns the dependencies needed for code generation
-func (w *WorkdirDecorator) ImportRequirements() decorators.ImportRequirement {
-	return decorators.ImportRequirement{
-		StandardLibrary: []string{"os", "path/filepath"},
-		ThirdParty:      []string{},
-		GoModules:       map[string]string{},
-	}
-}
+// Note: ImportRequirements removed - will be added back when code generation is implemented
 
 // ================================================================================================
 // BLOCK DECORATOR METHODS
 // ================================================================================================
 
 // Wrap executes the inner commands with updated working directory context
-func (w *WorkdirDecorator) WrapCommands(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner decorators.CommandSeq) decorators.CommandResult {
-	path, createIfNotExists, err := w.extractParameters(args)
-	if err != nil {
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("@workdir parameter error: %v", err),
-			ExitCode: 1,
-		}
+func (w *WorkdirDecorator) WrapCommands(ctx decorators.Context, args []decorators.Param, inner interface{}) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return context.CommandResult{
+		Stdout:   "",
+		Stderr:   "runtime execution not implemented yet - use plan mode",
+		ExitCode: 1,
 	}
-
-	// Resolve path relative to current working directory
-	resolvedPath := path
-	if !filepath.IsAbs(path) {
-		resolvedPath = filepath.Join(ctx.WorkDir, path)
-	}
-
-	// Clean the path to normalize it
-	resolvedPath = filepath.Clean(resolvedPath)
-
-	// Handle directory creation if requested
-	if createIfNotExists {
-		if err := os.MkdirAll(resolvedPath, 0o755); err != nil {
-			return decorators.CommandResult{
-				Stderr:   fmt.Sprintf("failed to create directory %s: %v", resolvedPath, err),
-				ExitCode: 1,
-			}
-		}
-	} else {
-		// Verify the directory exists
-		if _, err := os.Stat(resolvedPath); err != nil {
-			return decorators.CommandResult{
-				Stderr:   fmt.Sprintf("directory %s does not exist: %v", resolvedPath, err),
-				ExitCode: 1,
-			}
-		}
-	}
-
-	// Create new context with updated working directory
-	// This follows the "never use os.Chdir()" pattern
-	workdirCtx := ctx.WithWorkDir(resolvedPath)
-
-	// Execute inner commands with the new context
-	return workdirCtx.ExecSequential(inner.Steps)
 }
 
 // Describe returns description for dry-run display
-func (w *WorkdirDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, inner plan.ExecutionStep) plan.ExecutionStep {
+func (w *WorkdirDecorator) Describe(ctx decorators.Context, args []decorators.Param, inner plan.ExecutionStep) plan.ExecutionStep {
 	path, createIfNotExists, err := w.extractParameters(args)
 	if err != nil {
 		return plan.ExecutionStep{
@@ -151,7 +110,7 @@ func (w *WorkdirDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decor
 	// Resolve path for display
 	resolvedPath := path
 	if !filepath.IsAbs(path) {
-		resolvedPath = filepath.Join(ctx.WorkDir, path)
+		resolvedPath = filepath.Join(ctx.GetWorkingDir(), path)
 	}
 	resolvedPath = filepath.Clean(resolvedPath)
 
@@ -179,26 +138,26 @@ func (w *WorkdirDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decor
 // ================================================================================================
 
 // extractParameters extracts and validates workdir parameters
-func (w *WorkdirDecorator) extractParameters(params []decorators.DecoratorParam) (path string, createIfNotExists bool, err error) {
+func (w *WorkdirDecorator) extractParameters(params []decorators.Param) (path string, createIfNotExists bool, err error) {
 	if len(params) == 0 {
 		return "", false, fmt.Errorf("@workdir requires a path parameter")
 	}
 
 	// Extract path (first parameter)
-	switch params[0].Name {
+	switch params[0].GetName() {
 	case "":
 		// Positional parameter
-		if val, ok := params[0].Value.(string); ok {
+		if val, ok := params[0].GetValue().(string); ok {
 			path = val
 		} else {
-			return "", false, fmt.Errorf("@workdir path must be a string, got %T", params[0].Value)
+			return "", false, fmt.Errorf("@workdir path must be a string, got %T", params[0].GetValue())
 		}
 	case "path":
 		// Named parameter
-		if val, ok := params[0].Value.(string); ok {
+		if val, ok := params[0].GetValue().(string); ok {
 			path = val
 		} else {
-			return "", false, fmt.Errorf("@workdir path parameter must be a string, got %T", params[0].Value)
+			return "", false, fmt.Errorf("@workdir path parameter must be a string, got %T", params[0].GetValue())
 		}
 	default:
 		return "", false, fmt.Errorf("@workdir first parameter must be the path")
@@ -215,14 +174,14 @@ func (w *WorkdirDecorator) extractParameters(params []decorators.DecoratorParam)
 	for i := 1; i < len(params); i++ {
 		param := params[i]
 
-		if param.Name == "createIfNotExists" {
-			if val, ok := param.Value.(bool); ok {
+		if param.GetName() == "createIfNotExists" {
+			if val, ok := param.GetValue().(bool); ok {
 				createIfNotExists = val
 			} else {
-				return "", false, fmt.Errorf("@workdir createIfNotExists parameter must be a boolean, got %T", param.Value)
+				return "", false, fmt.Errorf("@workdir createIfNotExists parameter must be a boolean, got %T", param.GetValue())
 			}
 		} else {
-			return "", false, fmt.Errorf("@workdir unknown parameter: %s", param.Name)
+			return "", false, fmt.Errorf("@workdir unknown parameter: %s", param.GetName())
 		}
 	}
 

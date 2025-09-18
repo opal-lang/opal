@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
+	"github.com/aledsdavies/devcmd/core/ir"
 	"github.com/aledsdavies/devcmd/core/plan"
 )
 
@@ -46,15 +47,10 @@ func (w *WhenDecorator) ParameterSchema() []decorators.ParameterSchema {
 	}
 }
 
-// PatternSchema defines what patterns @when accepts
-func (w *WhenDecorator) PatternSchema() decorators.PatternSchema {
-	return decorators.PatternSchema{
-		AllowedPatterns:     []string{}, // Any pattern is allowed
-		RequiredPatterns:    []string{}, // No required patterns
-		AllowsWildcard:      true,       // "default" wildcard pattern is allowed
-		AllowsAnyIdentifier: true,       // Any identifier can be a pattern
-		Description:         "Pattern branches that match the environment variable value",
-	}
+// Validate checks if the provided patterns are valid for @when decorator
+func (w *WhenDecorator) Validate(patternNames []string) []error {
+	// @when allows any patterns including "default" wildcard - no validation needed
+	return nil
 }
 
 // Examples returns usage examples
@@ -88,31 +84,24 @@ func (w *WhenDecorator) Examples() []decorators.Example {
 	}
 }
 
-// ImportRequirements returns the dependencies needed for code generation
-func (w *WhenDecorator) ImportRequirements() decorators.ImportRequirement {
-	return decorators.ImportRequirement{
-		StandardLibrary: []string{},
-		ThirdParty:      []string{},
-		GoModules:       map[string]string{},
-	}
-}
+// Note: ImportRequirements removed - will be added back when code generation is implemented
 
 // ================================================================================================
 // PATTERN DECORATOR METHODS
 // ================================================================================================
 
 // SelectBranch chooses and executes the appropriate branch based on environment variable matching
-func (w *WhenDecorator) SelectBranch(ctx *decorators.Ctx, args []decorators.DecoratorParam, branches map[string]decorators.CommandSeq) decorators.CommandResult {
+func (w *WhenDecorator) SelectBranch(ctx decorators.Context, args []decorators.Param, branches map[string]ir.CommandSeq) decorators.CommandResult {
 	envVar, err := w.extractEnvVar(args)
 	if err != nil {
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("@when parameter error: %v", err),
-			ExitCode: 1,
+		return &ErrorResult{
+			stderr:   fmt.Sprintf("@when parameter error: %v", err),
+			exitCode: 1,
 		}
 	}
 
 	// Get environment variable value from frozen environment
-	value, exists := ctx.Env.Get(envVar)
+	value, exists := ctx.GetEnv(envVar)
 	if !exists {
 		value = "" // Treat missing env var as empty string
 	}
@@ -121,27 +110,32 @@ func (w *WhenDecorator) SelectBranch(ctx *decorators.Ctx, args []decorators.Deco
 	selectedBranch := w.selectBranch(value, branches)
 	if selectedBranch == "__NO_MATCH__" {
 		// No matching branch - return error
-		return decorators.CommandResult{
-			Stdout:   "",
-			Stderr:   fmt.Sprintf("no matching branch for %s=\"%s\"", envVar, value),
-			ExitCode: 1,
+		return &ErrorResult{
+			stdout:   "",
+			stderr:   fmt.Sprintf("no matching branch for %s=\"%s\"", envVar, value),
+			exitCode: 1,
 		}
 	}
 
 	// Execute the selected branch
-	branchCommands, exists := branches[selectedBranch]
+	_, exists = branches[selectedBranch]
 	if !exists {
-		return decorators.CommandResult{
-			Stderr:   fmt.Sprintf("internal error: branch %q not found", selectedBranch),
-			ExitCode: 1,
+		return &ErrorResult{
+			stderr:   fmt.Sprintf("internal error: branch %q not found", selectedBranch),
+			exitCode: 1,
 		}
 	}
 
-	return ctx.ExecSequential(branchCommands.Steps)
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &ErrorResult{
+		stdout:   "",
+		stderr:   "interpreter not implemented",
+		exitCode: 1,
+	}
 }
 
 // Describe returns description for dry-run display
-func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.DecoratorParam, branches map[string]plan.ExecutionStep) plan.ExecutionStep {
+func (w *WhenDecorator) Describe(ctx decorators.Context, args []decorators.Param, branches map[string]plan.ExecutionStep) plan.ExecutionStep {
 	envVar, err := w.extractEnvVar(args)
 	if err != nil {
 		return plan.ExecutionStep{
@@ -150,7 +144,7 @@ func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorato
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator":      "when",
-				"execution_mode": string(plan.ModeConditional),
+				"execution_mode": "conditional",
 				"color":          plan.ColorCyan,
 				"error":          err.Error(),
 			},
@@ -158,10 +152,7 @@ func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorato
 	}
 
 	// Get current environment variable value
-	value, exists := ctx.Env.Get(envVar)
-	if !exists {
-		value = "" // Missing env var
-	}
+	value, exists := ctx.GetEnv(envVar)
 
 	// Determine which branch would be selected
 	selectedBranch := w.selectBranchForPlan(value, branches)
@@ -192,7 +183,7 @@ func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorato
 		Children:    children,
 		Metadata: map[string]string{
 			"decorator":      "when",
-			"execution_mode": string(plan.ModeConditional),
+			"execution_mode": "conditional",
 			"color":          plan.ColorCyan,
 			"info":           infoStr,
 			"envVar":         envVar,
@@ -209,29 +200,29 @@ func (w *WhenDecorator) Describe(ctx *decorators.Ctx, args []decorators.Decorato
 // ================================================================================================
 
 // extractEnvVar extracts the environment variable name parameter
-func (w *WhenDecorator) extractEnvVar(params []decorators.DecoratorParam) (string, error) {
+func (w *WhenDecorator) extractEnvVar(params []decorators.Param) (string, error) {
 	if len(params) == 0 {
 		return "", fmt.Errorf("@when requires an environment variable name")
 	}
 
 	var envVar string
-	switch params[0].Name {
+	switch params[0].GetName() {
 	case "":
 		// Positional parameter
-		if val, ok := params[0].Value.(string); ok {
+		if val, ok := params[0].GetValue().(string); ok {
 			envVar = val
 		} else {
-			return "", fmt.Errorf("@when environment variable must be a string, got %T", params[0].Value)
+			return "", fmt.Errorf("@when environment variable must be a string, got %T", params[0].GetValue())
 		}
 	case "env":
 		// Named parameter
-		if val, ok := params[0].Value.(string); ok {
+		if val, ok := params[0].GetValue().(string); ok {
 			envVar = val
 		} else {
 			return "", fmt.Errorf("@when env parameter must be a string")
 		}
 	default:
-		return "", fmt.Errorf("@when unknown parameter: %s", params[0].Name)
+		return "", fmt.Errorf("@when unknown parameter: %s", params[0].GetName())
 	}
 
 	if envVar == "" {
@@ -243,7 +234,7 @@ func (w *WhenDecorator) extractEnvVar(params []decorators.DecoratorParam) (strin
 
 // selectBranch finds the matching branch for an environment variable value
 // Returns the branch name, or a special sentinel value if no match is found
-func (w *WhenDecorator) selectBranch(value string, branches map[string]decorators.CommandSeq) string {
+func (w *WhenDecorator) selectBranch(value string, branches map[string]ir.CommandSeq) string {
 	// First, look for exact match
 	if _, exists := branches[value]; exists {
 		return value
