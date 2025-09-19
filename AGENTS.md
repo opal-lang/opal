@@ -72,4 +72,37 @@ The CLI is now just a thin wrapper around runtime, and we have proper module bou
 - **Impact**: What this enables, not how revolutionary it is
 - **Avoid**: Emoji, excessive formatting, marketing language
 
+## Project Specification Compliance
+
+**CRITICAL**: Always follow the project specification and architecture documented in `docs/SPECIFICATION.md` and `docs/ARCHITECTURE.md`.
+
+### Unified Architecture Principles
+- **Everything is a Decorator**: No special cases - shell syntax becomes `@shell` decorators, all constructs use the unified decorator model
+- **Two Interface System**: Only `ValueDecorator` and `ExecutionDecorator` - blocks and patterns are parameter types in `[]Param`
+- **Decorator Completion Model**: Decorators execute their entire block before chain operators (`&&`, `||`) are evaluated
+- **Plan-Then-Execute**: Support both quick plans (`--dry-run`) and resolved plans (`--dry-run --resolve`) with deterministic execution
+
+### Implementation Requirements
+- **Unified interfaces**: All decorators use `Plan(ctx Context, args []Param)` signature
+- **Parameter system**: Blocks passed as `ArgTypeBlockFunction`/`ArgTypePatternBlockFunction` parameter types
+- **Registry pattern**: Decorators register via `decorators.RegisterValue()` and `decorators.RegisterExecution()`
+- **Shell conversion**: Parser automatically converts shell syntax to `@shell` decorators internally
+- **Error propagation**: Follow decorator-first completion model for operator chains
+
+### Code Changes Must
+1. **Read specification first**: Check `docs/SPECIFICATION.md` for user-facing behavior
+2. **Follow architecture**: Implement according to `docs/ARCHITECTURE.md` design patterns
+3. **Maintain unified model**: No special cases that break "everything is a decorator"
+4. **Preserve execution semantics**: Decorator blocks complete before chain evaluation
+5. **Support dual mode**: Both command mode and script mode execution
+
+### When Making Changes
+- **AST/IR changes**: Must support single Decorator/DecoratorNode types
+- **New decorators**: Must use unified interfaces and parameter system
+- **Parser changes**: Must convert shell syntax to `@shell` decorators
+- **Execution changes**: Must follow decorator completion model
+- **Plan changes**: Must support both quick and resolved plan generation
+
+**Never introduce special cases or break the unified decorator architecture.**
+
 This is an early-stage project focused on generating truly standalone CLI tools from declarative definitions.

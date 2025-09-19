@@ -1,5 +1,0 @@
-hello: echo "test"
-build: 
-  npm install
-  npm run build
-  echo "Build complete"
