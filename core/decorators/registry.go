@@ -13,24 +13,196 @@ import (
 type Registry struct {
 	mu sync.RWMutex
 
-	Actions  map[string]ActionDecorator
-	Blocks   map[string]BlockDecorator
-	Values   map[string]ValueDecorator
-	Patterns map[string]PatternDecorator
+	// Legacy interfaces (will be removed in Phase 4)
+	LegacyActions  map[string]LegacyActionDecorator
+	LegacyBlocks   map[string]LegacyBlockDecorator
+	LegacyValues   map[string]LegacyValueDecorator
+	LegacyPatterns map[string]LegacyPatternDecorator
+
+	// Target interfaces (clean names)
+	Values    map[string]ValueDecorator
+	Execution map[string]ExecutionDecorator
 }
 
 // NewRegistry creates a new empty registry
 func NewRegistry() *Registry {
 	return &Registry{
-		Actions:  make(map[string]ActionDecorator),
-		Blocks:   make(map[string]BlockDecorator),
-		Values:   make(map[string]ValueDecorator),
-		Patterns: make(map[string]PatternDecorator),
+		// Legacy interfaces
+		LegacyActions:  make(map[string]LegacyActionDecorator),
+		LegacyBlocks:   make(map[string]LegacyBlockDecorator),
+		LegacyValues:   make(map[string]LegacyValueDecorator),
+		LegacyPatterns: make(map[string]LegacyPatternDecorator),
+
+		// Target interfaces
+		Values:    make(map[string]ValueDecorator),
+		Execution: make(map[string]ExecutionDecorator),
 	}
 }
 
-// RegisterValue registers a value decorator with collision detection across all categories
-func (r *Registry) RegisterValue(decorator ValueDecorator) error {
+// RegisterValue registers a legacy value decorator with collision detection across all categories
+func (r *Registry) RegisterValue(decorator LegacyValueDecorator) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := decorator.Name()
+
+	// Check for collisions across ALL categories
+	if err := r.checkCollision(name); err != nil {
+		return err
+	}
+
+	r.LegacyValues[name] = decorator
+	return nil
+}
+
+// RegisterAction registers a legacy action decorator with collision detection across all categories
+func (r *Registry) RegisterAction(decorator LegacyActionDecorator) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := decorator.Name()
+
+	// Check for collisions across ALL categories
+	if err := r.checkCollision(name); err != nil {
+		return err
+	}
+
+	r.LegacyActions[name] = decorator
+	return nil
+}
+
+// RegisterBlock registers a legacy block decorator with collision detection across all categories
+func (r *Registry) RegisterBlock(decorator LegacyBlockDecorator) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := decorator.Name()
+
+	// Check for collisions across ALL categories
+	if err := r.checkCollision(name); err != nil {
+		return err
+	}
+
+	r.LegacyBlocks[name] = decorator
+	return nil
+}
+
+// RegisterPattern registers a legacy pattern decorator with collision detection across all categories
+func (r *Registry) RegisterPattern(decorator LegacyPatternDecorator) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := decorator.Name()
+
+	// Check for collisions across ALL categories
+	if err := r.checkCollision(name); err != nil {
+		return err
+	}
+
+	r.LegacyPatterns[name] = decorator
+	return nil
+}
+
+// checkCollision checks if a name is already registered in any category
+// Must be called with lock held
+// During Phase 1-3: Allow same decorator to be registered in both legacy and new interfaces
+func (r *Registry) checkCollision(name string) error {
+	// During migration: Only check for conflicts between categories of the same generation
+
+	// Check within new interfaces
+	valueExists := false
+	if _, exists := r.Values[name]; exists {
+		valueExists = true
+	}
+	executionExists := false
+	if _, exists := r.Execution[name]; exists {
+		executionExists = true
+	}
+
+	// Error if same name in both new interfaces
+	if valueExists && executionExists {
+		return fmt.Errorf("decorator %q already registered as both ValueDecorator and ExecutionDecorator", name)
+	}
+
+	// Check within legacy interfaces
+	legacyValueExists := false
+	if _, exists := r.LegacyValues[name]; exists {
+		legacyValueExists = true
+	}
+	legacyActionExists := false
+	if _, exists := r.LegacyActions[name]; exists {
+		legacyActionExists = true
+	}
+	legacyBlockExists := false
+	if _, exists := r.LegacyBlocks[name]; exists {
+		legacyBlockExists = true
+	}
+	legacyPatternExists := false
+	if _, exists := r.LegacyPatterns[name]; exists {
+		legacyPatternExists = true
+	}
+
+	// Error if same name in multiple legacy interfaces
+	legacyCount := 0
+	if legacyValueExists {
+		legacyCount++
+	}
+	if legacyActionExists {
+		legacyCount++
+	}
+	if legacyBlockExists {
+		legacyCount++
+	}
+	if legacyPatternExists {
+		legacyCount++
+	}
+
+	if legacyCount > 1 {
+		return fmt.Errorf("decorator %q already registered in multiple legacy interfaces", name)
+	}
+
+	// Allow same name between legacy and new (migration phase)
+	return nil
+}
+
+// GetValue retrieves a legacy value decorator
+func (r *Registry) GetValue(name string) (LegacyValueDecorator, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	decorator, exists := r.LegacyValues[name]
+	return decorator, exists
+}
+
+// GetAction retrieves a legacy action decorator
+func (r *Registry) GetAction(name string) (LegacyActionDecorator, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	decorator, exists := r.LegacyActions[name]
+	return decorator, exists
+}
+
+// GetBlock retrieves a legacy block decorator
+func (r *Registry) GetBlock(name string) (LegacyBlockDecorator, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	decorator, exists := r.LegacyBlocks[name]
+	return decorator, exists
+}
+
+// GetPattern retrieves a legacy pattern decorator
+func (r *Registry) GetPattern(name string) (LegacyPatternDecorator, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	decorator, exists := r.LegacyPatterns[name]
+	return decorator, exists
+}
+
+// ================================================================================================
+// UNIFIED INTERFACE REGISTRATION - Target architecture
+// ================================================================================================
+
+// RegisterValueDecorator registers a value decorator with the new interface
+func (r *Registry) RegisterValueDecorator(decorator ValueDecorator) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -45,8 +217,8 @@ func (r *Registry) RegisterValue(decorator ValueDecorator) error {
 	return nil
 }
 
-// RegisterAction registers an action decorator with collision detection across all categories
-func (r *Registry) RegisterAction(decorator ActionDecorator) error {
+// RegisterExecutionDecorator registers an execution decorator with the new interface
+func (r *Registry) RegisterExecutionDecorator(decorator ExecutionDecorator) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -57,89 +229,23 @@ func (r *Registry) RegisterAction(decorator ActionDecorator) error {
 		return err
 	}
 
-	r.Actions[name] = decorator
+	r.Execution[name] = decorator
 	return nil
 }
 
-// RegisterBlock registers a block decorator with collision detection across all categories
-func (r *Registry) RegisterBlock(decorator BlockDecorator) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	name := decorator.Name()
-
-	// Check for collisions across ALL categories
-	if err := r.checkCollision(name); err != nil {
-		return err
-	}
-
-	r.Blocks[name] = decorator
-	return nil
-}
-
-// RegisterPattern registers a pattern decorator with collision detection across all categories
-func (r *Registry) RegisterPattern(decorator PatternDecorator) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	name := decorator.Name()
-
-	// Check for collisions across ALL categories
-	if err := r.checkCollision(name); err != nil {
-		return err
-	}
-
-	r.Patterns[name] = decorator
-	return nil
-}
-
-// checkCollision checks if a name is already registered in any category
-// Must be called with lock held
-func (r *Registry) checkCollision(name string) error {
-	if _, exists := r.Values[name]; exists {
-		return fmt.Errorf("decorator %q already registered as Value", name)
-	}
-	if _, exists := r.Actions[name]; exists {
-		return fmt.Errorf("decorator %q already registered as Action", name)
-	}
-	if _, exists := r.Blocks[name]; exists {
-		return fmt.Errorf("decorator %q already registered as Block", name)
-	}
-	if _, exists := r.Patterns[name]; exists {
-		return fmt.Errorf("decorator %q already registered as Pattern", name)
-	}
-	return nil
-}
-
-// GetValue retrieves a value decorator
-func (r *Registry) GetValue(name string) (ValueDecorator, bool) {
+// GetValueDecorator retrieves a value decorator
+func (r *Registry) GetValueDecorator(name string) (ValueDecorator, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	decorator, exists := r.Values[name]
 	return decorator, exists
 }
 
-// GetAction retrieves an action decorator
-func (r *Registry) GetAction(name string) (ActionDecorator, bool) {
+// GetExecutionDecorator retrieves an execution decorator
+func (r *Registry) GetExecutionDecorator(name string) (ExecutionDecorator, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	decorator, exists := r.Actions[name]
-	return decorator, exists
-}
-
-// GetBlock retrieves a block decorator
-func (r *Registry) GetBlock(name string) (BlockDecorator, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	decorator, exists := r.Blocks[name]
-	return decorator, exists
-}
-
-// GetPattern retrieves a pattern decorator
-func (r *Registry) GetPattern(name string) (PatternDecorator, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	decorator, exists := r.Patterns[name]
+	decorator, exists := r.Execution[name]
 	return decorator, exists
 }
 
@@ -150,30 +256,44 @@ func (r *Registry) ListAll() map[string][]string {
 
 	result := make(map[string][]string)
 
-	// Collect values
+	// Collect unified values
 	var values []string
 	for name := range r.Values {
 		values = append(values, name)
 	}
 	result["values"] = values
 
-	// Collect actions
+	// Collect unified execution
+	var execution []string
+	for name := range r.Execution {
+		execution = append(execution, name)
+	}
+	result["execution"] = execution
+
+	// Collect legacy values
+	var legacyValues []string
+	for name := range r.LegacyValues {
+		legacyValues = append(legacyValues, name)
+	}
+	result["legacy_values"] = legacyValues
+
+	// Collect legacy actions
 	var actions []string
-	for name := range r.Actions {
+	for name := range r.LegacyActions {
 		actions = append(actions, name)
 	}
 	result["actions"] = actions
 
-	// Collect blocks
+	// Collect legacy blocks
 	var blocks []string
-	for name := range r.Blocks {
+	for name := range r.LegacyBlocks {
 		blocks = append(blocks, name)
 	}
 	result["blocks"] = blocks
 
-	// Collect patterns
+	// Collect legacy patterns
 	var patterns []string
-	for name := range r.Patterns {
+	for name := range r.LegacyPatterns {
 		patterns = append(patterns, name)
 	}
 	result["patterns"] = patterns
@@ -189,30 +309,44 @@ func (r *Registry) ListAll() map[string][]string {
 var globalRegistry = NewRegistry()
 
 // Register registers a value decorator in the global registry (called from init functions)
-func Register(decorator ValueDecorator) {
+func Register(decorator LegacyValueDecorator) {
 	if err := globalRegistry.RegisterValue(decorator); err != nil {
 		panic(fmt.Sprintf("failed to register value decorator: %v", err))
 	}
 }
 
 // RegisterAction registers an action decorator in the global registry (called from init functions)
-func RegisterAction(decorator ActionDecorator) {
+func RegisterAction(decorator LegacyActionDecorator) {
 	if err := globalRegistry.RegisterAction(decorator); err != nil {
 		panic(fmt.Sprintf("failed to register action decorator: %v", err))
 	}
 }
 
 // RegisterBlock registers a block decorator in the global registry (called from init functions)
-func RegisterBlock(decorator BlockDecorator) {
+func RegisterBlock(decorator LegacyBlockDecorator) {
 	if err := globalRegistry.RegisterBlock(decorator); err != nil {
 		panic(fmt.Sprintf("failed to register block decorator: %v", err))
 	}
 }
 
 // RegisterPattern registers a pattern decorator in the global registry (called from init functions)
-func RegisterPattern(decorator PatternDecorator) {
+func RegisterPattern(decorator LegacyPatternDecorator) {
 	if err := globalRegistry.RegisterPattern(decorator); err != nil {
 		panic(fmt.Sprintf("failed to register pattern decorator: %v", err))
+	}
+}
+
+// RegisterValueDecorator registers a value decorator globally
+func RegisterValueDecorator(decorator ValueDecorator) {
+	if err := globalRegistry.RegisterValueDecorator(decorator); err != nil {
+		panic(fmt.Sprintf("Failed to register value decorator %q: %v", decorator.Name(), err))
+	}
+}
+
+// RegisterExecutionDecorator registers an execution decorator globally
+func RegisterExecutionDecorator(decorator ExecutionDecorator) {
+	if err := globalRegistry.RegisterExecutionDecorator(decorator); err != nil {
+		panic(fmt.Sprintf("Failed to register execution decorator %q: %v", decorator.Name(), err))
 	}
 }
 
@@ -234,17 +368,26 @@ func NewStandardRegistry() *Registry {
 	globalRegistry.mu.RLock()
 	defer globalRegistry.mu.RUnlock()
 
+	// Copy unified decorators
 	for name, decorator := range globalRegistry.Values {
 		r.Values[name] = decorator
 	}
-	for name, decorator := range globalRegistry.Actions {
-		r.Actions[name] = decorator
+	for name, decorator := range globalRegistry.Execution {
+		r.Execution[name] = decorator
 	}
-	for name, decorator := range globalRegistry.Blocks {
-		r.Blocks[name] = decorator
+
+	// Copy legacy decorators
+	for name, decorator := range globalRegistry.LegacyValues {
+		r.LegacyValues[name] = decorator
 	}
-	for name, decorator := range globalRegistry.Patterns {
-		r.Patterns[name] = decorator
+	for name, decorator := range globalRegistry.LegacyActions {
+		r.LegacyActions[name] = decorator
+	}
+	for name, decorator := range globalRegistry.LegacyBlocks {
+		r.LegacyBlocks[name] = decorator
+	}
+	for name, decorator := range globalRegistry.LegacyPatterns {
+		r.LegacyPatterns[name] = decorator
 	}
 
 	return r
@@ -331,8 +474,8 @@ func GetDecoratorType(name string) string {
 	return globalRegistry.GetDecoratorType(name)
 }
 
-// GetValue retrieves a value decorator from the global registry
-func GetValue(name string) (ValueDecorator, error) {
+// GetValue retrieves a legacy value decorator from the global registry
+func GetValue(name string) (LegacyValueDecorator, error) {
 	decorator, exists := globalRegistry.GetValue(name)
 	if !exists {
 		return nil, fmt.Errorf("value decorator %q not found", name)
@@ -340,8 +483,8 @@ func GetValue(name string) (ValueDecorator, error) {
 	return decorator, nil
 }
 
-// GetAction retrieves an action decorator from the global registry
-func GetAction(name string) (ActionDecorator, error) {
+// GetAction retrieves a legacy action decorator from the global registry
+func GetAction(name string) (LegacyActionDecorator, error) {
 	decorator, exists := globalRegistry.GetAction(name)
 	if !exists {
 		return nil, fmt.Errorf("action decorator %q not found", name)
@@ -349,8 +492,8 @@ func GetAction(name string) (ActionDecorator, error) {
 	return decorator, nil
 }
 
-// GetBlock retrieves a block decorator from the global registry
-func GetBlock(name string) (BlockDecorator, error) {
+// GetBlock retrieves a legacy block decorator from the global registry
+func GetBlock(name string) (LegacyBlockDecorator, error) {
 	decorator, exists := globalRegistry.GetBlock(name)
 	if !exists {
 		return nil, fmt.Errorf("block decorator %q not found", name)
@@ -358,8 +501,8 @@ func GetBlock(name string) (BlockDecorator, error) {
 	return decorator, nil
 }
 
-// GetPattern retrieves a pattern decorator from the global registry
-func GetPattern(name string) (PatternDecorator, error) {
+// GetPattern retrieves a legacy pattern decorator from the global registry
+func GetPattern(name string) (LegacyPatternDecorator, error) {
 	decorator, exists := globalRegistry.GetPattern(name)
 	if !exists {
 		return nil, fmt.Errorf("pattern decorator %q not found", name)
@@ -373,10 +516,10 @@ func GetPattern(name string) (PatternDecorator, error) {
 
 // DecoratorType constants for parser
 const (
-	ValueType   = "value"
-	ActionType  = "action"
-	BlockType   = "block"
-	PatternType = "pattern"
+	ValueType      = "value"
+	ActionType     = "action"
+	BlockDecorType = "block" // Renamed to avoid conflict with new BlockType
+	PatternType    = "pattern"
 )
 
 // GetAny retrieves any decorator by name and returns it with its type
@@ -390,7 +533,7 @@ func GetAny(name string) (DecoratorBase, string, error) {
 		return decorator, ActionType, nil
 	}
 	if decorator, exists := globalRegistry.GetBlock(name); exists {
-		return decorator, BlockType, nil
+		return decorator, BlockDecorType, nil
 	}
 	if decorator, exists := globalRegistry.GetPattern(name); exists {
 		return decorator, PatternType, nil

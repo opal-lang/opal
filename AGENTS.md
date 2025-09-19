@@ -5,12 +5,11 @@
 ## Build/Test Commands
 ```bash
 # Single test: go test ./module/package -run TestName -v
-# Module test: devcmd run core-test (or runtime-test, cli-test, etc.)
-# All tests: devcmd run test
-# Full CI: devcmd run ci
+# Module test: cd module && go test ./...
+# All tests: go test ./...
 # Build CLI: cd cli && go build -o devcmd . 
-# Format: devcmd run format
-# Lint: devcmd run lint
+# Format: go fmt ./...
+# Lint: golangci-lint run (if available)
 ```
 
 ## Code Style & Conventions

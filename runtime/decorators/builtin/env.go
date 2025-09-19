@@ -10,7 +10,11 @@ import (
 
 // Register the @env decorator on package import
 func init() {
-	decorators.Register(NewEnvDecorator())
+	decorator := NewEnvDecorator()
+	// Register with legacy interface (Phase 4: remove this)
+	decorators.Register(decorator)
+	// Register with new interface
+	decorators.RegisterValueDecorator(decorator)
 }
 
 // EnvDecorator implements the @env decorator using the core decorator interfaces
@@ -91,7 +95,7 @@ func (e *EnvDecorator) ImportRequirements() execution.ImportRequirement {
 }
 
 // ================================================================================================
-// VALUE DECORATOR METHODS
+// LEGACY VALUE DECORATOR METHODS (will be removed in Phase 4)
 // ================================================================================================
 
 // Render expands the environment variable value from frozen context
@@ -183,6 +187,75 @@ func (e *EnvDecorator) extractDecoratorParameters(params []decorators.Param) (ke
 	}
 
 	return key, defaultValue, allowEmpty, nil
+}
+
+// ================================================================================================
+// NEW VALUE DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan showing how the environment variable will be resolved
+func (e *EnvDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	key, defaultValue, allowEmpty, err := e.extractDecoratorParameters(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@env(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "env",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Get the environment variable value from frozen environment
+	value, exists := ctx.GetEnv(key)
+	actualValue := value
+	source := "captured"
+
+	// Apply same logic as Resolve for consistency
+	if !exists || (!allowEmpty && value == "") {
+		actualValue = defaultValue
+		source = "default"
+	}
+
+	description := fmt.Sprintf("@env(%s) → %q (%s)", key, actualValue, source)
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: description,
+		Command:     actualValue,
+		Metadata: map[string]string{
+			"decorator":  "env",
+			"key":        key,
+			"value":      actualValue,
+			"source":     source,
+			"allowEmpty": fmt.Sprintf("%t", allowEmpty),
+		},
+	}
+}
+
+// Resolve gets the actual environment variable value during execution
+func (e *EnvDecorator) Resolve(ctx decorators.Context, args []decorators.Param) (string, error) {
+	key, defaultValue, allowEmpty, err := e.extractDecoratorParameters(args)
+	if err != nil {
+		return "", fmt.Errorf("@env parameter error: %w", err)
+	}
+
+	// ✅ CORRECT: Read from frozen environment (deterministic)
+	value, exists := ctx.GetEnv(key)
+
+	// Use default if not exists or empty (unless allowEmpty=true)
+	if !exists || (!allowEmpty && value == "") {
+		return defaultValue, nil
+	}
+
+	return value, nil
+}
+
+// IsExpensive returns false as environment variable lookups are fast
+func (e *EnvDecorator) IsExpensive() bool {
+	return false // Environment variable lookups are very fast
 }
 
 // extractParameters extracts the environment variable key, default value, and allowEmpty flag

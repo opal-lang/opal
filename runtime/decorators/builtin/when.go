@@ -10,7 +10,9 @@ import (
 
 // Register the @when decorator on package import
 func init() {
-	decorators.RegisterPattern(NewWhenDecorator())
+	decorator := NewWhenDecorator()
+	decorators.RegisterPattern(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // WhenDecorator implements the @when decorator using the core decorator interfaces
@@ -261,4 +263,61 @@ func (w *WhenDecorator) selectBranchForPlan(value string, branches map[string]pl
 	}
 
 	return "__NO_MATCH__" // No match found - use sentinel value
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the when operation
+func (w *WhenDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	envVar, err := w.extractEnvVar(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@when(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "when",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Get current value for display
+	currentValue, _ := ctx.GetVar(envVar)
+	description := fmt.Sprintf("@when(%s=%q) { ... }", envVar, currentValue)
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: description,
+		Command:     fmt.Sprintf("# Conditional execution based on %s", envVar),
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator with branches
+		Metadata: map[string]string{
+			"decorator":      "when",
+			"envVar":         envVar,
+			"currentValue":   currentValue,
+			"execution_mode": "conditional",
+			"pattern_type":   "switch_case",
+			"color":          plan.ColorCyan,
+		},
+	}
+}
+
+// Execute performs the when operation
+func (w *WhenDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "when execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @when
+func (w *WhenDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockPattern,
+		Required: true,
+	}
 }

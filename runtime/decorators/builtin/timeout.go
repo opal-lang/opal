@@ -10,7 +10,11 @@ import (
 
 // Register the @timeout decorator on package import
 func init() {
-	decorators.RegisterBlock(NewTimeoutDecorator())
+	decorator := NewTimeoutDecorator()
+	// Register with legacy interface (Phase 4: remove this)
+	decorators.RegisterBlock(decorator)
+	// Register with new interface
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // TimeoutDecorator implements the @timeout decorator using the core decorator interfaces
@@ -168,4 +172,58 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.Param) (time.Dura
 	}
 
 	return duration, nil
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the timeout operation
+func (t *TimeoutDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	duration, err := t.extractDuration(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@timeout(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "timeout",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: fmt.Sprintf("@timeout(duration=%s)", duration),
+		Command:     fmt.Sprintf("# Execute with %s timeout", duration),
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Timing: &plan.TimingInfo{
+			Timeout: &duration,
+		},
+		Metadata: map[string]string{
+			"decorator":      "timeout",
+			"duration":       duration.String(),
+			"execution_mode": "time_constraint",
+			"color":          plan.ColorYellow,
+		},
+	}
+}
+
+// Execute performs the timeout operation
+func (t *TimeoutDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "timeout execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @timeout
+func (t *TimeoutDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockShell,
+		Required: true,
+	}
 }

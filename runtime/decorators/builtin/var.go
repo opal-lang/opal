@@ -10,7 +10,11 @@ import (
 
 // Register the @var decorator on package import
 func init() {
-	decorators.Register(NewVarDecorator())
+	decorator := NewVarDecorator()
+	// Register with legacy interface (Phase 4: remove this)
+	decorators.Register(decorator)
+	// Register with new interface
+	decorators.RegisterValueDecorator(decorator)
 }
 
 // VarDecorator implements the @var decorator using the core decorator interfaces
@@ -75,7 +79,7 @@ func (v *VarDecorator) ImportRequirements() execution.ImportRequirement {
 }
 
 // ================================================================================================
-// VALUE DECORATOR METHODS
+// LEGACY VALUE DECORATOR METHODS (will be removed in Phase 4)
 // ================================================================================================
 
 // Render expands the variable value in the current context
@@ -155,6 +159,75 @@ func (v *VarDecorator) extractDecoratorVariableName(params []decorators.Param) (
 	}
 
 	return varName, nil
+}
+
+// ================================================================================================
+// NEW VALUE DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan showing how the variable will be resolved
+func (v *VarDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	varName, err := v.extractDecoratorVariableName(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@var(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "var",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Resolve the variable value during plan generation
+	value, exists := ctx.GetVar(varName)
+	if exists && value != "" {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@var(%s) → %q", varName, value),
+			Command:     value,
+			Metadata: map[string]string{
+				"decorator":   "var",
+				"variable":    varName,
+				"value":       value,
+				"resolved_at": "plan",
+				"source":      "cli_variable",
+			},
+		}
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: fmt.Sprintf("@var(%s) → <undefined>", varName),
+		Command:     "",
+		Metadata: map[string]string{
+			"decorator": "var",
+			"variable":  varName,
+			"error":     "undefined_variable",
+		},
+	}
+}
+
+// Resolve gets the actual variable value during execution
+func (v *VarDecorator) Resolve(ctx decorators.Context, args []decorators.Param) (string, error) {
+	varName, err := v.extractDecoratorVariableName(args)
+	if err != nil {
+		return "", fmt.Errorf("@var parameter error: %w", err)
+	}
+
+	// Look up variable in context
+	if value, exists := ctx.GetVar(varName); exists {
+		return value, nil
+	}
+
+	// Variable not found
+	return "", fmt.Errorf("undefined variable: %s", varName)
+}
+
+// IsExpensive returns false as variable lookups are fast
+func (v *VarDecorator) IsExpensive() bool {
+	return false // Variable lookups are very fast
 }
 
 // extractVariableName extracts the variable name from AST parameters

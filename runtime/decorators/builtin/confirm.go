@@ -10,7 +10,9 @@ import (
 
 // Register the @confirm decorator on package import
 func init() {
-	decorators.RegisterBlock(NewConfirmDecorator())
+	decorator := NewConfirmDecorator()
+	decorators.RegisterBlock(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // ConfirmDecorator implements the @confirm decorator using the core decorator interfaces
@@ -165,4 +167,61 @@ func (c *ConfirmDecorator) extractParameters(params []decorators.Param) (message
 	}
 
 	return message, defaultYes, nil
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the confirm operation
+func (c *ConfirmDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	message, defaultYes, err := c.extractParameters(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@confirm(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "confirm",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	description := fmt.Sprintf("@confirm(%q)", message)
+	if defaultYes {
+		description += " [default: yes]"
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: description,
+		Command:     fmt.Sprintf("prompt: %s", message),
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Metadata: map[string]string{
+			"decorator":      "confirm",
+			"message":        message,
+			"defaultYes":     fmt.Sprintf("%t", defaultYes),
+			"execution_mode": "interactive",
+			"color":          plan.ColorYellow,
+		},
+	}
+}
+
+// Execute performs the confirm operation
+func (c *ConfirmDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "confirm execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @confirm
+func (c *ConfirmDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockShell,
+		Required: true,
+	}
 }

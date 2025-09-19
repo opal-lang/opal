@@ -11,7 +11,9 @@ import (
 
 // Register the @try decorator on package import
 func init() {
-	decorators.RegisterPattern(NewTryDecorator())
+	decorator := NewTryDecorator()
+	decorators.RegisterPattern(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // TryDecorator implements the @try decorator using the core decorator interfaces
@@ -181,5 +183,45 @@ func (t *TryDecorator) Describe(ctx decorators.Context, args []decorators.Param,
 			"hasCatch":       fmt.Sprintf("%t", hasCatch),
 			"hasFinally":     fmt.Sprintf("%t", hasFinally),
 		},
+	}
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the try operation
+func (t *TryDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	// @try is a complex pattern decorator that handles conditional execution
+	// For now, create a simplified plan representation
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: "@try { ... } catch { ... } finally { ... }",
+		Command:     "# Try-catch-finally pattern execution",
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator with branches
+		Metadata: map[string]string{
+			"decorator":      "try",
+			"execution_mode": "conditional",
+			"pattern_type":   "try_catch_finally",
+			"color":          plan.ColorYellow,
+		},
+	}
+}
+
+// Execute performs the try operation
+func (t *TryDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "try execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @try
+func (t *TryDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockPattern,
+		Required: true,
 	}
 }

@@ -11,7 +11,9 @@ import (
 
 // Register the @parallel decorator on package import
 func init() {
-	decorators.RegisterBlock(NewParallelDecorator())
+	decorator := NewParallelDecorator()
+	decorators.RegisterBlock(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // ParallelDecorator implements the @parallel decorator using the core decorator interfaces
@@ -226,4 +228,59 @@ func (p *ParallelDecorator) extractParameters(params []decorators.Param, default
 	}
 
 	return mode, concurrency, nil
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the parallel operation
+func (p *ParallelDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	mode, concurrency, err := p.extractParameters(args, 4) // Default concurrency of 4
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@parallel(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "parallel",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: fmt.Sprintf("@parallel(mode=%s, concurrency=%d)", mode, concurrency),
+		Command:     fmt.Sprintf("# Execute %d commands in parallel", concurrency),
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Timing: &plan.TimingInfo{
+			ConcurrencyLimit: concurrency,
+		},
+		Metadata: map[string]string{
+			"decorator":      "parallel",
+			"mode":           mode,
+			"concurrency":    fmt.Sprintf("%d", concurrency),
+			"execution_mode": "concurrency",
+			"color":          plan.ColorBlue,
+		},
+	}
+}
+
+// Execute performs the parallel operation
+func (p *ParallelDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "parallel execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @parallel
+func (p *ParallelDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockShell,
+		Required: true,
+	}
 }

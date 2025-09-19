@@ -22,15 +22,16 @@ type DecoratorBase interface {
 type ArgType string
 
 const (
-	ArgTypeString     ArgType = "string"
-	ArgTypeBool       ArgType = "bool"
-	ArgTypeInt        ArgType = "int"
-	ArgTypeFloat      ArgType = "float"
-	ArgTypeDuration   ArgType = "duration"   // Duration strings like "30s", "5m", "1h"
-	ArgTypeIdentifier ArgType = "identifier" // Variable/command identifiers
-	ArgTypeList       ArgType = "list"
-	ArgTypeMap        ArgType = "map"
-	ArgTypeAny        ArgType = "any"
+	ArgTypeString               ArgType = "string"
+	ArgTypeBool                 ArgType = "bool"
+	ArgTypeInt                  ArgType = "int"
+	ArgTypeFloat                ArgType = "float"
+	ArgTypeDuration             ArgType = "duration"   // Duration strings like "30s", "5m", "1h"
+	ArgTypeIdentifier           ArgType = "identifier" // Variable/command identifiers
+	ArgTypeList                 ArgType = "list"
+	ArgTypeMap                  ArgType = "map"
+	ArgTypeBlockFunction        ArgType = "block_function"         // Shell command blocks { commands }
+	ArgTypePatternBlockFunction ArgType = "pattern_block_function" // Pattern blocks { branch: commands }
 )
 
 // ParameterSchema describes a decorator parameter
@@ -52,15 +53,19 @@ type Example struct {
 // CORE DECORATOR INTERFACES - Plan generation only (execution in runtime)
 // ================================================================================================
 
-// ValueDecorator - Inline value substitution decorators
-type ValueDecorator interface {
+// ================================================================================================
+// LEGACY DECORATOR INTERFACES - Will be removed in Phase 4
+// ================================================================================================
+
+// LegacyValueDecorator - Legacy inline value substitution decorators
+type LegacyValueDecorator interface {
 	DecoratorBase
 	// Plan generation - shows how value will be resolved
 	Describe(ctx Context, args []Param) plan.ExecutionStep
 }
 
-// ActionDecorator - Standalone action decorators
-type ActionDecorator interface {
+// LegacyActionDecorator - Legacy standalone action decorators
+type LegacyActionDecorator interface {
 	DecoratorBase
 	// Plan generation - shows what action will be executed
 	Describe(ctx Context, args []Param) plan.ExecutionStep
@@ -68,15 +73,15 @@ type ActionDecorator interface {
 	Run(ctx Context, args []Param) CommandResult
 }
 
-// BlockDecorator - Execution wrapper decorators
-type BlockDecorator interface {
+// LegacyBlockDecorator - Legacy execution wrapper decorators
+type LegacyBlockDecorator interface {
 	DecoratorBase
 	// Plan generation - shows how inner commands will be wrapped
 	Describe(ctx Context, args []Param, inner plan.ExecutionStep) plan.ExecutionStep
 }
 
-// PatternDecorator - Conditional execution decorators
-type PatternDecorator interface {
+// LegacyPatternDecorator - Legacy conditional execution decorators
+type LegacyPatternDecorator interface {
 	DecoratorBase
 	// Plan generation - shows which branch will be selected, with context for env access
 	Describe(ctx Context, args []Param, branches map[string]plan.ExecutionStep) plan.ExecutionStep
@@ -158,4 +163,47 @@ type ImportRequirement interface {
 	GetPackages() []string     // Go packages to import
 	GetBinaries() []string     // External binaries required
 	GetEnv() map[string]string // Environment variables required
+}
+
+// ================================================================================================
+// UNIFIED DECORATOR INTERFACES - Target architecture (2-interface system)
+// ================================================================================================
+
+// BlockRequirement describes structural requirements for execution decorators
+type BlockRequirement struct {
+	Type     BlockType `json:"type"`     // Type of block required
+	Required bool      `json:"required"` // Whether block is required
+}
+
+// BlockType represents the type of block a decorator requires
+type BlockType string
+
+const (
+	BlockNone    BlockType = "none"    // No block needed: @cmd(build)
+	BlockShell   BlockType = "shell"   // Shell command block: @retry(3) { commands }
+	BlockPattern BlockType = "pattern" // Pattern matching block: @when(ENV) { prod: ..., dev: ... }
+)
+
+// ValueDecorator - Target interface for inline value substitution decorators
+// Clean interface for the unified architecture
+type ValueDecorator interface {
+	DecoratorBase
+	// Plan generation - shows how value will be resolved
+	Plan(ctx Context, args []Param) plan.ExecutionStep
+	// Value resolution - resolves the actual value during execution
+	Resolve(ctx Context, args []Param) (string, error)
+	// Performance optimization - expensive decorators resolved lazily
+	IsExpensive() bool
+}
+
+// ExecutionDecorator - Target interface for command execution decorators
+// Clean interface for the unified architecture
+type ExecutionDecorator interface {
+	DecoratorBase
+	// Plan generation - shows what will be executed
+	Plan(ctx Context, args []Param) plan.ExecutionStep
+	// Execution - performs the actual work
+	Execute(ctx Context, args []Param) CommandResult
+	// Block requirements - describes structural needs for parsing
+	RequiresBlock() BlockRequirement
 }

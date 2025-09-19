@@ -487,7 +487,7 @@ func (p *Parser) parsePatternContent() (*ast.PatternDecorator, error) {
 	}
 
 	// Validate pattern branches using decorator schema
-	if patternDecorator, ok := decorator.(decorators.PatternDecorator); ok {
+	if patternDecorator, ok := decorator.(decorators.LegacyPatternDecorator); ok {
 		if err := p.validatePatternBranches(patternDecorator, patterns, decoratorName); err != nil {
 			return nil, err
 		}
@@ -1035,7 +1035,7 @@ func (p *Parser) parseShellDecorator() (ast.ShellPart, error) {
 			AtToken:   atToken,
 			NameToken: nameToken,
 		}, nil
-	case decorators.BlockType:
+	case decorators.BlockDecorType:
 		// Block decorators are allowed in shell context per specification
 		// Examples: setup: @parallel { ... }, server: @timeout(30s) { ... }
 		return &ast.BlockDecorator{
@@ -1120,7 +1120,7 @@ func (p *Parser) parseDecorator() (ast.CommandContent, error) {
 			AtToken:   atToken,
 			NameToken: nameToken,
 		}, nil
-	case decorators.BlockType:
+	case decorators.BlockDecorType:
 		return &ast.BlockDecorator{
 			Name:      decoratorName,
 			Args:      params,
@@ -1645,7 +1645,7 @@ func (p *Parser) synchronize() {
 				// Check if this is a registered block or pattern decorator
 				if _, decoratorType, err := decorators.GetAny(decoratorName); err == nil {
 					switch decoratorType {
-					case decorators.BlockType, decorators.PatternType:
+					case decorators.BlockDecorType, decorators.PatternType:
 						return // Found @parallel, @timeout, @when, etc.
 					}
 				}
@@ -1764,7 +1764,7 @@ func (p *Parser) convertArgTypeToExpressionType(argType decorators.ArgType) ast.
 		return ast.DurationType
 	case decorators.ArgTypeIdentifier:
 		return ast.IdentifierType
-	case decorators.ArgTypeList, decorators.ArgTypeMap, decorators.ArgTypeAny:
+	case decorators.ArgTypeList, decorators.ArgTypeMap:
 		// For complex types, use string as fallback for now
 		return ast.StringType
 	default:
@@ -1797,7 +1797,7 @@ func (p *Parser) getVariableType(varName string) (ast.ExpressionType, bool) {
 }
 
 // validatePatternBranches validates pattern branches using the decorator's own validation logic
-func (p *Parser) validatePatternBranches(decorator decorators.PatternDecorator, patterns []ast.PatternBranch, decoratorName string) error {
+func (p *Parser) validatePatternBranches(decorator decorators.LegacyPatternDecorator, patterns []ast.PatternBranch, decoratorName string) error {
 	// Extract pattern names
 	var patternNames []string
 	for _, patternBranch := range patterns {

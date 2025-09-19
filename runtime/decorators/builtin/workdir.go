@@ -11,7 +11,9 @@ import (
 
 // Register the @workdir decorator on package import
 func init() {
-	decorators.RegisterBlock(NewWorkdirDecorator())
+	decorator := NewWorkdirDecorator()
+	decorators.RegisterBlock(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // WorkdirDecorator implements the @workdir decorator using the core decorator interfaces
@@ -192,4 +194,69 @@ func (w *WorkdirDecorator) extractParameters(params []decorators.Param) (path st
 	}
 
 	return path, createIfNotExists, nil
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the workdir operation
+func (w *WorkdirDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	path, createIfNotExists, err := w.extractParameters(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@workdir(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "workdir",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Resolve path for display
+	resolvedPath := path
+	if !filepath.IsAbs(path) {
+		resolvedPath = filepath.Join(ctx.GetWorkingDir(), path)
+	}
+	resolvedPath = filepath.Clean(resolvedPath)
+
+	description := fmt.Sprintf("@workdir(%s)", resolvedPath)
+	if createIfNotExists {
+		description += " (create if needed)"
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: description,
+		Command:     fmt.Sprintf("cd %s", resolvedPath),
+		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Metadata: map[string]string{
+			"decorator":         "workdir",
+			"path":              resolvedPath,
+			"createIfNotExists": fmt.Sprintf("%t", createIfNotExists),
+			"originalPath":      path,
+			"execution_mode":    "context",
+			"color":             plan.ColorCyan,
+		},
+	}
+}
+
+// Execute performs the workdir operation
+func (w *WorkdirDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "workdir execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @workdir
+func (w *WorkdirDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockShell,
+		Required: true,
+	}
 }

@@ -12,7 +12,9 @@ import (
 
 // Register the @log decorator on package import
 func init() {
-	decorators.RegisterAction(NewLogDecorator())
+	decorator := NewLogDecorator()
+	decorators.RegisterAction(decorator)
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // LogDecorator implements the @log decorator using the core decorator interfaces
@@ -273,4 +275,81 @@ func (l *LogDecorator) removeColorTemplates(message string) string {
 	result = re.ReplaceAllString(result, "")
 
 	return result
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the log operation
+func (l *LogDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	message, level, plain, err := l.extractDecoratorParameters(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@log(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "log",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Show preview of message for plan - truncate at first newline
+	preview := message
+	if lines := strings.Split(preview, "\n"); len(lines) > 1 {
+		preview = lines[0] + " ..."
+	}
+
+	// Remove color templates for plan display
+	cleanPreview := l.removeColorTemplates(preview)
+
+	// Limit length for plans
+	maxMessageLength := 60
+	if len(cleanPreview) > maxMessageLength {
+		cleanPreview = cleanPreview[:maxMessageLength] + "..."
+	}
+
+	// Format description
+	var description string
+	if plain {
+		description = fmt.Sprintf("@log(plain): %s", cleanPreview)
+	} else {
+		levelUpper := strings.ToUpper(level)
+		description = fmt.Sprintf("@log[%s]: %s", levelUpper, cleanPreview)
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: description,
+		Command:     fmt.Sprintf("echo %q", cleanPreview), // Use echo for simple display
+		Children:    []plan.ExecutionStep{},               // Log doesn't have children
+		Metadata: map[string]string{
+			"decorator":      "log",
+			"level":          level,
+			"plain":          fmt.Sprintf("%t", plain),
+			"lines":          fmt.Sprintf("%d", strings.Count(message, "\n")+1),
+			"execution_mode": "output",
+			"color":          plan.ColorGreen,
+		},
+	}
+}
+
+// Execute performs the log operation
+func (l *LogDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "log execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @log
+func (l *LogDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockNone,
+		Required: false,
+	}
 }

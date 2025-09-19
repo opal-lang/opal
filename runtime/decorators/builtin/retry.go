@@ -10,9 +10,25 @@ import (
 	"github.com/aledsdavies/devcmd/runtime/execution/context"
 )
 
+// simpleCommandResult implements CommandResult for error cases
+type simpleCommandResult struct {
+	stdout   string
+	stderr   string
+	exitCode int
+}
+
+func (r *simpleCommandResult) GetStdout() string { return r.stdout }
+func (r *simpleCommandResult) GetStderr() string { return r.stderr }
+func (r *simpleCommandResult) GetExitCode() int  { return r.exitCode }
+func (r *simpleCommandResult) IsSuccess() bool   { return r.exitCode == 0 }
+
 // Register the @retry decorator on package import
 func init() {
-	decorators.RegisterBlock(NewRetryDecorator())
+	decorator := NewRetryDecorator()
+	// Register with legacy interface (Phase 4: remove this)
+	decorators.RegisterBlock(decorator)
+	// Register with new interface
+	decorators.RegisterExecutionDecorator(decorator)
 }
 
 // RetryDecorator implements the @retry decorator using the core decorator interfaces
@@ -188,4 +204,70 @@ func (r *RetryDecorator) extractParameters(params []decorators.Param) (attempts 
 	}
 
 	return attempts, delay, exponentialBackoff, nil
+}
+
+// ================================================================================================
+// NEW EXECUTION DECORATOR METHODS (target interface)
+// ================================================================================================
+
+// Plan generates an execution plan for the retry operation
+func (r *RetryDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
+	attempts, delay, exponentialBackoff, err := r.extractParameters(args)
+	if err != nil {
+		return plan.ExecutionStep{
+			Type:        plan.StepDecorator,
+			Description: fmt.Sprintf("@retry(<error: %v>)", err),
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "retry",
+				"error":     err.Error(),
+			},
+		}
+	}
+
+	// Create timing info for the plan
+	var desc string
+	if exponentialBackoff {
+		desc = fmt.Sprintf("@retry(attempts=%d, delay=%v, exponentialBackoff=true)", attempts, delay)
+	} else {
+		desc = fmt.Sprintf("@retry(attempts=%d, delay=%v)", attempts, delay)
+	}
+
+	return plan.ExecutionStep{
+		Type:        plan.StepDecorator,
+		Description: desc,
+		Command:     fmt.Sprintf("# Retry with %d attempts", attempts),
+		Children:    []plan.ExecutionStep{}, // Will be populated by the plan generator
+		Timing: &plan.TimingInfo{
+			RetryAttempts: attempts,
+			RetryDelay:    &delay,
+		},
+		Metadata: map[string]string{
+			"decorator":          "retry",
+			"attempts":           fmt.Sprintf("%d", attempts),
+			"delay":              delay.String(),
+			"exponentialBackoff": fmt.Sprintf("%t", exponentialBackoff),
+			"execution_mode":     "error_handling",
+			"color":              plan.ColorCyan,
+		},
+	}
+}
+
+// Execute performs the retry operation
+func (r *RetryDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+	// TODO: Runtime execution - implement when interpreter is rebuilt
+	// For now, return a placeholder result
+	return &simpleCommandResult{
+		stdout:   "",
+		stderr:   "retry execution not implemented yet - use plan mode",
+		exitCode: 1,
+	}
+}
+
+// RequiresBlock returns the block requirements for @retry
+func (r *RetryDecorator) RequiresBlock() decorators.BlockRequirement {
+	return decorators.BlockRequirement{
+		Type:     decorators.BlockShell,
+		Required: true,
+	}
 }
