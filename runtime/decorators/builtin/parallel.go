@@ -19,6 +19,12 @@ func init() {
 // ParallelDecorator implements the @parallel decorator using the core decorator interfaces
 type ParallelDecorator struct{}
 
+// ParallelParams represents validated parameters for @parallel decorator
+type ParallelParams struct {
+	Mode        string `json:"mode"`        // Failure mode: 'fail-fast', 'immediate', or 'all'
+	Concurrency int    `json:"concurrency"` // Maximum concurrent jobs
+}
+
 // NewParallelDecorator creates a new parallel decorator
 func NewParallelDecorator() *ParallelDecorator {
 	return &ParallelDecorator{}
@@ -231,36 +237,100 @@ func (p *ParallelDecorator) extractParameters(params []decorators.Param, default
 }
 
 // ================================================================================================
-// NEW EXECUTION DECORATOR METHODS (target interface)
+// NEW EXECUTION DECORATOR METHODS (generic interface)
 // ================================================================================================
 
+// Validate parses and validates parameters, returning typed ParallelParams as any
+func (p *ParallelDecorator) Validate(params []decorators.Param) (any, error) {
+	// Set defaults
+	result := ParallelParams{
+		Mode:        "fail-fast",
+		Concurrency: 4, // Default concurrency
+	}
+
+	// Extract optional parameters
+	for _, param := range params {
+		switch param.GetName() {
+		case "mode":
+			if val, ok := param.GetValue().(string); ok {
+				result.Mode = val
+			} else {
+				return nil, fmt.Errorf("@parallel mode parameter must be a string, got %T", param.GetValue())
+			}
+		case "concurrency":
+			if val, ok := param.GetValue().(int); ok {
+				result.Concurrency = val
+			} else if val, ok := param.GetValue().(float64); ok {
+				result.Concurrency = int(val)
+			} else if val, ok := param.GetValue().(string); ok {
+				// Try to parse string as integer
+				if parsed, err := strconv.Atoi(val); err == nil {
+					result.Concurrency = parsed
+				} else {
+					return nil, fmt.Errorf("@parallel concurrency parameter must be a number, got string %q", val)
+				}
+			} else {
+				return nil, fmt.Errorf("@parallel concurrency parameter must be a number, got %T", param.GetValue())
+			}
+		default:
+			return nil, fmt.Errorf("@parallel unknown parameter: %s", param.GetName())
+		}
+	}
+
+	// Cap concurrency for safety
+	maxConcurrency := 50
+	if result.Concurrency > maxConcurrency {
+		return nil, fmt.Errorf("@parallel concurrency cannot exceed %d, got %d", maxConcurrency, result.Concurrency)
+	}
+
+	// Validate mode
+	validModes := map[string]bool{
+		"fail-fast": true, // Stop scheduling on first failure, wait for running tasks
+		"immediate": true, // Stop scheduling and cancel running tasks immediately
+		"all":       true, // Run all tasks to completion, aggregate errors
+	}
+	if !validModes[result.Mode] {
+		return nil, fmt.Errorf("invalid @parallel mode %q, must be one of: fail-fast, immediate, all", result.Mode)
+	}
+
+	// Validate concurrency
+	if result.Concurrency <= 0 {
+		return nil, fmt.Errorf("@parallel concurrency must be positive, got %d", result.Concurrency)
+	}
+	if result.Concurrency > maxConcurrency {
+		return nil, fmt.Errorf("@parallel concurrency %d exceeds maximum allowed %d", result.Concurrency, maxConcurrency)
+	}
+
+	return result, nil
+}
+
 // Plan generates an execution plan for the parallel operation
-func (p *ParallelDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	mode, concurrency, err := p.extractParameters(args, 4) // Default concurrency of 4
-	if err != nil {
+func (p *ParallelDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(ParallelParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@parallel(<error: %v>)", err),
+			Description: "@parallel(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "parallel",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepDecorator,
-		Description: fmt.Sprintf("@parallel(mode=%s, concurrency=%d)", mode, concurrency),
-		Command:     fmt.Sprintf("# Execute %d commands in parallel", concurrency),
+		Description: fmt.Sprintf("@parallel(mode=%s, concurrency=%d)", params.Mode, params.Concurrency),
+		Command:     fmt.Sprintf("# Execute %d commands in parallel", params.Concurrency),
 		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
 		Timing: &plan.TimingInfo{
-			ConcurrencyLimit: concurrency,
+			ConcurrencyLimit: params.Concurrency,
 		},
 		Metadata: map[string]string{
 			"decorator":      "parallel",
-			"mode":           mode,
-			"concurrency":    fmt.Sprintf("%d", concurrency),
+			"mode":           params.Mode,
+			"concurrency":    fmt.Sprintf("%d", params.Concurrency),
 			"execution_mode": "concurrency",
 			"color":          plan.ColorBlue,
 		},
@@ -268,13 +338,20 @@ func (p *ParallelDecorator) Plan(ctx decorators.Context, args []decorators.Param
 }
 
 // Execute performs the parallel operation
-func (p *ParallelDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
+func (p *ParallelDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	params, ok := validated.(ParallelParams)
+	if !ok {
+		return nil, fmt.Errorf("@parallel: invalid parameters")
+	}
+
 	// TODO: Runtime execution - implement when interpreter is rebuilt
+	// Will use params.Mode and params.Concurrency for execution control
+	_ = params // Prevent unused variable warning
 	return &simpleCommandResult{
 		stdout:   "",
 		stderr:   "parallel execution not implemented yet - use plan mode",
 		exitCode: 1,
-	}
+	}, nil
 }
 
 // RequiresBlock returns the block requirements for @parallel

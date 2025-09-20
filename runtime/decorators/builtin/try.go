@@ -13,7 +13,7 @@ import (
 func init() {
 	decorator := NewTryDecorator()
 	decorators.RegisterPattern(decorator)
-	decorators.RegisterExecutionDecorator(decorator)
+	// Note: @try stays on legacy interface, not migrating to generic interface
 }
 
 // TryDecorator implements the @try decorator using the core decorator interfaces

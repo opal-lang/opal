@@ -184,26 +184,109 @@ const (
 	BlockPattern BlockType = "pattern" // Pattern matching block: @when(ENV) { prod: ..., dev: ... }
 )
 
-// ValueDecorator - Target interface for inline value substitution decorators
-// Clean interface for the unified architecture
-type ValueDecorator interface {
+// Resolved represents the result of decorator resolution with type flexibility
+type Resolved interface {
+	// The actual resolved value (string, bool, int, array, map, etc.)
+	Value() any
+	// Type classification matching our expression type system
+	Type() ResolvedType
+	// Hash for contract verification and change detection
+	Hash() string
+}
+
+// ResolvedType uses our existing expression type system
+type ResolvedType string
+
+const (
+	ResolvedString   ResolvedType = "string"
+	ResolvedNumber   ResolvedType = "number"
+	ResolvedDuration ResolvedType = "duration"
+	ResolvedBoolean  ResolvedType = "boolean"
+	ResolvedArray    ResolvedType = "array"
+	ResolvedMap      ResolvedType = "map"
+)
+
+// ================================================================================================
+// BLOCK EXECUTION DESIGN - Future Implementation
+// ================================================================================================
+
+// TODO: Implement full DAG-based value resolution and statement execution
+//
+// DESIGN OVERVIEW:
+// 1. Parse Phase: Source → AST → IR
+// 2. DAG Building: Traverse IR, identify value decorators (@var, @env), build dependency graph
+// 3. Value Resolution: Execute value decorators in topological order, substitute into IR
+// 4. Statement Building: Convert resolved IR into ExecutableStatements
+// 5. Execution: Decorators get clean arrays of ready-to-run ExecutableStatements
+//
+// This enables decorators like @retry to simply loop through pre-resolved statements:
+//
+//	for _, stmt := range retryParams.Statements {
+//	    result, err := stmt.Execute(ctx)
+//	}
+//
+// ExecutableStatement (placeholder interface):
+type ExecutableStatement interface {
+	// Execute the resolved statement (all values already substituted)
+	Execute(ctx Context) (CommandResult, error)
+	// Plan generation for resolved statement
+	Plan(ctx Context) plan.ExecutionStep
+	// Display the resolved command
+	String() string
+}
+
+// Block parameter type for decorators that need blocks (@retry, @parallel, @timeout, etc.)
+type ExecutableBlock []ExecutableStatement
+
+// resolved is a basic implementation of the Resolved interface
+type resolved struct {
+	value        any
+	resolvedType ResolvedType
+	hash         string
+}
+
+func (r *resolved) Value() any {
+	return r.value
+}
+
+func (r *resolved) Type() ResolvedType {
+	return r.resolvedType
+}
+
+func (r *resolved) Hash() string {
+	return r.hash
+}
+
+// NewResolved creates a new resolved value
+func NewResolved(value any, resolvedType ResolvedType, hash string) Resolved {
+	return &resolved{
+		value:        value,
+		resolvedType: resolvedType,
+		hash:         hash,
+	}
+}
+
+// Decorator - Base generic interface for all decorators with validated parameters
+type Decorator[T any] interface {
 	DecoratorBase
-	// Plan generation - shows how value will be resolved
-	Plan(ctx Context, args []Param) plan.ExecutionStep
-	// Value resolution - resolves the actual value during execution
-	Resolve(ctx Context, args []Param) (string, error)
+	// Validate parameters and return decorator-specific validated type
+	Validate(args []Param) (T, error)
+	// Plan generation using validated parameters
+	Plan(ctx Context, validated T) plan.ExecutionStep
+}
+
+// ValueDecorator - Generic interface for inline value substitution decorators
+type ValueDecorator[T any] interface {
+	Decorator[T]
+	// Value resolution using validated parameters
+	Resolve(ctx Context, validated T) (Resolved, error)
 	// Performance optimization - expensive decorators resolved lazily
 	IsExpensive() bool
 }
 
-// ExecutionDecorator - Target interface for command execution decorators
-// Clean interface for the unified architecture
-type ExecutionDecorator interface {
-	DecoratorBase
-	// Plan generation - shows what will be executed
-	Plan(ctx Context, args []Param) plan.ExecutionStep
-	// Execution - performs the actual work
-	Execute(ctx Context, args []Param) CommandResult
-	// Block requirements - describes structural needs for parsing
-	RequiresBlock() BlockRequirement
+// ExecutionDecorator - Generic interface for command execution decorators
+type ExecutionDecorator[T any] interface {
+	Decorator[T]
+	// Execution using validated parameters
+	Execute(ctx Context, validated T) (CommandResult, error)
 }

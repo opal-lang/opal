@@ -71,6 +71,11 @@ The CLI is now just a thin wrapper around runtime, and we have proper module bou
 - **Impact**: What this enables, not how revolutionary it is
 - **Avoid**: Emoji, excessive formatting, marketing language
 
+### Pre-PR Checklist
+- **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
+  - When Nix build fails with hash mismatch, copy the "got:" hash to replace the "expected:" hash
+  - This ensures the package builds correctly in Nix environments
+
 ## Project Specification Compliance
 
 **CRITICAL**: Always follow the project specification and architecture documented in `docs/SPECIFICATION.md` and `docs/ARCHITECTURE.md`.

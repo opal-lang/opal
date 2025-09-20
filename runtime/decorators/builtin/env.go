@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
@@ -19,6 +20,12 @@ func init() {
 
 // EnvDecorator implements the @env decorator using the core decorator interfaces
 type EnvDecorator struct{}
+
+// EnvParams represents validated parameters for @env decorator
+type EnvParams struct {
+	Name    string `json:"name"`    // Environment variable name to reference
+	Default string `json:"default"` // Default value if environment variable is not set or empty
+}
 
 // NewEnvDecorator creates a new env decorator
 func NewEnvDecorator() *EnvDecorator {
@@ -193,69 +200,107 @@ func (e *EnvDecorator) extractDecoratorParameters(params []decorators.Param) (ke
 // NEW VALUE DECORATOR METHODS (target interface)
 // ================================================================================================
 
-// Plan generates an execution plan showing how the environment variable will be resolved
-func (e *EnvDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	key, defaultValue, allowEmpty, err := e.extractDecoratorParameters(args)
-	if err != nil {
+// IsExpensive returns false as environment variable lookups are fast
+func (e *EnvDecorator) IsExpensive() bool {
+	return false // Environment variable lookups are very fast
+}
+
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ValueDecorator[any])
+// ================================================================================================
+
+// resolveValue performs the actual environment variable resolution
+func (e *EnvDecorator) resolveValue(params EnvParams) (string, string) {
+	// Get the environment variable value directly from OS
+	value := os.Getenv(params.Name)
+	actualValue := value
+	source := "environment"
+
+	// Use default if not set or empty
+	if value == "" {
+		actualValue = params.Default
+		source = "default"
+	}
+
+	return actualValue, source
+}
+
+// Validate validates parameters and returns EnvParams
+func (e *EnvDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract environment variable name (first positional parameter or named "name")
+	envName, err := decorators.ExtractPositionalString(args, 0, "")
+	if err != nil || envName == "" {
+		// Try named parameter "name"
+		envName, err = decorators.ExtractString(args, "name", "")
+		if err != nil || envName == "" {
+			return nil, fmt.Errorf("@env requires an environment variable name")
+		}
+	}
+
+	if envName == "" {
+		return nil, fmt.Errorf("@env requires a non-empty environment variable name")
+	}
+
+	// Extract optional default value (second positional parameter or named "default")
+	defaultValue, _ := decorators.ExtractPositionalString(args, 1, "")
+	if defaultValue == "" {
+		// Try named parameter "default"
+		defaultValue, _ = decorators.ExtractString(args, "default", "")
+	}
+
+	return EnvParams{
+		Name:    envName,
+		Default: defaultValue,
+	}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (e *EnvDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(EnvParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@env(<error: %v>)", err),
+			Description: "@env(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "env",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
-	// Get the environment variable value from frozen environment
-	value, exists := ctx.GetEnv(key)
-	actualValue := value
-	source := "captured"
-
-	// Apply same logic as Resolve for consistency
-	if !exists || (!allowEmpty && value == "") {
-		actualValue = defaultValue
-		source = "default"
-	}
-
-	description := fmt.Sprintf("@env(%s) → %q (%s)", key, actualValue, source)
+	actualValue, source := e.resolveValue(params)
+	description := fmt.Sprintf("@env(%s) → %q (%s)", params.Name, actualValue, source)
 
 	return plan.ExecutionStep{
 		Type:        plan.StepDecorator,
 		Description: description,
 		Command:     actualValue,
 		Metadata: map[string]string{
-			"decorator":  "env",
-			"key":        key,
-			"value":      actualValue,
-			"source":     source,
-			"allowEmpty": fmt.Sprintf("%t", allowEmpty),
+			"decorator": "env",
+			"name":      params.Name,
+			"value":     actualValue,
+			"source":    source,
+			"default":   params.Default,
 		},
 	}
 }
 
-// Resolve gets the actual environment variable value during execution
-func (e *EnvDecorator) Resolve(ctx decorators.Context, args []decorators.Param) (string, error) {
-	key, defaultValue, allowEmpty, err := e.extractDecoratorParameters(args)
-	if err != nil {
-		return "", fmt.Errorf("@env parameter error: %w", err)
+// Resolve gets the actual environment variable value using validated parameters
+func (e *EnvDecorator) Resolve(ctx decorators.Context, validated any) (decorators.Resolved, error) {
+	params, ok := validated.(EnvParams)
+	if !ok {
+		return nil, fmt.Errorf("@env: invalid parameters")
 	}
 
-	// ✅ CORRECT: Read from frozen environment (deterministic)
-	value, exists := ctx.GetEnv(key)
+	actualValue, _ := e.resolveValue(params)
 
-	// Use default if not exists or empty (unless allowEmpty=true)
-	if !exists || (!allowEmpty && value == "") {
-		return defaultValue, nil
-	}
-
-	return value, nil
-}
-
-// IsExpensive returns false as environment variable lookups are fast
-func (e *EnvDecorator) IsExpensive() bool {
-	return false // Environment variable lookups are very fast
+	// Return resolved value
+	return decorators.NewResolved(
+		actualValue,
+		decorators.ResolvedString,
+		fmt.Sprintf("env:%s:%s", params.Name, actualValue),
+	), nil
 }
 
 // extractParameters extracts the environment variable key, default value, and allowEmpty flag

@@ -20,6 +20,11 @@ func init() {
 // VarDecorator implements the @var decorator using the core decorator interfaces
 type VarDecorator struct{}
 
+// VarParams represents validated parameters for @var decorator
+type VarParams struct {
+	Path string `json:"path"` // Variable path with JQ-like dot notation (e.g., "user.profile.name")
+}
+
 // NewVarDecorator creates a new var decorator
 func NewVarDecorator() *VarDecorator {
 	return &VarDecorator{}
@@ -43,10 +48,10 @@ func (v *VarDecorator) Description() string {
 func (v *VarDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
 		{
-			Name:        "name",
-			Type:        decorators.ArgTypeIdentifier,
+			Name:        "path",
+			Type:        decorators.ArgTypeString,
 			Required:    true,
-			Description: "Variable name to reference",
+			Description: "Variable path with JQ-like dot notation (e.g., 'user.profile.name')",
 		},
 	}
 }
@@ -162,23 +167,50 @@ func (v *VarDecorator) extractDecoratorVariableName(params []decorators.Param) (
 }
 
 // ================================================================================================
-// NEW VALUE DECORATOR METHODS (target interface)
+// NEW GENERIC INTERFACE METHODS (ValueDecorator[any])
 // ================================================================================================
 
-// Plan generates an execution plan showing how the variable will be resolved
-func (v *VarDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	varName, err := v.extractDecoratorVariableName(args)
-	if err != nil {
+// Validate validates parameters and returns VarParams
+func (v *VarDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract variable path (first positional parameter or named "path"/"name")
+	path, err := decorators.ExtractPositionalString(args, 0, "")
+	if err != nil || path == "" {
+		// Try named parameter "path"
+		path, err = decorators.ExtractString(args, "path", "")
+		if err != nil || path == "" {
+			// Try legacy "name" parameter for backward compatibility
+			path, err = decorators.ExtractString(args, "name", "")
+			if err != nil || path == "" {
+				return nil, fmt.Errorf("@var requires a variable path")
+			}
+		}
+	}
+
+	if path == "" {
+		return nil, fmt.Errorf("@var requires a non-empty variable path")
+	}
+
+	return VarParams{Path: path}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (v *VarDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(VarParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@var(<error: %v>)", err),
+			Description: "@var(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "var",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
+
+	// TODO: Implement JQ-like path resolution here
+	// For now, treat as simple variable name
+	varName := params.Path
 
 	// Resolve the variable value during plan generation
 	value, exists := ctx.GetVar(varName)
@@ -189,7 +221,7 @@ func (v *VarDecorator) Plan(ctx decorators.Context, args []decorators.Param) pla
 			Command:     value,
 			Metadata: map[string]string{
 				"decorator":   "var",
-				"variable":    varName,
+				"path":        params.Path,
 				"value":       value,
 				"resolved_at": "plan",
 				"source":      "cli_variable",
@@ -203,26 +235,35 @@ func (v *VarDecorator) Plan(ctx decorators.Context, args []decorators.Param) pla
 		Command:     "",
 		Metadata: map[string]string{
 			"decorator": "var",
-			"variable":  varName,
+			"path":      params.Path,
 			"error":     "undefined_variable",
 		},
 	}
 }
 
-// Resolve gets the actual variable value during execution
-func (v *VarDecorator) Resolve(ctx decorators.Context, args []decorators.Param) (string, error) {
-	varName, err := v.extractDecoratorVariableName(args)
-	if err != nil {
-		return "", fmt.Errorf("@var parameter error: %w", err)
+// Resolve gets the actual variable value using validated parameters
+func (v *VarDecorator) Resolve(ctx decorators.Context, validated any) (decorators.Resolved, error) {
+	params, ok := validated.(VarParams)
+	if !ok {
+		return nil, fmt.Errorf("@var: invalid parameters")
 	}
+
+	// TODO: Implement JQ-like path resolution here
+	// For now, treat as simple variable name
+	varName := params.Path
 
 	// Look up variable in context
 	if value, exists := ctx.GetVar(varName); exists {
-		return value, nil
+		// TODO: Return proper Resolved type with type detection
+		return decorators.NewResolved(
+			value,
+			decorators.ResolvedString, // TODO: Detect actual type
+			fmt.Sprintf("var:%s", varName),
+		), nil
 	}
 
 	// Variable not found
-	return "", fmt.Errorf("undefined variable: %s", varName)
+	return nil, fmt.Errorf("undefined variable: %s", varName)
 }
 
 // IsExpensive returns false as variable lookups are fast

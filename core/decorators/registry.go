@@ -19,9 +19,9 @@ type Registry struct {
 	LegacyValues   map[string]LegacyValueDecorator
 	LegacyPatterns map[string]LegacyPatternDecorator
 
-	// Target interfaces (clean names)
-	Values    map[string]ValueDecorator
-	Execution map[string]ExecutionDecorator
+	// Target interfaces (generic with any for registry storage)
+	Values    map[string]ValueDecorator[any]
+	Execution map[string]ExecutionDecorator[any]
 }
 
 // NewRegistry creates a new empty registry
@@ -34,8 +34,8 @@ func NewRegistry() *Registry {
 		LegacyPatterns: make(map[string]LegacyPatternDecorator),
 
 		// Target interfaces
-		Values:    make(map[string]ValueDecorator),
-		Execution: make(map[string]ExecutionDecorator),
+		Values:    make(map[string]ValueDecorator[any]),
+		Execution: make(map[string]ExecutionDecorator[any]),
 	}
 }
 
@@ -202,7 +202,7 @@ func (r *Registry) GetPattern(name string) (LegacyPatternDecorator, bool) {
 // ================================================================================================
 
 // RegisterValueDecorator registers a value decorator with the new interface
-func (r *Registry) RegisterValueDecorator(decorator ValueDecorator) error {
+func (r *Registry) RegisterValueDecorator(decorator ValueDecorator[any]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -218,7 +218,7 @@ func (r *Registry) RegisterValueDecorator(decorator ValueDecorator) error {
 }
 
 // RegisterExecutionDecorator registers an execution decorator with the new interface
-func (r *Registry) RegisterExecutionDecorator(decorator ExecutionDecorator) error {
+func (r *Registry) RegisterExecutionDecorator(decorator ExecutionDecorator[any]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -234,7 +234,7 @@ func (r *Registry) RegisterExecutionDecorator(decorator ExecutionDecorator) erro
 }
 
 // GetValueDecorator retrieves a value decorator
-func (r *Registry) GetValueDecorator(name string) (ValueDecorator, bool) {
+func (r *Registry) GetValueDecorator(name string) (ValueDecorator[any], bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	decorator, exists := r.Values[name]
@@ -242,7 +242,7 @@ func (r *Registry) GetValueDecorator(name string) (ValueDecorator, bool) {
 }
 
 // GetExecutionDecorator retrieves an execution decorator
-func (r *Registry) GetExecutionDecorator(name string) (ExecutionDecorator, bool) {
+func (r *Registry) GetExecutionDecorator(name string) (ExecutionDecorator[any], bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	decorator, exists := r.Execution[name]
@@ -337,14 +337,14 @@ func RegisterPattern(decorator LegacyPatternDecorator) {
 }
 
 // RegisterValueDecorator registers a value decorator globally
-func RegisterValueDecorator(decorator ValueDecorator) {
+func RegisterValueDecorator(decorator ValueDecorator[any]) {
 	if err := globalRegistry.RegisterValueDecorator(decorator); err != nil {
 		panic(fmt.Sprintf("Failed to register value decorator %q: %v", decorator.Name(), err))
 	}
 }
 
 // RegisterExecutionDecorator registers an execution decorator globally
-func RegisterExecutionDecorator(decorator ExecutionDecorator) {
+func RegisterExecutionDecorator(decorator ExecutionDecorator[any]) {
 	if err := globalRegistry.RegisterExecutionDecorator(decorator); err != nil {
 		panic(fmt.Sprintf("Failed to register execution decorator %q: %v", decorator.Name(), err))
 	}

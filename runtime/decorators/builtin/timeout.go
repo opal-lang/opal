@@ -20,6 +20,11 @@ func init() {
 // TimeoutDecorator implements the @timeout decorator using the core decorator interfaces
 type TimeoutDecorator struct{}
 
+// TimeoutParams represents validated parameters for @timeout decorator
+type TimeoutParams struct {
+	Duration time.Duration `json:"duration"` // Maximum execution time (default: 30s)
+}
+
 // NewTimeoutDecorator creates a new timeout decorator
 func NewTimeoutDecorator() *TimeoutDecorator {
 	return &TimeoutDecorator{}
@@ -179,45 +184,76 @@ func (t *TimeoutDecorator) extractDuration(params []decorators.Param) (time.Dura
 // ================================================================================================
 
 // Plan generates an execution plan for the timeout operation
-func (t *TimeoutDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	duration, err := t.extractDuration(args)
+
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ExecutionDecorator[any])
+// ================================================================================================
+
+// Validate validates parameters and returns TimeoutParams
+func (t *TimeoutDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract duration (first positional parameter or named "duration")
+	duration, err := decorators.ExtractDuration(args, "duration", 30*time.Second) // default 30s
 	if err != nil {
+		return nil, fmt.Errorf("@timeout duration parameter error: %w", err)
+	}
+
+	if duration <= 0 {
+		return nil, fmt.Errorf("@timeout duration must be positive")
+	}
+
+	return TimeoutParams{
+		Duration: duration,
+	}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (t *TimeoutDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(TimeoutParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@timeout(<error: %v>)", err),
+			Description: "@timeout(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "timeout",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepDecorator,
-		Description: fmt.Sprintf("@timeout(duration=%s)", duration),
-		Command:     fmt.Sprintf("# Execute with %s timeout", duration),
-		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
-		Timing: &plan.TimingInfo{
-			Timeout: &duration,
-		},
+		Description: fmt.Sprintf("@timeout(%v) { ... }", params.Duration),
+		Command:     "",
 		Metadata: map[string]string{
-			"decorator":      "timeout",
-			"duration":       duration.String(),
-			"execution_mode": "time_constraint",
-			"color":          plan.ColorYellow,
+			"decorator": "timeout",
+			"duration":  params.Duration.String(),
+			"status":    "awaiting_executable_block_implementation",
 		},
 	}
 }
 
-// Execute performs the timeout operation
-func (t *TimeoutDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
-	// TODO: Runtime execution - implement when interpreter is rebuilt
-	return &simpleCommandResult{
-		stdout:   "",
-		stderr:   "timeout execution not implemented yet - use plan mode",
-		exitCode: 1,
+// Execute performs the actual timeout logic using validated parameters
+func (t *TimeoutDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	_, ok := validated.(TimeoutParams)
+	if !ok {
+		return nil, fmt.Errorf("@timeout: invalid parameters")
 	}
+
+	// TODO: When ExecutableBlock is implemented, this will become:
+	// ctx, cancel := context.WithTimeout(ctx, params.Duration)
+	// defer cancel()
+	// for _, stmt := range params.Block {
+	//     result, err := stmt.Execute(ctx)
+	//     if err != nil {
+	//         if errors.Is(err, context.DeadlineExceeded) {
+	//             return nil, fmt.Errorf("@timeout: execution exceeded %v", params.Duration)
+	//         }
+	//         return result, err
+	//     }
+	// }
+
+	return nil, fmt.Errorf("@timeout: ExecutableBlock not yet implemented - use legacy interface for now")
 }
 
 // RequiresBlock returns the block requirements for @timeout

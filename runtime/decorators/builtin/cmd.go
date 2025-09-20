@@ -31,6 +31,11 @@ func init() {
 // CmdDecorator implements the @cmd decorator using the core decorator interfaces
 type CmdDecorator struct{}
 
+// CmdParams represents validated parameters for @cmd decorator
+type CmdParams struct {
+	Name string `json:"name"` // Name of the command to execute
+}
+
 // NewCmdDecorator creates a new cmd decorator
 func NewCmdDecorator() *CmdDecorator {
 	return &CmdDecorator{}
@@ -55,7 +60,7 @@ func (c *CmdDecorator) ParameterSchema() []decorators.ParameterSchema {
 	return []decorators.ParameterSchema{
 		{
 			Name:        "name",
-			Type:        decorators.ArgTypeIdentifier,
+			Type:        decorators.ArgTypeString,
 			Required:    true,
 			Description: "Name of the command to execute",
 		},
@@ -153,47 +158,72 @@ func (c *CmdDecorator) extractDecoratorCommandName(params []decorators.Param) (s
 // NEW EXECUTION DECORATOR METHODS (target interface)
 // ================================================================================================
 
-// Plan generates an execution plan for the command reference
-func (c *CmdDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	cmdName, err := c.extractDecoratorCommandName(args)
-	if err != nil {
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ExecutionDecorator[any])
+// ================================================================================================
+
+// Validate validates parameters and returns CmdParams
+func (c *CmdDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract command name (first positional parameter or named "name")
+	cmdName, err := decorators.ExtractPositionalString(args, 0, "")
+	if err != nil || cmdName == "" {
+		// Try named parameter "name"
+		cmdName, err = decorators.ExtractString(args, "name", "")
+		if err != nil || cmdName == "" {
+			return nil, fmt.Errorf("@cmd requires a command name")
+		}
+	}
+
+	if cmdName == "" {
+		return nil, fmt.Errorf("@cmd requires a non-empty command name")
+	}
+
+	return CmdParams{Name: cmdName}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (c *CmdDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(CmdParams)
+	if !ok {
 		return plan.ExecutionStep{
-			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@cmd(<error: %v>)", err),
+			Type:        plan.StepShell,
+			Description: "@cmd(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "cmd",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
-	// Return a command reference step with expansion hints for the plan generator
 	return plan.ExecutionStep{
-		Type:        plan.StepDecorator,
-		Description: fmt.Sprintf("@cmd(%s)", cmdName),
-		Command:     fmt.Sprintf("# Execute command: %s", cmdName),
-		Children:    []plan.ExecutionStep{},
+		Type:        plan.StepShell,
+		Description: fmt.Sprintf("@cmd(%s)", params.Name),
+		Command:     params.Name,
 		Metadata: map[string]string{
-			"decorator":      "cmd",
-			"expansion_type": "command_reference",
-			"command_name":   cmdName,
+			"decorator":  "cmd",
+			"cmd_name":   params.Name,
+			"references": "command_definition",
 		},
 	}
 }
 
-// Execute runs the referenced command
-func (c *CmdDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
-	cmdName, err := c.extractDecoratorCommandName(args)
-	if err != nil {
-		return &ErrorResult{
-			stderr:   fmt.Sprintf("@cmd parameter error: %v", err),
-			exitCode: 1,
-		}
+// Execute performs the actual command execution using validated parameters
+func (c *CmdDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	params, ok := validated.(CmdParams)
+	if !ok {
+		return nil, fmt.Errorf("@cmd: invalid parameters")
 	}
 
-	// Execute the referenced command
-	return ctx.ExecShell(cmdName)
+	if params.Name == "" {
+		return nil, fmt.Errorf("@cmd: empty command name")
+	}
+
+	// Execute the referenced command by name
+	// Note: This is a simplified implementation - in reality this would need
+	// to look up the command definition and execute it
+	result := ctx.ExecShell(params.Name)
+	return result, nil
 }
 
 // RequiresBlock returns the block requirements for @cmd

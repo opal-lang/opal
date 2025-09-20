@@ -19,6 +19,12 @@ func init() {
 // WorkdirDecorator implements the @workdir decorator using the core decorator interfaces
 type WorkdirDecorator struct{}
 
+// WorkdirParams represents validated parameters for @workdir decorator
+type WorkdirParams struct {
+	Path              string `json:"path"`                 // Directory path to change to
+	CreateIfNotExists bool   `json:"create_if_not_exists"` // Create directory if it doesn't exist
+}
+
 // NewWorkdirDecorator creates a new workdir decorator
 func NewWorkdirDecorator() *WorkdirDecorator {
 	return &WorkdirDecorator{}
@@ -201,56 +207,94 @@ func (w *WorkdirDecorator) extractParameters(params []decorators.Param) (path st
 // ================================================================================================
 
 // Plan generates an execution plan for the workdir operation
-func (w *WorkdirDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	path, createIfNotExists, err := w.extractParameters(args)
+
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ExecutionDecorator[any])
+// ================================================================================================
+
+// Validate validates parameters and returns WorkdirParams
+func (w *WorkdirDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract path (first positional parameter or named "path")
+	path, err := decorators.ExtractPositionalString(args, 0, "")
+	if err != nil || path == "" {
+		// Try named parameter "path"
+		path, err = decorators.ExtractString(args, "path", "")
+		if err != nil || path == "" {
+			return nil, fmt.Errorf("@workdir requires a path")
+		}
+	}
+
+	// Extract createIfNotExists flag (optional, defaults to false)
+	createIfNotExists, err := decorators.ExtractBool(args, "createIfNotExists", false)
 	if err != nil {
+		return nil, fmt.Errorf("@workdir createIfNotExists parameter error: %w", err)
+	}
+
+	return WorkdirParams{
+		Path:              path,
+		CreateIfNotExists: createIfNotExists,
+	}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (w *WorkdirDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(WorkdirParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@workdir(<error: %v>)", err),
+			Description: "@workdir(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "workdir",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
-	// Resolve path for display
-	resolvedPath := path
-	if !filepath.IsAbs(path) {
-		resolvedPath = filepath.Join(ctx.GetWorkingDir(), path)
-	}
-	resolvedPath = filepath.Clean(resolvedPath)
-
-	description := fmt.Sprintf("@workdir(%s)", resolvedPath)
-	if createIfNotExists {
-		description += " (create if needed)"
+	description := fmt.Sprintf("@workdir(%q) { ... }", params.Path)
+	if params.CreateIfNotExists {
+		description = fmt.Sprintf("@workdir(%q, create=true) { ... }", params.Path)
 	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepDecorator,
 		Description: description,
-		Command:     fmt.Sprintf("cd %s", resolvedPath),
-		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Command:     "",
 		Metadata: map[string]string{
-			"decorator":         "workdir",
-			"path":              resolvedPath,
-			"createIfNotExists": fmt.Sprintf("%t", createIfNotExists),
-			"originalPath":      path,
-			"execution_mode":    "context",
-			"color":             plan.ColorCyan,
+			"decorator":            "workdir",
+			"path":                 params.Path,
+			"create_if_not_exists": fmt.Sprintf("%t", params.CreateIfNotExists),
+			"status":               "awaiting_executable_block_implementation",
 		},
 	}
 }
 
-// Execute performs the workdir operation
-func (w *WorkdirDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
-	// TODO: Runtime execution - implement when interpreter is rebuilt
-	return &simpleCommandResult{
-		stdout:   "",
-		stderr:   "workdir execution not implemented yet - use plan mode",
-		exitCode: 1,
+// Execute performs the actual workdir logic using validated parameters
+func (w *WorkdirDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	_, ok := validated.(WorkdirParams)
+	if !ok {
+		return nil, fmt.Errorf("@workdir: invalid parameters")
 	}
+
+	// TODO: When ExecutableBlock is implemented, this will become:
+	// if params.CreateIfNotExists {
+	//     err := os.MkdirAll(params.Path, 0755)
+	//     if err != nil {
+	//         return nil, fmt.Errorf("@workdir: failed to create directory %q: %w", params.Path, err)
+	//     }
+	// }
+	// err := ctx.SetWorkingDir(params.Path)
+	// if err != nil {
+	//     return nil, fmt.Errorf("@workdir: failed to change directory to %q: %w", params.Path, err)
+	// }
+	// for _, stmt := range params.Block {
+	//     result, err := stmt.Execute(ctx)
+	//     if err != nil {
+	//         return result, err
+	//     }
+	// }
+
+	return nil, fmt.Errorf("@workdir: ExecutableBlock not yet implemented - use legacy interface for now")
 }
 
 // RequiresBlock returns the block requirements for @workdir

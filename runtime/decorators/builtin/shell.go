@@ -1,6 +1,8 @@
 package builtin
 
 import (
+	"fmt"
+
 	"github.com/aledsdavies/devcmd/core/decorators"
 	"github.com/aledsdavies/devcmd/core/plan"
 )
@@ -9,6 +11,11 @@ import (
 // This is the foundational decorator that enables the "shell syntax as decorator sugar" concept.
 // All shell commands like "npm install" become "@shell('npm install')" internally.
 type ShellDecorator struct{}
+
+// ShellParams represents validated parameters for @shell decorator
+type ShellParams struct {
+	Command string `json:"command"` // Shell command to execute
+}
 
 // NewShellDecorator creates a new shell decorator
 func NewShellDecorator() *ShellDecorator {
@@ -55,36 +62,68 @@ func (s *ShellDecorator) Examples() []decorators.Example {
 	}
 }
 
-// Plan generates an execution plan for the shell command
-func (s *ShellDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	command, _ := decorators.ExtractPositionalString(args, 0, "")
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ExecutionDecorator[any])
+// ================================================================================================
+
+// Validate validates parameters and returns ShellParams
+func (s *ShellDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract shell command (first positional parameter or named "command")
+	command, err := decorators.ExtractPositionalString(args, 0, "")
+	if err != nil || command == "" {
+		// Try named parameter "command"
+		command, err = decorators.ExtractString(args, "command", "")
+		if err != nil || command == "" {
+			return nil, fmt.Errorf("@shell requires a command")
+		}
+	}
+
+	if command == "" {
+		return nil, fmt.Errorf("@shell requires a non-empty command")
+	}
+
+	return ShellParams{Command: command}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (s *ShellDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(ShellParams)
+	if !ok {
+		return plan.ExecutionStep{
+			Type:        plan.StepShell,
+			Description: "@shell(<invalid params>)",
+			Command:     "",
+			Metadata: map[string]string{
+				"decorator": "shell",
+				"error":     "invalid_params",
+			},
+		}
+	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepShell,
-		Description: "@shell",
-		Command:     command,
+		Description: fmt.Sprintf("@shell(%q)", params.Command),
+		Command:     params.Command,
 		Metadata: map[string]string{
-			"decorator":      "shell",
-			"execution_mode": "direct",
-			"color":          plan.ColorGreen,
+			"decorator": "shell",
+			"command":   params.Command,
 		},
 	}
 }
 
-// Execute performs the actual shell command execution
-func (s *ShellDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
-	command, _ := decorators.ExtractPositionalString(args, 0, "")
-
-	if command == "" {
-		// Return a simple error result - we'll need to implement this
-		return &simpleCommandResult{
-			stdout:   "",
-			stderr:   "shell decorator: no command provided",
-			exitCode: 1,
-		}
+// Execute performs the actual shell command execution using validated parameters
+func (s *ShellDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	params, ok := validated.(ShellParams)
+	if !ok {
+		return nil, fmt.Errorf("@shell: invalid parameters")
 	}
 
-	return ctx.ExecShell(command)
+	if params.Command == "" {
+		return nil, fmt.Errorf("@shell: empty command")
+	}
+
+	result := ctx.ExecShell(params.Command)
+	return result, nil
 }
 
 // RequiresBlock returns the block requirements for shell decorator

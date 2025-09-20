@@ -12,7 +12,7 @@ import (
 func init() {
 	decorator := NewWhenDecorator()
 	decorators.RegisterPattern(decorator)
-	decorators.RegisterExecutionDecorator(decorator)
+	// Note: @when stays on legacy interface, not migrating to generic interface
 }
 
 // WhenDecorator implements the @when decorator using the core decorator interfaces

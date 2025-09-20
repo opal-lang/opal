@@ -1,920 +1,437 @@
-# Devcmd Architecture: Unified Decorator System
+# Devcmd Architecture
 
-**Version**: Unified Architecture Implementation
-
-## Core Principle
-
-**Everything is a decorator.**
-
-There are no special cases, no different parsing modes, and no complex execution paths. All shell syntax becomes `@shell` decorators during parsing, creating a beautifully unified system where every construct uses the same execution model.
-
-## Architecture Overview
-
-```
-User Input (Natural Syntax)
-         ↓
-    Lexer/Parser (Converts shell syntax to @shell decorators)
-         ↓
-    AST (Single Decorator type)
-         ↓
-    IR (Single DecoratorNode type)
-         ↓
-    Registry Lookup (ValueDecorator | ExecutionDecorator)
-         ↓
-    Unified Execution (Plan/Execute methods)
-```
-
-## The Two-Interface System
-
-### 1. Value Decorators
-**Purpose**: Inject values at specific locations within shell commands
-
-```go
-type ValueDecorator interface {
-    DecoratorBase
-    Plan(ctx Context, args []Param) plan.ExecutionStep
-    Resolve(ctx Context, args []Param) (string, error)
-    IsExpensive() bool  // For optimization strategies
-}
-```
-
-**Parameter Handling**: All decorator parameters (including blocks) passed via `[]Param` with types:
-- `ArgTypeString`, `ArgTypeNumber`, `ArgTypeDuration`, `ArgTypeBool` - Basic types
-- `ArgTypeBlockFunction` - Shell command blocks `{ commands }`
-- `ArgTypePatternBlockFunction` - Pattern blocks `{ branch: commands }`
-
-**Examples**:
-- `@var(NAME)` - Variable substitution (non-expensive)
-- `@env(API_URL, default="localhost")` - Environment variable with default (non-expensive)  
-- `@aws_secret(key)` - AWS lookup (expensive)
-- `@http_get(url)` - HTTP request (expensive)
-
-**Value Decorator Lifecycle** (Implementation in Progress):
-- **Script startup**: Non-expensive value decorators resolved once and cached immutably
-- **Plan mode**: Non-expensive values shown resolved, expensive values show placeholders  
-- **Execution**: Expensive decorators resolved lazily only when used
-- **Caching**: Values remain immutable for entire script execution
-
-### 2. Execution Decorators
-**Purpose**: Execute commands or wrap command sequences with enhanced behavior
-
-```go
-type ExecutionDecorator interface {
-    DecoratorBase
-    Plan(ctx Context, args []Param) plan.ExecutionStep
-    Execute(ctx Context, args []Param) CommandResult
-    RequiresBlock() BlockRequirement  // Describes structural needs
-}
-```
-
-**Block Requirements** (Conceptual - determines parsing behavior):
-- `BlockNone` - No block needed: `@cmd(build)`
-- `BlockShell` - Shell command block: `@retry(3) { commands }`
-- `BlockPattern` - Pattern matching block: `@when(ENV) { prod: ..., dev: ... }`
-
-**Examples**:
-```devcmd
-// No block - simple execution
-deploy: @cmd(build)
-
-// Shell block - wraps multiple shell commands  
-reliable: @retry(3) {
-    kubectl apply -f k8s/
-    kubectl rollout status
-}
-
-// Pattern block - conditional execution
-build: @when(ENV) {
-    production: docker build -t app:prod .
-    development: docker build -t app:dev .
-}
-```
-
-## Shell Decorator: First-Class Execution
-
-The `@shell` decorator is a standard execution decorator that enables clean syntax:
-
-```go
-// @shell is registered as a standard ExecutionDecorator
-func (s *ShellDecorator) RequiresBlock() BlockRequirement {
-    return BlockRequirement{Type: BlockNone, Required: false}
-}
-
-func (s *ShellDecorator) Execute(ctx Context, args []Param) CommandResult {
-    command := args[0].GetValue().(string)
-    return ctx.ExecShell(command)
-}
-```
-
-**Parser Conversion Examples**:
-```devcmd
-// Simple command
-build: npm run build
-// → @shell("npm run build")
-
-// Command block  
-deploy: {
-    echo "Starting"    // → @shell("echo \"Starting\"")
-    npm run build     // → @shell("npm run build")
-    kubectl apply     // → @shell("kubectl apply")
-}
-
-// Shell operators split into separate decorators with chaining preserved
-complex: echo "hello" && npm test && echo "done"
-// → @shell("echo \"hello\"") && @shell("npm test") && @shell("echo \"done\"")
-```
-
-## Unified AST Structure
-
-**Single decorator type handles everything**:
-
-```go
-type Decorator struct {
-    Name   string             // "shell", "retry", "when", "var", etc.
-    Args   []NamedParameter   // decorator arguments including blocks
-    Pos    Position
-    Tokens TokenRange
-}
-```
-
-**Benefits**:
-- Parser has single decorator parsing path
-- LSP tools work uniformly across all decorators  
-- AST transformations are consistent
-- No special-case handling required
-
-## Unified IR Structure
-
-**Single decorator node type**:
-
-```go
-type DecoratorNode struct {
-    Name   string            // decorator name
-    Args   []decorators.Param // unified parameter system with block support
-}
-```
-
-**Command sequences preserve shell operator chaining**:
-```go
-type CommandSeq struct {
-    Steps []CommandStep
-}
-
-type CommandStep struct {
-    Chain []ChainElement  // Decorators connected by shell operators
-}
-
-type ChainElement struct {
-    Decorator DecoratorNode
-    OpNext    ChainOp      // &&, ||, |, >> to next element
-}
-```
-
-## Registry-Driven Execution
-
-**Single lookup, unified behavior**:
-
-```go
-// All decorators register the same way
-func init() {
-    decorators.RegisterValue(NewVarDecorator())      // Value decorators
-    decorators.RegisterExecution(NewRetryDecorator()) // Execution decorators  
-    decorators.RegisterExecution(NewShellDecorator()) // Shell is just another execution decorator
-}
-
-// Runtime uses unified interface
-decorator, exists := registry.GetExecution(name)
-if exists {
-    return decorator.Plan(ctx, args)
-}
-
-valueDecorator, exists := registry.GetValue(name)
-if exists {
-    return valueDecorator.Plan(ctx, args)
-}
-```
-
-## Decorator Management and Extensibility
-
-### **Decorator Namespacing Strategy**
-
-To prevent decorator explosion and improve discoverability:
-
-**Built-in decorators** (no namespace):
-```devcmd
-@retry(3) { ... }    // Core execution control
-@var(NAME)           // Core value substitution  
-@parallel { ... }    // Core concurrency
-```
-
-**Extension decorators** (namespaced):
-```devcmd
-@aws.secret(key)     // AWS-specific functionality
-@k8s.rollout(app)    // Kubernetes-specific operations
-@http.get(url)       // HTTP-specific value fetching
-@git.branch()        // Git-specific value resolution
-```
-
-**Custom project decorators** (project namespace):
-```devcmd
-@myapp.deploy(env)   // Project-specific deployment logic
-@myapp.scale(count)  // Project-specific scaling
-```
-
-### **Registry Organization**
-
-**Hierarchical decorator discovery**:
-1. **Built-in core** - Always available (retry, parallel, var, env)
-2. **Standard extensions** - Opt-in packages (aws.*, k8s.*, http.*)  
-3. **Project-specific** - Local .devcmd/decorators/ directory
-4. **Custom plugins** - External Go modules
-
-**Conflict resolution**:
-- Namespaced decorators always win: `@aws.secret` vs `@secret`
-- Built-ins cannot be overridden for safety
-- Project decorators can shadow extensions (with warning)
-
-### **Decorator Discovery and Documentation**
-
-**Built-in help system**:
-```bash
-devcmd decorators                    # List all available decorators
-devcmd decorators --namespace aws    # List AWS-specific decorators  
-devcmd help @retry                   # Show specific decorator help
-devcmd help @aws.secret             # Show namespaced decorator help
-```
-
-**Self-documenting decorators**:
-```go
-type RetryDecorator struct{}
-
-func (r *RetryDecorator) Description() string {
-    return "Retry command execution with configurable attempts and delay"
-}
-
-func (r *RetryDecorator) Examples() []string {
-    return []string{
-        "@retry(3) { kubectl apply -f k8s/ }",
-        "@retry(5, delay=2s) { npm test }",
-    }
-}
-```
-
-## Shell Operator Semantics
-
-Shell operators create decorator chains while preserving standard shell precedence:
-
-```devcmd
-// User input
-deploy: npm run build && kubectl apply -f k8s/ || echo "Failed"
-
-// Internal representation  
-deploy: @shell("npm run build") && @shell("kubectl apply -f k8s/") || @shell("echo \"Failed\"")
-
-// Execution behavior (left-to-right evaluation)
-// 1. Execute @shell("npm run build")
-// 2. If successful (&&), execute @shell("kubectl apply -f k8s/")  
-// 3. If previous failed (||), execute @shell("echo \"Failed\"")
-```
-
-**Operator Types**:
-- `&&` - Execute next only if previous succeeded
-- `||` - Execute next only if previous failed
-- `|` - Pipe stdout of previous to stdin of next
-- `;` - Execute next unconditionally (shell behavior - continue on failure)
-- `>>` - Append stdout of previous to file
-- **Newline** - Execute next only if previous succeeded (fail-fast behavior)
-
-## Error Handling and Operator Semantics
-
-### **Error Propagation Rules**
-
-#### **Semicolon vs Newline Execution Models**
-
-**Semicolon (`;`) - Shell Behavior**:
-```devcmd
-@retry(3) { cmd1; cmd2; cmd3 }
-// Internal: @retry(3) { @shell("cmd1; cmd2; cmd3") }
-// Behavior: Traditional shell execution, all commands run
-// Success: If overall shell sequence exits successfully
-// Failure: If overall shell sequence fails
-```
-
-**Newline - Fail-Fast Behavior**:
-```devcmd
-@retry(3) {
-    cmd1
-    cmd2  
-    cmd3
-}
-// Internal: @retry(3) { @shell("cmd1"); @shell("cmd2"); @shell("cmd3") }
-// Behavior: Structured execution with immediate failure detection
-// Success: Only if ALL commands succeed in sequence
-// Failure: Immediately when ANY command fails
-```
-
-#### **Shell Operator Chains**
-
-**Standard shell operators** follow traditional semantics:
-```devcmd
-// Success/failure propagation
-cmd1 && cmd2 && cmd3    // Stop on first failure, success if all succeed
-cmd1 || cmd2 || cmd3    // Stop on first success, fail if all fail
-
-// Mixed operators (standard shell precedence)
-cmd1 && cmd2 || cmd3    // ((cmd1 && cmd2) || cmd3)
-```
-
-**Decorator execution model** - Decorators complete entirely before chain evaluation:
-```devcmd
-// Decorator-first execution
-@retry(3) {
-    kubectl apply -f k8s/
-    kubectl rollout status
-} && echo "Deploy success" || echo "Deploy failed"
-
-// Execution flow:
-// 1. @retry executes its ENTIRE block (both kubectl commands, with retries)
-// 2. Only after @retry fully completes does && evaluation happen  
-// 3. echo executes based on @retry's final result (success/failure)
-
-// Nested decorator completion
-@timeout(5m) {
-    @retry(3) {
-        kubectl apply -f k8s/
-        kubectl rollout status
-    }
-    kubectl get pods
-} && echo "All operations completed"
-
-// Execution flow:
-// 1. @timeout starts its block
-// 2. @retry completes entirely (all retries if needed)
-// 3. kubectl get pods executes
-// 4. @timeout completes (success if within 5m)
-// 5. echo executes based on @timeout's final result
-```
-
-### **Debugging Decorator Chains**
-
-**Plan mode shows execution flow**:
-```bash
-devcmd deploy --dry-run --verbose
-```
-
-**Error tracing strategies**:
-1. **Plan first**: Always use `--dry-run` to understand execution flow
-2. **Incremental testing**: Test decorator components individually  
-3. **Verbose output**: Use `--verbose` for detailed execution logs
-4. **Plan comparison**: Save working plans and diff against failing ones
-
-**Common debugging patterns**:
-```devcmd
-// Debug individual decorators
-test-retry: @retry(3) { echo "Testing retry logic" }
-test-timeout: @timeout(5s) { sleep 2 && echo "Success" }
-
-// Debug operator chains  
-test-chain: echo "step1" && echo "step2" && echo "step3"
-
-// Debug nested composition
-test-nested: @timeout(10s) {
-    @retry(3) {
-        echo "Testing nested decorators"
-    }
-}
-```
-
-## Parallelism and Concurrency Model
-
-### **@parallel Decorator Semantics**
-
-The `@parallel` decorator executes all commands in its block concurrently:
-
-```devcmd
-// Parallel execution
-services: @parallel {
-    npm run api      // Starts immediately  
-    npm run worker   // Starts immediately
-    npm run ui       // Starts immediately
-}
-// @parallel completes only when ALL three services complete
-```
-
-**Execution guarantees**:
-- All commands start simultaneously
-- Decorator succeeds only if ALL commands succeed
-- Decorator fails if ANY command fails
-- Output is aggregated and presented coherently
-
-### **Output Aggregation Strategy**
-
-**Live output mode** (default):
-```
-[api]    Starting API server on port 3000
-[worker] Starting background worker
-[ui]     Starting UI development server
-[api]    API server ready
-[worker] Worker connected to queue
-[ui]     UI ready at http://localhost:3001
-```
-
-**Quiet output mode** (`--quiet`):
-- No live output during execution
-- Final results only after all complete
-- Aggregated success/failure summary
-
-### **Failure Handling in Parallel Blocks**
-
-**Fail-fast strategy**:
-```devcmd
-// If any service fails, immediately terminate others
-deploy: @parallel {
-    kubectl apply -f api/
-    kubectl apply -f worker/  
-    kubectl apply -f ui/
-}
-// Fails immediately if any kubectl command fails
-```
-
-**Mixed parallel/sequential patterns**:
-```devcmd
-// Sequential setup, then parallel execution
-setup-and-run: {
-    echo "Setting up infrastructure"
-    kubectl create namespace myapp
-    
-    @parallel {
-        kubectl apply -f api/
-        kubectl apply -f worker/
-        kubectl apply -f ui/
-    }
-    
-    echo "All services deployed"
-}
-```
-
-## Telemetry and Observability
-
-### **Telemetry Flag (`--telemetry`)**
-
-The `--telemetry` flag captures comprehensive execution data for analysis, optimization, and debugging:
-
-```bash
-# Enable telemetry for any execution
-devcmd deploy --telemetry
-devcmd script.cli --telemetry  
-devcmd deploy --dry-run --resolve --telemetry  # Even for planning
-```
-
-### **Telemetry Data Captured**
-
-**Execution flow tracking**:
-- Decorator entry/exit times with microsecond precision
-- Parameter resolution timing (expensive vs non-expensive decorators)
-- Shell command execution duration and resource usage
-- Operator chain evaluation paths and decision points
-
-**Resource utilization**:
-- CPU, memory, disk I/O per decorator
-- Network calls and data transfer
-- File system operations and access patterns
-- Process spawning and lifecycle management
-
-**Error and retry patterns**:
-- Failure points and error propagation paths
-- Retry attempt timing and success rates
-- Timeout occurrences and performance bottlenecks
-- Recovery strategies and their effectiveness
-
-### **Telemetry Output Formats**
-
-**JSON structured logs** (machine-readable):
-```json
-{
-  "session_id": "deploy-2024-01-15-14:30:22",
-  "command": "deploy",
-  "total_duration_ms": 45620,
-  "decorators": [
-    {
-      "name": "timeout",
-      "args": {"duration": "5m"},
-      "start_time": "2024-01-15T14:30:22.123Z",
-      "end_time": "2024-01-15T14:31:07.845Z",
-      "duration_ms": 45722,
-      "status": "success",
-      "children": [...]
-    }
-  ],
-  "resource_usage": {
-    "peak_memory_mb": 128,
-    "cpu_time_ms": 2340,
-    "network_bytes": 524288
-  }
-}
-```
-
-**Visual timeline** (human-readable):
-```
-deploy: 45.6s total
-├─ @timeout(5m): 45.7s
-│  ├─ @shell("npm run build"): 12.3s [CPU: 450ms, Mem: 85MB]
-│  ├─ @retry(3): 31.2s (2 attempts)
-│  │  ├─ @shell("kubectl apply"): 15.8s [Network: 2.1MB]
-│  │  └─ @shell("kubectl rollout"): 15.4s [Network: 512KB]
-│  └─ @shell("kubectl get pods"): 2.2s [Network: 64KB]
-```
-
-### **Telemetry Analysis and Optimization**
-
-**Performance insights**:
-- Identify slow decorators and bottlenecks
-- Track expensive decorator resolution patterns
-- Analyze parallel execution efficiency
-- Monitor resource usage trends over time
-
-**Reliability insights**:
-- Retry success rates and optimal retry counts
-- Timeout frequency and duration tuning
-- Error pattern analysis and prevention
-- Decorator composition effectiveness
-
-**CI/CD optimization**:
-```bash
-# Collect telemetry across multiple runs
-devcmd deploy --telemetry --output deploy-telemetry.json
-
-# Analyze performance trends
-devcmd analyze-telemetry deploy-telemetry-*.json --summary
-devcmd analyze-telemetry deploy-telemetry-*.json --slowest-decorators
-devcmd analyze-telemetry deploy-telemetry-*.json --retry-patterns
-```
-
-### **Privacy and Security**
-
-**Data sanitization**:
-- Automatic redaction of sensitive parameter values
-- Optional command output filtering
-- Configurable data retention policies
-- Local-only storage by default
-
-**Telemetry controls**:
-```bash
-# Fine-grained telemetry control
-devcmd deploy --telemetry=timing,resources     # Exclude command output
-devcmd deploy --telemetry=full --redact-secrets  # Full data, sanitized
-devcmd deploy --telemetry=off                  # Explicit disable
-```
-
-This telemetry system provides much deeper insights than dependency graphs alone - it captures the actual runtime behavior of decorator compositions and enables data-driven optimization of devcmd workflows.
-
-## Plan System Architecture
-
-The plan system provides dry-run visualization using the same unified decorator interfaces.
-
-### Core Plan Concepts
-
-**ExecutionPlan**: Complete execution tree with steps, context, and summary
-**ExecutionStep**: Individual nodes in execution tree with type, description, command, children, and metadata
-
-### Unified Plan Generation
-
-All decorators implement the same Plan interface:
-```go
-// Both ValueDecorator and ExecutionDecorator use same signature
-Plan(ctx Context, args []Param) plan.ExecutionStep
-```
-
-**Registry-Driven Planning**:
-```go
-// All decorators use the same planning interface
-decorator, exists := registry.GetExecution(name)
-if exists {
-    return decorator.Plan(ctx, args)
-}
-
-valueDecorator, exists := registry.GetValue(name)
-if exists {
-    return valueDecorator.Plan(ctx, args)
-}
-```
-
-### Plan Display Examples
-
-#### Value Decorators with Superscript Cross-References
-```devcmd
-# User input
-server: node app.js --port @var(PORT) --env @env("NODE_ENV")
-
-# Plan display
-server:
-└─ @shell("node app.js --port ¹3000 --env ²development")
-
-   Resolved Values:
-   1. @var(PORT) → 3000
-   2. @env("NODE_ENV") → development
-```
-
-#### Block Decorators with Lambda-Style Composition
-```devcmd
-# User input  
-deploy: @retry(3) {
-    kubectl apply -f k8s/
-    kubectl rollout status
-}
-
-# Plan output
-deploy:
-└─ @retry(attempts=3, delay=1s)
-   ├─ @shell("kubectl apply -f k8s/")
-   └─ @shell("kubectl rollout status")
-```
-
-#### Complex Nested Composition
-```devcmd
-# User input
-deploy: @timeout(5m) {
-    echo "Starting"
-    @retry(3) {
-        kubectl apply -f k8s/
-        kubectl rollout status
-    }
-    echo "Complete"
-}
-
-# Plan output
-deploy:
-└─ @timeout(duration=5m)
-   ├─ @shell("echo \"Starting\"")
-   ├─ @retry(attempts=3)
-   │  ├─ @shell("kubectl apply -f k8s/")
-   │  └─ @shell("kubectl rollout status")
-   └─ @shell("echo \"Complete\"")
-```
-
-### Plan Metadata System
-
-All decorators provide consistent metadata:
-```go
-plan.ExecutionStep{
-    Type:        plan.StepDecorator,
-    Description: "@retry(attempts=3)",
-    Command:     "retry with 3 attempts",
-    Children:    [...],
-    Metadata: map[string]string{
-        "decorator":      "retry",
-        "execution_mode": "error_handling",
-        "color":          plan.ColorCyan,
-        "info":           "{attempts: 3, delay: 1s}",
-    },
-}
-```
-
-### Value Resolution Strategy
-
-#### **Quick Plans (Default `--dry-run`)**
-Fast preview with cached values and deferred expensive operations:
-
-**Non-expensive decorators** (like `@var`, `@env`):
-- Resolved once at script startup (planned feature)
-- Cached immutably for entire execution  
-- Shown resolved in plan mode
-
-**Expensive decorators** (like `@aws_secret`, `@http_get`):
-- Resolved lazily only when used during execution (planned feature)
-- Show placeholders in plan mode
-- Marked clearly as deferred
-
-```devcmd
-# User input with expensive decorator
-deploy: kubectl apply -f @aws_secret("k8s-config") --namespace @var(NAMESPACE)
-
-# Quick plan display (expensive decorators deferred)
-deploy:
-└─ @shell("kubectl apply -f ¹@aws_secret(\"k8s-config\") --namespace ²production")
-
-   Resolved Values:
-   1. @aws_secret("k8s-config") → <deferred: AWS lookup>
-   2. @var(NAMESPACE) → production
-```
-
-#### **Resolved Plans (`--dry-run --resolve`)**
-Complete resolution of ALL decorators with frozen execution context:
-
-```devcmd
-# Same input with resolved plan
-deploy: kubectl apply -f @aws_secret("k8s-config") --namespace @var(NAMESPACE)
-
-# Resolved plan display (all values resolved)
-deploy:
-└─ @shell("kubectl apply -f ¹k8s-secret-content.yaml --namespace ²production")
-
-   Resolved Values:
-   1. @aws_secret("k8s-config") → k8s-secret-content.yaml
-   2. @var(NAMESPACE) → production
-```
-
-**Resolved plans enable plan-then-execute workflows:**
-- All expensive operations performed at plan time
-- Execution becomes purely deterministic shell commands
-- Plans can be saved, audited, and executed later
-- Perfect for CI/CD pipelines and production deployments
-
-## Execution Modes
-
-### Dual Mode Support
-
-**Command Mode**: Files with named command definitions
-```bash
-devcmd build                   # Execute 'build' command from commands.cli
-devcmd deploy                  # Execute 'deploy' command
-```
-
-**Script Mode**: Files with commandless execution
-```bash
-#!/usr/bin/env devcmd
-./deploy-script               # Direct execution via shebang
-devcmd deploy-script          # Or via devcmd
-```
-
-**Advanced**: Scripts with local commands using `@cmd()` decorator for internal composition
-
-### Interpreter Mode
-All decorators execute through the same unified execution pipeline:
-
-```go
-// ValueDecorator execution
-result := decorator.Resolve(ctx, args)
-// Inject resolved value into shell command
-
-// ExecutionDecorator execution  
-result := decorator.Execute(ctx, args)
-// Execute with enhancement (retry, timeout, etc.)
-
-// Shell decorator execution
-result := ctx.ExecShell(command)
-// Direct shell execution
-```
-
-### Plan Mode (Dry Run)
-All decorators generate plans through the same interface:
-
-```go
-// Unified plan generation
-step := decorator.Plan(ctx, args)
-// All decorators produce ExecutionStep for visualization
-```
-
-### Resolved Execution Plans
-Plans can be **resolved** to create deterministic, executable artifacts with all values frozen:
-
-```bash
-# Generate resolved plan (all values resolved at plan time)
-devcmd build --dry-run --resolve > build.plan
-
-# Execute the resolved plan directly
-devcmd --execute build.plan      # Execute from resolved plan file
-```
-
-**Resolved Plan Benefits:**
-- **Deterministic execution**: All variable values locked at plan generation time
-- **Auditable workflows**: Complete execution context captured
-- **CI/CD pipelines**: Generate plans in one stage, execute in another
-- **Debugging**: Inspect exact execution before running
-- **Rollback capability**: Re-execute previous successful plans
-
-**Resolved Plan Structure:**
-```json
-{
-  "version": "1.0",
-  "context": {
-    "variables": {"ENV": "production", "TIMEOUT": "5m"},
-    "resolved_values": {
-      "1": "@var(PORT) → 3000",
-      "2": "@env(API_URL) → https://api.prod.com"
-    }
-  },
-  "execution": {
-    "steps": [
-      {
-        "type": "shell",
-        "command": "node app.js --port 3000 --url https://api.prod.com",
-        "resolved": true
-      }
-    ]
-  }
-}
-```
-
-This enables **plan-then-execute** workflows for both scripts and commands:
-```bash
-# Commands
-devcmd deploy --dry-run --resolve > deploy-prod.plan
-devcmd --execute deploy-prod.plan
-
-# Scripts  
-devcmd deploy-script --dry-run --resolve > script.plan
-devcmd --execute script.plan
-```
-
-## Key Architecture Benefits
-
-### 1. Conceptual Simplicity
-- **One mental model**: Everything is a decorator
-- **No special cases**: Shell syntax, decorators, all use same execution model
-- **Unified tooling**: LSP, formatting, analysis work consistently
-
-### 2. Implementation Simplicity  
-- **Single AST node type**: No more 4-way branching in parser
-- **Single IR node type**: No more complex distinctions
-- **Single execution path**: Registry lookup → interface method call
-
-### 3. Extensibility
-- **New decorators**: Register with same interface, no language changes needed
-- **Custom behavior**: Implement ValueDecorator or ExecutionDecorator interface
-- **Consistent integration**: New decorators work with existing composition patterns
-
-### 4. Performance
-- **Unified caching**: Value decorators can be cached consistently (planned)
-- **Optimal execution**: Shell decorators enable direct shell execution where appropriate
-- **Parallel opportunities**: Block decorators can implement parallel execution strategies
-
-## Lambda-Style Composition
-
-The unified architecture enables powerful functional composition:
-
-```devcmd
-// Nested execution decorators with lambda-style blocks
-deploy: @timeout(5m) {
-    echo "Starting deployment"
-    @retry(3) {
-        kubectl apply -f k8s/
-        kubectl rollout status
-    }
-    @when(ENV) {
-        production: kubectl scale deployment/app --replicas=3
-        staging: kubectl scale deployment/app --replicas=1
-    }
-    echo "Deployment complete"
-}
-
-// Internal representation preserves nesting and converts shell syntax
-deploy: @timeout(5m) {
-    @shell("echo \"Starting deployment\"")
-    @retry(3) {
-        @shell("kubectl apply -f k8s/")
-        @shell("kubectl rollout status")
-    }
-    @when(ENV) {
-        production: @shell("kubectl scale deployment/app --replicas=3")
-        staging: @shell("kubectl scale deployment/app --replicas=1")
-    }
-    @shell("echo \"Deployment complete\"")
-}
-```
-
-## Migration Path
-
-### Phase 1: Core Unification ✅
-- [x] Simplified decorator interfaces (2 instead of 4)
-- [x] Unified registry system
-- [x] All builtin decorators migrated
-- [x] Unified parameter system with block support
-
-### Phase 2: AST/IR Simplification (In Progress)
-- [ ] Single Decorator AST node type
-- [ ] Single DecoratorNode IR type  
-- [ ] Parser conversion of shell syntax to @shell decorators
-- [ ] Unified runtime execution path
-
-### Phase 3: Advanced Features
-- [ ] Value decorator expense optimization
-- [ ] Shell decorator optimization for direct execution
-- [ ] Advanced composition patterns
-- [ ] Generated mode implementation
-
-### Phase 4: Production Enhancements
-- [ ] **Incrementality via decorators**: `@produces`/`@consumes` decorators for dependency tracking
-- [ ] **Cross-platform shell normalization**: Enhanced `@shell` with platform-agnostic quoting/paths
-- [ ] **Nested complexity tooling**: LSP quick-fixes, plan simplification, composition guidelines
-- [ ] **Performance telemetry**: Cache hit rates, dependency analysis, execution optimization
+**Implementation requirements for humans building contract-based operations**
 
 ## Design Philosophy
 
-### **Core Principles**
+Build a system where resolved plans are execution contracts that get verified before running. Everything becomes a decorator internally - no special cases, no surprises.
 
-**Everything is a Decorator**: A single, unified abstraction eliminates special cases and creates consistent patterns across the entire system. Shell commands, control flow, value injection - all follow the same decorator model.
+The key insight: instead of managing state like Terraform, we verify contracts. Plans aren't just previews, they're promises about what will execute.
 
-**Natural Syntax with Hidden Power**: Users write familiar shell-like syntax while gaining access to sophisticated orchestration capabilities. The complexity is hidden until needed, with decorators providing enhanced functionality on demand.
+## The Big Picture
 
-**Plan-Then-Execute Workflows**: The ability to visualize, audit, and freeze execution plans before running enables confident operations in production environments. Plans become first-class artifacts for review and compliance.
+```
+User writes natural syntax  →  Parser converts to decorators  →  Contract execution
+```
 
-**Composable Enhancement**: New capabilities are added through decorators, not language changes. This keeps the core language stable while enabling unlimited extensibility through the decorator system.
+Every piece of syntax becomes a decorator:
+- `npm run build` → `@shell("npm run build")`
+- `@retry(3) { ... }` → execution decorator with block
+- `when ENV { ... }` → plan-time conditional expansion
+- `for service in [...] { ... }` → plan-time loop unrolling
 
-**Dual Mode Flexibility**: Support both command-based task running and script-based execution provides natural growth paths from simple automation to complex orchestration.
+## Everything is a Decorator
 
-**Observable Execution**: Built-in telemetry and plan visualization give deep insights into execution patterns, performance characteristics, and optimization opportunities.
+The core architectural principle: every operation becomes one of two decorator types.
 
-**Incremental Evolution**: The decorator system naturally accommodates enhancements like dependency tracking (`@produces`/`@consumes`), cross-platform normalization (`@shell` improvements), and complexity management (tooling support) without architectural changes.
+**Value decorators** inject values inline:
+- `@env("PORT")` pulls environment variables
+- `@var(REPLICAS)` references script variables  
+- `@aws.secret("api-key")` fetches from AWS (expensive)
 
-This architecture transforms devcmd from a complex system with multiple execution paths into an elegantly unified system where everything follows the same decorator-based execution model, while preserving the natural feel of shell syntax through automatic conversion to @shell decorators.
+**Execution decorators** run commands:
+- `@shell("npm run build")` executes shell commands
+- `@retry(3) { ... }` adds retry logic around blocks
+- `@parallel { ... }` runs commands concurrently
+
+Even plain shell commands become `@shell` decorators internally:
+```devcmd
+// You write
+npm run build
+
+// Parser generates  
+@shell("npm run build")
+```
+
+This decorator model means new features integrate seamlessly - no special parsing rules or execution paths.
+
+## Decorator Design Requirements
+
+When building decorators, follow these principles to maintain the contract model:
+
+**Value decorators must be referentially transparent** during plan resolution. Non-deterministic decorators (like `@http.get("time-api")`) will cause contract verification failures when plans are executed later.
+
+**Execution decorators should be stateless**. Query current reality fresh each time rather than maintaining state between runs. This eliminates the complexity of state file management.
+
+**Expose idempotency keys** so the same resolved plan can run multiple times safely. For example, `@aws.ec2.deploy` might use `region + name + instance_spec` as its key.
+
+**Handle infrastructure drift gracefully**. When current infrastructure doesn't match plan expectations, provide clear error messages and suggested actions rather than cryptic failures.
+
+## Plugin System
+
+Decorators work through a plugin system that maintains security and reliability:
+
+**Plugin verification**: External decorators must come from verified, source-hashed binaries. No arbitrary code execution - plugins pass a compliance test suite that verifies they implement required interfaces correctly and respect security requirements.
+
+**Plugin isolation**: Plugins run in limited contexts and can't crash the main execution engine. Resource usage gets monitored and timeouts are enforced.
+
+**Registry pattern**: Both built-in and plugin decorators register themselves at startup. The runtime looks up decorators by name without hardcoded lists, making the system extensible.
+
+This means organizations can build custom infrastructure decorators (like `@company.k8s.deploy`) while maintaining the same security and verification guarantees as built-in decorators.
+
+## Resolution Strategy
+
+Two-phase resolution optimizes for both speed and determinism:
+
+**Quick plans** defer expensive operations and show placeholders:
+```
+kubectl create secret --token=¹@aws.secret("api-token")
+Deferred: 1. @aws.secret("api-token") → <expensive: AWS lookup>
+```
+
+**Resolved plans** materialize all values for deterministic execution:
+```  
+kubectl create secret --token=¹<32:sha256:a1b2c3>
+Resolved: 1. @aws.secret("api-token") → <32:sha256:a1b2c3>
+```
+
+Smart optimizations happen automatically:
+- Expensive decorators in unused conditional branches never execute
+- Independent expensive operations resolve in parallel  
+- Dead code elimination prevents unnecessary side effects
+
+## Security Model
+
+The placeholder system protects sensitive values while enabling change detection:
+
+**Placeholder format**: `<length:algorithm:hash>` like `<32:sha256:a1b2c3>`. The length gives size hints for debugging, the algorithm future-proofs against changes, and the hash detects value changes without exposing content.
+
+**Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env()`, `@aws.secret()`, whatever. Compliance teams can review plans confidently.
+
+**Hash scope**: Plan hashes cover ordered steps, arguments, operator graphs, and timing flags. They exclude ephemeral data like run IDs or timestamps that shouldn't invalidate a plan.
+
+## Seeded Determinism
+
+For operations requiring randomness or cryptography, devcmd will use seeded determinism to maintain contract verification while enabling secure random generation.
+
+### Plan Seed Envelope (PSE)
+
+**Seed generation**: High-entropy seed generated at `--resolve` time, never stored raw in plans.
+
+**Sealed envelope**: Plans contain only encrypted seed envelopes with fields:
+- `alg`: DRBG algorithm (e.g., "chacha20-drbg")  
+- `kdf`: Key derivation function (e.g., "hkdf-sha256")
+- `scope`: Derivation scope ("plan")
+- `seed_hash`: Hash for tamper detection
+- `enc_seed`: Seed sealed to runner key/KMS
+
+**Security model**: Raw seeds never appear in plans, only sealed envelopes. Decryption requires proper runner authorization.
+
+### Deterministic Derivation
+
+**Scoped sub-seeds**: Each decorator gets unique deterministic sub-seed using:
+```
+HKDF(seed, info=plan_hash || step_path || decorator_name || counter)
+```
+
+**Stable generation**: Same plan produces same random values every time. Different plans (even with same source) produce different values due to new seed.
+
+**Parallel safety**: Each step has unique `step_path`, ensuring no collisions in concurrent execution.
+
+### Implementation Requirements
+
+**API surface**:
+```devcmd
+var DB_PASS = @random.password(length=24, alphabet="A-Za-z0-9!@#")
+var API_KEY = @crypto.generate_key(type="ed25519")
+
+deploy: {
+    kubectl create secret generic db --from-literal=password=@var(DB_PASS)
+}
+```
+
+**Plan display**: Shows placeholders maintaining security invariant:
+```
+kubectl create secret generic db --from-literal=password=¹<24:sha256:abcd>
+```
+
+**Execution flow**:
+1. `--resolve`: Generate PSE, derive preview hashes, seal envelope
+2. `run --plan`: Decrypt PSE, derive values on-demand during execution
+3. Material values injected via secure channels, never stdout/logs
+
+**Failure modes**:
+- Missing decryption capability → `infra_missing:seed_keystore`
+- Tampered envelope → verification failure  
+- Structure changes → normal contract verification failure
+
+### Security Guarantees
+
+**No value exposure**: Generated secrets follow same placeholder rules as all other sensitive values.
+
+**Audit trail**: Plan headers include seed algorithm metadata without exposing entropy.
+
+**Deterministic contracts**: Same resolved plan produces identical random values across executions.
+
+**Authorization boundaries**: PSE sealed to specific runner contexts, preventing unauthorized plan execution.
+
+This enables secure, auditable randomness within the contract verification model while maintaining all existing security invariants.
+
+### Seed Security and Scoping
+
+**Cryptographic independence**: Seeds are generated using 256-bit CSPRNG entropy, never derived from plan content, hashes, or names. The plan provides scoping context via HKDF info parameter, not entropy.
+
+**Safe derivation pattern**:
+```
+seed = CSPRNG(256_bits)  // Independent entropy 
+subkey = HKDF(seed, info=plan_hash || step_path || decorator || counter)
+output = DRBG(subkey, requested_length)
+```
+
+**Regeneration keys**: Decorators use explicit regeneration keys to control when values change:
+
+```devcmd
+// Default: regenerates on every plan (plan hash as key)
+var TEMP_TOKEN = @random.password(length=16)
+
+// Stable: same key = same password across plan changes  
+var DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v1")
+
+// Rotate by changing the key
+var DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v2")
+```
+
+**Derivation with regeneration keys**:
+```
+effective_key = regen_key || decorator_name || step_path
+subkey = HKDF(seed, info=effective_key)
+output = DRBG(subkey, requested_length)
+```
+
+**Value stability rules**:
+- Same `regen_key` = same values (regardless of plan changes)
+- Change `regen_key` = new values  
+- No `regen_key` = plan hash used as key (values change on plan regeneration)
+
+**Security hardening options**:
+- Keystore references instead of embedded encrypted seeds
+- Require `--resolve` for any randomness operations  
+- AEAD encryption with runner-specific keys or KMS
+- Seed hash for tamper detection
+
+**Threat model**:
+- Plan-only attacker: Cannot decrypt seed, sees only length/hash placeholders
+- Known outputs: Cannot recover seed due to HKDF+DRBG one-way properties  
+- Stolen plans: Useless without runner authorization keys
+
+This approach provides cryptographically sound randomness while maintaining deterministic contract execution.
+
+## Plan-Time Determinism  
+
+Control flow expands during plan generation, not execution:
+
+```devcmd
+// Source code
+for service in ["api", "worker"] {
+    kubectl apply -f k8s/${service}/
+}
+
+// Plan shows expanded steps
+kubectl apply -f k8s/api/      # Step: deploy.service[0]  
+kubectl apply -f k8s/worker/   # Step: deploy.service[1]
+```
+
+This means execution decorators like `@parallel` receive predictable, static command lists rather than dynamic loops. Much easier to reason about.
+
+**No chaining for control flow**: Constructs like `when`, `for`, `try/catch` are complete statements, not expressions. You can't write `when ENV { ... } && echo "done"` because it creates precedence confusion. Keep control flow self-contained.
+
+## Contract Verification
+
+The heart of the architecture: resolved plans become execution contracts.
+
+**Verification process**: When executing a resolved plan, we replan from current source and infrastructure, then compare structures. If anything changed, we fail with a clear diff showing what's different.
+
+**Drift classification**: We categorize verification failures to suggest appropriate actions:
+- `source_changed`: Source files modified → regenerate plan
+- `infra_missing`: Expected infrastructure not found → use `--force` or fix infrastructure  
+- `infra_mutated`: Infrastructure present but different → use `--force` or regenerate plan
+
+**Execution modes**: 
+- Default: strict verification, fail on any changes
+- `--force`: use plan values as targets, adapt to current infrastructure
+
+This gives teams deployment confidence: the plan they reviewed is exactly what executes, with clear options when reality changes.
+
+## Module Organization
+
+Clean separation keeps the system maintainable:
+
+**Core module**: Types, interfaces, and data structures only. No execution logic, no external dependencies. Defines the contracts that decorators must implement.
+
+**Runtime module**: Lexer, parser, execution engine, and built-in decorators. Handles plugin loading and verification. Contains all the business logic.
+
+**CLI module**: Thin wrapper around runtime. Handles command-line parsing and file I/O. No business logic.
+
+Dependencies flow one direction: `cli/` → `runtime/` → `core/`. This prevents circular dependencies and keeps concerns separated.
+
+## Module Structure
+
+**Three clean modules:**
+
+- **core/**: Types, interfaces, and plan structures
+- **runtime/**: Lexer, parser, execution engine
+- **cli/**: Command-line interface
+
+Dependencies flow one way: `cli/` → `runtime/` → `core/`
+
+## Error Handling
+
+Try/catch is special - it's the only construct that creates non-deterministic execution paths:
+
+```devcmd
+deploy: {
+    try {
+        kubectl apply -f k8s/
+        kubectl rollout status deployment/app  
+    } catch {
+        kubectl rollout undo deployment/app
+    } finally {
+        kubectl get pods
+    }
+}
+```
+
+Plans show all possible paths (try, catch, finally). Execution logs show which path was actually taken. This gives you predictable error handling without making plans completely deterministic.
+
+Like other control flow, try/catch can't be chained with operators. Keep error handling self-contained to avoid precedence confusion.
+
+## Implementation Pipeline
+
+The compilation flow ensures contract verification works reliably:
+
+1. **Lexer**: Fast tokenization with mode detection (command vs script mode)
+2. **Parser**: Decorator AST generation  
+3. **Transform**: Meta-programming expansion (loops, conditionals)
+4. **Plan**: Deterministic execution sequence with stable step IDs
+5. **Resolve**: Value materialization with security placeholders
+6. **Verify**: Contract comparison and drift detection  
+7. **Execute**: Actual command execution with idempotency
+
+The key insight: meta-programming happens during transform, so all downstream stages work with predictable, static command sequences.
+
+## Performance Requirements
+
+**Lexer performance**: Target >5000 lines/ms with zero allocations for hot paths. Use pre-compiled patterns and avoid regex where possible.
+
+**Resolution optimization**: Expensive decorators resolve in parallel using DAG analysis. Unused branches never execute, preventing unnecessary side effects.
+
+**Plan caching**: Plans should be cacheable and reusable between runs. Plan hashes enable this optimization.
+
+**Partial execution**: Support resuming from specific steps with `--from step:path` for long pipelines.
+
+## Testing Requirements
+
+**Decorator compliance**: Every decorator must pass a standard compliance test suite that verifies interface implementation, security placeholder handling, and contract verification behavior.
+
+**Plugin verification**: External decorators get the same compliance testing plus binary integrity verification through source hashing.
+
+**Contract testing**: Comprehensive scenarios covering source changes, infrastructure drift, and all verification error types.
+
+**Performance validation**: Lexer throughput, resolution DAG efficiency, and memory usage under load.
+
+## IaC + Operations Together
+
+A novel capability emerges from the decorator architecture: seamless mixing of infrastructure-as-code with operations scripts in a single language.
+
+```devcmd
+deploy: {
+    // Infrastructure deployment
+    @aws.ec2.deploy(name="web-prod", count=3)
+    @aws.rds.deploy(name="db-prod", size="db.r5.large")
+    
+    // Operations on the deployed infrastructure  
+    @aws.ec2.instances(tags={name:"web-prod"}, transport="ssm") {
+        sudo systemctl start myapp
+        @retry(attempts=3) { curl -f http://localhost:8080/health }
+    }
+    
+    // Traditional ops commands
+    kubectl apply -f k8s/monitoring/
+    helm upgrade prometheus charts/prometheus
+}
+```
+
+**The key insight**: Both infrastructure decorators and execution decorators follow the same contract model - plan, verify, execute. This means you can mix provisioning with configuration management cleanly.
+
+**Infrastructure decorators** handle provisioning:
+- Plan: Show what infrastructure will be created/modified
+- Verify: Check current infrastructure state vs plan
+- Execute: Create/modify infrastructure to match plan
+
+**Execution decorators** handle operations:
+- Plan: Show what commands will run where
+- Verify: Check target systems are available and reachable
+- Execute: Run commands with proper error handling and aggregation
+
+Both types support the same features: contract verification, partial execution, idempotency, security placeholders, and plugin extensibility.
+
+This eliminates the traditional boundary between "infrastructure tools" and "configuration management tools" - it's all just decorators with different responsibilities.
+
+## Example: Advanced Infrastructure Execution
+
+Here's how complex scenarios work within the decorator model:
+
+```devcmd
+maintenance: {
+    // Select running instances
+    @aws.ec2.instances(
+        region="us-west-2",
+        tags={env:"prod", role:"web"},
+        transport="ssm",
+        max_concurrency=3,
+        tolerate=0
+    ) {
+        // Drain traffic
+        sudo systemctl stop nginx
+        
+        // Update application  
+        @retry(attempts=3, delay=10s) {
+            sudo yum update -y myapp
+            sudo systemctl start myapp
+        }
+        
+        // Health check
+        @timeout(30s) {
+            curl -fsS http://127.0.0.1:8080/healthz
+        }
+        
+        // Restore traffic
+        sudo systemctl start nginx
+    }
+}
+```
+
+**Plan shows**:
+- 5 instances selected by tags
+- Commands that will run on each
+- Concurrency and error tolerance policy
+- Transport method (SSM vs SSH)
+
+**Verification checks**:
+- Selected instances still exist and match tags
+- SSM transport is available on all instances  
+- Classifies drift: `ok | infra_missing | infra_mutated`
+
+**Execution provides**:
+- Bounded concurrency across instances
+- Per-instance stdout/stderr streaming
+- Retry/timeout on individual commands
+- Aggregated results with failure policy
+
+This level of infrastructure operations was traditionally split across multiple tools. The decorator model handles it seamlessly.
+
+## Why This Architecture Works
+
+**Contract-first development**: Resolved plans are immutable execution contracts with verification, giving teams deployment confidence.
+
+**IaC + ops together**: Mix infrastructure provisioning with operations scripts in one language, eliminating tool boundaries.
+
+**Plugin extensibility**: Organizations can build custom decorators through verified, source-hashed plugins while maintaining security guarantees.
+
+**Stateless simplicity**: No state files to corrupt or manage - decorators query reality fresh each time and use contract verification for consistency.
+
+**Consistent execution model**: Everything becomes a decorator internally, making the system predictable and extensible without special cases.
+
+**Performance optimization**: Plan-time expansion, parallel resolution, and dead code elimination ensure efficient execution at scale.
+
+This delivers "Terraform for operations, but without state file complexity" through contract verification rather than state management.

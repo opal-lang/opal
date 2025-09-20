@@ -18,6 +18,12 @@ func init() {
 // ConfirmDecorator implements the @confirm decorator using the core decorator interfaces
 type ConfirmDecorator struct{}
 
+// ConfirmParams represents validated parameters for @confirm decorator
+type ConfirmParams struct {
+	Message    string `json:"message"`     // Confirmation message (default: "Continue?")
+	DefaultYes bool   `json:"default_yes"` // Default to yes if user just presses enter
+}
+
 // NewConfirmDecorator creates a new confirm decorator
 func NewConfirmDecorator() *ConfirmDecorator {
 	return &ConfirmDecorator{}
@@ -174,48 +180,92 @@ func (c *ConfirmDecorator) extractParameters(params []decorators.Param) (message
 // ================================================================================================
 
 // Plan generates an execution plan for the confirm operation
-func (c *ConfirmDecorator) Plan(ctx decorators.Context, args []decorators.Param) plan.ExecutionStep {
-	message, defaultYes, err := c.extractParameters(args)
+
+// ================================================================================================
+// NEW GENERIC INTERFACE METHODS (ExecutionDecorator[any])
+// ================================================================================================
+
+// Validate validates parameters and returns ConfirmParams
+func (c *ConfirmDecorator) Validate(args []decorators.Param) (any, error) {
+	// Extract message (first positional parameter or named "message")
+	message, err := decorators.ExtractPositionalString(args, 0, "Continue?")
 	if err != nil {
+		// Try named parameter "message"
+		message, err = decorators.ExtractString(args, "message", "Continue?")
+		if err != nil {
+			return nil, fmt.Errorf("@confirm message parameter error: %w", err)
+		}
+	}
+
+	// Extract defaultYes flag (optional, defaults to false)
+	defaultYes, err := decorators.ExtractBool(args, "defaultYes", false)
+	if err != nil {
+		return nil, fmt.Errorf("@confirm defaultYes parameter error: %w", err)
+	}
+
+	return ConfirmParams{
+		Message:    message,
+		DefaultYes: defaultYes,
+	}, nil
+}
+
+// Plan generates an execution plan using validated parameters
+func (c *ConfirmDecorator) Plan(ctx decorators.Context, validated any) plan.ExecutionStep {
+	params, ok := validated.(ConfirmParams)
+	if !ok {
 		return plan.ExecutionStep{
 			Type:        plan.StepDecorator,
-			Description: fmt.Sprintf("@confirm(<error: %v>)", err),
+			Description: "@confirm(<invalid params>)",
 			Command:     "",
 			Metadata: map[string]string{
 				"decorator": "confirm",
-				"error":     err.Error(),
+				"error":     "invalid_params",
 			},
 		}
 	}
 
-	description := fmt.Sprintf("@confirm(%q)", message)
-	if defaultYes {
-		description += " [default: yes]"
+	defaultText := ""
+	if params.DefaultYes {
+		defaultText = " [Y/n]"
+	} else {
+		defaultText = " [y/N]"
 	}
 
 	return plan.ExecutionStep{
 		Type:        plan.StepDecorator,
-		Description: description,
-		Command:     fmt.Sprintf("prompt: %s", message),
-		Children:    []plan.ExecutionStep{}, // Will be populated by plan generator
+		Description: fmt.Sprintf("@confirm(%q%s) { ... }", params.Message, defaultText),
+		Command:     "",
 		Metadata: map[string]string{
-			"decorator":      "confirm",
-			"message":        message,
-			"defaultYes":     fmt.Sprintf("%t", defaultYes),
-			"execution_mode": "interactive",
-			"color":          plan.ColorYellow,
+			"decorator":   "confirm",
+			"message":     params.Message,
+			"default_yes": fmt.Sprintf("%t", params.DefaultYes),
+			"status":      "awaiting_executable_block_implementation",
 		},
 	}
 }
 
-// Execute performs the confirm operation
-func (c *ConfirmDecorator) Execute(ctx decorators.Context, args []decorators.Param) decorators.CommandResult {
-	// TODO: Runtime execution - implement when interpreter is rebuilt
-	return &simpleCommandResult{
-		stdout:   "",
-		stderr:   "confirm execution not implemented yet - use plan mode",
-		exitCode: 1,
+// Execute performs the actual confirmation using validated parameters
+func (c *ConfirmDecorator) Execute(ctx decorators.Context, validated any) (decorators.CommandResult, error) {
+	_, ok := validated.(ConfirmParams)
+	if !ok {
+		return nil, fmt.Errorf("@confirm: invalid parameters")
 	}
+
+	// TODO: When ExecutableBlock is implemented, this will become:
+	// response, err := ctx.Confirm(params.Message)
+	// if err != nil {
+	//     return nil, err
+	// }
+	// if response {
+	//     for _, stmt := range params.Block {
+	//         result, err := stmt.Execute(ctx)
+	//         if err != nil {
+	//             return result, err
+	//         }
+	//     }
+	// }
+
+	return nil, fmt.Errorf("@confirm: ExecutableBlock not yet implemented - use legacy interface for now")
 }
 
 // RequiresBlock returns the block requirements for @confirm
