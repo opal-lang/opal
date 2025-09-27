@@ -2,19 +2,20 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ main, master, develop ]
-  workflow_dispatch: # Allow manual triggers
+    branches: [main, master, develop]
+  workflow_dispatch:
 
 env:
   GO_VERSION: '1.25.x'
-  CACHE_VERSION: v3  # Updated for interpreter mode focus
+  CACHE_VERSION: v3
 
 jobs:
   # =============================================================================
-  # 🔍 FORMATTING CHECKS - Nix & Go Formatting (30s)
+  # PHASE 1: Independent Validation (All run in parallel)
   # =============================================================================
+
   format-check:
     name: Format Check
     runs-on: ubuntu-latest
@@ -29,9 +30,9 @@ jobs:
 
       - name: Check Nix formatting
         run: |
-          echo "🔍 Checking Nix file formatting..."
+          echo "Checking Nix file formatting..."
           nix run nixpkgs#nixpkgs-fmt -- --check . || {
-            echo "❌ Nix formatting check failed. Run 'nixpkgs-fmt .' to fix."
+            echo "Nix formatting check failed. Run 'nixpkgs-fmt .' to fix."
             exit 1
           }
 
@@ -46,9 +47,9 @@ jobs:
 
       - name: Check Go formatting
         run: |
-          echo "🔍 Checking Go formatting..."
+          echo "Checking Go formatting..."
           if [ "$(gofumpt -l . | wc -l)" -gt 0 ]; then
-            echo "❌ Go formatting issues found:"
+            echo "Go formatting issues found:"
             gofumpt -l .
             echo "Run 'gofumpt -w .' to fix."
             exit 1
@@ -56,16 +57,12 @@ jobs:
 
       - name: Nix flake check (basic)
         run: |
-          echo "🔍 Basic Nix flake validation..."
+          echo "Basic Nix flake validation..."
           nix flake check --no-build
 
-  # =============================================================================
-  # 🔍 MODULE LINTING - Direct go vet (30s each)
-  # =============================================================================
-  module-lint:
+  lint:
     name: Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
-    needs: [format-check]
     strategy:
       matrix:
         module: [core, runtime, cli]
@@ -79,157 +76,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Setup golangci-lint
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.4.0
           working-directory: ${{ matrix.module }}
           args: --timeout=5m --verbose
 
-  # =============================================================================
-  # 🧪 MODULE TESTING - Respecting Dependency Hierarchy
-  # =============================================================================
-
-  # Core module (foundation - no dependencies)
-  test-core:
-    name: Test Core Module
-    runs-on: ubuntu-latest
-    needs: [format-check, module-lint]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run core module tests
-        run: |
-          echo "🧪 Running core module tests..."
-          cd core
-          go test -v -race -coverprofile=../coverage-core.out -covermode=atomic ./...
-
-      - name: Upload core coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-core
-          path: coverage-core.out
-
-  # Runtime module (depends on core)
-  test-runtime:
-    name: Test Runtime Module
-    runs-on: ubuntu-latest
-    needs: [test-core]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run runtime module tests (execution only)
-        run: |
-          echo "⚡ Running runtime execution tests..."
-          cd runtime
-          # Only test execution package as other runtime tests depend on unregistered decorators
-          go test -v -race -coverprofile=../coverage-runtime.out -covermode=atomic ./execution/...
-
-      - name: Upload runtime coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-runtime
-          path: coverage-runtime.out
-
-  # Skip testing module for now (has failures due to unregistered decorators)
-  # test-testing:
-  #   name: Test Testing Module
-  #   runs-on: ubuntu-latest
-  #   needs: [test-core, test-runtime]
-
-  # CLI module build test (interpreter mode functionality)
-  test-cli:
-    name: Test CLI Module Build
-    runs-on: ubuntu-latest
-    needs: [test-core, test-runtime]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Test CLI build and basic functionality
-        run: |
-          echo "🚀 Testing CLI build and interpreter mode..."
-          cd cli
-          go build -o devcmd .
-
-          # Test basic functionality
-          ./devcmd --help
-
-          # Test plan mode (dry-run) with simple command
-          echo 'test: echo "CI test successful"' > test.cli
-          ./devcmd --dry-run -f test.cli test
-
-          # Note: Runtime execution not implemented yet - only plan mode works
-
-  # Aggregate coverage reports
-  aggregate-coverage:
-    name: Aggregate Coverage
-    runs-on: ubuntu-latest
-    needs: [test-core, test-runtime]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download all coverage reports
-        uses: actions/download-artifact@v4
-        with:
-          path: coverage-artifacts/
-
-      - name: Merge coverage reports
-        run: |
-          echo "📊 Merging coverage reports..."
-          find coverage-artifacts/ -name "*.out" -exec cp {} . \;
-
-          # Simple coverage merge (combine all coverage files)
-          echo "mode: atomic" > coverage.out
-          tail -n +2 coverage-*.out | grep -v "mode: atomic" >> coverage.out || true
-
-      - name: Upload merged coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
-
-      - name: Archive merged coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-merged
-          path: coverage.out
-
-  # =============================================================================
-  # 🔨 BUILD BINARIES - Core Deliverables (1-2m)
-  # =============================================================================
-  build-binaries:
-    name: Build Binaries
+  build:
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [format-check]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -256,7 +112,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          echo "🔨 Building devcmd for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          echo "Building devcmd for ${{ matrix.goos }}/${{ matrix.goarch }}..."
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -266,10 +122,9 @@ jobs:
 
       - name: Test binary
         run: |
-          echo "🧪 Testing built binary..."
+          echo "Testing built binary..."
           ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --help
 
-          # Test plan mode functionality
           echo 'test: echo "Binary test successful"' > test.cli
           ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.cli test
 
@@ -279,13 +134,9 @@ jobs:
           name: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
           path: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
 
-  # =============================================================================
-  # 📦 NIX DEVELOPMENT SHELL - Dependencies Only (Package Builds Disabled)
-  # =============================================================================
   nix-development:
-    name: Nix Development Environment
+    name: Nix Development (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [format-check]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -300,45 +151,217 @@ jobs:
 
       - name: Test development shell
         run: |
-          echo "🐚 Testing Nix development shell (dependencies only)..."
-          nix develop --command echo "✅ Development shell provides dependencies!"
+          echo "Testing Nix development shell..."
+          nix develop --command echo "Development shell provides dependencies!"
 
       - name: Verify Go tools in Nix shell
         run: |
-          echo "🔧 Verifying Go tools are available in Nix shell..."
+          echo "Verifying Go tools are available in Nix shell..."
           nix develop --command go version
           nix develop --command gofumpt --version || echo "gofumpt not required in shell"
 
-      # Skip package builds during IR refactoring - they're broken
-      # - name: Build core devcmd package (DISABLED - IR REFACTORING)
-      # - name: Comprehensive Nix flake check (DISABLED - IR REFACTORING)
+  # =============================================================================
+  # PHASE 2: Core Foundation (Needs linting to pass)
+  # =============================================================================
 
+  test-core:
+    name: Test Core Module
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run core module tests
+        run: |
+          echo "Running core module tests..."
+          cd core
+          go test -v -race -coverprofile=../coverage-core.out -covermode=atomic ./...
+
+      - name: Upload core coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-core
+          path: coverage-core.out
 
   # =============================================================================
-  # 📋 SUMMARY - Collect Results
+  # PHASE 3: Module Testing (All run in parallel after core)
   # =============================================================================
+
+  test-runtime:
+    name: Test Runtime Module
+    runs-on: ubuntu-latest
+    needs: [test-core]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run runtime execution tests
+        run: |
+          echo "Running runtime execution tests..."
+          cd runtime
+          # Only test execution package as other runtime tests depend on unregistered decorators
+          go test -v -race -coverprofile=../coverage-runtime.out -covermode=atomic ./execution/...
+
+      - name: Upload runtime coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-runtime
+          path: coverage-runtime.out
+
+  test-v2-stack:
+    name: Test V2 Language Stack
+    runs-on: ubuntu-latest
+    needs: [test-core]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run lexer v2 tests
+        run: |
+          echo "Running lexer v2 tests (zero-allocation tokenization)..."
+          cd runtime
+          go test -v -race -coverprofile=../coverage-lexer-v2.out -covermode=atomic ./lexer/v2/...
+
+      # TODO: Add parser v2 when implemented
+      # - name: Run parser v2 tests
+      #   run: |
+      #     echo "Running parser v2 tests (AST generation)..."
+      #     cd runtime
+      #     go test -v -race -coverprofile=../coverage-parser-v2.out -covermode=atomic ./parser/v2/...
+
+      # TODO: Add validation v2 when implemented
+      # - name: Run validation v2 tests
+      #   run: |
+      #     echo "Running validation v2 tests (semantic analysis)..."
+      #     cd runtime
+      #     go test -v -race -coverprofile=../coverage-validation-v2.out -covermode=atomic ./validation/v2/...
+
+      - name: Run v2 performance benchmarks
+        run: |
+          echo "Running v2 stack performance benchmarks..."
+          cd runtime
+          go test -bench=BenchmarkLexerCore -benchmem ./lexer/v2/...
+          # TODO: Add parser and validation benchmarks as they're implemented
+
+      - name: Upload v2 stack coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-v2-stack
+          path: coverage-*-v2.out
+
+  test-cli:
+    name: Test CLI Module Build
+    runs-on: ubuntu-latest
+    needs: [test-core]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Test CLI build and basic functionality
+        run: |
+          echo "Testing CLI build and interpreter mode..."
+          cd cli
+          go build -o devcmd .
+
+          ./devcmd --help
+
+          echo 'test: echo "CI test successful"' > test.cli
+          ./devcmd --dry-run -f test.cli test
+
+  # =============================================================================
+  # PHASE 4: Aggregation (After all tests)
+  # =============================================================================
+
+  aggregate-coverage:
+    name: Aggregate Coverage
+    runs-on: ubuntu-latest
+    needs: [test-core, test-runtime, test-v2-stack]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download all coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-artifacts/
+
+      - name: Merge coverage reports
+        run: |
+          echo "Merging coverage reports..."
+          find coverage-artifacts/ -name "*.out" -exec cp {} . \;
+
+          echo "mode: atomic" > coverage.out
+          tail -n +2 coverage-*.out | grep -v "mode: atomic" >> coverage.out || true
+
+      - name: Upload merged coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Archive merged coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-merged
+          path: coverage.out
+
+  # =============================================================================
+  # SUMMARY: Collect all results
+  # =============================================================================
+
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [format-check, module-lint, test-core, test-runtime, test-cli, aggregate-coverage, build-binaries, nix-development]
+    needs: [format-check, lint, build, nix-development, test-core, test-runtime, test-v2-stack, test-cli, aggregate-coverage]
     if: always()
     steps:
       - name: Check job statuses
         run: |
-          echo "📋 CI Pipeline Summary"
-          echo "════════════════════════════════════════"
+          echo "CI Pipeline Summary"
+          echo "================================"
 
           jobs=(
             "${{ needs.format-check.result }}:Format Check"
-            "${{ needs.module-lint.result }}:Module Lint"
+            "${{ needs.lint.result }}:Lint"
+            "${{ needs.build.result }}:Build"
+            "${{ needs.nix-development.result }}:Nix Development"
             "${{ needs.test-core.result }}:Test Core"
-
             "${{ needs.test-runtime.result }}:Test Runtime"
+            "${{ needs.test-v2-stack.result }}:Test V2 Stack"
             "${{ needs.test-cli.result }}:Test CLI"
             "${{ needs.aggregate-coverage.result }}:Coverage Report"
-            "${{ needs.build-binaries.result }}:Build Binaries"
-            "${{ needs.nix-development.result }}:Nix Development"
           )
 
           all_passed=true
@@ -354,7 +377,7 @@ jobs:
             esac
           done
 
-          echo "════════════════════════════════════════"
+          echo "================================"
           if [ "$all_passed" = true ]; then
             echo "🎉 All CI jobs passed successfully!"
           else
@@ -363,8 +386,9 @@ jobs:
           fi
 
   # =============================================================================
-  # 📦 LATEST BUILDS (only on main/master - for development artifacts)
+  # LATEST BUILDS (only on main/master)
   # =============================================================================
+
   latest-builds:
     name: Latest Development Builds
     runs-on: ubuntu-latest
@@ -381,14 +405,11 @@ jobs:
 
       - name: Prepare development builds
         run: |
-          echo "📦 Preparing latest development builds..."
+          echo "Preparing latest development builds..."
           mkdir -p latest/
 
-          # Copy binaries with dev suffix
           find artifacts/ -name 'devcmd-*' -type f -exec cp {} latest/ \;
 
-
-          # Create build info
           echo "Built from commit: ${{ github.sha }}" > latest/build-info.txt
           echo "Built at: $(date -u)" >> latest/build-info.txt
           echo "Branch: ${{ github.ref_name }}" >> latest/build-info.txt
@@ -398,16 +419,16 @@ jobs:
         with:
           name: latest-dev-builds
           path: latest/
-          retention-days: 30  # Keep for 30 days
+          retention-days: 30
 
-# =============================================================================
-# 🚀 RELEASE (only when tags are pushed)
-# =============================================================================
+  # =============================================================================
+  # RELEASE (only when tags are pushed)
+  # =============================================================================
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
-    # Note: This runs independently when tags are pushed, doesn't need summary
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -432,9 +453,8 @@ jobs:
 
       - name: Build release binaries
         run: |
-          echo "🔨 Building release binaries for ${{ steps.version.outputs.version }}..."
+          echo "Building release binaries for ${{ steps.version.outputs.version }}..."
 
-          # Build for multiple platforms
           platforms=(
             "linux/amd64"
             "linux/arm64"
@@ -463,19 +483,16 @@ jobs:
               ./cli/main.go
           done
 
-
       - name: Create checksums
         run: |
-          echo "🔐 Creating checksums..."
+          echo "Creating checksums..."
           cd release/
 
-          # Create checksums for binaries
           for file in devcmd-*; do
             if [ -f "$file" ]; then
               sha256sum "$file" >> checksums.txt
             fi
           done
-
 
       - name: Create release
         uses: softprops/action-gh-release@v1

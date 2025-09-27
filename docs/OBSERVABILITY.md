@@ -176,6 +176,80 @@ devcmd runs verify run-… --cert prod.pem
 devcmd runs report --env prod --format sox --month 2025-01
 ```
 
+### Decorator Usage Tracking & Security Audit
+devcmd automatically tracks all decorator usage for comprehensive security and performance audit:
+
+```bash
+# Complete decorator audit - see all decorator usage
+devcmd runs audit-decorators --env prod --since 24h
+# Shows: @env(AWS_SECRET_KEY) at deploy.cli:23, @shell("kubectl apply") at deploy.cli:45
+
+# Security-focused audit - track sensitive data access  
+devcmd runs audit-security --env prod --since 24h
+# Shows: @env(SECRET_*), @var(PROD_*), @file(*.key), @shell("sudo *")
+
+# Performance audit - find bottlenecks
+devcmd runs audit-performance --env prod --since 24h --slowest 10
+# Shows: @shell("kubectl rollout status") avg 5.4s, @http("healthcheck") avg 2.1s
+
+# Compliance reporting - complete audit trail
+devcmd runs export-audit --env prod --format soc2 --month 2025-01
+# Generates: Complete decorator usage for SOC2/ISO27001 compliance
+```
+
+#### Built-in Security & Audit Features
+- **Complete decorator tracking**: Every `@env()`, `@var()`, `@file()`, `@shell()`, `@http()` call logged
+- **Security pattern detection**: Automatic flagging of sensitive decorator usage
+- **Access pattern analysis**: Detect unusual decorator combinations or frequencies  
+- **Performance bottleneck identification**: Find slow decorators across all runs
+- **Zero-configuration audit**: Complete audit trail with no additional setup
+- **Anomaly detection**: Flag scripts with unexpected decorator usage patterns
+
+#### Decorator Telemetry Data
+The telemetry system captures comprehensive decorator usage:
+```json
+{
+  "decorator_usage": [
+    {
+      "decorator": "@env", 
+      "parameter": "AWS_SECRET_ACCESS_KEY",
+      "script": "deploy.cli",
+      "line": 23,
+      "timestamp": "2025-09-20T14:32:15Z",
+      "duration_ms": 0.1,
+      "user": "deploy-bot",
+      "runner": "runner-12"
+    },
+    {
+      "decorator": "@shell",
+      "parameter": "kubectl apply -f k8s/",
+      "script": "deploy.cli", 
+      "line": 45,
+      "timestamp": "2025-09-20T14:32:18Z",
+      "duration_ms": 1250,
+      "exit_code": 0,
+      "stdout_lines": 15
+    },
+    {
+      "decorator": "@http",
+      "parameter": "https://api.internal/health",
+      "script": "verify.cli",
+      "line": 12,
+      "timestamp": "2025-09-20T14:32:20Z", 
+      "duration_ms": 180,
+      "status_code": 200
+    }
+  ]
+}
+```
+
+#### Security Use Cases
+- **Secret sprawl detection**: "Which scripts access production secrets?"
+- **Privilege escalation monitoring**: "Unusual @shell('sudo') usage detected"
+- **Data access audit**: "Complete trail of @file() access to sensitive configs"
+- **Network activity tracking**: "All @http() calls with URLs and response codes"
+- **Compliance reporting**: "Generate quarterly audit of all decorator usage"
+
 ## Implementation Priority
 
 ### Phase 1: Core Tracking

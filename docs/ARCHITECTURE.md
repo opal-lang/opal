@@ -59,15 +59,54 @@ When building decorators, follow these principles to maintain the contract model
 
 ## Plugin System
 
-Decorators work through a plugin system that maintains security and reliability:
+Decorators work through a dual-path plugin system that balances safety with flexibility:
 
-**Plugin verification**: External decorators must come from verified, source-hashed binaries. No arbitrary code execution - plugins pass a compliance test suite that verifies they implement required interfaces correctly and respect security requirements.
+### Plugin Distribution Model
 
-**Plugin isolation**: Plugins run in limited contexts and can't crash the main execution engine. Resource usage gets monitored and timeouts are enforced.
+**Two distribution paths following Go modules and Nix flakes pattern:**
 
-**Registry pattern**: Both built-in and plugin decorators register themselves at startup. The runtime looks up decorators by name without hardcoded lists, making the system extensible.
+* **Registry path (curated, verified)** → strict conformance guarantees
+* **Direct Git path (user-supplied)** → bypasses registry, user owns risk
 
-This means organizations can build custom infrastructure decorators (like `@company.k8s.deploy`) while maintaining the same security and verification guarantees as built-in decorators.
+```bash
+# From registry (verified)
+accord get accord.dev/aws.ec2@v1.4.2
+
+# Direct Git (team-owned, unverified)  
+accord get github.com/acme/accord-plugins/k8s@v0.1.0
+```
+
+### Registry vs Git-Sourced Plugins
+
+**Registry plugins (accord.dev/...):**
+- Come with signed manifests + verification reports
+- Passed full conformance suite and security audits
+- Deterministic, idempotent, secrets-safety verified
+- SLSA Level 3 provenance + reproducible builds
+- Automatic updates within semver constraints
+
+**Git-sourced plugins (github.com/...):**
+- Can pin by commit hash for reproducibility
+- `accord verify-plugin ./...` runs locally but not centrally verified
+- Warning displayed but not blocked
+- Useful for private/experimental/internal plugins
+- Enterprise can host private verified registries
+
+### Plugin Verification
+
+**Registry admission pipeline**: External decorators must pass comprehensive verification before registry inclusion. No arbitrary code execution - plugins pass a compliance test suite that verifies they implement required interfaces correctly and respect security requirements.
+
+**Local verification**: Git-sourced plugins run the same conformance suite locally, providing the same crash isolation and security sandboxing but without central verification guarantees.
+
+**Plugin isolation**: All plugins (registry or Git) run in limited contexts and can't crash the main execution engine. Resource usage gets monitored and timeouts are enforced via cgroups/bwrap.
+
+### Registry Pattern Implementation
+
+**Startup registration**: Both built-in and plugin decorators register themselves at startup. The runtime looks up decorators by name without hardcoded lists, making the system extensible.
+
+**Capability verification**: Engine checks on load that manifest signature matches, spec_version overlaps with runtime, and capabilities match requested decorators (no "hidden" entrypoints).
+
+This means organizations can build custom infrastructure decorators (like `@company.k8s.deploy`) while maintaining the same security and verification guarantees as built-in decorators. Small teams can ship plugins immediately via Git without waiting on central registry approval, but audit trails clearly show verification status.
 
 ## Resolution Strategy
 
@@ -99,6 +138,77 @@ The placeholder system protects sensitive values while enabling change detection
 **Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env()`, `@aws.secret()`, whatever. Compliance teams can review plans confidently.
 
 **Hash scope**: Plan hashes cover ordered steps, arguments, operator graphs, and timing flags. They exclude ephemeral data like run IDs or timestamps that shouldn't invalidate a plan.
+
+### Plan Provenance Headers
+
+All resolved plans include provenance metadata for audit trails:
+
+```json
+{
+  "header": {
+    "spec_version": "1.1",
+    "plan_version": "2024.1",
+    "generated_at": "2024-09-20T10:22:30Z",
+    "source_commit": "abc123def456",
+    "compiler_version": "devcmd-1.4.2",
+    "plugins": {
+      "aws.ec2": {
+        "version": "1.4.2",
+        "source": "registry:accord.dev",
+        "verification": "passed",
+        "signed_by": "sigstore:accord.dev/publishers/aws-team"
+      },
+      "company.k8s": {
+        "version": "0.2.1", 
+        "source": "git:github.com/acme/accord-plugins@sha256:def789",
+        "verification": "local-only",
+        "signed_by": null
+      }
+    }
+  },
+  "plan_hash": "sha256:5f6c...",
+  "steps": [...]
+}
+```
+
+**Provenance benefits:**
+- **Audit compliance**: See exactly which plugins were used and their verification status
+- **Risk assessment**: Distinguish registry-verified vs Git-sourced plugins
+- **Reproducibility**: Pin exact plugin versions and sources
+- **Security**: Track signing and verification chain
+
+**Source classification:**
+- `registry:accord.dev` - Centrally verified via registry admission pipeline  
+- `registry:company.internal` - Private enterprise registry with internal verification
+- `git:github.com/org/repo@sha` - Direct Git import with commit pinning
+- `local:./plugins/custom` - Local development plugin
+
+This ensures compliance teams can review plans knowing the verification status of every component, while developers retain flexibility to use unverified plugins when needed.
+
+### Enterprise Plugin Strategies
+
+**Private registry pattern:**
+```bash
+# Enterprise hosts internal registry with company plugins
+accord config set registry https://plugins.company.internal
+
+# Mix verified public and private plugins
+accord get accord.dev/aws.ec2@v1.4.2        # Public verified
+accord get company.internal/vault@v2.1.0     # Private verified  
+accord get github.com/team/custom@v0.1.0     # Direct Git (unverified)
+```
+
+**Policy enforcement:**
+- Production environments can require `verification: passed` in all plan headers
+- Development environments allow unverified plugins with warnings
+- CI/CD pipelines can gate on plugin verification status
+
+**Air-gapped deployments:**
+- Registry mirrors for offline environments
+- Pre-verified plugin bundles with signatures
+- Local verification without external registry access
+
+This dual-path approach avoids "walled garden" criticism while maintaining security - developers can always opt out but know they're assuming risk, and audit trails preserve full accountability.
 
 ## Seeded Determinism
 

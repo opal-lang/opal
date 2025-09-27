@@ -98,7 +98,115 @@ var (
 )
 ```
 
-**Types**: `string | bool | int | duration | array | map`. Type errors caught at plan time.
+**Types**: `string | bool | int | float | duration | array | map`. Type errors caught at plan time.
+
+### Identifier Names
+
+Variable names, command names, and decorator names follow ASCII identifier rules for fast tokenization:
+
+```devcmd
+// Valid identifiers - start with letter, then letters/numbers/underscores
+var apiUrl = "https://api.example.com"
+var PORT = 3000
+var service_name = "api-gateway"
+var deployToProduction = true
+
+// Command names follow same rules
+deployToProduction: kubectl apply -f prod/
+check_api_health: curl /health
+buildAndTest: npm run build && npm test
+```
+
+**Identifier rules**:
+- Must start with letter: `[a-zA-Z]`
+- Can contain letters, numbers, underscores: `[a-zA-Z0-9_]*`
+- Case-sensitive: `myVar` ≠ `MyVar` ≠ `MYVAR`
+- No hyphens to avoid parsing ambiguity with minus operator
+- ASCII-only for optimal performance
+
+**Supported naming styles**:
+- `camelCase` - common in JavaScript/Java
+- `snake_case` - common in Python/Go
+- `PascalCase` - common for types/commands  
+- `SCREAMING_SNAKE` - common for constants
+
+### Duration Format
+
+Duration literals use human-readable time units common in operations:
+
+```devcmd
+// Simple durations
+var TIMEOUT = 30s           // 30 seconds
+var RETRY_DELAY = 5m        // 5 minutes  
+var DEPLOY_WINDOW = 2h      // 2 hours
+var RETENTION = 7d          // 7 days
+var BACKUP_CYCLE = 1w       // 1 week
+var LICENSE_EXPIRY = 2y     // 2 years
+
+// Compound durations (high to low order)
+var SESSION_TIMEOUT = 1h30m     // 1 hour 30 minutes
+var MAINTENANCE_WINDOW = 2d12h  // 2 days 12 hours
+var GRACE_PERIOD = 5m30s        // 5 minutes 30 seconds
+var API_TIMEOUT = 1s500ms       // 1 second 500 milliseconds
+```
+
+**Supported units** (in descending order):
+- `y` - years
+- `w` - weeks
+- `d` - days  
+- `h` - hours
+- `m` - minutes
+- `s` - seconds
+- `ms` - milliseconds
+- `us` - microseconds  
+- `ns` - nanoseconds
+
+**Compound duration rules**:
+- Must be in descending order: `1h30m` ✓, `30m1h` ✗
+- No duplicate units: `1h30m` ✓, `1h2h` ✗
+- No whitespace within: `1h30m` ✓, `1h 30m` = two separate durations
+- Can skip units: `1d30m` ✓ (skipping hours is fine)
+- Integer values only: `1h30m` ✓, `1.5h` ✗ (use compound format for precision)
+
+**Duration arithmetic**:
+```devcmd
+// Duration arithmetic with other durations
+var total = 1h30m + 45m        // total = 2h15m
+var remaining = 5m - 2m30s     // remaining = 2m30s
+var scaled = 30s * 3           // scaled = 1m30s
+
+// Variables can hold negative durations
+var grace = 1m - 5m            // grace = -4m (preserved for logic)
+var timeout = 30s - 1h         // timeout = -29m30s (preserved for logic)
+
+// Conditional logic with negative durations
+if grace < 0s {
+    echo "No grace period remaining"
+    exit 1
+} else {
+    @timeout(grace) { deploy() }
+}
+```
+
+**Duration execution rules**:
+```devcmd
+// Runtime functions clamp negative durations to zero
+@timeout(-4m) { cmd }          // Executes with 0s timeout
+@retry(attempts=3, delay=-30s) { cmd }  // Uses 0s delay
+sleep(-1h)                     // Sleeps for 0s (no-op)
+
+// Variables preserve negative values for arithmetic/logic
+var remaining = deadline - current_time
+echo "Time remaining: ${remaining}"     // Shows "-5m" if past deadline
+@timeout(remaining) { task() }          // Uses max(remaining, 0s) = 0s
+```
+
+**Duration evaluation rules**:
+- All duration arithmetic evaluated at plan time with resolved values
+- Variables can store negative durations for conditional logic
+- Runtime functions automatically clamp negative durations to zero
+- Duration literals are always non-negative (`30s`, `1h30m`)
+- Negative expressions use minus operator: `-30s` = `MINUS` + `DURATION`
 
 ### Accessing Data
 
@@ -122,9 +230,126 @@ list-services: echo "Services: @var(SERVICES.*)"    # "api worker ui"
 @var(SERVICES.[0])  # Mixed notation
 ```
 
+## Arithmetic and Assignment
+
+Devcmd supports arithmetic operations for deterministic calculations in operations scripts. All arithmetic is evaluated at plan time, ensuring predictable results.
+
+### Basic Arithmetic
+
+```devcmd
+// Deterministic calculations for operations
+var total_replicas = base_replicas * environments
+var batch_size = total_items / worker_count
+var shard_id = item_id % shard_count
+var timeout = base_timeout + (retry_attempt * backoff_multiplier)
+
+// Memory and resource calculations
+var total_memory = service_memory * replica_count
+var disk_space = data_size + (log_retention * daily_logs)
+var cpu_limit = base_cpu + (load_factor * peak_multiplier)
+```
+
+**Supported operators**:
+- `+` - addition
+- `-` - subtraction  
+- `*` - multiplication
+- `/` - division
+- `%` - modulo (remainder)
+
+**Operator precedence** (highest to lowest):
+1. `*`, `/`, `%` (multiplication, division, modulo)
+2. `+`, `-` (addition, subtraction)
+3. Use parentheses `()` for explicit ordering
+
+### Assignment Operators
+
+```devcmd
+// Accumulation in deterministic loops
+var total_cost = 0
+for service in @var(SERVICES) {
+    total_cost += @var(SERVICE_COSTS[service])
+}
+
+// Resource scaling
+var replicas = 1
+replicas *= @var(ENVIRONMENTS).length  // multiply by environment count
+replicas += 1                          // add monitoring replica
+
+// Batch processing
+var remaining = total_items
+for batch in batches {
+    remaining -= batch.size
+    echo "Processing batch, ${remaining} items left"
+}
+```
+
+**Supported assignment operators**:
+- `+=` - add and assign
+- `-=` - subtract and assign
+- `*=` - multiply and assign  
+- `/=` - divide and assign
+- `%=` - modulo and assign
+
+### Increment and Decrement
+
+```devcmd
+// Counting in deterministic loops
+var counter = 0
+for service in @var(SERVICES) {
+    counter++
+    echo "Processing service ${counter}: ${service}"
+}
+
+// Countdown operations
+var attempts = max_retries
+while attempts > 0 {
+    attempts--
+    echo "Retry attempt ${max_retries - attempts}"
+}
+```
+
+**Supported operators**:
+- `++` - increment by 1
+- `--` - decrement by 1
+
+### Deterministic Evaluation
+
+All arithmetic operations are evaluated at plan time with known values:
+
+```devcmd
+// Plan shows exact calculations
+var replicas = 3 * 2 + 1    // Plan: replicas = 7
+var timeout = 30 + (2 * 5)  // Plan: timeout = 40
+
+// Variable resolution then calculation
+var base = @env("BASE_REPLICAS", default=2)  // Resolves to 2
+var total = base * 3                         // Plan: total = 6
+```
+
+**Type rules**:
+- `int` + `int` = `int`
+- `float` + `float` = `float`  
+- `int` + `float` = `float` (automatic promotion)
+- `duration` + `duration` = `duration`
+- Division by zero detected at plan time
+
 ## Control Flow
 
 Control flow happens at **plan time**, creating deterministic execution sequences.
+
+### Block Phases and Deterministic Execution
+
+Every `{ ... }` block in devcmd represents a **phase** - a unit of execution with strong deterministic guarantees. When you write a block, the planner expands it at plan time into a finite, ordered sequence of steps that will execute in a predictable way.
+
+**Phase boundaries create execution order.** Each phase completes entirely before the next phase begins. This means all steps within a phase finish before any step in a subsequent phase can start. Within a phase, steps execute according to their canonical order - the order they appear after plan-time expansion.
+
+**Variable mutations follow block semantics.** Most blocks (`for`, `if`, `when`, command blocks) allow variable mutations to affect the outer scope, since their execution is deterministic at plan time. However, `try/catch` blocks and decorator blocks use scope isolation to maintain predictable behavior (detailed below).
+
+**Plans are verifiable contracts.** The resolved plan captures everything needed to verify execution: which steps run in what order, what commands they execute (with placeholders for resolved values), and how they handle retries or timeouts. If any of this changes between plan and execution, verification fails.
+
+**Outputs are deterministically merged.** Each step produces its own stdout and stderr streams. When these need to be combined (for logging or display), they're merged in the canonical order, ensuring the same plan always produces the same combined output.
+
+Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel` work within this framework. They define how blocks expand (unrolling loops, selecting branches) or add constraints (parallel independence), but they all inherit the same phase execution guarantees.
 
 ### Loops
 
@@ -145,7 +370,7 @@ deploy-all: {
 // └─ ... (and so on)
 ```
 
-**For loop guarantee**: Plan-time unrolling creates independent steps with stable IDs. Empty arrays produce no commands.
+For loops unroll at plan time into a known number of steps. The collection (`@var(SERVICES)`) is resolved during planning, and each item creates a separate step in the canonical order. Empty collections produce zero steps.
 
 ### Conditionals
 
@@ -160,6 +385,8 @@ deploy: {
     }
 }
 ```
+
+Conditionals are evaluated at plan time using resolved variable values. Only the taken branch expands into steps - the other branch becomes dead code that doesn't appear in the final plan.
 
 ### Pattern Matching
 
@@ -176,15 +403,7 @@ deploy: {
 }
 ```
 
-**Pattern rules**:
-- `"literal"` - exact match
-- `"main" | "develop"` - any match (OR)
-- `{"hotfix", "urgent"}` - any in set
-- `r"^release/"` - regex (RE2 engine)
-- `200..299` - inclusive range
-- `else` - catch-all
-
-**Evaluation**: First match wins, patterns evaluated in order.
+Pattern matching uses first-match-wins evaluation at plan time. Supported patterns include exact strings (`"production"`), OR expressions (`"main" | "develop"`), sets (`{"hotfix", "urgent"}`), regex patterns (`r"^release/"`), numeric ranges (`200..299`), and catch-all (`else`). Only the matching branch expands into the plan.
 
 ### Error Handling
 
@@ -206,12 +425,60 @@ deploy: {
 }
 ```
 
-Plans show all possible paths. Execution logs show which path was taken.
+The plan records all possible execution paths through try/catch blocks. At runtime, only one of `try` or `catch` executes, while `finally` always runs. Execution logs show which path was actually taken.
 
-**Control flow rules**:
-- `for`, `if`, `when`, `try/catch` cannot be chained with operators
-- They are complete statements, not expressions
-- This eliminates complex precedence questions
+## Scope Isolation
+
+The rule is simple: **values can flow in from the outer scope, but mutations never flow back out**.
+
+```devcmd
+var counter = 0
+var status = "pending"
+
+try {
+    // Can READ outer scope values
+    echo "Starting with counter=${counter}"  // counter = 0 ✓
+    
+    // Can MODIFY local copies
+    counter++           // Local counter = 1
+    status = "running"  // Local status = "running"
+    
+    kubectl apply -f k8s/
+} catch {
+    // Can READ outer scope values  
+    echo "Failed with counter=${counter}"    // counter = 0 ✓
+    
+    // Can MODIFY local copies
+    counter += 5        // Local counter = 5
+    status = "failed"   // Local status = "failed"
+}
+
+// Outer scope unchanged after try/catch
+echo "Final: counter=${counter}, status=${status}"  // counter=0, status="pending" ✓
+```
+
+**Decorator blocks work the same way:**
+
+```devcmd
+var attempts = 0
+var result = ""
+
+@retry(attempts=3) {
+    // Can READ outer scope
+    echo "Base attempts: ${attempts}"  // attempts = 0 ✓
+    
+    // Can MODIFY local copies
+    attempts++         // Local attempts = 1, 2, 3...
+    result = "done"    // Local result = "done"
+    
+    kubectl apply -f k8s/
+}
+
+// Outer scope unchanged after decorator
+echo "Final: attempts=${attempts}, result=${result}"  // attempts=0, result="" ✓
+```
+
+This pattern ensures that both non-deterministic execution (try/catch) and decorator behaviors don't create unpredictable state mutations in the outer scope.
 
 ## Decorators
 

@@ -7,25 +7,21 @@
 # Single test: go test ./module/package -run TestName -v
 # Module test: cd module && go test ./...
 # All tests: go test ./...
-# Build CLI: cd cli && go build -o devcmd . 
+# Build CLI: cd cli && go build -o devcmd .
 # Format: go fmt ./...
 # Lint: golangci-lint run (if available)
 ```
 
 ## Code Style & Conventions
 - **Go 1.25.0** with workspace modules (`core/`, `runtime/`, `cli/`)
-- **Imports**: stdlib first, then third-party, then internal modules
 - **Error handling**: Use typed error constants from `core/errors` (e.g., `ErrCommandNotFound`)
 - **Testing**: Use `github.com/google/go-cmp/cmp` for diffs, `testify` for assertions
   - **CRITICAL**: Always test complete, exact output with `cmp.Diff` - no lazy partial tests with `assert.Contains`
-  - Use table-driven tests for multiple scenarios
-  - Test the entire output format, not just parts of it
   - **Bug reproduction**: Always reproduce parser/CLI bugs in existing test files before fixing
   - Add failing tests to `runtime/lexer/*_test.go` and `runtime/parser/*_test.go` for parsing issues
 - **Types**: Define in `core/types/types.go`, use `TokenType` and `ExpressionType` enums
 - **Registry pattern**: All decorators use global registry, no hardcoded implementations
-- **Context passing**: Pass context explicitly, avoid global state
-- **Naming**: CamelCase for public, camelCase for private, descriptive error names
+- **Temporary debugging files**: ALWAYS prefix with `DELETE_ME_DEBUG_` (e.g., `DELETE_ME_DEBUG_main.go`, `DELETE_ME_DEBUG_memory_alloc_test.go`) so they're clearly identified as temporary and excluded from version control
 
 ## Architecture Rules
 - **Module deps**: `core/` (foundation) → `runtime/` → `cli/` (top-level)
@@ -39,37 +35,10 @@
 - **Fresh builds**: Rebuild CLI after any core/runtime changes
 - **Phase 1**: Interpreter mode only, no code generation yet
 
-## Commit & PR Writing Style
-
-**Goal**: Write like a human developer, not an AI. Be clear and direct without corporate-speak or excessive enthusiasm.
-
-### Commit Messages
-- **Format**: `type: brief description` (conventional commits)
-- **Body**: Explain what was done and why, not how amazing it is
-- **Tone**: Straightforward, matter-of-fact
-- **Avoid**: "This is the big one!", "Revolutionary", "Massive success!", platitudes
-- **Structure**: Brief intro paragraph, then 3-5 key points (not extensive lists, not walls of text)
-
-**Good example**:
-```
-refactor: complete core module separation and interface cleanup
-
-Finished separating the core module so it only contains structural types and interfaces, with all execution logic moved to runtime. This gives us clean architectural boundaries between what things are (core) and how they execute (runtime).
-
-Key changes:
-- Moved AST, IR, and transformation logic from runtime to core
-- Moved lexer/parser/validation from cli/internal to runtime (better separation)
-- Replaced 4000-line test utilities file with focused helpers
-- Added unified Context interface for decorators to access system info and variables
-
-The CLI is now just a thin wrapper around runtime, and we have proper module boundaries.
-```
-
-### PR Descriptions
-- **Summary**: What this accomplishes and why it was needed
-- **Key Changes**: 3-5 bullet points of what actually changed
-- **Impact**: What this enables, not how revolutionary it is
-- **Avoid**: Emoji, excessive formatting, marketing language
+## Pre-PR Checklist
+- **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
+  - When Nix build fails with hash mismatch, copy the "got:" hash to replace the "expected:" hash
+  - This ensures the package builds correctly in Nix environments
 
 ### Pre-PR Checklist
 - **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
@@ -100,7 +69,20 @@ The CLI is now just a thin wrapper around runtime, and we have proper module bou
 4. **Preserve execution semantics**: Decorator blocks complete before chain evaluation
 5. **Support dual mode**: Both command mode and script mode execution
 
+### TDD Development Rules
+- **Test-Driven Development**: Always write failing tests before implementation
+- **Test categories**: Golden tests (exact token output), performance tests (5000+ lines/ms), error tests (precise error messages)
+- **Red-Green-Refactor**: See test fail → make it pass → run full suite → refactor safely
+- **Logical test groups**: Group tests by language feature (control flow, decorators, interpolation)
+- **No implementation without tests**: Every new feature starts with a failing test
+
 ### When Making Changes
+- **Write test first**: Create failing test for new feature
+- **Minimal implementation**: Write just enough code to pass the test
+- **Run full suite**: Ensure no regressions in existing functionality
+- **Follow coding guidelines**: Apply all code style and conventions
+- **Follow docs specifications**: Implement according to SPECIFICATION.md and ARCHITECTURE.md
+- **Update WORK.md**: Keep work tracking clean and terse throughout development
 - **AST/IR changes**: Must support single Decorator/DecoratorNode types
 - **New decorators**: Must use unified interfaces and parameter system
 - **Parser changes**: Must convert shell syntax to `@shell` decorators
