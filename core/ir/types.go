@@ -1,7 +1,7 @@
 package ir
 
 import (
-	"github.com/aledsdavies/devcmd/core/decorators"
+	"github.com/aledsdavies/opal/core/decorators"
 )
 
 // ================================================================================================

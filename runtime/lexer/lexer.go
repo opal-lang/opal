@@ -8,8 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // ASCII character lookup tables for fast classification

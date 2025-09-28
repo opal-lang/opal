@@ -1,13 +1,13 @@
 # AGENTS.md
 
-**devcmd** - CLI generation tool that creates standalone binaries from declarative command definitions.
+**opal** - CLI generation tool that creates standalone binaries from declarative command definitions.
 
 ## Build/Test Commands
 ```bash
 # Single test: go test ./module/package -run TestName -v
 # Module test: cd module && go test ./...
 # All tests: go test ./...
-# Build CLI: cd cli && go build -o devcmd .
+# Build CLI: cd cli && go build -o opal .
 # Format: go fmt ./...
 # Lint: golangci-lint run (if available)
 ```
@@ -29,7 +29,7 @@
   - Always run `go work sync` after dependency changes
   - Use `go work use .` to add new modules to workspace
   - When testing modules individually: `cd module && go test ./...`
-  - For cross-module imports: `github.com/aledsdavies/devcmd/core/...`
+  - For cross-module imports: `github.com/aledsdavies/opal/core/...`
 - **String system**: Use `StringLiteral.Parts[]` not deprecated `.Value`
 - **Decorators**: Registry-driven via `decorators.RegisterAction/RegisterValue/etc.`
 - **Fresh builds**: Rebuild CLI after any core/runtime changes

@@ -7,8 +7,8 @@ import (
 func TestCompleteParserIntegration(t *testing.T) {
 	testCases := []TestCase{
 		{
-			Name: "complete devcmd file",
-			Input: `# Complete devcmd example
+			Name: "complete opal file",
+			Input: `# Complete opal example
 var SRC = "./src"
 var DIST = "./dist"
 var PORT = 8080

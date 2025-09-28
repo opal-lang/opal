@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // Real-world Devcmd examples based on the ACTUAL language specification

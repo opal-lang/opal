@@ -1,6 +1,6 @@
 # Clean Code Guidelines for Devcmd
 
-Guidelines for maintaining clean, discoverable, and scalable decorator composition as the devcmd ecosystem grows.
+Guidelines for maintaining clean, discoverable, and scalable decorator composition as the opal ecosystem grows.
 
 ## Core Philosophy
 
@@ -11,13 +11,13 @@ Guidelines for maintaining clean, discoverable, and scalable decorator compositi
 ### **Naming Conventions**
 
 **Verb-first naming** for clarity and consistency:
-```devcmd
+```opal
 ✅ Good: @retry, @timeout, @log, @aws.secret, @k8s.rollout
 ❌ Bad:  @retryPolicy, @timeoutHandler, @logger
 ```
 
 **Avoid synonyms** - one concept, one name:
-```devcmd
+```opal
 ✅ Good: @retry (standard)
 ❌ Bad:  @repeat, @redo, @again (confusing alternatives)
 ```
@@ -25,7 +25,7 @@ Guidelines for maintaining clean, discoverable, and scalable decorator compositi
 ### **Parameter Design**
 
 **Named parameters over positional soup**:
-```devcmd
+```opal
 ✅ Good: @retry(attempts=3, delay=2s)
 ❌ Bad:  @retry(3, 2000)
 ❌ Bad:  @retry(3, delay=2s)  # No mixing named and positional
@@ -39,13 +39,13 @@ Guidelines for maintaining clean, discoverable, and scalable decorator compositi
 - Use consistent verb/noun patterns: `max_attempts` not `maxAttempts` or `attempts_max`
 
 **Duration format (strict)**:
-```devcmd
+```opal
 ✅ Good: 500ms, 30s, 5m, 2h
 ❌ Bad:  300, 2000, "5 minutes", "PT30S" (no ISO-8601)
 ```
 
 **Enum values (standardized)**:
-```devcmd
+```opal
 ✅ Good: level="info|warn|error|debug|trace"
 ✅ Good: signal="TERM|KILL|INT|HUP"
 ❌ Bad:  level="INFO|Warning|err"  # Inconsistent casing
@@ -72,7 +72,7 @@ Guidelines for maintaining clean, discoverable, and scalable decorator compositi
 - Any pipe/chain operators present
 - Nesting improves readability
 
-```devcmd
+```opal
 ❌ Bad: @timeout(5m) && @retry(3) && @log("starting") && kubectl apply
 
 ✅ Good:
@@ -95,7 +95,7 @@ Guidelines for maintaining clean, discoverable, and scalable decorator compositi
 
 **Breaking nesting order requires a comment explaining why.**
 
-```devcmd
+```opal
 ✅ Good nesting order:
 @timeout(10m) {
     @retry(attempts=3) {
@@ -133,11 +133,11 @@ func (d *RetryDecorator) Examples() []string {
 ### **CLI Discovery Commands**
 
 ```bash
-devcmd decorators                           # List all available
-devcmd decorators --category control        # Filter by category  
-devcmd decorators --search rollout          # Search by keyword
-devcmd help @retry                          # Specific decorator help
-devcmd help @retry --examples               # Show usage examples
+opal decorators                           # List all available
+opal decorators --category control        # Filter by category  
+opal decorators --search rollout          # Search by keyword
+opal help @retry                          # Specific decorator help
+opal help @retry --examples               # Show usage examples
 ```
 
 ### **Decorator Categories**
@@ -157,34 +157,34 @@ devcmd help @retry --examples               # Show usage examples
 ### **Lint Rules (Enforced)**
 
 **D001: Chain complexity** (ERROR)
-```devcmd
+```opal
 ❌ @timeout(5m) && @retry(3) && @log("x") && command
 ✅ Fix: Use block structure for ≥2 control decorators or any |/&&/|| operators
 ```
 
 **D002: Unknown decorators** (ERROR)
-```devcmd
+```opal
 ❌ @retrry(3) { command }
 ✅ Fix: Did you mean @retry? (auto-fixable)
 ```
 
 **D003: Mixed argument styles** (ERROR)
-```devcmd
+```opal
 ❌ @retry(3, delay=2s)  # No mixing positional and named
 ✅ Fix: @retry(attempts=3, delay=2s) (auto-fixable)
 ```
 
 **CI Integration**:
 ```bash
-devcmd lint --strict    # Fail on D001-D003, warn on deprecations
-devcmd lint --fix       # Auto-fix D002 and D003 where possible
+opal lint --strict    # Fail on D001-D003, warn on deprecations
+opal lint --fix       # Auto-fix D002 and D003 where possible
 ```
 
 ### **Collision Policy**
 
 **Resolution order**:
 1. **Built-ins** (always win)
-2. **Project decorators** (local .devcmd/)
+2. **Project decorators** (local .opal/)
 3. **Extensions** (installed packages)
 
 **Edge case handling**:
@@ -230,7 +230,7 @@ This makes telemetry diffs stable across refactors while maintaining precise loc
 ### **Namespace Strategy**
 
 **Local prefixes optional, not required**:
-```devcmd
+```opal
 ✅ Simple: @deploy, @scale (when unambiguous)
 ✅ Explicit: @myapp.deploy, @myapp.scale (when needed)
 ❌ Forced: Always requiring namespaces
@@ -246,8 +246,8 @@ This makes telemetry diffs stable across refactors while maintaining precise loc
 
 **Clear migration paths**:
 ```bash
-devcmd check-deprecated                     # Scan for deprecated usage
-devcmd migrate @old-decorator @new-decorator # Automated migration
+opal check-deprecated                     # Scan for deprecated usage
+opal migrate @old-decorator @new-decorator # Automated migration
 ```
 
 **Sunset versions**:
@@ -257,7 +257,7 @@ devcmd migrate @old-decorator @new-decorator # Automated migration
 
 ## Example: Well-Designed Decorator Composition
 
-```devcmd
+```opal
 var ENV = "production"
 var TIMEOUT = 10m
 
@@ -295,7 +295,7 @@ deploy: @timeout(TIMEOUT) {
 
 ### **Starter Configuration**
 
-`.devcmdrc` example for teams:
+`.opalrc` example for teams:
 ```yaml
 lint:
   rules:
@@ -318,25 +318,25 @@ fmt:
 **Pre-commit hook** (5-line setup):
 ```bash
 #!/bin/bash
-devcmd lint --strict || exit 1
-devcmd fmt --check || exit 1
-devcmd check-docs || exit 1  # Verify Description() + Examples()
+opal lint --strict || exit 1
+opal fmt --check || exit 1
+opal check-docs || exit 1  # Verify Description() + Examples()
 ```
 
 **CI pipeline**:
 ```bash
-devcmd lint --strict    # Fail on D001-D003, warn on deprecations
-devcmd fmt --check      # Verify formatting consistency
-devcmd check-docs       # Enforce Description() + Examples() on all decorators
+opal lint --strict    # Fail on D001-D003, warn on deprecations
+opal fmt --check      # Verify formatting consistency
+opal check-docs       # Enforce Description() + Examples() on all decorators
 ```
 
 ### **Development Workflow**
 
 ```bash
-devcmd lint --fix       # Auto-fix D002 and D003 issues
-devcmd fmt              # Format decorator composition
-devcmd check-deprecated # Scan for deprecated decorator usage
-devcmd migrate @old @new # Automated migration for renamed decorators
+opal lint --fix       # Auto-fix D002 and D003 issues
+opal fmt              # Format decorator composition
+opal check-deprecated # Scan for deprecated decorator usage
+opal migrate @old @new # Automated migration for renamed decorators
 ```
 
 This approach keeps decorator composition clean and discoverable while avoiding namespace ceremony until actually needed.

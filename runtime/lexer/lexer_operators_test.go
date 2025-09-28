@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 func TestLexer_ShellOperators(t *testing.T) {

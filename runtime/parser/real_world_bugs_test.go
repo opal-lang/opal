@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin" // Register decorators for tests
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin" // Register decorators for tests
 )
 
-// TestRealWorldBugs contains all tests for bugs found in actual usage of devcmd
+// TestRealWorldBugs contains all tests for bugs found in actual usage of opal
 // These tests ensure we don't regress on issues found in real .cli files
 func TestRealWorldBugs(t *testing.T) {
 	t.Run("commands_cli_setup_exact", func(t *testing.T) {
 		// Extract the exact setup command that fails (lines 265-277 from commands.cli)
-		input := `var PROJECT = "devcmd"
+		input := `var PROJECT = "opal"
 
 # Quick setup for new contributors
 setup: {
@@ -49,7 +49,7 @@ setup: {
 
 	t.Run("commands_cli_build_workdir", func(t *testing.T) {
 		// Line 358 from commands.cli - @workdir with inline block
-		input := `var PROJECT = "devcmd"
+		input := `var PROJECT = "opal"
 var VERSION = "1.0"
 var BUILD_TIME = "2024"
 

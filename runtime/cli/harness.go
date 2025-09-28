@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ type CLIHarness struct {
 func NewCLIHarness(name, version string) *CLIHarness {
 	rootCmd := &cobra.Command{
 		Use:     name,
-		Short:   "CLI from devcmd",
+		Short:   "CLI from opal",
 		Version: version,
 	}
 

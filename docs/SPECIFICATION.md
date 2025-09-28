@@ -1,18 +1,18 @@
-# Devcmd Language Specification
+# Opal Language Specification
 
 **Write operations scripts that show you exactly what they'll do before they do it.**
 
-## What is Devcmd?
+## What is Opal?
 
-Devcmd is an operations language for teams who want the reliability of infrastructure-as-code without the complexity of state files. Write scripts that feel like shell but generate auditable plans.
+Opal is an operations language for teams who want the reliability of infrastructure-as-code without the complexity of state files. Write scripts that feel like shell but generate auditable plans.
 
 **Key principle**: Resolved plans are execution contracts that get verified before running.
 
 ## The Core Idea
 
-Everything becomes a decorator internally. No special cases.
+Everything becomes a value decorator or execution decorator internally. No special cases.
 
-```devcmd
+```opal
 // You write natural syntax
 deploy: {
     echo "Starting deployment"
@@ -20,7 +20,7 @@ deploy: {
     kubectl apply -f k8s/
 }
 
-// Parser converts to decorators
+// Parser converts to execution decorators
 deploy: {
     @shell("echo \"Starting deployment\"")
     @shell("npm run build")
@@ -31,19 +31,19 @@ deploy: {
 ## Two Ways to Run
 
 **Command mode** - organized tasks:
-```devcmd
-// commands.cli
+```opal
+// commands.opl
 install: npm install
 test: npm test
 deploy: kubectl apply -f k8s/
 ```
 ```bash
-devcmd deploy    # Run specific task
+opal deploy    # Run specific task
 ```
 
 **Script mode** - direct execution:
-```devcmd
-#!/usr/bin/env devcmd
+```opal
+#!/usr/bin/env opal
 echo "Deploying version $VERSION"
 kubectl apply -f k8s/
 ```
@@ -55,7 +55,7 @@ kubectl apply -f k8s/
 
 How commands connect matters:
 
-```devcmd
+```opal
 // Newlines = fail-fast (stop on first failure)
 deploy: {
     npm run build
@@ -77,7 +77,7 @@ logs: kubectl logs app | grep ERROR
 
 Pull values from real sources:
 
-```devcmd
+```opal
 var ENV = @env("ENVIRONMENT", default="development")
 var PORT = @env("PORT", default=3000)
 var DEBUG = @env("DEBUG", default=false)
@@ -102,9 +102,9 @@ var (
 
 ### Identifier Names
 
-Variable names, command names, and decorator names follow ASCII identifier rules for fast tokenization:
+Variable names, command names, and value decorator and execution decorator names follow ASCII identifier rules for fast tokenization:
 
-```devcmd
+```opal
 // Valid identifiers - start with letter, then letters/numbers/underscores
 var apiUrl = "https://api.example.com"
 var PORT = 3000
@@ -134,7 +134,7 @@ buildAndTest: npm run build && npm test
 
 Duration literals use human-readable time units common in operations:
 
-```devcmd
+```opal
 // Simple durations
 var TIMEOUT = 30s           // 30 seconds
 var RETRY_DELAY = 5m        // 5 minutes  
@@ -169,7 +169,7 @@ var API_TIMEOUT = 1s500ms       // 1 second 500 milliseconds
 - Integer values only: `1h30m` ✓, `1.5h` ✗ (use compound format for precision)
 
 **Duration arithmetic**:
-```devcmd
+```opal
 // Duration arithmetic with other durations
 var total = 1h30m + 45m        // total = 2h15m
 var remaining = 5m - 2m30s     // remaining = 2m30s
@@ -189,7 +189,7 @@ if grace < 0s {
 ```
 
 **Duration execution rules**:
-```devcmd
+```opal
 // Runtime functions clamp negative durations to zero
 @timeout(-4m) { cmd }          // Executes with 0s timeout
 @retry(attempts=3, delay=-30s) { cmd }  // Uses 0s delay
@@ -212,7 +212,7 @@ echo "Time remaining: ${remaining}"     // Shows "-5m" if past deadline
 
 Use dot notation for nested access:
 
-```devcmd
+```opal
 // Array access
 start-api: docker run -p @var(SERVICES.0):3000 app
 start-worker: docker run -p @var(SERVICES.1):3001 app
@@ -232,11 +232,11 @@ list-services: echo "Services: @var(SERVICES.*)"    # "api worker ui"
 
 ## Arithmetic and Assignment
 
-Devcmd supports arithmetic operations for deterministic calculations in operations scripts. All arithmetic is evaluated at plan time, ensuring predictable results.
+Opal supports arithmetic operations for deterministic calculations in operations scripts. All arithmetic is evaluated at plan time, ensuring predictable results.
 
 ### Basic Arithmetic
 
-```devcmd
+```opal
 // Deterministic calculations for operations
 var total_replicas = base_replicas * environments
 var batch_size = total_items / worker_count
@@ -263,7 +263,7 @@ var cpu_limit = base_cpu + (load_factor * peak_multiplier)
 
 ### Assignment Operators
 
-```devcmd
+```opal
 // Accumulation in deterministic loops
 var total_cost = 0
 for service in @var(SERVICES) {
@@ -292,7 +292,7 @@ for batch in batches {
 
 ### Increment and Decrement
 
-```devcmd
+```opal
 // Counting in deterministic loops
 var counter = 0
 for service in @var(SERVICES) {
@@ -316,7 +316,7 @@ while attempts > 0 {
 
 All arithmetic operations are evaluated at plan time with known values:
 
-```devcmd
+```opal
 // Plan shows exact calculations
 var replicas = 3 * 2 + 1    // Plan: replicas = 7
 var timeout = 30 + (2 * 5)  // Plan: timeout = 40
@@ -339,11 +339,11 @@ Control flow happens at **plan time**, creating deterministic execution sequence
 
 ### Block Phases and Deterministic Execution
 
-Every `{ ... }` block in devcmd represents a **phase** - a unit of execution with strong deterministic guarantees. When you write a block, the planner expands it at plan time into a finite, ordered sequence of steps that will execute in a predictable way.
+Every `{ ... }` block in opal represents a **phase** - a unit of execution with strong deterministic guarantees. When you write a block, the planner expands it at plan time into a finite, ordered sequence of steps that will execute in a predictable way.
 
 **Phase boundaries create execution order.** Each phase completes entirely before the next phase begins. This means all steps within a phase finish before any step in a subsequent phase can start. Within a phase, steps execute according to their canonical order - the order they appear after plan-time expansion.
 
-**Variable mutations follow block semantics.** Most blocks (`for`, `if`, `when`, command blocks) allow variable mutations to affect the outer scope, since their execution is deterministic at plan time. However, `try/catch` blocks and decorator blocks use scope isolation to maintain predictable behavior (detailed below).
+**Variable mutations follow block semantics.** Most blocks (`for`, `if`, `when`, command blocks) allow variable mutations to affect the outer scope, since their execution is deterministic at plan time. However, `try/catch` blocks and execution decorator blocks use scope isolation to maintain predictable behavior (detailed below).
 
 **Plans are verifiable contracts.** The resolved plan captures everything needed to verify execution: which steps run in what order, what commands they execute (with placeholders for resolved values), and how they handle retries or timeouts. If any of this changes between plan and execution, verification fails.
 
@@ -353,7 +353,7 @@ Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel`
 
 ### Loops
 
-```devcmd
+```opal
 deploy-all: {
     for service in @var(SERVICES) {
         echo "Deploying ${service}"
@@ -374,7 +374,7 @@ For loops unroll at plan time into a known number of steps. The collection (`@va
 
 ### Conditionals
 
-```devcmd
+```opal
 deploy: {
     if @var(ENV) == "production" {
         kubectl apply -f k8s/prod/
@@ -390,7 +390,7 @@ Conditionals are evaluated at plan time using resolved variable values. Only the
 
 ### Pattern Matching
 
-```devcmd
+```opal
 deploy: {
     when @var(ENV) {
         "production" -> {
@@ -409,7 +409,7 @@ Pattern matching uses first-match-wins evaluation at plan time. Supported patter
 
 Try/catch is the **only** non-deterministic construct:
 
-```devcmd
+```opal
 deploy: {
     try {
         kubectl apply -f k8s/
@@ -431,7 +431,7 @@ The plan records all possible execution paths through try/catch blocks. At runti
 
 The rule is simple: **values can flow in from the outer scope, but mutations never flow back out**.
 
-```devcmd
+```opal
 var counter = 0
 var status = "pending"
 
@@ -459,7 +459,7 @@ echo "Final: counter=${counter}, status=${status}"  // counter=0, status="pendin
 
 **Decorator blocks work the same way:**
 
-```devcmd
+```opal
 var attempts = 0
 var result = ""
 
@@ -474,11 +474,11 @@ var result = ""
     kubectl apply -f k8s/
 }
 
-// Outer scope unchanged after decorator
+// Outer scope unchanged after execution decorator
 echo "Final: attempts=${attempts}, result=${result}"  // attempts=0, result="" ✓
 ```
 
-This pattern ensures that both non-deterministic execution (try/catch) and decorator behaviors don't create unpredictable state mutations in the outer scope.
+This pattern ensures that both non-deterministic execution (try/catch) and execution decorator behaviors don't create unpredictable state mutations in the outer scope.
 
 ## Decorators
 
@@ -486,11 +486,11 @@ This pattern ensures that both non-deterministic execution (try/catch) and decor
 
 Inject values inline:
 
-```devcmd
+```opal
 // Environment variables
 start: node app.js --port @env("PORT", default=3000)
 
-// Devcmd variables  
+// Opal variables  
 scale: kubectl scale --replicas=@var(REPLICAS) deployment/app
 
 // Expensive lookups (resolved lazily)
@@ -502,7 +502,7 @@ config: curl -H "Authorization: @http.get('https://auth.com/token')"
 
 Enhance command execution:
 
-```devcmd
+```opal
 // Retry with named parameters
 deploy: @retry(attempts=3, delay=2s, backoff=1.5) {
     kubectl apply -f k8s/
@@ -526,45 +526,84 @@ services: @parallel {
 deploy: @cmd(build) && @cmd(test) && @cmd(apply)
 ```
 
-## Plans: Execution Contracts
+## Plans: Three Execution Modes
 
-Devcmd turns operations into two-phase execution: plan generation, then verified execution.
+Opal provides three distinct planning and execution modes, each serving different operational needs.
 
 **Plan provenance**: Plans include source_commit, spec_version, and compiler_version in headers for audit trails.
 
-### Quick Plans
+### Quick Plans (`--dry-run`)
 
-Fast preview without expensive operations:
+**Purpose**: Fast preview of likely execution paths without expensive operations.
 
 ```bash
-devcmd deploy --dry-run
+opal deploy --dry-run
 ```
+
+**What happens**:
+- Resolves control flow (if/when/for conditions) using cheap value decorators
+- Shows all possible execution branches that code could take
+- Defers expensive value decorators (`@aws.secret`, `@http.get`, etc.)
+- Calculates execution paths based on current variable values
+
 ```
 deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=¹@aws.secret("api-token")
 └─ kubectl rollout status deployment/app
 
+Possible Branches:
+├─ if ENV == "production" → [kubectl scale --replicas=3]
+└─ else → [kubectl scale --replicas=1]
+
 Deferred Values:
 1. @aws.secret("api-token") → <expensive: AWS lookup>
 ```
 
-### Resolved Plans
+### Resolved Plans (`--dry-run --resolve`)
 
-All values resolved, creating an execution contract:
+**Purpose**: Complete execution contract with all values resolved.
 
 ```bash
-devcmd deploy --dry-run --resolve > prod.plan
+opal deploy --dry-run --resolve > prod.plan
 ```
+
+**What happens**:
+- Resolves ALL value decorators (including expensive ones)
+- Determines exact execution path (no branches, single success path)
+- Creates deterministic execution contract
+- Generates plan file for later contract-verified execution
+
 ```
 deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=¹<32:a1b2c3>
+├─ kubectl scale --replicas=<1:3> deployment/app
 └─ kubectl rollout status deployment/app
 
 Resolved Values:
 1. @aws.secret("api-token") → <32:a1b2c3>
+
+Contract Hash: sha256:def456...
 ```
+
+### Execution Plans (always happens)
+
+**Purpose**: Runtime resolution and execution.
+
+```bash
+# Direct execution
+opal deploy
+
+# Contract-verified execution  
+opal run --plan prod.plan
+```
+
+**What happens**:
+1. **Internal resolution**: Resolves all value decorators fresh at execution time
+2. **Path determination**: Follows single execution path based on resolved values
+3. **Contract verification** (if using plan file): Ensures resolved values match contract hashes
+4. **Execution**: Runs commands with internally resolved values
 
 **Security by default**: All values appear as `<N:hashAlgo:hex>` format (e.g., `<32:sha256:a1b2c3d4>`).
 
@@ -580,50 +619,105 @@ Resolved Values:
 > This applies to all value decorators: `@env()`, `@var()`, `@aws.secret()`, etc.  
 > Compliance teams can review plans with confidence.
 
-### Verified Execution
+## Contract Verification
 
-Resolved plans are **execution contracts** with verification:
+When using plan files, opal ensures execution matches the reviewed contract exactly.
+
+### Contract-Verified Execution
 
 ```bash
-# Execute against resolved plan
-devcmd run --plan prod.plan
+# Execute against resolved plan contract
+opal run --plan prod.plan
 ```
 
-**What happens**:
-1. **Replan** from source with current infrastructure state
-2. **Verify** replanned structure matches resolved plan exactly
-3. **Execute** the contracted plan if verification passes
-4. **Fail** with diff if anything changed
+**Contract verification process**:
+1. **Fresh resolution**: Resolve all value decorators with current infrastructure state
+2. **Hash comparison**: Compare newly resolved value hashes with plan contract hashes  
+3. **Path verification**: Ensure execution path matches contracted plan structure
+4. **Execute or bail**: Run contracted plan if hashes match, otherwise fail with diff
 
-**Verification outcomes**:
-- `source_changed`: Source files modified → regenerate plan
-- `infra_missing`: Expected infrastructure not found → use `--force` or fix infrastructure  
-- `infra_mutated`: Infrastructure present but different → use `--force` or regenerate plan
+**Why this works**: The resolved plan contains `<length:hash>` placeholders. At execution time, opal resolves values fresh and compares their hashes. If `@env("REPLICAS")` was `3` during planning but is now `5`, the hashes won't match.
 
-**Example verification failure**:
+### Verification Outcomes
+
+**✅ Contract verified** - hashes match, execution proceeds:
 ```
-ERROR: Plan verification failed
-
-Expected: kubectl scale --replicas=<1:3> deployment/app
-Actual:   kubectl scale --replicas=<1:5> deployment/app
-
-Source file changed since plan generation.
-Run 'devcmd plan --resolve deploy' to generate new plan.
+✓ Contract verified: all value decorators resolve to expected hashes
+→ Executing contracted plan...
 ```
 
-**Partial execution**: Use `--from step:path` to resume from specific steps when verification passes (useful for long pipelines).
+**❌ Contract violated** - hashes differ, execution stops:
+```
+ERROR: Contract verification failed
 
-This ensures the resolved plan you reviewed is exactly what executes, even hours later.
+Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app  
+Actual:   kubectl scale --replicas=<1:sha256:def456> deployment/app
+
+Variable REPLICAS changed: was 3, now 5
+→ Source or environment changed since plan generation
+→ Run 'opal deploy --dry-run --resolve' to generate new plan
+```
+
+**Contract violation causes**:
+- `source_changed`: Source files modified since plan generation
+- `env_changed`: Environment variables modified since plan generation  
+- `infra_drift`: Infrastructure state changed since plan generation
+
+### Direct Execution (No Contract)
+
+```bash
+# Always resolves fresh, no contract verification
+opal deploy
+```
+
+**Direct execution process**:
+1. **Fresh resolution**: Resolve all value decorators with current state
+2. **Path determination**: Follow execution path based on resolved values
+3. **Execute**: Run commands with resolved values (no hash verification)
+
+This mode is ideal for development and immediate execution where you want current values, not contracted values.
+
+## Planning Mode Summary
+
+| Mode | Command | Value Resolution | Use Case |
+|------|---------|------------------|----------|
+| **Quick Plan** | `--dry-run` | Cheap values only | Fast preview, see possible paths |
+| **Resolved Plan** | `--dry-run --resolve` | ALL values resolved | Complete contract, audit review |
+| **Direct Execution** | `deploy` | Fresh resolution | Development, immediate execution |
+| **Contract Execution** | `run --plan file` | Fresh + hash verification | Production, change detection |
+
+### When to Use Each Mode
+
+**Quick plans** for:
+- Development workflow: "What will this probably do?"
+- Fast feedback during script development
+- Understanding possible execution branches
+
+**Resolved plans** for:
+- Change window planning: Generate contract hours before execution
+- Audit review: Show exactly what will execute with real values
+- Production contracts: Lock in execution plan with hash verification
+
+**Direct execution** for:
+- Development and testing: Run with current values immediately
+- One-off operations: Execute without contract overhead
+- Iterative script development
+
+**Contract execution** for:
+- Production deployments: Ensure reviewed plan matches execution
+- Time-delayed execution: Execute plan generated hours earlier
+- Change detection: Catch environment drift since plan generation
 
 ## Resolution Strategy
 
 **Value timing rules**:
-- **Quick plans**: Expensive decorators deferred, show placeholders
-- **Resolved plans**: ALL decorators execute, values frozen as execution contract
-- **Verified execution**: Contract verification ensures resolved plan matches current source
-- **Dead code elimination**: Decorators in pruned branches never execute
+- **Quick plans**: Expensive value decorators deferred, show placeholders
+- **Resolved plans**: ALL value decorators resolve, values frozen as execution contract
+- **Direct execution**: Fresh resolution at execution time, no contracts
+- **Contract execution**: Fresh resolution + hash verification against contract
+- **Dead code elimination**: Value decorators in pruned branches never execute
 
-**Non-determinism guardrail**: Value decorators must be referentially transparent during `--resolve`. Non-deterministic decorators cause contract verification failures.
+**Non-determinism guardrail**: Value decorators must be referentially transparent during `--resolve`. Non-deterministic value decorators cause contract verification failures.
 
 **Seeded determinism**: Operations requiring randomness or cryptography (like `@random.password()` or `@crypto.generate_key()`) use Plan Seed Envelopes (PSE) to be deterministic within resolved plans while maintaining security.
 
@@ -631,21 +725,21 @@ This ensures the resolved plan you reviewed is exactly what executes, even hours
 
 ## Time-Delayed Execution
 
-Real operations involve plan generation and execution at different times. Devcmd's verification model handles this cleanly.
+Real operations involve plan generation and execution at different times. Opal's verification model handles this cleanly.
 
 ### The Scenario
 
 ```bash
 # 2:00 PM - Generate plan during change window planning
-devcmd deploy --dry-run --resolve > evening-deploy.plan
+opal deploy --dry-run --resolve > evening-deploy.plan
 
 # 5:00 PM - Execute plan during maintenance window  
-devcmd run --plan evening-deploy.plan
+opal run --plan evening-deploy.plan
 ```
 
 ### Verification at Execution
 
-When you execute a resolved plan, devcmd **verifies the contract**:
+When you execute a resolved plan, opal **verifies the contract**:
 
 1. **Replan** from source files with current infrastructure state
 2. **Compare** new plan structure with resolved plan
@@ -676,7 +770,7 @@ Infrastructure changed since plan generation.
 Consider regenerating plan or using --force.
 ```
 
-**Non-deterministic decorator detected**:
+**Non-deterministic value decorator detected**:
 ```
 ERROR: Contract verification failed
 
@@ -684,7 +778,7 @@ ERROR: Contract verification failed
   Plan time: <20:sha256:abc123>
   Execution:  <20:sha256:def456>
 
-Non-deterministic decorators cannot be used in resolved plans.
+Non-deterministic value decorators cannot be used in resolved plans.
 Consider separating dynamic value acquisition from deterministic execution.
 ```
 
@@ -692,7 +786,7 @@ Consider separating dynamic value acquisition from deterministic execution.
 
 For operations requiring randomness, resolved plans contain a Plan Seed Envelope - a minimal, immutable piece of state that enables deterministic random generation:
 
-```devcmd
+```opal
 // Default: regenerates on every new plan
 var TEMP_TOKEN = @random.password(length=16)
 
@@ -722,7 +816,7 @@ kubectl create secret generic api --from-literal=key=¹<64:sha256:def456>
 **How PSE works**:
 - High-entropy seed generated at `--resolve` time
 - Seed encrypted and sealed to authorized runners (file-based key or KMS)
-- Each decorator derives unique deterministic values using plan context
+- Each value decorator derives unique deterministic values using plan context
 - Same plan always generates identical random values
 - Different plans generate different values (new seed per plan)
 
@@ -739,13 +833,13 @@ This gives you secure, auditable randomness while maintaining the stateless exec
 
 **Strict verification** (default):
 ```bash
-devcmd run --plan prod.plan
+opal run --plan prod.plan
 # Fails on any source or infrastructure changes
 ```
 
 **Force execution**:
 ```bash
-devcmd run --plan prod.plan --force
+opal run --plan prod.plan --force
 # Uses resolved plan values as targets, adapts to current infrastructure
 ```
 
@@ -764,7 +858,7 @@ This verification model gives you the determinism of resolved plans with safety 
 
 Independent expensive operations resolve concurrently:
 
-```devcmd
+```opal
 var CLUSTER = @env("KUBE_CLUSTER", default="minikube")
 var DB_HOST = @aws.secret("${CLUSTER}-db-host")  
 var API_KEY = @http.get("https://keygen.com/api/new")
@@ -791,22 +885,22 @@ Scripts are **idempotent by design** with smart change detection:
 
 ```bash
 # First run
-devcmd deploy
+opal deploy
 # Creates resources, shows what was done
 
 # Second run (no changes)
-devcmd deploy  
+opal deploy  
 # Shows "no-op" for existing resources
 
 # Third run (environment changed)
-REPLICAS=5 devcmd deploy
+REPLICAS=5 opal deploy
 # Shows only the scale operation (replica count changed)
 ```
 
 **How change detection works**:
 - Value hashing: `<1:3>` → `<1:5>` indicates REPLICAS changed from 3 to 5
 - Secret rotation: `<32:a1b>` → `<32:x7y>` indicates API token was rotated
-- Infrastructure queries: Decorators check current state vs desired state
+- Infrastructure queries: Value decorators check current state vs desired state
 - Character count in hash gives size hints for debugging
 
 **Resolved plan verification adds another layer**:
@@ -816,9 +910,9 @@ REPLICAS=5 devcmd deploy
 
 ## Future: Infrastructure Decorators
 
-The decorator model extends naturally to infrastructure management:
+The value decorator and execution decorator model extends naturally to infrastructure management:
 
-```devcmd
+```opal
 // Future capabilities following same patterns
 @aws.ec2.deploy(name="web-prod", count=3)
 @k8s.apply(manifest="app.yaml")
@@ -832,17 +926,17 @@ These will follow the same plan-first pattern without requiring state files - qu
 **Contract-based**: Resolved plans are execution contracts with verification
 **Auditable**: See exactly what will run, verify it matches before execution
 **Secure**: No sensitive values in plans or logs, change detection without exposure
-**Stateless**: No state files to corrupt - decorators query reality fresh each time
+**Stateless**: No state files to corrupt - value decorators query reality fresh each time
 **Readable**: More natural than YAML, more structured than shell scripts
-**Extensible**: New decorators integrate seamlessly
+**Extensible**: New value decorators and execution decorators integrate seamlessly
 
-Devcmd transforms operations from "pray and deploy" to "plan, review, execute with verification" - bringing contract discipline to deployment workflows without traditional infrastructure tool complexity.
+Opal transforms operations from "pray and deploy" to "plan, review, execute with verification" - bringing contract discipline to deployment workflows without traditional infrastructure tool complexity.
 
 ## Examples
 
 ### Web Application Deployment
 
-```devcmd
+```opal
 var (
     ENV = @env("ENVIRONMENT", default="development")
     VERSION = @env("APP_VERSION", default="latest")
@@ -883,7 +977,7 @@ deploy: {
 
 ### Database Migration with Rollback
 
-```devcmd
+```opal
 var DB_URL = @env("DATABASE_URL")
 var BACKUP_BUCKET = @env("BACKUP_BUCKET", default="db-backups")
 

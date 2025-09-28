@@ -1,8 +1,8 @@
-# Package definition for devcmd CLI (built from cli module with Go workspace support)
+# Package definition for Opal CLI (built from cli module with Go workspace support)
 { pkgs, lib, version ? "dev" }:
 
 pkgs.buildGoModule rec {
-  pname = "devcmd";
+  pname = "opal";
   inherit version;
 
   src = ./..; # repo root that contains go.work
@@ -23,7 +23,7 @@ pkgs.buildGoModule rec {
   };
 
   # Vendor hash for CLI module dependencies  
-  vendorHash = "sha256-pech71JNOvjPmPmqZlAWtKr9YR+TT3WtZdyTc2Sboz4=";
+  vendorHash = "sha256-ZIvMatH8XMOuYk0nZ7fT+o7vyPyi9x+mKUWQi1zAjDg=";
 
   # Build with version info
   ldflags = [
@@ -33,19 +33,19 @@ pkgs.buildGoModule rec {
     "-X main.BuildTime=1970-01-01T00:00:00Z"
   ];
 
-  # Rename binary from 'cli' to 'devcmd'
+  # Rename binary from 'cli' to 'opal'
   postInstall = ''
-    mv $out/bin/cli $out/bin/devcmd
+    mv $out/bin/cli $out/bin/opal
   '';
 
   doCheck = false; # Skip tests during build for now
 
   meta = with lib; {
-    description = "Domain-specific language for generating development command CLIs";
-    homepage = "https://github.com/aledsdavies/devcmd";
+    description = "Opal - The Operations Planning Language";
+    homepage = "https://github.com/aledsdavies/opal";
     license = licenses.mit;
     maintainers = [ maintainers.aledsdavies ];
     platforms = platforms.unix;
-    mainProgram = "devcmd";
+    mainProgram = "opal";
   };
 }

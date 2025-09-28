@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/runtime/parser"
+	"github.com/aledsdavies/opal/runtime/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	// Import builtin decorators to register them globally
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin"
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin"
 )
 
 func TestValidateNoRecursion_SimpleRecursion(t *testing.T) {

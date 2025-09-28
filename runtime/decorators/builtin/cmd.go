@@ -3,8 +3,8 @@ package builtin
 import (
 	"fmt"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/plan"
 )
 
 // ErrorResult implements decorators.CommandResult for error cases

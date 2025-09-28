@@ -609,7 +609,7 @@ func TestNestedDecorators(t *testing.T) {
 		},
 		{
 			Name: "EXACT commands.cli reproduction with variables - now works!",
-			Input: `var PROJECT = "devcmd"
+			Input: `var PROJECT = "opal"
 
 setup: {
     @log("🔧 Setting up @var(PROJECT) development environment...")
@@ -627,7 +627,7 @@ setup: {
 			// This now parses successfully due to lexer string interpolation fixes!
 			// The key issue was @var(PROJECT) in @log string breaking @parallel parsing
 			Expected: Program(
-				Var("PROJECT", Str("devcmd")),
+				Var("PROJECT", Str("opal")),
 				CmdBlock("setup",
 					// Now correctly parsing all content due to lexer string interpolation fixes
 					Shell(

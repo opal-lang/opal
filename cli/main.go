@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/aledsdavies/devcmd/runtime"
+	"github.com/aledsdavies/opal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -19,8 +19,8 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:   "devcmd [command]",
-		Short: "Execute commands defined in devcmd files",
+		Use:   "opal [command]",
+		Short: "Execute commands defined in opal files",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCommand(cmd, args, file, dryRun, debug, noColor, autoConfirm)

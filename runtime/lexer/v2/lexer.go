@@ -134,7 +134,7 @@ func NewLexer(input string, opts ...LexerOpt) *Lexer {
 	}
 
 	lexer := &Lexer{
-		bufferSize:    2500,                   // Large enough for 90%+ of devcmd files
+		bufferSize:    2500,                   // Large enough for 90%+ of opal files
 		tokens:        make([]Token, 0, 2500), // Pre-allocate capacity
 		telemetryMode: config.telemetry,       // Default is TelemetryOff (0)
 		debugLevel:    config.debug,           // Default is DebugOff (0)

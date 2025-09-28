@@ -3,7 +3,7 @@ package lexer
 import (
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 func TestShellBracketStructures(t *testing.T) {

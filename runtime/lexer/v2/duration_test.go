@@ -233,7 +233,7 @@ func TestDurationEdgeCases(t *testing.T) {
 	}
 }
 
-// TestDurationInContext tests durations in realistic devcmd usage
+// TestDurationInContext tests durations in realistic opal usage
 func TestDurationInContext(t *testing.T) {
 	tests := []struct {
 		name     string

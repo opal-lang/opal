@@ -15,7 +15,7 @@ import (
 func generateRealisticInput(tokenCount int) string {
 	var parts []string
 
-	// Realistic devcmd-style content
+	// Realistic opal-style content
 	patterns := []string{
 		"var service_name = \"api-server\"",
 		"for env in @var(ENVIRONMENTS) {",

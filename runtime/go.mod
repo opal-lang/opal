@@ -1,9 +1,9 @@
-module github.com/aledsdavies/devcmd/runtime
+module github.com/aledsdavies/opal/runtime
 
 go 1.25.0
 
 require (
-	github.com/aledsdavies/devcmd/core v0.0.0
+	github.com/aledsdavies/opal/core v0.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.9.1
 )
@@ -17,4 +17,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/aledsdavies/devcmd/core => ../core
+replace github.com/aledsdavies/opal/core => ../core

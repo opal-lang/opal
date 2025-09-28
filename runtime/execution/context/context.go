@@ -9,8 +9,8 @@ import (
 	"os/user"
 	"runtime"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/ir"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/ir"
 )
 
 // ================================================================================================

@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// Focused benchmark suite for devcmd V2 lexer performance analysis.
+// Focused benchmark suite for opal V2 lexer performance analysis.
 //
 // This suite replaces previous micro-benchmarks with actionable, meaningful metrics:
 // - BenchmarkLexerCore: Primary performance across syntax complexity levels
@@ -15,7 +15,7 @@ import (
 // Key targets: <250ns/op simple syntax, <500ns/op arithmetic, 0 allocs/op hot paths
 
 // BenchmarkLexerCore measures pure tokenization performance across syntax complexity levels.
-// This is the primary performance metric - tracks lexer efficiency for different devcmd syntax patterns.
+// This is the primary performance metric - tracks lexer efficiency for different opal syntax patterns.
 // Excludes lexer creation overhead to focus on tokenization speed.
 // Target: <250ns/op simple, <500ns/op arithmetic, 0 allocs/op in hot paths.
 func BenchmarkLexerCore(b *testing.B) {
@@ -92,7 +92,7 @@ func BenchmarkTelemetryModes(b *testing.B) {
 }
 
 // BenchmarkLexerScaling verifies linear O(n) performance scaling across file sizes.
-// Ensures the lexer handles enterprise-scale devcmd files efficiently.
+// Ensures the lexer handles enterprise-scale opal files efficiently.
 // Should show consistent per-token performance regardless of total input size.
 // Target: Linear scaling, no performance degradation with larger files.
 func BenchmarkLexerScaling(b *testing.B) {
@@ -154,7 +154,7 @@ func BenchmarkLexerInitialization(b *testing.B) {
 	}
 }
 
-// generateTypicalDevcmdScript creates a realistic devcmd deployment script
+// generateTypicalDevcmdScript creates a realistic opal deployment script
 func generateTypicalDevcmdScript() string {
 	return `// Production deployment script
 var replicas = 3        /* minimum for HA */

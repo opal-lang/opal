@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // TestModeTransitionScenarios tests comprehensive nesting scenarios found in the specification

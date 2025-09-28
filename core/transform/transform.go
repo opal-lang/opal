@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/ir"
+	"github.com/aledsdavies/opal/core/ast"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/ir"
 )
 
 // ================================================================================================

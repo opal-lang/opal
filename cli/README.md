@@ -1,15 +1,15 @@
 # CLI Module
 
-The `cli` module provides the command-line interface and main executable for devcmd.
+The `cli` module provides the command-line interface and main executable for opal.
 
 ## Purpose
 
 This module contains the CLI application that users interact with:
 
-- **Main CLI Application**: The `devcmd` command-line tool
+- **Main CLI Application**: The `opal` command-line tool
 - **Built-in Decorators**: Core decorator implementations
 - **Engine**: Execution engine for interpreter and generator modes
-- **Language Processing**: Lexer and parser for the devcmd language
+- **Language Processing**: Lexer and parser for the opal language
 
 ## Key Components
 
@@ -42,8 +42,8 @@ This module contains the CLI application that users interact with:
 ## CLI Commands
 
 ### Main Commands
-- `devcmd <command>`: Execute a command from commands.cli
-- `devcmd version`: Show version information
+- `opal <command>`: Execute a command from commands.cli
+- `opal version`: Show version information
 
 ### Options  
 - `--dry-run`: Show execution plan without running
@@ -54,16 +54,16 @@ This module contains the CLI application that users interact with:
 
 ```bash
 # Run a command
-devcmd run build
+opal run build
 
 # Dry-run to see execution plan
-devcmd run deploy --dry-run
+opal run deploy --dry-run
 
 # Use custom commands file
-devcmd run test -f my-commands.cli
+opal run test -f my-commands.cli
 
 # Show execution plan  
-devcmd build --dry-run
+opal build --dry-run
 ```
 
 ## Architecture

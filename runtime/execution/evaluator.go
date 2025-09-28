@@ -1,8 +1,8 @@
 package execution
 
 import (
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 )
 
 // ================================================================================================

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/plan"
 )
 
 // Register the @timeout decorator on package import

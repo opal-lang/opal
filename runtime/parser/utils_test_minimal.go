@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	// Import builtins to register decorators
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin"
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin"
 )
 
 // init registers any test-specific decorators not in decorators

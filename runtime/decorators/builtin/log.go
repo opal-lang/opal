@@ -5,9 +5,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/plan"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/plan"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 )
 
 // Register the @log decorator on package import

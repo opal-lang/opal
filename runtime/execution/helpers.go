@@ -1,10 +1,10 @@
 package execution
 
 import (
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/core/ir"
-	"github.com/aledsdavies/devcmd/core/transform"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/core/ast"
+	"github.com/aledsdavies/opal/core/ir"
+	"github.com/aledsdavies/opal/core/transform"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 )
 
 // ================================================================================================

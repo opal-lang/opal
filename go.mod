@@ -1,3 +1,3 @@
-module github.com/aledsdavies/devcmd
+module github.com/aledsdavies/opal
 
 go 1.25.0

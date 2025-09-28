@@ -253,7 +253,7 @@ func TestDecoratorWithArguments(t *testing.T) {
 	}
 }
 
-// TestDecoratorInContext tests decorators within larger devcmd expressions
+// TestDecoratorInContext tests decorators within larger opal expressions
 func TestDecoratorInContext(t *testing.T) {
 	tests := []struct {
 		name     string

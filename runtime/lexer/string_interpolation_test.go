@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/types"
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin" // Import for decorator registration
+	"github.com/aledsdavies/opal/core/types"
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin" // Import for decorator registration
 )
 
 // TestStringInterpolationModeTransitions tests that the lexer correctly handles

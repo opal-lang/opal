@@ -5,7 +5,7 @@
 # PROJECT CONFIGURATION
 # =============================================================================
 
-var PROJECT = "devcmd"
+var PROJECT = "opal"
 var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 var BUILD_TIME = "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 var GO_VERSION = "1.24.3"

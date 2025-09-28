@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // Node represents any node in the AST
@@ -31,7 +31,7 @@ type TokenRange struct {
 	All   []types.Token
 }
 
-// Program represents the root of the CST (entire devcmd file)
+// Program represents the root of the CST (entire opal file)
 // Preserves concrete syntax for LSP, Tree-sitter, and formatting tools
 type Program struct {
 	Variables []VariableDecl

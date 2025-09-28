@@ -960,7 +960,7 @@ func TestLogicalOperatorEdgeCases(t *testing.T) {
 	}
 }
 
-// TestLogicalInDevcmdContext tests logical operators in realistic devcmd scenarios
+// TestLogicalInDevcmdContext tests logical operators in realistic opal scenarios
 func TestLogicalInDevcmdContext(t *testing.T) {
 	tests := []struct {
 		name     string

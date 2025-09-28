@@ -481,7 +481,7 @@ func TestComparisonOperatorEdgeCases(t *testing.T) {
 	}
 }
 
-// TestComparisonInControlFlow tests comparison operators in realistic devcmd scenarios
+// TestComparisonInControlFlow tests comparison operators in realistic opal scenarios
 func TestComparisonInControlFlow(t *testing.T) {
 	tests := []struct {
 		name     string

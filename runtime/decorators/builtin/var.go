@@ -3,9 +3,9 @@ package builtin
 import (
 	"fmt"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/plan"
-	"github.com/aledsdavies/devcmd/runtime/execution"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/plan"
+	"github.com/aledsdavies/opal/runtime/execution"
 )
 
 // Register the @var decorator on package import

@@ -66,10 +66,10 @@ rec {
 
       processedContent = preProcess finalContent;
 
-      # Get devcmd binary
-      devcmdBin =
-        if self != null then self.packages.${system}.devcmd or self.packages.${system}.default
-        else throw "Self reference required for CLI generation. Cannot build '${name}' without devcmd parser.";
+      # Get opal binary
+      opalBin =
+        if self != null then self.packages.${system}.opal or self.packages.${system}.default
+        else throw "Self reference required for CLI generation. Cannot build '${name}' without opal parser.";
 
       # Create a shell script that checks for existing binary first
       cliScript = pkgs.writeShellScriptBin binaryName ''

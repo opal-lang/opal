@@ -33,28 +33,28 @@ Answer "what ran, where it got to, and what changed" in seconds when prod is spi
 ### List and Filter
 ```bash
 # Recent prod runs
-devcmd runs list --env prod --target deploy --since 48h
+opal runs list --env prod --target deploy --since 48h
 
 # Filter by plan (approved artifact → all executions)
-devcmd runs list --plan-hash 5f6c…
+opal runs list --plan-hash 5f6c…
 
 # Grep for recurring issues
-devcmd runs grep --env prod --like "rollout status" --since 7d
+opal runs grep --env prod --like "rollout status" --since 7d
 ```
 
 ### Inspect and Debug
 ```bash
 # Show run details (status, critical path, failing step)
-devcmd runs show run-2025-09-20T10:22:31Z-3f2a
+opal runs show run-2025-09-20T10:22:31Z-3f2a
 
 # Open visual timeline
-devcmd runs open run-…            # Launches report.html
+opal runs open run-…            # Launches report.html
 
 # Compare runs (or last success vs failure)  
-devcmd runs diff run-A run-B
+opal runs diff run-A run-B
 
 # Stream failing step logs
-devcmd runs tail run-… --step main/verify/healthz
+opal runs tail run-… --step main/verify/healthz
 ```
 
 ## OpenTelemetry Integration
@@ -62,7 +62,7 @@ devcmd runs tail run-… --step main/verify/healthz
 ### Trace Mapping
 - **trace_id**: `hash(plan-hash + env + target)`
 - **span**: Each decorator/step (`kind=INTERNAL`)
-- **attributes**: `devcmd.env`, `devcmd.target`, `devcmd.step_path`, `exit_code`, `runner.id`
+- **attributes**: `opal.env`, `opal.target`, `opal.step_path`, `exit_code`, `runner.id`
 - **events**: `retry {n, exit_code}`, `stderr_tail`
 - **status**: OK/ERROR with message
 
@@ -75,13 +75,13 @@ devcmd runs tail run-… --step main/verify/healthz
 
 ### 1. Triage
 ```bash
-devcmd runs list --env prod --target deploy --since 24h
+opal runs list --env prod --target deploy --since 24h
 ```
 
 ### 2. Investigate
 ```bash
-devcmd runs show run-…     # See failing step + attempt history
-devcmd runs open run-…     # Visual timeline
+opal runs show run-…     # See failing step + attempt history
+opal runs open run-…     # Visual timeline
 ```
 
 ### 3. Correlate
@@ -90,12 +90,12 @@ devcmd runs open run-…     # Visual timeline
 
 ### 4. Compare
 ```bash
-devcmd runs diff run-fail run-ok    # Shows changed steps/args/env
+opal runs diff run-fail run-ok    # Shows changed steps/args/env
 ```
 
 ### 5. Verify Safety
 ```bash
-devcmd verify plan.json --sig ...   # Confirm approved plan executed
+opal verify plan.json --sig ...   # Confirm approved plan executed
 ```
 
 ## Data Structures
@@ -155,65 +155,65 @@ devcmd verify plan.json --sig ...   # Confirm approved plan executed
 ### Advanced Debugging
 ```bash
 # Stream logs for specific step
-devcmd runs tail run-… --step main/deploy/api
+opal runs tail run-… --step main/deploy/api
 
 # Find patterns across runs  
-devcmd runs analyze --env prod --pattern "timeout" --since 30d
+opal runs analyze --env prod --pattern "timeout" --since 30d
 
 # Export for external analysis
-devcmd runs export --env prod --format csv --since 7d
+opal runs export --env prod --format csv --since 7d
 ```
 
 ### Security and Compliance
 ```bash
 # Audit trail
-devcmd runs audit --env prod --user alice --since 24h
+opal runs audit --env prod --user alice --since 24h
 
 # Verify execution integrity
-devcmd runs verify run-… --cert prod.pem
+opal runs verify run-… --cert prod.pem
 
 # Export compliance reports
-devcmd runs report --env prod --format sox --month 2025-01
+opal runs report --env prod --format sox --month 2025-01
 ```
 
 ### Decorator Usage Tracking & Security Audit
-devcmd automatically tracks all decorator usage for comprehensive security and performance audit:
+opal automatically tracks all value decorator and execution decorator usage for comprehensive security and performance audit:
 
 ```bash
-# Complete decorator audit - see all decorator usage
-devcmd runs audit-decorators --env prod --since 24h
-# Shows: @env(AWS_SECRET_KEY) at deploy.cli:23, @shell("kubectl apply") at deploy.cli:45
+# Complete decorator audit - see all value decorator and execution decorator usage
+opal runs audit-decorators --env prod --since 24h
+# Shows: @env(AWS_SECRET_KEY) at deploy.opl:23, @shell("kubectl apply") at deploy.opl:45
 
 # Security-focused audit - track sensitive data access  
-devcmd runs audit-security --env prod --since 24h
+opal runs audit-security --env prod --since 24h
 # Shows: @env(SECRET_*), @var(PROD_*), @file(*.key), @shell("sudo *")
 
 # Performance audit - find bottlenecks
-devcmd runs audit-performance --env prod --since 24h --slowest 10
+opal runs audit-performance --env prod --since 24h --slowest 10
 # Shows: @shell("kubectl rollout status") avg 5.4s, @http("healthcheck") avg 2.1s
 
 # Compliance reporting - complete audit trail
-devcmd runs export-audit --env prod --format soc2 --month 2025-01
+opal runs export-audit --env prod --format soc2 --month 2025-01
 # Generates: Complete decorator usage for SOC2/ISO27001 compliance
 ```
 
 #### Built-in Security & Audit Features
-- **Complete decorator tracking**: Every `@env()`, `@var()`, `@file()`, `@shell()`, `@http()` call logged
-- **Security pattern detection**: Automatic flagging of sensitive decorator usage
-- **Access pattern analysis**: Detect unusual decorator combinations or frequencies  
-- **Performance bottleneck identification**: Find slow decorators across all runs
+- **Complete decorator tracking**: Every `@env()`, `@var()`, `@file()`, `@shell()`, `@http()` value decorator and execution decorator call logged
+- **Security pattern detection**: Automatic flagging of sensitive value decorator usage
+- **Access pattern analysis**: Detect unusual value decorator and execution decorator combinations or frequencies  
+- **Performance bottleneck identification**: Find slow value decorators and execution decorators across all runs
 - **Zero-configuration audit**: Complete audit trail with no additional setup
-- **Anomaly detection**: Flag scripts with unexpected decorator usage patterns
+- **Anomaly detection**: Flag scripts with unexpected value decorator and execution decorator usage patterns
 
 #### Decorator Telemetry Data
-The telemetry system captures comprehensive decorator usage:
+The telemetry system captures comprehensive value decorator and execution decorator usage:
 ```json
 {
   "decorator_usage": [
     {
       "decorator": "@env", 
       "parameter": "AWS_SECRET_ACCESS_KEY",
-      "script": "deploy.cli",
+      "script": "deploy.opl",
       "line": 23,
       "timestamp": "2025-09-20T14:32:15Z",
       "duration_ms": 0.1,
@@ -223,7 +223,7 @@ The telemetry system captures comprehensive decorator usage:
     {
       "decorator": "@shell",
       "parameter": "kubectl apply -f k8s/",
-      "script": "deploy.cli", 
+      "script": "deploy.opl", 
       "line": 45,
       "timestamp": "2025-09-20T14:32:18Z",
       "duration_ms": 1250,
@@ -233,7 +233,7 @@ The telemetry system captures comprehensive decorator usage:
     {
       "decorator": "@http",
       "parameter": "https://api.internal/health",
-      "script": "verify.cli",
+      "script": "verify.opl",
       "line": 12,
       "timestamp": "2025-09-20T14:32:20Z", 
       "duration_ms": 180,
@@ -259,7 +259,7 @@ The telemetry system captures comprehensive decorator usage:
 
 ### Phase 2: Query Interface  
 - SQLite indexing
-- `devcmd runs` CLI commands
+- `opal runs` CLI commands
 - HTML report generation
 
 ### Phase 3: Observability Integration
@@ -276,7 +276,7 @@ The telemetry system captures comprehensive decorator usage:
 
 ### Local Development
 ```
-~/.devcmd/runs/
+~/.opal/runs/
 ├── runs.db
 └── dev/
     └── deploy/
@@ -286,7 +286,7 @@ The telemetry system captures comprehensive decorator usage:
 
 ### Production
 ```
-s3://company-devcmd-runs/
+s3://company-opal-runs/
 ├── runs.db.gz          # Periodic snapshots
 └── prod/
     └── deploy/
@@ -301,7 +301,7 @@ s3://company-devcmd-runs/
 
 ## Why This Matters
 
-This observability design transforms devcmd from a deployment tool into a **deployment intelligence platform**:
+This observability design transforms opal from a deployment tool into a **deployment intelligence platform**:
 
 - **Before**: Plan review and approval workflows
 - **During**: Live execution monitoring and debugging

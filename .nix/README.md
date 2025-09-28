@@ -1,43 +1,49 @@
-# Nix Configuration for devcmd
+# Nix Configuration for Opal
 
-This project uses **dynamic derivations** to properly handle the two-stage build process:
-1. Stage 1: Build devcmd binary 
-2. Stage 2: Use devcmd to generate CLI with network access for Go modules
+Simple Nix flake configuration for building and developing Opal.
 
-## Required Nix Configuration
-
-To use this flake, you need to enable experimental features in your Nix configuration:
-
-### Option 1: Global Configuration (recommended)
-
-Add to your `~/.config/nix/nix.conf` or `/etc/nix/nix.conf`:
-
-```
-experimental-features = nix-command flakes dynamic-derivations ca-derivations recursive-nix
-```
-
-### Option 2: Per-command
+## Basic Usage
 
 ```bash
-nix --extra-experimental-features "dynamic-derivations ca-derivations recursive-nix" develop
+# Build the opal binary
+nix build
+
+# Enter development environment
+nix develop
+
+# Run directly without installing
+nix run github:aledsdavies/opal -- deploy --dry-run
 ```
 
-### Option 3: Environment Variable
+## Development Environment
+
+The development shell provides:
+- Go toolchain
+- All required development dependencies
+- `opal` binary built from current source
 
 ```bash
-export NIX_CONFIG="experimental-features = nix-command flakes dynamic-derivations ca-derivations recursive-nix"
+nix develop
+opal --version
 ```
 
-## Why Dynamic Derivations?
+## Integration
 
-Dynamic derivations solve the fundamental issue with our build process:
+Add Opal to your project's development environment:
 
-- **Problem**: devcmd needs to generate CLIs that require network access for Go modules
-- **Old approach**: Fixed-output derivations can't reference store paths (like devcmd binary)
-- **New approach**: Stage 1 creates a derivation, Stage 2 builds it with network access
+```nix
+{
+  inputs.opal.url = "github:aledsdavies/opal";
+  
+  outputs = { nixpkgs, opal, ... }: {
+    devShells.default = nixpkgs.mkShell {
+      buildInputs = [ opal.packages.x86_64-linux.default ];
+    };
+  };
+}
+```
 
-This provides clean separation while maintaining reproducibility and allowing network access where needed.
+## Requirements
 
-## Fallback
-
-If dynamic derivations are not available, the system will fall back to an all-in-one fixed-output derivation approach that builds devcmd from source within the derivation.
+- Nix with flakes enabled
+- No special experimental features required

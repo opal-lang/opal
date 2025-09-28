@@ -176,7 +176,7 @@ func TestContractVerification(t *testing.T) {
                 errorMsg := getVerificationError(resolvedPlan, newPlan)
                 assert.Contains(t, errorMsg, "Expected:", "Error must show expected state")
                 assert.Contains(t, errorMsg, "Actual:", "Error must show actual state") 
-                assert.Contains(t, errorMsg, "Run 'devcmd plan", "Error must suggest remediation")
+                assert.Contains(t, errorMsg, "Run 'opal plan", "Error must suggest remediation")
             }
         })
     }
@@ -221,12 +221,12 @@ func testValueDecoratorConformance(t *testing.T, decorator ValueDecorator) {
     // Test security invariant: placeholders only per specification
     testSecurityInvariants(t, decorator, resolved1)
     
-    // Test expensive decorator handling per architecture
+    // Test expensive value decorator handling per architecture
     if decorator.IsExpensive() {
-        // Expensive decorators should be deferred in quick plans
+        // Expensive value decorators should be deferred in quick plans
         quickPlan := decorator.Plan(ctx, params)
         assert.Contains(t, quickPlan.String(), "¹@", 
-            "Expensive decorators should show deferred placeholders in quick plans")
+            "Expensive value decorators should show deferred placeholders in quick plans")
     }
 }
 
@@ -1006,4 +1006,4 @@ As the system matures, add:
 - **PSE security testing**: Verify Plan Seed Envelope implementation
 - **Chaos engineering**: Randomly inject failures during soak tests
 
-This testing strategy ensures devcmd becomes ridiculously stable through systematic, incremental improvements while maintaining full alignment with the specification's contract verification model and architecture's plugin system design.
+This testing strategy ensures opal becomes ridiculously stable through systematic, incremental improvements while maintaining full alignment with the specification's contract verification model and architecture's plugin system design.

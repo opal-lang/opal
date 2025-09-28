@@ -1,4 +1,4 @@
-# Devcmd Project .gitignore
+# Opal Project .gitignore
 # Comprehensive ignore file for Go, Nix, ANTLR, and editor environments
 
 # =============================================================================
@@ -64,10 +64,12 @@ grammar/*.tokens
 *BaseVisitor.java
 *Visitor.java
 
-# Devcmd compiled binaries
+# Opal compiled binaries
+opal
+opal.exe
+opal-*
 devcmd
 devcmd.exe
-devcmd-*
 dev-compiled
 cli/cli
 cli/dev-compiled
@@ -78,7 +80,7 @@ result
 testdir/
 cli/testdir/
 
-# Generated CLI files from devcmd
+# Generated CLI files from opal
 examples/*.go
 examples/dev/
 examples/build/
@@ -95,11 +97,11 @@ cpu.prof
 mem.prof
 *.prof
 
-# Test CLI files (temporary test files)
-test_*.cli
-simple_*.cli
-debug_*.cli
-*_test_*.cli
+# Test Opal files (temporary test files)
+test_*.opl
+simple_*.opl
+debug_*.opl
+*_test_*.opl
 
 # Documentation generated files
 docs/parser.md

@@ -1,20 +1,20 @@
-# Devcmd Architecture
+# Opal Architecture
 
 **Implementation requirements for humans building contract-based operations**
 
 ## Design Philosophy
 
-Build a system where resolved plans are execution contracts that get verified before running. Everything becomes a decorator internally - no special cases, no surprises.
+Build a system where resolved plans are execution contracts that get verified before running. Everything becomes a value decorator or execution decorator internally - no special cases, no surprises.
 
 The key insight: instead of managing state like Terraform, we verify contracts. Plans aren't just previews, they're promises about what will execute.
 
 ## The Big Picture
 
 ```
-User writes natural syntax  →  Parser converts to decorators  →  Contract execution
+User writes natural syntax  →  Parser converts to value decorators and execution decorators  →  Contract execution
 ```
 
-Every piece of syntax becomes a decorator:
+Every piece of syntax becomes a value decorator or execution decorator:
 - `npm run build` → `@shell("npm run build")`
 - `@retry(3) { ... }` → execution decorator with block
 - `when ENV { ... }` → plan-time conditional expansion
@@ -22,7 +22,7 @@ Every piece of syntax becomes a decorator:
 
 ## Everything is a Decorator
 
-The core architectural principle: every operation becomes one of two decorator types.
+The core architectural principle: every operation becomes one of two types: value decorators or execution decorators.
 
 **Value decorators** inject values inline:
 - `@env("PORT")` pulls environment variables
@@ -35,7 +35,7 @@ The core architectural principle: every operation becomes one of two decorator t
 - `@parallel { ... }` runs commands concurrently
 
 Even plain shell commands become `@shell` decorators internally:
-```devcmd
+```opal
 // You write
 npm run build
 
@@ -49,7 +49,7 @@ This decorator model means new features integrate seamlessly - no special parsin
 
 When building decorators, follow these principles to maintain the contract model:
 
-**Value decorators must be referentially transparent** during plan resolution. Non-deterministic decorators (like `@http.get("time-api")`) will cause contract verification failures when plans are executed later.
+**Value decorators must be referentially transparent** during plan resolution. Non-deterministic value decorators (like `@http.get("time-api")`) will cause contract verification failures when plans are executed later.
 
 **Execution decorators should be stateless**. Query current reality fresh each time rather than maintaining state between runs. This eliminates the complexity of state file management.
 
@@ -94,7 +94,7 @@ accord get github.com/acme/accord-plugins/k8s@v0.1.0
 
 ### Plugin Verification
 
-**Registry admission pipeline**: External decorators must pass comprehensive verification before registry inclusion. No arbitrary code execution - plugins pass a compliance test suite that verifies they implement required interfaces correctly and respect security requirements.
+**Registry admission pipeline**: External value decorators and execution decorators must pass comprehensive verification before registry inclusion. No arbitrary code execution - plugins pass a compliance test suite that verifies they implement required interfaces correctly and respect security requirements.
 
 **Local verification**: Git-sourced plugins run the same conformance suite locally, providing the same crash isolation and security sandboxing but without central verification guarantees.
 
@@ -102,11 +102,11 @@ accord get github.com/acme/accord-plugins/k8s@v0.1.0
 
 ### Registry Pattern Implementation
 
-**Startup registration**: Both built-in and plugin decorators register themselves at startup. The runtime looks up decorators by name without hardcoded lists, making the system extensible.
+**Startup registration**: Both built-in and plugin value decorators and execution decorators register themselves at startup. The runtime looks up decorators by name without hardcoded lists, making the system extensible.
 
 **Capability verification**: Engine checks on load that manifest signature matches, spec_version overlaps with runtime, and capabilities match requested decorators (no "hidden" entrypoints).
 
-This means organizations can build custom infrastructure decorators (like `@company.k8s.deploy`) while maintaining the same security and verification guarantees as built-in decorators. Small teams can ship plugins immediately via Git without waiting on central registry approval, but audit trails clearly show verification status.
+This means organizations can build custom infrastructure value decorators and execution decorators (like `@company.k8s.deploy`) while maintaining the same security and verification guarantees as built-in decorators. Small teams can ship plugins immediately via Git without waiting on central registry approval, but audit trails clearly show verification status.
 
 ## Resolution Strategy
 
@@ -125,7 +125,7 @@ Resolved: 1. @aws.secret("api-token") → <32:sha256:a1b2c3>
 ```
 
 Smart optimizations happen automatically:
-- Expensive decorators in unused conditional branches never execute
+- Expensive value decorators in unused conditional branches never execute
 - Independent expensive operations resolve in parallel  
 - Dead code elimination prevents unnecessary side effects
 
@@ -150,7 +150,7 @@ All resolved plans include provenance metadata for audit trails:
     "plan_version": "2024.1",
     "generated_at": "2024-09-20T10:22:30Z",
     "source_commit": "abc123def456",
-    "compiler_version": "devcmd-1.4.2",
+    "compiler_version": "opal-1.4.2",
     "plugins": {
       "aws.ec2": {
         "version": "1.4.2",
@@ -212,7 +212,7 @@ This dual-path approach avoids "walled garden" criticism while maintaining secur
 
 ## Seeded Determinism
 
-For operations requiring randomness or cryptography, devcmd will use seeded determinism to maintain contract verification while enabling secure random generation.
+For operations requiring randomness or cryptography, opal will use seeded determinism to maintain contract verification while enabling secure random generation.
 
 ### Plan Seed Envelope (PSE)
 
@@ -241,7 +241,7 @@ HKDF(seed, info=plan_hash || step_path || decorator_name || counter)
 ### Implementation Requirements
 
 **API surface**:
-```devcmd
+```opal
 var DB_PASS = @random.password(length=24, alphabet="A-Za-z0-9!@#")
 var API_KEY = @crypto.generate_key(type="ed25519")
 
@@ -290,7 +290,7 @@ output = DRBG(subkey, requested_length)
 
 **Regeneration keys**: Decorators use explicit regeneration keys to control when values change:
 
-```devcmd
+```opal
 // Default: regenerates on every plan (plan hash as key)
 var TEMP_TOKEN = @random.password(length=16)
 
@@ -330,7 +330,7 @@ This approach provides cryptographically sound randomness while maintaining dete
 
 Control flow expands during plan generation, not execution:
 
-```devcmd
+```opal
 // Source code
 for service in ["api", "worker"] {
     kubectl apply -f k8s/${service}/
@@ -388,7 +388,7 @@ Dependencies flow one way: `cli/` → `runtime/` → `core/`
 
 Try/catch is special - it's the only construct that creates non-deterministic execution paths:
 
-```devcmd
+```opal
 deploy: {
     try {
         kubectl apply -f k8s/
@@ -423,7 +423,7 @@ The key insight: meta-programming happens during transform, so all downstream st
 
 **Lexer performance**: Target >5000 lines/ms with zero allocations for hot paths. Use pre-compiled patterns and avoid regex where possible.
 
-**Resolution optimization**: Expensive decorators resolve in parallel using DAG analysis. Unused branches never execute, preventing unnecessary side effects.
+**Resolution optimization**: Expensive value decorators resolve in parallel using DAG analysis. Unused branches never execute, preventing unnecessary side effects.
 
 **Plan caching**: Plans should be cacheable and reusable between runs. Plan hashes enable this optimization.
 
@@ -431,9 +431,9 @@ The key insight: meta-programming happens during transform, so all downstream st
 
 ## Testing Requirements
 
-**Decorator compliance**: Every decorator must pass a standard compliance test suite that verifies interface implementation, security placeholder handling, and contract verification behavior.
+**Decorator compliance**: Every value decorator and execution decorator must pass a standard compliance test suite that verifies interface implementation, security placeholder handling, and contract verification behavior.
 
-**Plugin verification**: External decorators get the same compliance testing plus binary integrity verification through source hashing.
+**Plugin verification**: External value decorators and execution decorators get the same compliance testing plus binary integrity verification through source hashing.
 
 **Contract testing**: Comprehensive scenarios covering source changes, infrastructure drift, and all verification error types.
 
@@ -443,7 +443,7 @@ The key insight: meta-programming happens during transform, so all downstream st
 
 A novel capability emerges from the decorator architecture: seamless mixing of infrastructure-as-code with operations scripts in a single language.
 
-```devcmd
+```opal
 deploy: {
     // Infrastructure deployment
     @aws.ec2.deploy(name="web-prod", count=3)
@@ -461,9 +461,9 @@ deploy: {
 }
 ```
 
-**The key insight**: Both infrastructure decorators and execution decorators follow the same contract model - plan, verify, execute. This means you can mix provisioning with configuration management cleanly.
+**The key insight**: Both infrastructure value decorators and execution decorators follow the same contract model - plan, verify, execute. This means you can mix provisioning with configuration management cleanly.
 
-**Infrastructure decorators** handle provisioning:
+**Infrastructure value decorators** handle provisioning:
 - Plan: Show what infrastructure will be created/modified
 - Verify: Check current infrastructure state vs plan
 - Execute: Create/modify infrastructure to match plan
@@ -481,7 +481,7 @@ This eliminates the traditional boundary between "infrastructure tools" and "con
 
 Here's how complex scenarios work within the decorator model:
 
-```devcmd
+```opal
 maintenance: {
     // Select running instances
     @aws.ec2.instances(

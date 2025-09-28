@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/ir"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/ir"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 )
 
 // PlanExecutor handles dry-run/plan execution mode

@@ -1,15 +1,15 @@
-module github.com/aledsdavies/devcmd/cli
+module github.com/aledsdavies/opal/cli
 
 go 1.25.0
 
 require (
-	github.com/aledsdavies/devcmd/runtime v0.0.0
+	github.com/aledsdavies/opal/runtime v0.0.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 )
 
 require (
-	github.com/aledsdavies/devcmd/core v0.0.0 // indirect
+	github.com/aledsdavies/opal/core v0.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -17,6 +17,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/aledsdavies/devcmd/core => ../core
+replace github.com/aledsdavies/opal/core => ../core
 
-replace github.com/aledsdavies/devcmd/runtime => ../runtime
+replace github.com/aledsdavies/opal/runtime => ../runtime

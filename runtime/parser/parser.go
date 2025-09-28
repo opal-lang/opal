@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/types"
-	"github.com/aledsdavies/devcmd/runtime/lexer"
+	"github.com/aledsdavies/opal/core/ast"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/types"
+	"github.com/aledsdavies/opal/runtime/lexer"
 )
 
 // Parser implements a fast, spec-compliant recursive descent parser for the Devcmd language.
@@ -1017,7 +1017,7 @@ func (p *Parser) parseShellDecorator() (ast.ShellPart, error) {
 	}
 
 	// In shell context, ValueDecorator, ActionDecorator, and BlockDecorator are allowed per specification
-	// See devcmd_specification.md examples: @parallel { ... }, @timeout(30s) { ... }
+	// See opal_specification.md examples: @parallel { ... }, @timeout(30s) { ... }
 	switch decoratorType {
 	case decorators.ValueType:
 		return &ast.ValueDecorator{

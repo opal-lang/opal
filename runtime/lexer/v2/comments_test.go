@@ -423,7 +423,7 @@ func TestCommentEdgeCases(t *testing.T) {
 	}
 }
 
-// TestCommentsInDevcmdContext tests comments in realistic devcmd scenarios
+// TestCommentsInDevcmdContext tests comments in realistic opal scenarios
 func TestCommentsInDevcmdContext(t *testing.T) {
 	tests := []struct {
 		name     string

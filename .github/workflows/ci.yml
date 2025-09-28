@@ -112,27 +112,27 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          echo "Building devcmd for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          echo "Building opal for ${{ matrix.goos }}/${{ matrix.goarch }}..."
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
-            -o devcmd-${{ matrix.goos }}-${{ matrix.goarch }} \
+            -o opal-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cli/main.go
 
       - name: Test binary
         run: |
           echo "Testing built binary..."
-          ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --help
+          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --help
 
-          echo 'test: echo "Binary test successful"' > test.cli
-          ./devcmd-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.cli test
+          echo 'test: echo "Binary test successful"' > test.opl
+          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.opl test
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: devcmd-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: opal-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: opal-${{ matrix.goos }}-${{ matrix.goarch }}
 
   nix-development:
     name: Nix Development (${{ matrix.os }})
@@ -286,12 +286,12 @@ jobs:
         run: |
           echo "Testing CLI build and interpreter mode..."
           cd cli
-          go build -o devcmd .
+          go build -o opal .
 
-          ./devcmd --help
+          ./opal --help
 
-          echo 'test: echo "CI test successful"' > test.cli
-          ./devcmd --dry-run -f test.cli test
+          echo 'test: echo "CI test successful"' > test.opl
+          ./opal --dry-run -f test.opl test
 
   # =============================================================================
   # PHASE 4: Aggregation (After all tests)
@@ -408,7 +408,7 @@ jobs:
           echo "Preparing latest development builds..."
           mkdir -p latest/
 
-          find artifacts/ -name 'devcmd-*' -type f -exec cp {} latest/ \;
+          find artifacts/ -name 'opal-*' -type f -exec cp {} latest/ \;
 
           echo "Built from commit: ${{ github.sha }}" > latest/build-info.txt
           echo "Built at: $(date -u)" >> latest/build-info.txt
@@ -472,9 +472,9 @@ jobs:
             echo "Building for $GOOS/$GOARCH..."
 
             if [ "$GOOS" = "windows" ]; then
-              BINARY_NAME="devcmd-$GOOS-$GOARCH.exe"
+              BINARY_NAME="opal-$GOOS-$GOARCH.exe"
             else
-              BINARY_NAME="devcmd-$GOOS-$GOARCH"
+              BINARY_NAME="opal-$GOOS-$GOARCH"
             fi
 
             CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
@@ -488,7 +488,7 @@ jobs:
           echo "Creating checksums..."
           cd release/
 
-          for file in devcmd-*; do
+          for file in opal-*; do
             if [ -f "$file" ]; then
               sha256sum "$file" >> checksums.txt
             fi
@@ -500,7 +500,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
-            release/devcmd-*
+            release/opal-*
             release/checksums.txt
           generate_release_notes: true
           body: |
@@ -509,18 +509,18 @@ jobs:
             **Declarative CLI Tool - Interpreter Mode**
 
             ### ✅ Available Features
-            - **Interpreter Mode**: Run commands directly with `devcmd run <command>`
+            - **Interpreter Mode**: Run commands directly with `opal run <command>`
             - **Shell Operators**: Support for `&&`, `||`, `|`, `>>`
             - **Variable Substitution**: `@var(NAME)` syntax
             - **Plan Generation**: `--dry-run` mode
             - **Standardized Flags**: `--quiet`, `--verbose`, `--ci`, etc.
 
             ### 📦 Downloads
-            - **Linux (x64)**: `devcmd-linux-amd64`
-            - **Linux (ARM64)**: `devcmd-linux-arm64`
-            - **macOS (Intel)**: `devcmd-darwin-amd64`
-            - **macOS (Apple Silicon)**: `devcmd-darwin-arm64`
-            - **Windows (x64)**: `devcmd-windows-amd64.exe`
+            - **Linux (x64)**: `opal-linux-amd64`
+            - **Linux (ARM64)**: `opal-linux-arm64`
+            - **macOS (Intel)**: `opal-darwin-amd64`
+            - **macOS (Apple Silicon)**: `opal-darwin-arm64`
+            - **Windows (x64)**: `opal-windows-amd64.exe`
 
             ### 🚧 Coming Soon
             - Standalone CLI generation (Generator Mode)

@@ -5,16 +5,16 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/errors"
-	"github.com/aledsdavies/devcmd/core/ir"
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin" // Import for decorator registration
-	"github.com/aledsdavies/devcmd/runtime/execution"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
-	"github.com/aledsdavies/devcmd/runtime/execution/plan"
-	"github.com/aledsdavies/devcmd/runtime/parser"
-	"github.com/aledsdavies/devcmd/runtime/validation"
+	"github.com/aledsdavies/opal/core/ast"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/errors"
+	"github.com/aledsdavies/opal/core/ir"
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin" // Import for decorator registration
+	"github.com/aledsdavies/opal/runtime/execution"
+	"github.com/aledsdavies/opal/runtime/execution/context"
+	"github.com/aledsdavies/opal/runtime/execution/plan"
+	"github.com/aledsdavies/opal/runtime/parser"
+	"github.com/aledsdavies/opal/runtime/validation"
 )
 
 // ExecutionOptions configures how commands are executed

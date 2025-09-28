@@ -1,5 +1,5 @@
 {
-  description = "devcmd - Domain-specific language for generating development command CLIs";
+  description = "Opal - The Operations Planning Language";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -16,19 +16,19 @@
           # Get git revision for generated CLIs (fallback for dirty trees)
           gitRev = self.rev or "dev-${toString self.lastModified}";
 
-          # Main devcmd package
-          devcmdPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
+          # Main opal package
+          opalPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
 
           # Library functions with automatic system detection
-          devcmdLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
+          opalLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
 
 
         in
         {
           packages = {
-            # Core devcmd package
-            default = devcmdPackage;
-            devcmd = devcmdPackage;
+            # Core opal package
+            default = opalPackage;
+            opal = opalPackage;
           };
 
           devShells = {
@@ -37,12 +37,12 @@
           };
 
           # Library functions for other flakes (simplified interface)
-          lib = devcmdLib;
+          lib = opalLib;
 
           apps = {
             default = {
               type = "app";
-              program = "${self.packages.${system}.default}/bin/devcmd";
+              program = "${self.packages.${system}.default}/bin/opal";
             };
           };
 
@@ -68,11 +68,11 @@
 
       # Overlay for use in other flakes
       overlays.default = final: prev: {
-        # Core devcmd package
-        devcmd = self.packages.${prev.system}.default;
+        # Core opal package
+        opal = self.packages.${prev.system}.default;
 
         # Library interface
-        devcmdLib = self.lib.${prev.system};
+        opalLib = self.lib.${prev.system};
 
         # Core function for overlay users
         mkDevCLI = self.lib.${prev.system}.mkDevCLI;

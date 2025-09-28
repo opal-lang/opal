@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/types"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // TestPatternDecoratorEdgeCases focuses on the specific edge cases that are failing

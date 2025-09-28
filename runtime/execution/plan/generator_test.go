@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/decorators"
-	"github.com/aledsdavies/devcmd/core/ir"
-	"github.com/aledsdavies/devcmd/runtime/execution/context"
+	"github.com/aledsdavies/opal/core/decorators"
+	"github.com/aledsdavies/opal/core/ir"
+	"github.com/aledsdavies/opal/runtime/execution/context"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	// Import builtin decorators for testing
-	_ "github.com/aledsdavies/devcmd/runtime/decorators/builtin"
+	_ "github.com/aledsdavies/opal/runtime/decorators/builtin"
 )
 
 func TestPlanGenerator_BasicShellCommand(t *testing.T) {

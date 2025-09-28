@@ -315,7 +315,7 @@ func TestIncrementDecrement(t *testing.T) {
 	}
 }
 
-// TestArithmeticInDevcmdContext tests arithmetic in realistic devcmd scenarios
+// TestArithmeticInDevcmdContext tests arithmetic in realistic opal scenarios
 func TestArithmeticInDevcmdContext(t *testing.T) {
 	tests := []struct {
 		name     string

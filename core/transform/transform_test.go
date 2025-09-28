@@ -3,9 +3,9 @@ package transform_test
 import (
 	"testing"
 
-	"github.com/aledsdavies/devcmd/core/ast"
-	"github.com/aledsdavies/devcmd/core/ir"
-	"github.com/aledsdavies/devcmd/core/transform"
+	"github.com/aledsdavies/opal/core/ast"
+	"github.com/aledsdavies/opal/core/ir"
+	"github.com/aledsdavies/opal/core/transform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

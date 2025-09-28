@@ -22,7 +22,7 @@ func TestCLIExecutionModes(t *testing.T) {
 
 	t.Run("StdinMode", func(t *testing.T) {
 		t.Run("ExplicitStdinFlag", func(t *testing.T) {
-			// Test: devcmd -f - test-cmd
+			// Test: opal -f - test-cmd
 
 			// Mock stdin with command content
 			oldStdin := os.Stdin
@@ -50,7 +50,7 @@ func TestCLIExecutionModes(t *testing.T) {
 		})
 
 		t.Run("PipedInputWithDefaultFile", func(t *testing.T) {
-			// Test: echo "commands" | devcmd test-cmd
+			// Test: echo "commands" | opal test-cmd
 			// This should use stdin when data is piped and default file is used
 
 			// Create a pipe to simulate piped input
@@ -98,7 +98,7 @@ func TestCLIExecutionModes(t *testing.T) {
 
 	t.Run("FileArgumentMode", func(t *testing.T) {
 		t.Run("ExistingFile", func(t *testing.T) {
-			// Test: devcmd -f mycommands.cli test-cmd
+			// Test: opal -f mycommands.cli test-cmd
 			tempDir := t.TempDir()
 			testFile := filepath.Join(tempDir, "mycommands.cli")
 
@@ -124,7 +124,7 @@ func TestCLIExecutionModes(t *testing.T) {
 		})
 
 		t.Run("RelativePathFile", func(t *testing.T) {
-			// Test: devcmd -f ./path/to/commands.cli test-cmd
+			// Test: opal -f ./path/to/commands.cli test-cmd
 			tempDir := t.TempDir()
 			subDir := filepath.Join(tempDir, "path", "to")
 			err := os.MkdirAll(subDir, 0o755)
@@ -154,7 +154,7 @@ func TestCLIExecutionModes(t *testing.T) {
 
 	t.Run("DefaultMode", func(t *testing.T) {
 		t.Run("CommandsCliExists", func(t *testing.T) {
-			// Test: devcmd test-cmd (looks for commands.cli in current directory)
+			// Test: opal test-cmd (looks for commands.cli in current directory)
 			tempDir := t.TempDir()
 			commandsFile := filepath.Join(tempDir, "commands.cli")
 

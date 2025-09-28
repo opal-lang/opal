@@ -3,7 +3,7 @@ package decorators
 import (
 	"context"
 
-	"github.com/aledsdavies/devcmd/core/plan"
+	"github.com/aledsdavies/opal/core/plan"
 )
 
 // ================================================================================================
@@ -94,7 +94,7 @@ type LegacyPatternDecorator interface {
 // ================================================================================================
 
 // Context provides the runtime environment for decorator execution
-// Wraps Go context.Context for cancellation plus devcmd-specific functionality
+// Wraps Go context.Context for cancellation plus opal-specific functionality
 type Context interface {
 	// Go context for cancellation and deadlines
 	context.Context
