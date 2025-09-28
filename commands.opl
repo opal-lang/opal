@@ -1,505 +1,116 @@
-# Devcmd Development Commands - Modular Architecture
-# Multi-module project with clean separation of concerns and dependency hierarchy
-
-# =============================================================================
-# PROJECT CONFIGURATION
-# =============================================================================
+# Opal Development Commands - Clean Slate with Metaprogramming
 
 var PROJECT = "opal"
 var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
-var BUILD_TIME = "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-var GO_VERSION = "1.24.3"
+var MODULES = ["cli", "runtime"]
 
 # =============================================================================
-# 📦 CORE MODULE - Foundation (no dependencies)
+# 📦 MODULE COMMANDS - Generated via Metaprogramming
 # =============================================================================
 
-# Core module testing
-core-test: @workdir("core") { 
-    @log("🧪 Testing core module...")
-    go test -v ./... 
-}
-
-core-test-coverage: @workdir("core") { 
-    @log("📊 Testing core module with coverage...")
-    go test -race -coverprofile=../coverage-core.out -covermode=atomic ./... 
-}
-
-# Core module code quality
-core-lint: @workdir("core") { 
-    @log("🔍 Linting core module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-}
-
-core-format: @workdir("core") { 
-    @log("📝 Formatting core module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# Core module utilities
-core-clean: @workdir("core") { 
-    @log("🧹 Cleaning core module...")
-    go clean -cache -testcache
-}
-
-core-deps: @workdir("core") { 
-    @log("📦 Managing core module dependencies...")
-    go mod download
-    go mod tidy
-}
-
-# Complete core module CI workflow
-core-ci: {
-    @log("🧪 Core module CI workflow...")
-    @cmd(core-format)
-    @cmd(core-lint)
-    @cmd(core-test-coverage)
-    @log("✅ Core module CI complete!")
-}
-
-# =============================================================================
-# 🏗️ CODEGEN MODULE - Code Generation Utilities (depends on core)
-# =============================================================================
-
-# Codegen module testing
-codegen-test: @workdir("codegen") { 
-    @log("🏗️ Testing codegen module...")
-    go test -v ./... 
-}
-
-codegen-test-coverage: @workdir("codegen") { 
-    @log("📊 Testing codegen module with coverage...")
-    go test -race -coverprofile=../coverage-codegen.out -covermode=atomic ./... 
-}
-
-# Codegen module code quality
-codegen-lint: @workdir("codegen") { 
-    @log("🔍 Linting codegen module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-}
-
-codegen-format: @workdir("codegen") { 
-    @log("📝 Formatting codegen module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# Codegen module utilities
-codegen-clean: @workdir("codegen") { 
-    @log("🧹 Cleaning codegen module...")
-    go clean -cache -testcache
-}
-
-codegen-deps: @workdir("codegen") { 
-    @log("📦 Managing codegen module dependencies...")
-    go mod download
-    go mod tidy
-}
-
-# Complete codegen module CI workflow (includes dependency validation)
-codegen-ci: {
-    @log("🏗️ Codegen module CI workflow...")
-    @cmd(core-test)          # Ensure dependency is good
-    @cmd(codegen-format)
-    @cmd(codegen-lint)
-    @cmd(codegen-test-coverage)
-    @log("✅ Codegen module CI complete!")
-}
-
-# =============================================================================
-# ⚡ RUNTIME MODULE - Decorators & Execution (depends on core)
-# =============================================================================
-
-# Runtime module testing
-runtime-test: @workdir("runtime") { 
-    @log("⚡ Testing runtime module...")
-    go test -v ./... 
-}
-
-runtime-test-coverage: @workdir("runtime") { 
-    @log("📊 Testing runtime module with coverage...")
-    go test -race -coverprofile=../coverage-runtime.out -covermode=atomic ./... 
-}
-
-# Runtime module code quality
-runtime-lint: @workdir("runtime") { 
-    @log("🔍 Linting runtime module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-}
-
-runtime-format: @workdir("runtime") { 
-    @log("📝 Formatting runtime module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# Runtime module utilities
-runtime-clean: @workdir("runtime") { 
-    @log("🧹 Cleaning runtime module...")
-    go clean -cache -testcache
-}
-
-runtime-deps: @workdir("runtime") { 
-    @log("📦 Managing runtime module dependencies...")
-    go mod download
-    go mod tidy
-}
-
-# Complete runtime module CI workflow (includes dependency validation)
-runtime-ci: {
-    @log("⚡ Runtime module CI workflow...")
-    @cmd(core-test)          # Ensure dependency is good
-    @cmd(runtime-format)
-    @cmd(runtime-lint)
-    @cmd(runtime-test-coverage)
-    @log("✅ Runtime module CI complete!")
-}
-
-# =============================================================================
-# 🧰 TESTING MODULE - Test Utilities (depends on core + runtime)
-# =============================================================================
-
-# Testing module testing
-testing-test: @workdir("testing") { 
-    @log("🧰 Testing testing module...")
-    go test -v ./... 
-}
-
-testing-test-coverage: @workdir("testing") { 
-    @log("📊 Testing testing module with coverage...")
-    go test -race -coverprofile=../coverage-testing.out -covermode=atomic ./... 
-}
-
-# Testing module code quality
-testing-lint: @workdir("testing") { 
-    @log("🔍 Linting testing module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-}
-
-testing-format: @workdir("testing") { 
-    @log("📝 Formatting testing module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# Testing module utilities
-testing-clean: @workdir("testing") { 
-    @log("🧹 Cleaning testing module...")
-    go clean -cache -testcache
-}
-
-testing-deps: @workdir("testing") { 
-    @log("📦 Managing testing module dependencies...")
-    go mod download
-    go mod tidy
-}
-
-# Complete testing module CI workflow (includes dependency validation)
-testing-ci: {
-    @log("🧰 Testing module CI workflow...")
-    @cmd(core-test)          # Ensure dependencies are good
-    @cmd(runtime-test)
-    @cmd(testing-format)
-    @cmd(testing-lint)
-    @cmd(testing-test-coverage)
-    @log("✅ Testing module CI complete!")
-}
-
-# =============================================================================
-# 🚀 CLI MODULE - Main Application (depends on all modules)
-# =============================================================================
-
-# CLI module testing
-cli-test: @workdir("cli") { 
-    @log("🚀 Testing CLI module...")
-    go test -v ./... 
-}
-
-cli-test-coverage: @workdir("cli") { 
-    @log("📊 Testing CLI module with coverage...")
-    go test -race -coverprofile=../coverage-cli.out -covermode=atomic ./... 
-}
-
-# CLI module code quality
-cli-lint: @workdir("cli") { 
-    @log("🔍 Linting CLI module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-}
-
-cli-format: @workdir("cli") { 
-    @log("📝 Formatting CLI module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# CLI module utilities
-cli-clean: @workdir("cli") { 
-    @log("🧹 Cleaning CLI module...")
-    go clean -cache -testcache
-}
-
-cli-deps: @workdir("cli") { 
-    @log("📦 Managing CLI module dependencies...")
-    go mod download
-    go mod tidy
-}
-
-# Component-specific CLI tests
-cli-test-lexer: @workdir("cli") { go test -v ./internal/lexer }
-cli-test-parser: @workdir("cli") { go test -v ./internal/parser }
-cli-test-engine: @workdir("cli") { go test -v ./internal/engine }
-
-# Complete CLI module CI workflow (includes all dependency validation)
-cli-ci: {
-    @log("🚀 CLI module CI workflow...")
-    @cmd(core-test)          # Ensure all dependencies are good
-    @cmd(runtime-test)
-    @cmd(testing-test)
-    @cmd(cli-format)
-    @cmd(cli-lint)
-    @cmd(cli-test-coverage)
-    @log("✅ CLI module CI complete!")
-}
-
-# =============================================================================
-# 🔄 GLOBAL ORCHESTRATION - Project-wide Commands
-# =============================================================================
-
-# Quick setup for new contributors
-setup: {
-    @log("🔧 Setting up @var(PROJECT) development environment...")
-    @log("📦 Downloading Go dependencies for all modules...")
-    @parallel {
-        @cmd(core-deps)
-        @cmd(codegen-deps)
-        @cmd(runtime-deps)
-        @cmd(testing-deps)
-        @cmd(cli-deps)
+for module in @var(MODULES) {
+    fun @var(module)_test = @workdir(@var(module)) { 
+        @log("🧪 Testing @var(module) module...")
+        go test -v ./... 
     }
-    go work sync
-    @log("✅ Setup complete! Run 'dev ci' to verify everything works.")
-}
-
-# Test all modules respecting dependency hierarchy
-test: {
-    @log("🧪 Testing all modules with dependency awareness...")
-    @cmd(core-test)           # Foundation
-    @cmd(codegen-test)        # Depends on core
-    @cmd(runtime-test)        # Depends on core
-    @cmd(testing-test)        # Depends on core + runtime  
-    @cmd(cli-test)            # Depends on all
-    @log("✅ All module tests passed!")
-}
-
-# Test all modules with coverage
-test-coverage: {
-    @log("📊 Running tests with coverage across all modules...")
-    @cmd(core-test-coverage)
-    @cmd(codegen-test-coverage)
-    @cmd(runtime-test-coverage)
-    @cmd(testing-test-coverage)
-    @cmd(cli-test-coverage)
-    @cmd(coverage-reports)
-    @log("✅ Coverage testing complete!")
-}
-
-# Generate coverage reports (only called after coverage tests)
-coverage-reports: {
-    @log("📊 Merging coverage reports...")
-    command -v gocovmerge >/dev/null 2>&1 && gocovmerge coverage-*.out > coverage.out && rm coverage-*.out || @log("⚠️  gocovmerge not available")
-    command -v go >/dev/null 2>&1 && go tool cover -html=coverage.out -o coverage.html && @log("📊 Coverage report: coverage.html")
-}
-
-# Format all modules
-format: {
-    @log("📝 Formatting all code across modules...")
-    @parallel {
-        @cmd(core-format)
-        @cmd(codegen-format)
-        @cmd(runtime-format)
-        @cmd(testing-format)
-        @cmd(cli-format)
+    
+    fun @var(module)_lint = @workdir(@var(module)) { 
+        @log("🔍 Linting @var(module) module...")
+        command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
     }
-    # Also format Nix files
-    command -v nixpkgs-fmt >/dev/null 2>&1 && find . -name '*.nix' -exec nixpkgs-fmt {} + || @log("⚠️  nixpkgs-fmt not available")
+    
+    fun @var(module)_format = @workdir(@var(module)) { 
+        @log("📝 Formatting @var(module) module...")
+        command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
+    }
+}
+
+# =============================================================================
+# 🔄 GLOBAL COMMANDS
+# =============================================================================
+
+fun test {
+    @log("🧪 Testing all modules...")
+    for module in @var(MODULES) {
+        @cmd(@var(module)_test)
+    }
+    @log("✅ All tests passed!")
+}
+
+fun format {
+    @log("📝 Formatting all code...")
+    @parallel {
+        for module in @var(MODULES) {
+            @cmd(@var(module)_format)
+        }
+    }
     @log("✅ All code formatted!")
 }
 
-# Lint all modules
-lint: {
-    @log("🔍 Running linters across all modules...")
+fun lint {
+    @log("🔍 Running linters...")
     @parallel {
-        @cmd(core-lint)
-        @cmd(codegen-lint)
-        @cmd(runtime-lint)
-        @cmd(testing-lint)
-        @cmd(cli-lint)
+        for module in @var(MODULES) {
+            @cmd(@var(module)_lint)
+        }
     }
     @log("✅ Linting complete!")
 }
 
-# Clean all modules
-clean: {
-    @log("🧹 Cleaning generated files and artifacts...")
+fun clean {
+    @log("🧹 Cleaning artifacts...")
     @parallel {
-        @cmd(core-clean)
-        @cmd(codegen-clean)
-        @cmd(runtime-clean)
-        @cmd(testing-clean)
-        @cmd(cli-clean)
+        for module in @var(MODULES) {
+            @workdir(@var(module)) { go clean -cache -testcache }
+        }
     }
-    rm -f @var(PROJECT) coverage-core.out coverage-codegen.out coverage-runtime.out coverage-testing.out coverage-cli.out coverage.out coverage.html
-    rm -rf result result-* build/ artifacts/
+    rm -f @var(PROJECT) coverage.out coverage.html
     @log("✅ Cleanup complete")
 }
 
-# Build the CLI (with full validation)
-build: {
+fun build {
     @log("🔨 Building @var(PROJECT) CLI...")
-    @log("🧪 Running full CI to ensure quality...")
-    @cmd(ci)
-    @log("🔨 Building binary...")
-    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var(VERSION) -X main.BuildTime=@var(BUILD_TIME)" -o ../@var(PROJECT) ./main.go }
-    @log("✅ Built: ./@var(PROJECT)")
-}
-
-# Full CI workflow
-ci: {
-    @log("🔄 Full project CI workflow...")
-    @cmd(core-ci)
-    @cmd(codegen-ci)
-    @cmd(runtime-ci)
-    @cmd(testing-ci)
-    @cmd(cli-ci)
-    @log("🎉 Full project CI complete!")
-}
-
-# Quick development iteration
-dev-quick: {
-    @log("⚡ Quick development checks...")
-    @cmd(format)
     @cmd(test)
-    @log("✅ Quick checks passed!")
+    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var(VERSION)" -o ../opal . }
+    @log("✅ Built: ./opal")
 }
 
-# =============================================================================
-# 📦 NIX INTEGRATION  
-# =============================================================================
-
-# Build with Nix
-nix-build: {
-    @log("📦 Building with Nix...")
-    nix build .#@var(PROJECT) --print-build-logs
-    @log("✅ Nix build complete")
-}
-
-# Comprehensive Nix validation
-nix-check: {
-    @log("🔍 Running comprehensive Nix validation...")
-    nix flake check --print-build-logs
-    @log("✅ Nix validation passed")
-}
-
-# Test all example CLIs
-test-examples: {
-    @log("🎯 Testing example CLIs...")
-    @parallel {
-        nix build .#basicDev --print-build-logs
-        nix build .#webDev --print-build-logs
-        nix build .#goProject --print-build-logs
-    }
-    @log("Testing example functionality...")
-    @parallel {
-        nix run .#basicDev -- --help >/dev/null
-        nix run .#webDev -- --help >/dev/null
-        nix run .#goProject -- --help >/dev/null
-    }
-    @log("✅ Example CLI tests passed!")
-}
-
-# Release preparation with comprehensive testing
-release: @timeout(10m) {
-    @log("📦 Running release preparation workflow...")
-    @cmd(clean)
-    @cmd(setup)
-    @cmd(ci)
-    @cmd(test-examples)
+fun ci {
+    @log("🔄 Clean slate CI workflow...")
     @cmd(format)
-    @log("📋 Release checklist complete!")
-    @log("🚀 Ready for release!")
+    @cmd(lint) 
+    @cmd(test)
+    @log("✅ CI complete!")
 }
 
-# =============================================================================
-# 📊 PROJECT STATUS & UTILITIES
-# =============================================================================
-
-# Show detailed project information
-info: {
-    @log(`📊 @var(PROJECT) Multi-Module Project Status
+fun info = @log("📊 @var(PROJECT) Clean Slate Status
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Project: @var(PROJECT)
+Project: @var(PROJECT) (Plan-Verify-Execute Engine)
 Version: @var(VERSION)
-Build time: @var(BUILD_TIME)
-Go version: @var(GO_VERSION)
 
-Module Dependency Hierarchy:
-  core/     - Foundation (AST, types, errors)
-  ├── runtime/  - Decorators and execution contexts
-  ├── testing/  - Test utilities and frameworks
-  └── cli/      - Main CLI application
+Current Modules: @var(MODULES)
+  cli/        - Command-line interface
+  runtime/    - Lexer v2 (high-performance tokenization)
+  docs/       - Architecture and specification
 
-Statistics:
-  Go source files: $(find . -name '*.go' | wc -l)
-  Test files: $(find . -name '*_test.go' | wc -l)
-  Modules: $(find . -name 'go.mod' | wc -l)
+Ready for fresh AST and parser implementation!")
 
-Git status:`)
-    git status --porcelain | head -5 || @log("Not a git repository")
-}
+fun help = @log("🔧 Opal Development Commands (Clean Slate)
 
-# Quick alias for info
-status: @cmd(info)
+🚀 Main Commands:
+  build     - Build CLI binary
+  ci        - Full CI workflow (format, lint, test)
+  test      - Run all tests
+  clean     - Clean artifacts
 
-# =============================================================================
-# 📋 HELP & DOCUMENTATION
-# =============================================================================
+📝 Code Quality:
+  format    - Format all code
+  lint      - Run linters
 
-# Show comprehensive help
-help: @log(`{bold}{cyan}🔧 Devcmd Multi-Module Development Commands{/cyan}{/bold}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 Utilities:
+  info      - Show project status
+  help      - Show this help
 
-{bold}{green}🚀 Global Commands:{/green}{/bold}
-  {yellow}setup{/yellow}          - Set up development environment
-  {yellow}build{/yellow}          - Build CLI (with full validation)
-  {yellow}ci{/yellow}             - Full project CI workflow
-  {yellow}test{/yellow}           - Test all modules (dependency order)
-  {yellow}test-coverage{/yellow}  - Tests with coverage reports
-  {yellow}format{/yellow}         - Format all code
-  {yellow}lint{/yellow}           - Run all linters
-  {yellow}clean{/yellow}          - Clean artifacts and caches
-
-{bold}{blue}📦 Module-Specific Commands:{/blue}{/bold}
-  {yellow}core-ci{/yellow}        - Complete core module workflow
-  {yellow}codegen-ci{/yellow}     - Complete codegen module workflow
-  {yellow}runtime-ci{/yellow}     - Complete runtime module workflow
-  {yellow}testing-ci{/yellow}     - Complete testing module workflow
-  {yellow}cli-ci{/yellow}         - Complete CLI module workflow
-
-{bold}{magenta}🧪 Module Testing:{/magenta}{/bold}
-  {yellow}[module]-test{/yellow}           - Test specific module
-  {yellow}[module]-test-coverage{/yellow}  - Test with coverage
-  {yellow}[module]-lint{/yellow}           - Lint specific module
-  {yellow}[module]-format{/yellow}         - Format specific module
-
-{bold}{cyan}📦 Nix Integration:{/cyan}{/bold}
-  {yellow}nix-build{/yellow}      - Build with Nix
-  {yellow}nix-check{/yellow}      - Comprehensive Nix validation
-  {yellow}test-examples{/yellow}  - Test example CLIs
-
-{bold}{green}🔄 Workflows:{/green}{/bold}
-  {yellow}dev-quick{/yellow}      - Fast development iteration
-  {yellow}release{/yellow}        - Release preparation
-
-{bold}{blue}📊 Utilities:{/blue}{/bold}
-  {yellow}info{/yellow}           - Show project status
-  {yellow}status{/yellow}         - Show project status (alias)
-  {yellow}help{/yellow}           - Show this help
-
-{dim}Module hierarchy: core → runtime → testing → cli{/dim}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+💡 Module-specific commands are auto-generated:
+  cli_test, cli_lint, cli_format
+  runtime_test, runtime_lint, runtime_format")

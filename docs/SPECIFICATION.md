@@ -1,10 +1,12 @@
 # Opal Language Specification
 
-**Write operations scripts that show you exactly what they'll do before they do it.**
+**Write automation that shows you exactly what it will do before it does it.**
 
 ## What is Opal?
 
-Opal is an operations language for teams who want the reliability of infrastructure-as-code without the complexity of state files. Write scripts that feel like shell but generate auditable plans.
+Opal is a Plan-Verify-Execute engine for automating risky, stateful processes with confidence. Perfect for any domain where mistakes are expensive and auditability matters - from infrastructure deployment to data pipelines to security incident response.
+
+> **Domain-agnostic design**: Opal itself is domain-agnostic. It becomes useful in a given field through the decorator sets provided. The DevOps examples here use `@shell` and `@kubectl`, but the same rules apply equally to data, science, security, or any other domain.
 
 **Key principle**: Resolved plans are execution contracts that get verified before running.
 
@@ -33,9 +35,9 @@ deploy: {
 **Command mode** - organized tasks:
 ```opal
 // commands.opl
-install: npm install
-test: npm test
-deploy: kubectl apply -f k8s/
+fun install = npm install
+fun test = npm test  
+fun deploy = kubectl apply -f k8s/
 ```
 ```bash
 opal deploy    # Run specific task
@@ -72,6 +74,144 @@ logs: kubectl logs app | grep ERROR
 ```
 
 **Operator precedence**: `|` (pipe) > `&&`, `||` > `;` > newlines
+
+## Domain Examples
+
+Opal's Plan-Verify-Execute model works across any domain requiring safe, auditable automation:
+
+### Infrastructure & DevOps
+```opal
+deploy: {
+    when @env("ENV") {
+        "production" -> {
+            kubectl apply -f k8s/prod/
+            @retry(attempts=3) { kubectl rollout status deployment/app }
+        }
+        else -> kubectl apply -f k8s/dev/
+    }
+}
+```
+
+### Data Engineering
+```opal
+daily_etl: {
+    @snowflake.load(
+        table="raw_events", 
+        from_s3=@env("S3_DATA_BUCKET")
+    )
+    @dbt.run(model="daily_user_summary")
+    @slack.notify(
+        channel="#data-team",
+        message="Daily ETL completed: ${@dbt.row_count} rows processed"
+    )
+}
+```
+
+### Security Incident Response
+```opal
+contain_threat: {
+    @log("Starting containment for user: ${@var(ALERT_USER)}")
+    @okta.suspend_user(email=@var(ALERT_USER))
+    @crowdstrike.isolate_host(hostname=@var(ALERT_HOST))
+    @pagerduty.escalate(incident_id=@var(INCIDENT_ID))
+}
+```
+
+### Scientific Computing
+```opal
+run_analysis: {
+    @dataset.fetch(
+        doi="10.1000/xyz123",
+        checksum="sha256:abc123..."
+    )
+    var job_id = @hpc.submit_job(
+        cluster=@env("SLURM_CLUSTER"),
+        script="analysis.py",
+        cores=64
+    )
+    @plot.generate(
+        template="results.gnu",
+        data=@hpc.job_output(job_id)
+    )
+}
+```
+
+Each domain uses the same safety guarantees but with domain-specific decorators.
+
+### Command Definitions with `fun` (Metaprogramming)
+
+`fun` enables **template-based code generation** at plan-time. Command definitions can be parameterized and dynamically generated through metaprogramming constructs.
+
+```opal
+var MODULES = ["cli", "runtime"]
+
+# Template command definitions with parameters
+fun build_module(module) {
+    @workdir(path=@var(module)) {
+        npm ci
+        npm run build
+    }
+}
+
+fun test_module(module, retries=2) {
+    @workdir(path=@var(module)) {
+        @retry(attempts=@var(retries), delay=5s) { npm test }
+    }
+}
+
+# Generate multiple commands via metaprogramming
+for module in @var(MODULES) {
+    fun @var(module)_build() {
+        @cmd(build_module, module=@var(module))
+    }
+    
+    fun @var(module)_test() {
+        @cmd(test_module, module=@var(module), retries=3)
+    }
+}
+
+# Results in generated commands: cli_build(), cli_test(), runtime_build(), runtime_test()
+```
+
+**Metaprogramming semantics**:
+- **Plan-time expansion**: `for` loops and `@var()` resolve during plan construction
+- **Parameter binding**: All parameters resolve to concrete values when `@cmd()` is called  
+- **Template inlining**: `@cmd(fun_name, args...)` expands to the `fun` body with parameters substituted
+- **Code generation**: `for` + `fun` creates multiple command definitions dynamically
+- **Static command names**: After metaprogramming expansion, all command names are concrete identifiers
+- **No runtime reflection**: All metaprogramming happens at plan-time, execution is deterministic
+
+**Syntax forms**:
+```opal
+# Assignment form (concise one-liners)
+fun deploy = kubectl apply -f k8s/
+fun greet(name) = echo "Hello, @var(name)!"
+
+# Block form (multi-line)  
+fun complex {
+    kubectl apply -f k8s/
+    kubectl rollout status deployment/app
+}
+
+fun build_module(module, target="dist") {
+    @workdir(@var(module)) {
+        npm ci
+        npm run build --output=@var(target)
+    }
+}
+```
+
+**Example expansion**:
+```opal
+# Source code with metaprogramming
+for module in ["cli", "runtime"] {
+    fun @var(module)_test = @workdir(@var(module)) { go test ./... }
+}
+
+# Expands at plan-time to:
+fun cli_test = @workdir("cli") { go test ./... }
+fun runtime_test = @workdir("runtime") { go test ./... }
+```
 
 ## Variables
 
@@ -351,6 +491,48 @@ Every `{ ... }` block in opal represents a **phase** - a unit of execution with 
 
 Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel` work within this framework. They define how blocks expand (unrolling loops, selecting branches) or add constraints (parallel independence), but they all inherit the same phase execution guarantees.
 
+### Command Definitions
+
+Commands are defined using the `fun` keyword for reusable, parameterized blocks that expand at plan-time:
+
+```opal
+// Simple one-liner definitions
+fun deploy = kubectl apply -f k8s/
+fun hello = echo "Hello World!"
+
+// Parameterized one-liners  
+fun greet(name) = echo "Hello, @var(name)!"
+
+// Multi-line block form
+fun build_module(module, target="dist") {
+    @workdir(@var(module)) {
+        npm ci
+        npm run build --output=@var(target)
+    }
+}
+
+// Metaprogramming command generation
+for module in ["api", "worker"] {
+    fun @var(module)_test = @workdir(@var(module)) { go test ./... }
+}
+
+// Calling parameterized commands
+build_all: {
+    @cmd(build_module, module="frontend", target="public")
+    @cmd(build_module, module="backend")  // uses default target="dist"
+}
+```
+
+**Plan-time expansion**: `fun` definitions are **macros** that expand at plan-time when called via `@cmd()`. All parameters must be resolvable at plan-time using value decorators.
+
+**DAG constraint**: Command calls must form a directed acyclic graph. Recursive calls or cycles result in plan generation errors.
+
+**Parameter binding**: Arguments are bound to their resolved values at plan-time. Default values are supported and must be plan-time expressions.
+
+**Deterministic**: All `fun` bodies must have finite execution paths - no unbounded loops or dynamic fan-out beyond normal metaprogramming expansion.
+
+**Scope isolation**: `fun` bodies follow the same scope rules as other blocks - regular statements propagate mutations to outer scope, execution decorator blocks isolate scope.
+
 ### Loops
 
 ```opal
@@ -541,24 +723,23 @@ opal deploy --dry-run
 ```
 
 **What happens**:
-- Resolves control flow (if/when/for conditions) using cheap value decorators
-- Shows all possible execution branches that code could take
+- Resolves control flow (`if`/`when`/`for` conditions) using cheap value decorators only
+- Shows single execution path after metaprogramming expansion
 - Defers expensive value decorators (`@aws.secret`, `@http.get`, etc.)
-- Calculates execution paths based on current variable values
+- Displays which branches/iterations were taken for auditability
 
 ```
 deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=¹@aws.secret("api-token")
-└─ kubectl rollout status deployment/app
-
-Possible Branches:
-├─ if ENV == "production" → [kubectl scale --replicas=3]
-└─ else → [kubectl scale --replicas=1]
+└─ @if(ENV == "production")
+   └─ kubectl scale --replicas=<1:sha256:def789> deployment/app
 
 Deferred Values:
 1. @aws.secret("api-token") → <expensive: AWS lookup>
 ```
+
+**Visual format note**: This tree structure is optimized for human readability. The internal contract format uses an optimized structure for efficient parsing and verification.
 
 ### Resolved Plans (`--dry-run --resolve`)
 
@@ -570,22 +751,24 @@ opal deploy --dry-run --resolve > prod.plan
 
 **What happens**:
 - Resolves ALL value decorators (including expensive ones)
-- Determines exact execution path (no branches, single success path)
-- Creates deterministic execution contract
+- Expands all metaprogramming constructs into concrete execution steps
+- Creates deterministic execution contract with hash placeholders
 - Generates plan file for later contract-verified execution
 
 ```
 deploy:
 ├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=¹<32:a1b2c3>
-├─ kubectl scale --replicas=<1:3> deployment/app
-└─ kubectl rollout status deployment/app
+├─ kubectl create secret --token=<32:sha256:a1b2c3>
+└─ @if(ENV == "production")
+   └─ kubectl scale --replicas=<1:sha256:def789> deployment/app
 
-Resolved Values:
-1. @aws.secret("api-token") → <32:a1b2c3>
-
-Contract Hash: sha256:def456...
+Contract Hash: sha256:abc123...
 ```
+
+**Key principles**:
+- All resolved values use `<length:algorithm:hash>` format (security by default)
+- Metaprogramming constructs (`@if`, `@for`, `@when`) show which path was taken
+- Original constructs are preserved for audit trails while showing expanded results
 
 ### Execution Plans (always happens)
 
@@ -676,6 +859,70 @@ opal deploy
 3. **Execute**: Run commands with resolved values (no hash verification)
 
 This mode is ideal for development and immediate execution where you want current values, not contracted values.
+
+## Plan Visual Structure
+
+Plans show the execution path after metaprogramming expansion using a consistent tree format. This visual structure is optimized for human readability and audit trails, while the internal contract format uses an optimized binary structure for efficient parsing and verification.
+
+### Metaprogramming Expansion Patterns
+
+**For loops** expand into sequential steps:
+```opal
+// Source: for service in ["api", "worker"] { kubectl apply -f k8s/${service}/ }
+
+// Plan shows:
+deploy:
+└─ @for(service in ["api", "worker"])
+   ├─ kubectl apply -f k8s/api/
+   └─ kubectl apply -f k8s/worker/
+```
+
+**If statements** show the taken branch:
+```opal
+// Source: if ENV == "production" { kubectl scale --replicas=3 }
+
+// Plan shows:
+deploy:
+└─ @if(ENV == "production")
+   └─ kubectl scale --replicas=<1:sha256:abc123> deployment/app
+```
+
+**When patterns** show the matched pattern:
+```opal
+// Source: when ENV { "production" -> kubectl scale --replicas=3; else -> kubectl scale --replicas=1 }
+
+// Plan shows:
+deploy:
+└─ @when(ENV == "production")
+   └─ kubectl scale --replicas=<1:sha256:abc123> deployment/app
+```
+
+**Try/catch blocks** show all possible paths:
+```opal
+// Source: try { kubectl apply } catch { kubectl rollout undo } finally { kubectl clean }
+
+// Plan shows:
+deploy:
+└─ @try
+   ├─ kubectl apply -f k8s/
+   ├─ @catch
+   │  └─ kubectl rollout undo deployment/app
+   └─ @finally
+      └─ kubectl delete pod -l job=temp
+```
+
+### Security and Hash Format
+
+**All resolved values** use the security placeholder format `<length:algorithm:hash>`:
+- `<1:sha256:abc123>` - single character value (e.g., "3")
+- `<32:sha256:def456>` - 32 character value (e.g., secret token)
+- `<8:sha256:xyz789>` - 8 character value (e.g., hostname)
+
+This format ensures:
+- **No value leakage** in plans or logs
+- **Contract verification** via hash comparison
+- **Debugging support** via length hints
+- **Algorithm agility** for future hash upgrades
 
 ## Planning Mode Summary
 

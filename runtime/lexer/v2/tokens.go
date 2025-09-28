@@ -23,6 +23,7 @@ const (
 	FINALLY // finally - error handling decorator
 
 	// Language structure
+	FUN    // fun - command definition
 	VAR    // var
 	AT     // @
 	DOT    // .
@@ -136,6 +137,8 @@ func (t TokenType) String() string {
 		return "CATCH"
 	case FINALLY:
 		return "FINALLY"
+	case FUN:
+		return "FUN"
 	case VAR:
 		return "VAR"
 	case AT:

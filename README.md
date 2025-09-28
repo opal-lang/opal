@@ -1,8 +1,10 @@
 # Opal
 
-**The Operations Planning Language**
+**Plan-Verify-Execute Engine for Safe Automation**
 
-A task runner for operations teams who want to see exactly what will execute before running it.
+Write automation that shows you exactly what it will do before it does it. Perfect for any domain where mistakes are expensive and auditability matters.
+
+> **Domain-agnostic design**: Opal itself is domain-agnostic. It becomes useful in a given field through the decorator sets provided. The DevOps examples here use `@shell` and `@kubectl`, but the same rules apply equally to data, science, security, or any other domain.
 
 ## Quick Start
 
@@ -30,10 +32,10 @@ opal deploy
 
 ## Why Opal?
 
-**Plan first, execute with confidence**: See exactly what commands will run before execution
-**Operations focused**: Built for deployment, infrastructure, and operational workflows  
-**Contract-based execution**: Generate execution contracts for auditable operations
-**Simple syntax**: Write operations that feel like shell but with planning capabilities
+**Plan first, execute with confidence**: See exactly what will happen before it happens
+**Contract-based execution**: Generate immutable execution contracts for perfect auditability
+**Safe automation**: Deterministic execution with safety guarantees prevents runaway scripts
+**Domain agnostic**: Extensible to any field where automation needs to be predictable and safe
 
 ## Core Features
 
@@ -85,6 +87,32 @@ Enhance command execution:
 - `@retry(attempts=3) { ... }` - Retry failed operations
 - `@timeout(5m) { ... }` - Timeout protection
 - `@parallel { ... }` - Concurrent execution
+
+## Domain Examples
+
+### DevOps & Infrastructure
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    @retry(attempts=3) { kubectl rollout status deployment/app }
+}
+```
+
+### Data Engineering  
+```opal
+etl_pipeline: {
+    @snowflake.load(table="events", from_s3=@var(RAW_BUCKET))
+    @dbt.run(model="daily_summary")
+}
+```
+
+### Security Automation
+```opal
+incident_response: {
+    @okta.suspend_user(email=@var(ALERT.user))
+    @crowdstrike.isolate_host(hostname=@var(ALERT.host))
+}
+```
 
 ## Installation
 

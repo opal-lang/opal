@@ -43,6 +43,71 @@ func TestVarKeyword(t *testing.T) {
 	}
 }
 
+// TestFunKeyword tests the "fun" keyword recognition
+func TestFunKeyword(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []tokenExpectation
+	}{
+		{
+			name:  "simple fun",
+			input: "fun",
+			expected: []tokenExpectation{
+				{FUN, "fun", 1, 1},
+				{EOF, "", 1, 4},
+			},
+		},
+		{
+			name:  "fun with whitespace",
+			input: "  fun  ",
+			expected: []tokenExpectation{
+				{FUN, "fun", 1, 3},
+				{EOF, "", 1, 8},
+			},
+		},
+		{
+			name:  "fun assignment syntax",
+			input: "fun deploy =",
+			expected: []tokenExpectation{
+				{FUN, "fun", 1, 1},
+				{IDENTIFIER, "deploy", 1, 5},
+				{EQUALS, "", 1, 12},
+				{EOF, "", 1, 13},
+			},
+		},
+		{
+			name:  "fun with parameters",
+			input: "fun greet(name) =",
+			expected: []tokenExpectation{
+				{FUN, "fun", 1, 1},
+				{IDENTIFIER, "greet", 1, 5},
+				{LPAREN, "", 1, 10},
+				{IDENTIFIER, "name", 1, 11},
+				{RPAREN, "", 1, 15},
+				{EQUALS, "", 1, 17},
+				{EOF, "", 1, 18},
+			},
+		},
+		{
+			name:  "fun block syntax",
+			input: "fun test {",
+			expected: []tokenExpectation{
+				{FUN, "fun", 1, 1},
+				{IDENTIFIER, "test", 1, 5},
+				{LBRACE, "", 1, 10},
+				{EOF, "", 1, 11},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTokens(t, tt.name, tt.input, tt.expected)
+		})
+	}
+}
+
 // TestForKeyword tests the "for" keyword recognition
 func TestForKeyword(t *testing.T) {
 	tests := []struct {

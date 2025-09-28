@@ -1,12 +1,16 @@
 # Opal Architecture
 
-**Implementation requirements for humans building contract-based operations**
+**Implementation requirements for building a Plan-Verify-Execute engine**
 
 ## Design Philosophy
 
-Build a system where resolved plans are execution contracts that get verified before running. Everything becomes a value decorator or execution decorator internally - no special cases, no surprises.
+Build a system where resolved plans are execution contracts that get verified before running. This creates a universal framework for safe automation across any domain where mistakes are expensive.
 
-The key insight: instead of managing state like Terraform, we verify contracts. Plans aren't just previews, they're promises about what will execute.
+> **Domain-agnostic design**: Opal itself is domain-agnostic. It becomes useful in a given field through the decorator sets provided. The DevOps examples here use `@shell` and `@kubectl`, but the same rules apply equally to data, science, security, or any other domain.
+
+The key insight: instead of managing state like traditional tools, we verify contracts. Plans aren't just previews, they're promises about what will execute. This pattern works for infrastructure, data pipelines, security automation, scientific computing, and any domain requiring predictable, auditable automation.
+
+**Halting and determinism guarantees**: Opal is designed as a halting, deterministic automation engine. All plans are guaranteed to terminate with predictable, reproducible results across any domain.
 
 ## The Big Picture
 
@@ -14,15 +18,28 @@ The key insight: instead of managing state like Terraform, we verify contracts. 
 User writes natural syntax  →  Parser converts to value decorators and execution decorators  →  Contract execution
 ```
 
-Every piece of syntax becomes a value decorator or execution decorator:
+Opal has two distinct layers that work together:
+
+**Metaprogramming constructs** decide execution structure:
+
+*Plan-time deterministic:*
+- `for service in [...] { ... }` → unrolls loops into concrete steps
+- `when ENV { ... }` → selects branches based on conditions  
+- `if condition { ... } else { ... }` → evaluates conditionals at plan-time
+
+*Execution-dependent path selection:*
+- `try/catch/finally` → defines deterministic error handling paths, but which path executes depends on actual execution results (exceptions)
+
+**Work execution** happens through decorators at runtime:
 - `npm run build` → `@shell("npm run build")`
 - `@retry(3) { ... }` → execution decorator with block
-- `when ENV { ... }` → plan-time conditional expansion
-- `for service in [...] { ... }` → plan-time loop unrolling
+- `@var(NAME)` → value decorator for interpolation
 
-## Everything is a Decorator
+## Everything is a Decorator (For Work Execution)
 
-The core architectural principle: every operation becomes one of two types: value decorators or execution decorators.
+The core architectural principle: **every operation that performs work** becomes one of two decorator types: value decorators or execution decorators.
+
+This means metaprogramming constructs like `for`, `if`, `when` are **not** decorators - they're language constructs that decide what work gets done. The actual work is always performed by decorators.
 
 **Value decorators** inject values inline:
 - `@env("PORT")` pulls environment variables
@@ -43,7 +60,77 @@ npm run build
 @shell("npm run build")
 ```
 
-This decorator model means new features integrate seamlessly - no special parsing rules or execution paths.
+This separation means:
+- **AST structure** represents both metaprogramming constructs and decorators appropriately
+- **Execution model** is unified through decorators (no special cases for different work types)  
+- **New features** integrate by adding decorators, not special execution paths
+
+## Two-Layer Architecture
+
+```
+Plan-time Layer (Metaprogramming):
+├─ for loops unroll into concrete steps (deterministic)
+├─ if/when conditionals select execution paths (deterministic)
+├─ try/catch defines error handling structure (execution-dependent paths)
+└─ AST represents all language constructs
+
+Runtime Layer (Work Execution):
+├─ @shell decorators execute commands
+├─ @retry/@parallel decorators modify execution
+├─ @var/@env decorators provide values
+├─ try/catch path selection based on actual exceptions
+└─ Unified decorator interfaces handle all work
+```
+
+**Key insight**: `try/catch` is a metaprogramming construct (not a decorator) that defines deterministic error handling paths. Unlike `for`/`if`/`when` which resolve to a single path at plan-time, `try/catch` creates multiple **known paths** where execution selects which one based on actual results (exceptions). The plan includes **all possible paths** through try/catch blocks.
+
+## Safety Guarantees
+
+Opal guarantees that all operations halt with deterministic results.
+
+### Plan-Time Safety
+
+**Finite loops**: All loops must terminate during plan generation.
+- `for item in collection` - collection size is known
+- `while count > 0` - count value is resolved at plan-time
+- Loop iteration happens during planning, not execution
+
+**Command call DAG constraint**: Commands can call each other, but must form a directed acyclic graph.
+- `fun` definitions called via `@cmd()` expand at plan-time with parameter binding
+- Call graph analysis prevents cycles: `A → B → A` results in plan generation error  
+- Parameters must be plan-time resolvable (value decorators, variables, literals)
+- No dynamic dispatch - all calls resolved during planning
+
+**Finite parallelism**: `@parallel` blocks have a known number of tasks after loop expansion.
+
+### Runtime Safety
+
+**User-controlled timeouts**: No automatic timeouts - users control when they want limits.
+- Commands run until completion or manual termination (Ctrl+C)
+- `@timeout(1h) { ... }` - explicit timeout when desired
+- `--timeout 30m` flag - global safety net when needed
+- Long-running processes (`dev servers`, `monitoring`) run naturally
+
+**Resource limits**: Memory and process limits prevent system exhaustion.
+
+### Determinism
+
+**Reproducible plans**: Same source + environment = identical plan.
+- Value decorators are referentially transparent
+- Random values use cryptographic seeding (resolved plans only)
+- Output ordering is deterministic
+
+**Contract verification**: Resolved plans are execution contracts.
+- Values re-resolved at runtime and hash-compared against plan
+- Execution fails if any value changed since planning
+- Exception: `try/catch` path selection based on actual runtime results
+
+### Cancellation and Cleanup
+
+**Graceful cancellation**: `finally` blocks run on interruption for safe cleanup.
+- **First Ctrl+C**: Triggers cleanup sequence, shows "Cleaning up..."
+- **Second Ctrl+C**: Force immediate termination, skips cleanup
+- Allows resource cleanup (PIDs, temp files, containers) while providing escape hatch
 
 ## Decorator Design Requirements
 

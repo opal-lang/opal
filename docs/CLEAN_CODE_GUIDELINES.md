@@ -1,4 +1,4 @@
-# Clean Code Guidelines for Devcmd
+# Clean Code Guidelines for Opal
 
 Guidelines for maintaining clean, discoverable, and scalable decorator composition as the opal ecosystem grows.
 

@@ -35,12 +35,28 @@
 - **Fresh builds**: Rebuild CLI after any core/runtime changes
 - **Phase 1**: Interpreter mode only, no code generation yet
 
-## Pre-PR Checklist
-- **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
-  - When Nix build fails with hash mismatch, copy the "got:" hash to replace the "expected:" hash
-  - This ensures the package builds correctly in Nix environments
+## JJ to Git Workflow
+```bash
+# 1. Work in changes
+jj new main -m "feat: description"
+# make changes
+jj commit -m "detailed commit message"
 
-### Pre-PR Checklist
+# 2. Fix empty descriptions before push
+jj log --limit 5                    # Check for "(no description set)"
+jj describe -r <change_id> -m "msg" # Fix any empty descriptions
+
+# 3. Create bookmark and push
+jj bookmark create -r @ feature-name
+jj git push -b feature-name --allow-new
+
+# 4. Update existing PR
+jj bookmark set feature-name -r @
+jj git push -b feature-name
+```
+
+## Pre-PR Checklist
+- **All commits have descriptions**: JJ won't push commits with "(no description set)" to Git
 - **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
   - When Nix build fails with hash mismatch, copy the "got:" hash to replace the "expected:" hash
   - This ensures the package builds correctly in Nix environments

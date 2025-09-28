@@ -623,6 +623,8 @@ func (l *Lexer) lexString(start Position, quote byte, hasSpaceBefore bool) Token
 // lookupKeyword returns the appropriate token type for keywords, or IDENTIFIER
 func (l *Lexer) lookupKeyword(text string) TokenType {
 	switch text {
+	case "fun":
+		return FUN
 	case "var":
 		return VAR
 	case "for":

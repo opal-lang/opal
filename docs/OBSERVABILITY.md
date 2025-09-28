@@ -1,4 +1,4 @@
-# Devcmd Observability
+# Opal Observability
 
 **Making "what ran in prod" trivial**
 

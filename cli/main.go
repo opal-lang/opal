@@ -5,17 +5,15 @@ import (
 	"io"
 	"os"
 
-	"github.com/aledsdavies/opal/runtime"
 	"github.com/spf13/cobra"
 )
 
 func main() {
 	var (
-		file        string
-		dryRun      bool
-		debug       bool
-		noColor     bool
-		autoConfirm bool
+		file    string
+		dryRun  bool
+		debug   bool
+		noColor bool
 	)
 
 	rootCmd := &cobra.Command{
@@ -23,7 +21,7 @@ func main() {
 		Short: "Execute commands defined in opal files",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, file, dryRun, debug, noColor, autoConfirm)
+			return runCommand(cmd, args, file, dryRun, debug, noColor)
 		},
 	}
 
@@ -32,7 +30,6 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
-	rootCmd.PersistentFlags().BoolVar(&autoConfirm, "yes", false, "Auto-confirm all prompts")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -40,7 +37,7 @@ func main() {
 	}
 }
 
-func runCommand(cmd *cobra.Command, args []string, file string, dryRun, debug, noColor, autoConfirm bool) error {
+func runCommand(cmd *cobra.Command, args []string, file string, dryRun, debug, noColor bool) error {
 	commandName := args[0]
 
 	// Get input reader based on file options
@@ -50,18 +47,12 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, debug, n
 	}
 	defer func() { _ = closeFunc() }()
 
-	// Execute using runtime
-	opts := runtime.ExecutionOptions{
-		Command:     commandName,
-		DryRun:      dryRun,
-		Debug:       debug,
-		NoColor:     noColor,
-		AutoConfirm: autoConfirm,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
-	}
-
-	return runtime.Execute(reader, opts)
+	// TODO: Execute using new runtime implementation
+	_ = reader // Ignore unused reader for now
+	fmt.Fprintf(os.Stderr, "Runtime execution not yet implemented - AST redesign in progress\n")
+	fmt.Fprintf(os.Stderr, "Command: %s, File: %s, DryRun: %t\n", commandName, file, dryRun)
+	fmt.Fprintf(os.Stderr, "This is expected during the transition to new AST implementation\n")
+	return nil // Return success during transition period
 }
 
 // getInputReader handles the 3 modes of input:

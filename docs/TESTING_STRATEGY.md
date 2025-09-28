@@ -1,4 +1,4 @@
-# Devcmd Testing Strategy
+# Opal Testing Strategy
 
 **Goal: Ridiculously stable contract-based operations through systematic testing**
 
