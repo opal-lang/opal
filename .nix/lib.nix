@@ -39,13 +39,13 @@ rec {
         if commandsContent != null then commandsContent
         else null;
 
-      # Auto-detect with commands.cli as default
+      # Auto-detect with commands.opl as default
       autoDetectContent =
         let
           candidates = [
-            ../commands.cli # Look in parent directory (project root)
-            ./commands.cli # Look in current directory
-            ./.commands.cli # Hidden variant
+            ../commands.opl # Look in parent directory (project root)
+            ./commands.opl # Look in current directory
+            ./.commands.opl # Hidden variant
           ];
 
           findFirst = paths:
@@ -62,7 +62,7 @@ rec {
         if fileContent != null then fileContent
         else if inlineContent != null then inlineContent
         else if autoDetectContent != null then autoDetectContent
-        else throw "No commands content found for CLI '${name}'. Expected commands.cli file or explicit content.";
+        else throw "No commands content found for CLI '${name}'. Expected commands.opl file or explicit content.";
 
       processedContent = preProcess finalContent;
 

@@ -36,7 +36,7 @@ deploy: {
 ```opal
 // commands.opl
 fun install = npm install
-fun test = npm test  
+fun test = npm test
 fun deploy = kubectl apply -f k8s/
 ```
 ```bash
@@ -82,7 +82,7 @@ Opal's Plan-Verify-Execute model works across any domain requiring safe, auditab
 ### Infrastructure & DevOps
 ```opal
 deploy: {
-    when @env("ENV") {
+    when @env.ENV {
         "production" -> {
             kubectl apply -f k8s/prod/
             @retry(attempts=3) { kubectl rollout status deployment/app }
@@ -96,8 +96,8 @@ deploy: {
 ```opal
 daily_etl: {
     @snowflake.load(
-        table="raw_events", 
-        from_s3=@env("S3_DATA_BUCKET")
+        table="raw_events",
+        from_s3=@env.S3_DATA_BUCKET
     )
     @dbt.run(model="daily_user_summary")
     @slack.notify(
@@ -110,10 +110,10 @@ daily_etl: {
 ### Security Incident Response
 ```opal
 contain_threat: {
-    @log("Starting containment for user: ${@var(ALERT_USER)}")
-    @okta.suspend_user(email=@var(ALERT_USER))
-    @crowdstrike.isolate_host(hostname=@var(ALERT_HOST))
-    @pagerduty.escalate(incident_id=@var(INCIDENT_ID))
+    @log("Starting containment for user: ${@var.ALERT_USER}")
+    @okta.suspend_user(email=@var.ALERT_USER)
+    @crowdstrike.isolate_host(hostname=@var.ALERT_HOST)
+    @pagerduty.escalate(incident_id=@var.INCIDENT_ID)
 }
 ```
 
@@ -125,7 +125,7 @@ run_analysis: {
         checksum="sha256:abc123..."
     )
     var job_id = @hpc.submit_job(
-        cluster=@env("SLURM_CLUSTER"),
+        cluster=@env.SLURM_CLUSTER,
         script="analysis.py",
         cores=64
     )
@@ -138,46 +138,57 @@ run_analysis: {
 
 Each domain uses the same safety guarantees but with domain-specific decorators.
 
-### Command Definitions with `fun` (Metaprogramming)
+### Command Definitions with `fun` (Template Functions)
 
-`fun` enables **template-based code generation** at plan-time. Command definitions can be parameterized and dynamically generated through metaprogramming constructs.
+`fun` enables **template-based code reuse** at plan-time. Command definitions can be parameterized and called with different arguments.
+
+**IMPORTANT**: `fun` definitions must be at the top level. You cannot define `fun` inside `for` loops, `if` statements, or other control flow constructs. Define template functions first, then call them inside loops.
 
 ```opal
 var MODULES = ["cli", "runtime"]
 
-# Template command definitions with parameters
+# ✅ CORRECT: Define template functions at top level
 fun build_module(module) {
-    @workdir(path=@var(module)) {
+    @workdir(@var.module) {
         npm ci
         npm run build
     }
 }
 
 fun test_module(module, retries=2) {
-    @workdir(path=@var(module)) {
-        @retry(attempts=@var(retries), delay=5s) { npm test }
+    @workdir(@var.module) {
+        @retry(attempts=@var.retries, delay=5s) { npm test }
     }
 }
 
-# Generate multiple commands via metaprogramming
-for module in @var(MODULES) {
-    fun @var(module)_build() {
-        @cmd(build_module, module=@var(module))
-    }
-    
-    fun @var(module)_test() {
-        @cmd(test_module, module=@var(module), retries=3)
+# ✅ CORRECT: Call templates inside loops
+fun build_all {
+    for module in @var.MODULES {
+        @cmd.build_module(module=@var.module)
     }
 }
 
-# Results in generated commands: cli_build(), cli_test(), runtime_build(), runtime_test()
+fun test_all {
+    for module in @var.MODULES {
+        @cmd.test_module(module=@var.module, retries=3)
+    }
+}
+
+# ❌ INCORRECT: Cannot define fun inside for loops
+fun build_all {
+    for module in @var.MODULES {
+        fun build_@var.module {  # ERROR: fun inside for is not allowed
+            npm run build
+        }
+    }
+}
 ```
 
 **Metaprogramming semantics**:
-- **Plan-time expansion**: `for` loops and `@var()` resolve during plan construction
-- **Parameter binding**: All parameters resolve to concrete values when `@cmd()` is called  
-- **Template inlining**: `@cmd(fun_name, args...)` expands to the `fun` body with parameters substituted
-- **Code generation**: `for` + `fun` creates multiple command definitions dynamically
+- **Plan-time expansion**: `for` loops and `@var.NAME` resolve during plan construction
+- **Parameter binding**: All parameters resolve to concrete values when `@cmd.function_name()` is called
+- **Template inlining**: `@cmd.fun_name(args...)` expands to the `fun` body with parameters substituted
+- **Template expansion**: `@cmd.function_name()` calls expand function templates with parameters
 - **Static command names**: After metaprogramming expansion, all command names are concrete identifiers
 - **No runtime reflection**: All metaprogramming happens at plan-time, execution is deterministic
 
@@ -185,55 +196,106 @@ for module in @var(MODULES) {
 ```opal
 # Assignment form (concise one-liners)
 fun deploy = kubectl apply -f k8s/
-fun greet(name) = echo "Hello, @var(name)!"
+fun greet(name) = echo "Hello, @var.name!"
 
-# Block form (multi-line)  
+# Block form (multi-line)
 fun complex {
     kubectl apply -f k8s/
     kubectl rollout status deployment/app
 }
 
 fun build_module(module, target="dist") {
-    @workdir(@var(module)) {
+    @workdir(@var.module) {
         npm ci
-        npm run build --output=@var(target)
+        npm run build --output=@var.target
     }
 }
 ```
 
 **Example expansion**:
 ```opal
-# Source code with metaprogramming
-for module in ["cli", "runtime"] {
-    fun @var(module)_test = @workdir(@var(module)) { go test ./... }
+# Template function definition
+fun test_module(module) {
+    @workdir(@var.module) { go test ./... }
+}
+
+# Usage in commands
+test_all: {
+    for module in ["cli", "runtime"] {
+        @cmd.test_module(module=@var.module)
+    }
 }
 
 # Expands at plan-time to:
-fun cli_test = @workdir("cli") { go test ./... }
-fun runtime_test = @workdir("runtime") { go test ./... }
+# @workdir("cli") { go test ./... }
+# @workdir("runtime") { go test ./... }
 ```
+
+## Decorator Syntax
+
+Opal distinguishes between value decorators (return data) and execution decorators (perform work) with clear syntax patterns:
+
+### **Value Decorators**
+
+**Dot syntax for simple access:**
+```opal
+# Variables (namespaced for visibility)
+kubectl scale --replicas=@var.REPLICAS deployment/app
+psql @var.CONFIG.database.url
+docker run -p @var.SERVICES[0]:3000 app
+
+# Simple value decorators
+kubectl create secret --token=@aws.secret.api_token
+echo "Environment: @env.NODE_ENV"
+curl -H "Authorization: Bearer @oauth.tokens.access_token"
+```
+
+**Optional parameters when needed:**
+```opal
+# Defaults and complex parameters
+kubectl apply -f @env.MANIFEST_PATH(default="k8s/")
+curl @aws.secret.api_key(region="us-west-2")
+echo "Version: @env.APP_VERSION(default="latest")"
+```
+
+### **Execution Decorators**
+
+**Always function syntax with blocks:**
+```opal
+@retry(attempts=3, delay=2s) { kubectl apply -f k8s/ }
+@workdir("/tmp") { ls -la }
+@timeout(30s) { npm test }
+@parallel {
+    echo "Task A"
+    echo "Task B"
+}
+```
+
+**Clear distinction:**
+- **Value decorators**: Use dot syntax, return data for command arguments
+- **Execution decorators**: Use function syntax, modify how commands execute
 
 ## Variables
 
 Pull values from real sources:
 
 ```opal
-var ENV = @env("ENVIRONMENT", default="development")
-var PORT = @env("PORT", default=3000)
-var DEBUG = @env("DEBUG", default=false)
-var TIMEOUT = @env("DEPLOY_TIMEOUT", default=30s)
+var ENV = @env.ENVIRONMENT(default="development")
+var PORT = @env.PORT(default=3000)
+var DEBUG = @env.DEBUG(default=false)
+var TIMEOUT = @env.DEPLOY_TIMEOUT(default=30s)
 
 // Arrays and maps
 var SERVICES = ["api", "worker", "ui"]
 var CONFIG = {
-    "database": @env("DATABASE_URL"),
-    "redis": @env("REDIS_URL", default="redis://localhost:6379")
+    "database": @env.DATABASE_URL,
+    "redis": @env.REDIS_URL(default="redis://localhost:6379")
 }
 
 // Go-style grouped declarations
 var (
-    API_URL = @env("API_URL", default="https://api.dev.com")
-    REPLICAS = @env("REPLICAS", default=1)
+    API_URL = @env.API_URL(default="https://api.dev.com")
+    REPLICAS = @env.REPLICAS(default=1)
     SERVICES = ["api", "worker"]
 )
 ```
@@ -267,7 +329,7 @@ buildAndTest: npm run build && npm test
 **Supported naming styles**:
 - `camelCase` - common in JavaScript/Java
 - `snake_case` - common in Python/Go
-- `PascalCase` - common for types/commands  
+- `PascalCase` - common for types/commands
 - `SCREAMING_SNAKE` - common for constants
 
 ### Duration Format
@@ -277,7 +339,7 @@ Duration literals use human-readable time units common in operations:
 ```opal
 // Simple durations
 var TIMEOUT = 30s           // 30 seconds
-var RETRY_DELAY = 5m        // 5 minutes  
+var RETRY_DELAY = 5m        // 5 minutes
 var DEPLOY_WINDOW = 2h      // 2 hours
 var RETENTION = 7d          // 7 days
 var BACKUP_CYCLE = 1w       // 1 week
@@ -293,12 +355,12 @@ var API_TIMEOUT = 1s500ms       // 1 second 500 milliseconds
 **Supported units** (in descending order):
 - `y` - years
 - `w` - weeks
-- `d` - days  
+- `d` - days
 - `h` - hours
 - `m` - minutes
 - `s` - seconds
 - `ms` - milliseconds
-- `us` - microseconds  
+- `us` - microseconds
 - `ns` - nanoseconds
 
 **Compound duration rules**:
@@ -354,20 +416,20 @@ Use dot notation for nested access:
 
 ```opal
 // Array access
-start-api: docker run -p @var(SERVICES.0):3000 app
-start-worker: docker run -p @var(SERVICES.1):3001 app
+start-api: docker run -p @var.SERVICES.0:3000 app
+start-worker: docker run -p @var.SERVICES.1:3001 app
 
-// Map access  
-connect: psql @var(CONFIG.database)
-cache: redis-cli -u @var(CONFIG.redis)
+// Map access
+connect: psql @var.CONFIG.database
+cache: redis-cli -u @var.CONFIG.redis
 
 // Wildcards expand to space-separated values
-list-services: echo "Services: @var(SERVICES.*)"    # "api worker ui"
+list-services: echo "Services: @var.SERVICES.*"    # "api worker ui"
 
 // All equivalent ways to access arrays
-@var(SERVICES.0)    # Dot notation
-@var(SERVICES[0])   # Bracket notation  
-@var(SERVICES.[0])  # Mixed notation
+@var.SERVICES.0    # Dot notation
+@var.SERVICES[0]   # Bracket notation
+@var.SERVICES.[0]  # Mixed notation
 ```
 
 ## Arithmetic and Assignment
@@ -391,7 +453,7 @@ var cpu_limit = base_cpu + (load_factor * peak_multiplier)
 
 **Supported operators**:
 - `+` - addition
-- `-` - subtraction  
+- `-` - subtraction
 - `*` - multiplication
 - `/` - division
 - `%` - modulo (remainder)
@@ -406,13 +468,13 @@ var cpu_limit = base_cpu + (load_factor * peak_multiplier)
 ```opal
 // Accumulation in deterministic loops
 var total_cost = 0
-for service in @var(SERVICES) {
-    total_cost += @var(SERVICE_COSTS[service])
+for service in @var.SERVICES {
+    total_cost += @var.SERVICE_COSTS[service]
 }
 
 // Resource scaling
 var replicas = 1
-replicas *= @var(ENVIRONMENTS).length  // multiply by environment count
+replicas *= @var.ENVIRONMENTS.length  // multiply by environment count
 replicas += 1                          // add monitoring replica
 
 // Batch processing
@@ -426,7 +488,7 @@ for batch in batches {
 **Supported assignment operators**:
 - `+=` - add and assign
 - `-=` - subtract and assign
-- `*=` - multiply and assign  
+- `*=` - multiply and assign
 - `/=` - divide and assign
 - `%=` - modulo and assign
 
@@ -435,7 +497,7 @@ for batch in batches {
 ```opal
 // Counting in deterministic loops
 var counter = 0
-for service in @var(SERVICES) {
+for service in @var.SERVICES {
     counter++
     echo "Processing service ${counter}: ${service}"
 }
@@ -462,13 +524,13 @@ var replicas = 3 * 2 + 1    // Plan: replicas = 7
 var timeout = 30 + (2 * 5)  // Plan: timeout = 40
 
 // Variable resolution then calculation
-var base = @env("BASE_REPLICAS", default=2)  // Resolves to 2
+var base = @env.BASE_REPLICAS(default=2)  // Resolves to 2
 var total = base * 3                         // Plan: total = 6
 ```
 
 **Type rules**:
 - `int` + `int` = `int`
-- `float` + `float` = `float`  
+- `float` + `float` = `float`
 - `int` + `float` = `float` (automatic promotion)
 - `duration` + `duration` = `duration`
 - Division by zero detected at plan time
@@ -500,30 +562,30 @@ Commands are defined using the `fun` keyword for reusable, parameterized blocks 
 fun deploy = kubectl apply -f k8s/
 fun hello = echo "Hello World!"
 
-// Parameterized one-liners  
-fun greet(name) = echo "Hello, @var(name)!"
+// Parameterized one-liners
+fun greet(name) = echo "Hello, @var.name!"
 
 // Multi-line block form
 fun build_module(module, target="dist") {
-    @workdir(@var(module)) {
+    @workdir(@var.module) {
         npm ci
-        npm run build --output=@var(target)
+        npm run build --output=@var.target
     }
 }
 
-// Metaprogramming command generation
-for module in ["api", "worker"] {
-    fun @var(module)_test = @workdir(@var(module)) { go test ./... }
+// Template function for reuse
+fun test_module(module) {
+    @workdir(@var.module) { go test ./... }
 }
 
 // Calling parameterized commands
 build_all: {
-    @cmd(build_module, module="frontend", target="public")
-    @cmd(build_module, module="backend")  // uses default target="dist"
+    @cmd.build_module(module="frontend", target="public")
+    @cmd.build_module(module="backend")  // uses default target="dist"
 }
 ```
 
-**Plan-time expansion**: `fun` definitions are **macros** that expand at plan-time when called via `@cmd()`. All parameters must be resolvable at plan-time using value decorators.
+**Plan-time expansion**: `fun` definitions are **macros** that expand at plan-time when called via `@cmd.function_name()`. All parameters must be resolvable at plan-time using value decorators.
 
 **DAG constraint**: Command calls must form a directed acyclic graph. Recursive calls or cycles result in plan generation errors.
 
@@ -537,7 +599,7 @@ build_all: {
 
 ```opal
 deploy-all: {
-    for service in @var(SERVICES) {
+    for service in @var.SERVICES {
         echo "Deploying ${service}"
         kubectl apply -f k8s/${service}/
         kubectl rollout status deployment/${service}
@@ -552,13 +614,13 @@ deploy-all: {
 // └─ ... (and so on)
 ```
 
-For loops unroll at plan time into a known number of steps. The collection (`@var(SERVICES)`) is resolved during planning, and each item creates a separate step in the canonical order. Empty collections produce zero steps.
+For loops unroll at plan time into a known number of steps. The collection (`@var.SERVICES`) is resolved during planning, and each item creates a separate step in the canonical order. Empty collections produce zero steps.
 
 ### Conditionals
 
 ```opal
 deploy: {
-    if @var(ENV) == "production" {
+    if @var.ENV == "production" {
         kubectl apply -f k8s/prod/
         kubectl scale --replicas=3 deployment/app
     } else {
@@ -574,13 +636,13 @@ Conditionals are evaluated at plan time using resolved variable values. Only the
 
 ```opal
 deploy: {
-    when @var(ENV) {
+    when @var.ENV {
         "production" -> {
             kubectl apply -f k8s/prod/
             kubectl scale --replicas=3 deployment/app
         }
         "staging" -> kubectl apply -f k8s/staging/
-        else -> echo "Unknown environment: @var(ENV)"
+        else -> echo "Unknown environment: @var.ENV"
     }
 }
 ```
@@ -620,16 +682,16 @@ var status = "pending"
 try {
     // Can READ outer scope values
     echo "Starting with counter=${counter}"  // counter = 0 ✓
-    
+
     // Can MODIFY local copies
     counter++           // Local counter = 1
     status = "running"  // Local status = "running"
-    
+
     kubectl apply -f k8s/
 } catch {
-    // Can READ outer scope values  
+    // Can READ outer scope values
     echo "Failed with counter=${counter}"    // counter = 0 ✓
-    
+
     // Can MODIFY local copies
     counter += 5        // Local counter = 5
     status = "failed"   // Local status = "failed"
@@ -648,11 +710,11 @@ var result = ""
 @retry(attempts=3) {
     // Can READ outer scope
     echo "Base attempts: ${attempts}"  // attempts = 0 ✓
-    
+
     // Can MODIFY local copies
     attempts++         // Local attempts = 1, 2, 3...
     result = "done"    // Local result = "done"
-    
+
     kubectl apply -f k8s/
 }
 
@@ -670,13 +732,13 @@ Inject values inline:
 
 ```opal
 // Environment variables
-start: node app.js --port @env("PORT", default=3000)
+start: node app.js --port @env.PORT(default=3000)
 
-// Opal variables  
-scale: kubectl scale --replicas=@var(REPLICAS) deployment/app
+// Opal variables
+scale: kubectl scale --replicas=@var.REPLICAS deployment/app
 
 // Expensive lookups (resolved lazily)
-deploy: kubectl apply --token=@aws.secret("api-token")
+deploy: kubectl apply --token=@aws.secret.api_token
 config: curl -H "Authorization: @http.get('https://auth.com/token')"
 ```
 
@@ -705,7 +767,7 @@ services: @parallel {
 }
 
 // Command references
-deploy: @cmd(build) && @cmd(test) && @cmd(apply)
+deploy: @cmd.build && @cmd.test && @cmd.apply
 ```
 
 ## Plans: Three Execution Modes
@@ -778,7 +840,7 @@ Contract Hash: sha256:abc123...
 # Direct execution
 opal deploy
 
-# Contract-verified execution  
+# Contract-verified execution
 opal run --plan prod.plan
 ```
 
@@ -790,16 +852,16 @@ opal run --plan prod.plan
 
 **Security by default**: All values appear as `<N:hashAlgo:hex>` format (e.g., `<32:sha256:a1b2c3d4>`).
 
-> **Placeholder Format**  
-> `<N:hashAlgo:hex>` where N=character count, hashAlgo=algorithm, hex=truncated hash.  
-> Examples: `<32:sha256:a1b2c3>`, `<8:sha256:x7y8z9>`.  
+> **Placeholder Format**
+> `<N:hashAlgo:hex>` where N=character count, hashAlgo=algorithm, hex=truncated hash.
+> Examples: `<32:sha256:a1b2c3>`, `<8:sha256:x7y8z9>`.
 > Future-proofs against algorithm changes and aids debugging.
 
 **Plan hash scope**: Ordered steps + arguments (with `<len:hash>` placeholders) + operator graph + resolution timing flags; excludes ephemeral run IDs/logs.
 
-> **Security Invariant**  
-> Raw secrets never appear in plans or logs, only `<len:hash>` placeholders.  
-> This applies to all value decorators: `@env()`, `@var()`, `@aws.secret()`, etc.  
+> **Security Invariant**
+> Raw secrets never appear in plans or logs, only `<len:hash>` placeholders.
+> This applies to all value decorators: `@env.KEY`, `@var.NAME`, `@aws.secret.name`, etc.
 > Compliance teams can review plans with confidence.
 
 ## Contract Verification
@@ -815,11 +877,11 @@ opal run --plan prod.plan
 
 **Contract verification process**:
 1. **Fresh resolution**: Resolve all value decorators with current infrastructure state
-2. **Hash comparison**: Compare newly resolved value hashes with plan contract hashes  
+2. **Hash comparison**: Compare newly resolved value hashes with plan contract hashes
 3. **Path verification**: Ensure execution path matches contracted plan structure
 4. **Execute or bail**: Run contracted plan if hashes match, otherwise fail with diff
 
-**Why this works**: The resolved plan contains `<length:hash>` placeholders. At execution time, opal resolves values fresh and compares their hashes. If `@env("REPLICAS")` was `3` during planning but is now `5`, the hashes won't match.
+**Why this works**: The resolved plan contains `<length:hash>` placeholders. At execution time, opal resolves values fresh and compares their hashes. If `@env.REPLICAS` was `3` during planning but is now `5`, the hashes won't match.
 
 ### Verification Outcomes
 
@@ -833,7 +895,7 @@ opal run --plan prod.plan
 ```
 ERROR: Contract verification failed
 
-Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app  
+Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app
 Actual:   kubectl scale --replicas=<1:sha256:def456> deployment/app
 
 Variable REPLICAS changed: was 3, now 5
@@ -843,7 +905,7 @@ Variable REPLICAS changed: was 3, now 5
 
 **Contract violation causes**:
 - `source_changed`: Source files modified since plan generation
-- `env_changed`: Environment variables modified since plan generation  
+- `env_changed`: Environment variables modified since plan generation
 - `infra_drift`: Infrastructure state changed since plan generation
 
 ### Direct Execution (No Contract)
@@ -980,7 +1042,7 @@ Real operations involve plan generation and execution at different times. Opal's
 # 2:00 PM - Generate plan during change window planning
 opal deploy --dry-run --resolve > evening-deploy.plan
 
-# 5:00 PM - Execute plan during maintenance window  
+# 5:00 PM - Execute plan during maintenance window
 opal run --plan evening-deploy.plan
 ```
 
@@ -1010,7 +1072,7 @@ Source file modified since plan generation.
 ```
 ERROR: Infrastructure state changed
 
-Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app  
+Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app
 Current:  No deployment/app found
 
 Infrastructure changed since plan generation.
@@ -1042,15 +1104,15 @@ var DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v1")
 var API_KEY = @crypto.generate_key(type="ed25519", regen_key="api-key-v3")
 
 deploy: {
-    kubectl create secret generic db --from-literal=password=@var(DB_PASS)
-    kubectl create secret generic api --from-literal=key=@var(API_KEY)  
+    kubectl create secret generic db --from-literal=password=@var.DB_PASS
+    kubectl create secret generic api --from-literal=key=@var.API_KEY
 }
 
 // Rotate secrets by changing regeneration key
 rotate-secrets: {
-    // Change v1 → v2 to get new password  
+    // Change v1 → v2 to get new password
     var NEW_DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v2")
-    kubectl patch secret db --patch='{"data":{"password":"'$(echo -n @var(NEW_DB_PASS) | base64)'"}}'
+    kubectl patch secret db --patch='{"data":{"password":"'$(echo -n @var.NEW_DB_PASS) | base64)'"}}'
 }
 ```
 
@@ -1069,7 +1131,7 @@ kubectl create secret generic api --from-literal=key=¹<64:sha256:def456>
 
 **PSE vs traditional state**:
 - **Scoped**: Each plan contains its own PSE, no shared state
-- **Immutable**: Never changes after plan creation, no updates or migrations  
+- **Immutable**: Never changes after plan creation, no updates or migrations
 - **Self-contained**: Plan file includes everything needed, no external storage
 - **Minimal**: Contains only cryptographic entropy, not infrastructure tracking
 - **Contract-aligned**: Enables deterministic execution within resolved plans
@@ -1106,15 +1168,15 @@ This verification model gives you the determinism of resolved plans with safety 
 Independent expensive operations resolve concurrently:
 
 ```opal
-var CLUSTER = @env("KUBE_CLUSTER", default="minikube")
-var DB_HOST = @aws.secret("${CLUSTER}-db-host")  
+var CLUSTER = @env.KUBE_CLUSTER(default="minikube")
+var DB_HOST = @aws.secret("${CLUSTER}-db-host")
 var API_KEY = @http.get("https://keygen.com/api/new")
 
 deploy: {
-    when @var(CLUSTER) {
+    when @var.CLUSTER {
         "production" -> {
-            kubectl apply -f k8s/prod/ --server=@var(DB_HOST)
-            kubectl create secret --api-key=@var(API_KEY)
+            kubectl apply -f k8s/prod/ --server=@var.DB_HOST
+            kubectl create secret --api-key=@var.API_KEY
         }
         else -> kubectl apply -f k8s/dev/
     }
@@ -1122,7 +1184,7 @@ deploy: {
 ```
 
 **Resolution DAG**:
-- `@env("KUBE_CLUSTER")` resolves first (needed for conditional)
+- `@env.KUBE_CLUSTER` resolves first (needed for conditional)
 - `@aws.secret()` and `@http.get()` resolve in parallel
 - Unused expensive operations in dev branch never execute
 
@@ -1136,7 +1198,7 @@ opal deploy
 # Creates resources, shows what was done
 
 # Second run (no changes)
-opal deploy  
+opal deploy
 # Shows "no-op" for existing resources
 
 # Third run (environment changed)
@@ -1185,22 +1247,22 @@ Opal transforms operations from "pray and deploy" to "plan, review, execute with
 
 ```opal
 var (
-    ENV = @env("ENVIRONMENT", default="development")
-    VERSION = @env("APP_VERSION", default="latest")
-    REPLICAS = @env("REPLICAS", default=1)
+    ENV = @env.ENVIRONMENT(default="development")
+    VERSION = @env.APP_VERSION(default="latest")
+    REPLICAS = @env.REPLICAS(default=1)
     SERVICES = ["api", "worker", "ui"]
 )
 
 deploy: {
-    echo "Deploying version @var(VERSION) to @var(ENV)"
-    
-    when @var(ENV) {
+    echo "Deploying version @var.VERSION to @var.ENV"
+
+    when @var.ENV {
         "production" -> {
-            for service in @var(SERVICES) {
+            for service in @var.SERVICES {
                 @retry(attempts=3, delay=10s) {
                     kubectl apply -f k8s/prod/${service}/
-                    kubectl set image deployment/${service} app=@var(VERSION)
-                    kubectl scale --replicas=@var(REPLICAS) deployment/${service}
+                    kubectl set image deployment/${service} app=@var.VERSION
+                    kubectl scale --replicas=@var.REPLICAS deployment/${service}
                     kubectl rollout status deployment/${service} --timeout=300s
                 }
             }
@@ -1208,7 +1270,7 @@ deploy: {
         "staging" -> {
             @timeout(5m) {
                 kubectl apply -f k8s/staging/
-                kubectl set image deployment/app app=@var(VERSION)
+                kubectl set image deployment/app app=@var.VERSION
                 kubectl rollout status deployment/app
             }
         }
@@ -1217,7 +1279,7 @@ deploy: {
             kubectl apply -f k8s/dev/
         }
     }
-    
+
     echo "Deployment complete"
 }
 ```
@@ -1225,41 +1287,41 @@ deploy: {
 ### Database Migration with Rollback
 
 ```opal
-var DB_URL = @env("DATABASE_URL")
-var BACKUP_BUCKET = @env("BACKUP_BUCKET", default="db-backups")
+var DB_URL = @env.DATABASE_URL
+var BACKUP_BUCKET = @env.BACKUP_BUCKET(default="db-backups")
 
 migrate: {
     try {
         echo "Starting database migration"
-        
+
         @timeout(30m) {
             # Backup first
-            pg_dump @var(DB_URL) | gzip > backup-$(date +%Y%m%d-%H%M%S).sql.gz
-            aws s3 cp backup-*.sql.gz s3://@var(BACKUP_BUCKET)/
-            
+            pg_dump @var.DB_URL | gzip > backup-$(date +%Y%m%d-%H%M%S).sql.gz
+            aws s3 cp backup-*.sql.gz s3://@var.BACKUP_BUCKET/
+
             # Run migration
             @retry(attempts=2, delay=5s) {
-                psql @var(DB_URL) -f migrations/001-add-users.sql
-                psql @var(DB_URL) -f migrations/002-add-indexes.sql
+                psql @var.DB_URL -f migrations/001-add-users.sql
+                psql @var.DB_URL -f migrations/002-add-indexes.sql
             }
-            
+
             # Verify
-            psql @var(DB_URL) -c "SELECT COUNT(*) FROM users;"
+            psql @var.DB_URL -c "SELECT COUNT(*) FROM users;"
         }
-        
+
         echo "Migration completed successfully"
-        
+
     } catch {
         echo "Migration failed, restoring from backup"
-        
+
         # Find latest backup
-        LATEST_BACKUP=$(aws s3 ls s3://@var(BACKUP_BUCKET)/ | tail -1 | awk '{print $4}')
-        
+        LATEST_BACKUP=$(aws s3 ls s3://@var.BACKUP_BUCKET/ | tail -1 | awk '{print $4}')
+
         # Restore
-        aws s3 cp s3://@var(BACKUP_BUCKET)/${LATEST_BACKUP} - | gunzip | psql @var(DB_URL)
-        
+        aws s3 cp s3://@var.BACKUP_BUCKET/${LATEST_BACKUP} - | gunzip | psql @var.DB_URL
+
         echo "Database restored from backup"
-        
+
     } finally {
         # Cleanup local backup files
         rm -f backup-*.sql.gz
@@ -1267,3 +1329,4 @@ migrate: {
     }
 }
 ```
+

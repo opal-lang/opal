@@ -5,24 +5,22 @@ var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')
 var MODULES = ["cli", "runtime"]
 
 # =============================================================================
-# 📦 MODULE COMMANDS - Generated via Metaprogramming
+# 📦 MODULE TEMPLATE FUNCTIONS
 # =============================================================================
 
-for module in @var(MODULES) {
-    fun @var(module)_test = @workdir(@var(module)) { 
-        @log("🧪 Testing @var(module) module...")
-        go test -v ./... 
-    }
-    
-    fun @var(module)_lint = @workdir(@var(module)) { 
-        @log("🔍 Linting @var(module) module...")
-        command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
-    }
-    
-    fun @var(module)_format = @workdir(@var(module)) { 
-        @log("📝 Formatting @var(module) module...")
-        command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-    }
+fun test_module(module) = @workdir(@var.module) {
+    @log("🧪 Testing @var.module module...")
+    go test -v ./...
+}
+
+fun lint_module(module) = @workdir(@var.module) {
+    @log("🔍 Linting @var.module module...")
+    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+}
+
+fun format_module(module) = @workdir(@var.module) {
+    @log("📝 Formatting @var.module module...")
+    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
 }
 
 # =============================================================================
@@ -31,8 +29,8 @@ for module in @var(MODULES) {
 
 fun test {
     @log("🧪 Testing all modules...")
-    for module in @var(MODULES) {
-        @cmd(@var(module)_test)
+    for module in @var.MODULES {
+        @cmd.test_module(module=@var.module)
     }
     @log("✅ All tests passed!")
 }
@@ -40,8 +38,8 @@ fun test {
 fun format {
     @log("📝 Formatting all code...")
     @parallel {
-        for module in @var(MODULES) {
-            @cmd(@var(module)_format)
+        for module in @var.MODULES {
+            @cmd.format_module(module=@var.module)
         }
     }
     @log("✅ All code formatted!")
@@ -50,8 +48,8 @@ fun format {
 fun lint {
     @log("🔍 Running linters...")
     @parallel {
-        for module in @var(MODULES) {
-            @cmd(@var(module)_lint)
+        for module in @var.MODULES {
+            @cmd.lint_module(module=@var.module)
         }
     }
     @log("✅ Linting complete!")
@@ -60,35 +58,35 @@ fun lint {
 fun clean {
     @log("🧹 Cleaning artifacts...")
     @parallel {
-        for module in @var(MODULES) {
-            @workdir(@var(module)) { go clean -cache -testcache }
+        for module in @var.MODULES {
+            @workdir(@var.module) { go clean -cache -testcache }
         }
     }
-    rm -f @var(PROJECT) coverage.out coverage.html
+    rm -f @var.PROJECT coverage.out coverage.html
     @log("✅ Cleanup complete")
 }
 
 fun build {
-    @log("🔨 Building @var(PROJECT) CLI...")
-    @cmd(test)
-    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var(VERSION)" -o ../opal . }
+    @log("🔨 Building @var.PROJECT CLI...")
+    @cmd.test
+    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var.VERSION" -o ../opal . }
     @log("✅ Built: ./opal")
 }
 
 fun ci {
     @log("🔄 Clean slate CI workflow...")
-    @cmd(format)
-    @cmd(lint) 
-    @cmd(test)
+    @cmd.format
+    @cmd.lint 
+    @cmd.test
     @log("✅ CI complete!")
 }
 
-fun info = @log("📊 @var(PROJECT) Clean Slate Status
+fun info = @log("📊 @var.PROJECT Clean Slate Status
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Project: @var(PROJECT) (Plan-Verify-Execute Engine)
-Version: @var(VERSION)
+Project: @var.PROJECT (Plan-Verify-Execute Engine)
+Version: @var.VERSION
 
-Current Modules: @var(MODULES)
+Current Modules: @var.MODULES
   cli/        - Command-line interface
   runtime/    - Lexer v2 (high-performance tokenization)
   docs/       - Architecture and specification

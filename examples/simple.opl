@@ -22,9 +22,9 @@ fun test_logs {
 }
 
 # Parameterized command example
-fun greet(name, greeting="Hello") = echo "@var(greeting), @var(name)!"
+fun greet(name, greeting="Hello") = echo "@var.greeting, @var.name!"
 
 fun demo {
-    @cmd(greet, name="World")
-    @cmd(greet, name="Opal", greeting="Welcome")
+    @cmd.greet(name="World")
+    @cmd.greet(name="Opal", greeting="Welcome")
 }
