@@ -1,0 +1,129 @@
+name: Corpus Update PR
+
+on:
+  workflow_run:
+    workflows: ["Nightly Fuzzing", "Weekly Deep Fuzzing"]
+    types:
+      - completed
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25.x'
+
+jobs:
+  create-corpus-pr:
+    name: Create PR for New Corpus Files
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download corpus artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fuzz-corpus-${{ github.event.workflow_run.id }}
+          path: ./artifacts
+        continue-on-error: true
+
+      - name: Extract and check for new corpus files
+        id: check
+        run: |
+          if [ ! -f ./artifacts/corpus-*.tgz ]; then
+            echo "No corpus artifact found"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract corpus
+          tar xzf ./artifacts/corpus-*.tgz
+          
+          # Check if there are new files
+          git add runtime/parser/testdata/fuzz/
+          if git diff --cached --quiet; then
+            echo "No new corpus files"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "New corpus files detected"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            
+            # Count new files
+            NEW_COUNT=$(git diff --cached --name-only | wc -l)
+            echo "new_count=$NEW_COUNT" >> $GITHUB_OUTPUT
+            
+            # Get file list
+            FILES=$(git diff --cached --name-only | tr '\n' ' ')
+            echo "files=$FILES" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            chore: update fuzz corpus with ${{ steps.check.outputs.new_count }} new cases
+            
+            Discovered by ${{ github.event.workflow_run.name }} workflow.
+            
+            New corpus files:
+            ${{ steps.check.outputs.files }}
+            
+            These files represent new interesting edge cases found during fuzzing.
+            Review them to ensure they're valid test cases, then merge to add them
+            to the permanent regression test suite.
+          branch: chore/fuzz-corpus-${{ github.event.workflow_run.id }}
+          delete-branch: true
+          title: "chore: update fuzz corpus with ${{ steps.check.outputs.new_count }} new cases"
+          body: |
+            ## Fuzz Corpus Update
+            
+            **Source:** ${{ github.event.workflow_run.name }}
+            **Run ID:** ${{ github.event.workflow_run.id }}
+            **Date:** ${{ github.event.workflow_run.created_at }}
+            
+            ### New Files
+            
+            This PR adds **${{ steps.check.outputs.new_count }}** new corpus files:
+            
+            ```
+            ${{ steps.check.outputs.files }}
+            ```
+            
+            ### What to Review
+            
+            1. **Check file sizes** - Should be small (< 1KB each typically)
+            2. **Verify they're valid inputs** - Not corrupted or junk
+            3. **Confirm they add value** - Represent real edge cases
+            
+            ### Corpus Status
+            
+            - Current corpus size: ~32KB
+            - Target: Keep under 1MB total
+            - These files will run on every PR as regression tests
+            
+            ### Actions
+            
+            - ✅ **Merge** - Add these cases to permanent test suite
+            - ❌ **Close** - Discard if not valuable
+            
+            ---
+            
+            *This PR was automatically created by the fuzzing infrastructure.*
+            *See `.github/workflows/fuzz-corpus-pr.yml` for details.*
+          labels: |
+            chore
+            fuzzing
+            automated
+          assignees: ${{ github.repository_owner }}
+
+      - name: Comment on workflow run
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          echo "::notice title=Corpus PR Created::Created PR with ${{ steps.check.outputs.new_count }} new corpus files from ${{ github.event.workflow_run.name }}"

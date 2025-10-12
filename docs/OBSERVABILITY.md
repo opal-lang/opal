@@ -1,12 +1,33 @@
+---
+title: "Opal Observability"
+audience: "Operators & DevOps Engineers"
+summary: "Tracing, artifacts, and debugging for production deployments"
+---
+
 # Opal Observability
 
 **Making "what ran in prod" trivial**
+
+**Audience**: Operators, DevOps engineers, and SREs running Opal in production.
 
 The dual-end story is the clincher: **safe to review before** and **observable after**.
 
 ## Design Goal
 
 Answer "what ran, where it got to, and what changed" in seconds when prod is spicy.
+
+## Integration Points
+
+Opal's observability model connects directly to the architecture:
+
+- **Run ID**: Unique identifier for each execution
+- **Plan Hash**: From [ARCHITECTURE.md](ARCHITECTURE.md) contract verification - ensures reviewed plan matches execution
+- **Trace IDs**: Map to plan steps for debugging
+- **Artifacts**: Resolved plans, traces, and summaries stored per run
+
+**When to use:**
+- **Ops**: Post-execution debugging, audit trails, compliance
+- **Dev**: Understanding execution flow, performance analysis
 
 ## Minimal Observability Design
 
@@ -60,16 +81,23 @@ opal runs tail run-… --step main/verify/healthz
 ## OpenTelemetry Integration
 
 ### Trace Mapping
+
 - **trace_id**: `hash(plan-hash + env + target)`
 - **span**: Each decorator/step (`kind=INTERNAL`)
 - **attributes**: `opal.env`, `opal.target`, `opal.step_path`, `exit_code`, `runner.id`
 - **events**: `retry {n, exit_code}`, `stderr_tail`
 - **status**: OK/ERROR with message
 
+**Trace correlation**: The `plan-hash` in trace_id enables:
+- Verify which reviewed plan actually executed
+- Correlate runs with same plan across environments
+- Detect when plan changed between runs
+
 ### Benefits
 - View live in Jaeger/Tempo **and** keep offline HTML per run
 - Correlate deployment spans with application traces (same trace_id)
 - Standard observability tooling integration
+- Link traces back to reviewed execution contracts
 
 ## Typical Production Incident Workflow
 
@@ -139,8 +167,8 @@ opal verify plan.json --sig ...   # Confirm approved plan executed
     }
   ],
   "resolved_values": {
-    "1": "@env(API_TOKEN) → <redacted:32chars>",
-    "2": "@var(REPLICAS) → 3"
+    "1": "@env.API_TOKEN → <redacted:32chars>",
+    "2": "@var.REPLICAS → 3"
   }
 }
 ```
@@ -182,11 +210,11 @@ opal automatically tracks all value decorator and execution decorator usage for 
 ```bash
 # Complete decorator audit - see all value decorator and execution decorator usage
 opal runs audit-decorators --env prod --since 24h
-# Shows: @env(AWS_SECRET_KEY) at deploy.opl:23, @shell("kubectl apply") at deploy.opl:45
+# Shows: @env.AWS_SECRET_KEY at deploy.opl:23, @shell("kubectl apply") at deploy.opl:45
 
 # Security-focused audit - track sensitive data access  
 opal runs audit-security --env prod --since 24h
-# Shows: @env(SECRET_*), @var(PROD_*), @file(*.key), @shell("sudo *")
+# Shows: @env.SECRET_*, @var.PROD_*, @file.*.key, @shell("sudo *")
 
 # Performance audit - find bottlenecks
 opal runs audit-performance --env prod --since 24h --slowest 10
@@ -198,7 +226,7 @@ opal runs export-audit --env prod --format soc2 --month 2025-01
 ```
 
 #### Built-in Security & Audit Features
-- **Complete decorator tracking**: Every `@env()`, `@var()`, `@file()`, `@shell()`, `@http()` value decorator and execution decorator call logged
+- **Complete decorator tracking**: Every `@env.NAME`, `@var.NAME`, `@file.NAME`, `@shell()`, `@http()` value decorator and execution decorator call logged
 - **Security pattern detection**: Automatic flagging of sensitive value decorator usage
 - **Access pattern analysis**: Detect unusual value decorator and execution decorator combinations or frequencies  
 - **Performance bottleneck identification**: Find slow value decorators and execution decorators across all runs

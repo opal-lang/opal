@@ -1,0 +1,17 @@
+var ENV = @env.ENVIRONMENT
+var REPLICAS = @env.REPLICAS
+
+fun deploy {
+    @retry(times=5, delay=2s, backoff="exponential") {
+        kubectl apply -f k8s/@var.ENV/deployment.yaml
+        kubectl apply -f k8s/@var.ENV/service.yaml
+    }
+    
+    kubectl rollout status deployment/app --timeout=5m
+    
+    @parallel(maxConcurrency=3) {
+        kubectl scale deployment/app --replicas=@var.REPLICAS
+        kubectl annotate deployment/app deployed-at="$(date)"
+        echo "Deployment to @var.ENV complete"
+    }
+}

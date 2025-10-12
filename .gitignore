@@ -97,6 +97,9 @@ cpu.prof
 mem.prof
 *.prof
 
+# Temporary debugging files (always prefix with DELETE_ME_)
+DELETE_ME_*
+
 # Test Opal files (temporary test files)
 test_*.opl
 simple_*.opl

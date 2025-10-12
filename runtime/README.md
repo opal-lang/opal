@@ -39,9 +39,8 @@ This module contains the runtime infrastructure that powers opal execution:
 
 ### Decorator System
 The runtime provides a unified decorator system where:
-- **Function decorators** expand inline (e.g., `@var(name)`, `@cmd(target)`)
-- **Block decorators** wrap command blocks (e.g., `@timeout{}`, `@workdir{}`)
-- **Pattern decorators** provide conditional logic (e.g., `@when{}`, `@try{}`)
+- **Value decorators** expand inline (e.g., `@var.name`, `@env.PORT`)
+- **Execution decorators** wrap command blocks (e.g., `@timeout{}`, `@retry{}`, `@parallel{}`)
 
 ## Usage
 

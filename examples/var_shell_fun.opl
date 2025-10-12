@@ -1,0 +1,15 @@
+# Variable declarations, shell commands, and function definitions
+
+var env = "production"
+var replicas = 3
+
+echo "Starting deployment"
+kubectl get pods
+
+fun deploy(service) {
+  echo "Deploying service"
+  kubectl apply -f deployment.yaml
+}
+
+echo "Deployment complete"
+kubectl get deployments

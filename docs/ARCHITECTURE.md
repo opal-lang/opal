@@ -1,16 +1,66 @@
+---
+title: "Opal Architecture"
+audience: "Core Developers & Contributors"
+summary: "System design and implementation of the plan-verify-execute model"
+---
+
 # Opal Architecture
 
-**Implementation requirements for building a Plan-Verify-Execute engine**
+**Implementation requirements for the plan-verify-execute model**
 
-## Design Philosophy
+**Audience**: Core developers, plugin authors, and contributors working on the Opal runtime, parser, or execution engine.
 
-Build a system where resolved plans are execution contracts that get verified before running. This creates a universal framework for safe automation across any domain where mistakes are expensive.
+**See also**: [SPECIFICATION.md](SPECIFICATION.md) for user-facing language semantics and guarantees.
 
-> **Domain-agnostic design**: Opal itself is domain-agnostic. It becomes useful in a given field through the decorator sets provided. The DevOps examples here use `@shell` and `@kubectl`, but the same rules apply equally to data, science, security, or any other domain.
+## Target Scope
 
-The key insight: instead of managing state like traditional tools, we verify contracts. Plans aren't just previews, they're promises about what will execute. This pattern works for infrastructure, data pipelines, security automation, scientific computing, and any domain requiring predictable, auditable automation.
+Operations and developer task automation - the gap between "infrastructure is up" and "services are reliably operated."
 
-**Halting and determinism guarantees**: Opal is designed as a halting, deterministic automation engine. All plans are guaranteed to terminate with predictable, reproducible results across any domain.
+**Why this scope?** Operations and task automation is the immediate need - reliable deployment, scaling, rollback, and operational workflows.
+
+## Core Requirements
+
+These principles implement the guarantees defined in [SPECIFICATION.md](SPECIFICATION.md):
+
+- **Deterministic planning**: Same inputs → identical plan
+- **Contract verification**: Detect environment changes between plan and execute
+- **Fail-fast**: Errors at plan-time, not execution
+- **Halting guarantee**: All plans terminate with predictable results
+
+### Concept Mapping
+
+| Concept | Purpose | Defined In | Tested In |
+|---------|---------|------------|-----------|
+| **Plans** | Execution contracts | [SPECIFICATION.md](SPECIFICATION.md#plans-three-execution-modes) | [TESTING_STRATEGY.md](TESTING_STRATEGY.md#golden-plan-tests) |
+| **Decorators** | Value injection & execution control | [SPECIFICATION.md](SPECIFICATION.md#decorator-syntax) | [TESTING_STRATEGY.md](TESTING_STRATEGY.md#decorator-conformance-tests) |
+| **Contract Verification** | Hash-based change detection | [SPECIFICATION.md](SPECIFICATION.md#contract-verification) | [TESTING_STRATEGY.md](TESTING_STRATEGY.md#contract-verification-tests) |
+| **Event-Based Parsing** | Zero-copy plan generation | [AST_DESIGN.md](AST_DESIGN.md#event-based-plan-generation) | [TESTING_STRATEGY.md](TESTING_STRATEGY.md#parser-tests) |
+| **Dual-Path Architecture** | Execution vs tooling | This document | [AST_DESIGN.md](AST_DESIGN.md#dual-path-pipeline) |
+| **Observability** | Run tracking & debugging | [OBSERVABILITY.md](OBSERVABILITY.md) | [TESTING_STRATEGY.md](TESTING_STRATEGY.md#observability-tests) |
+
+## Architectural Philosophy
+
+**Stateless, reality-driven execution:**
+
+> Opal's architecture treats *reality* as its database.
+
+Traditional IaC tools maintain state files to track "what should exist." Opal takes a different approach:
+
+1. **Query reality** - Decorators check actual current state (API calls, file checks, etc.)
+2. **Generate plan** - Based on reality + user intent, create execution contract
+3. **Freeze the contract** - Plan becomes immutable with hash-based verification
+4. **Execute** - Perform work, verify contract still valid
+
+**Why stateless works:**
+
+- Reality is the source of truth, not a state file
+- Re-query on every run - always current
+- No state drift, no state locking, no state corruption
+- Mix Opal with other tools freely - no coordination needed
+
+**Plans as contracts:**
+
+Plans aren't previews - they're immutable execution contracts. Hash-based verification detects if reality changed between plan and execute, failing fast instead of executing against stale assumptions.
 
 ## The Big Picture
 
@@ -33,7 +83,7 @@ Opal has two distinct layers that work together:
 **Work execution** happens through decorators at runtime:
 - `npm run build` → `@shell("npm run build")`
 - `@retry(3) { ... }` → execution decorator with block
-- `@var(NAME)` → value decorator for interpolation
+- `@var.NAME` → value decorator for interpolation
 
 ## Everything is a Decorator (For Work Execution)
 
@@ -42,9 +92,9 @@ The core architectural principle: **every operation that performs work** becomes
 This means metaprogramming constructs like `for`, `if`, `when` are **not** decorators - they're language constructs that decide what work gets done. The actual work is always performed by decorators.
 
 **Value decorators** inject values inline:
-- `@env("PORT")` pulls environment variables
-- `@var(REPLICAS)` references script variables  
-- `@aws.secret("api-key")` fetches from AWS (expensive)
+- `@env.PORT` pulls environment variables
+- `@var.REPLICAS` references script variables  
+- `@aws.secret.api_key` fetches from AWS (expensive)
 
 **Execution decorators** run commands:
 - `@shell("npm run build")` executes shell commands
@@ -83,6 +133,114 @@ Runtime Layer (Work Execution):
 ```
 
 **Key insight**: `try/catch` is a metaprogramming construct (not a decorator) that defines deterministic error handling paths. Unlike `for`/`if`/`when` which resolve to a single path at plan-time, `try/catch` creates multiple **known paths** where execution selects which one based on actual results (exceptions). The plan includes **all possible paths** through try/catch blocks.
+
+## Dual-Path Architecture: Execution vs Tooling
+
+Opal's parser produces a stream of events that can be consumed in two different ways:
+
+### Path 1: Events → Plan (Execution)
+
+For **runtime execution**, the interpreter consumes events directly to generate execution plans:
+
+```
+Source → Lexer → Parser → Events → Interpreter → Plan → Execute
+                          ^^^^^^^^
+                     No AST construction!
+```
+
+**Use cases:**
+- CLI execution: `opal deploy production`
+- Script execution: `opal run build.opl`
+- CI/CD pipelines
+- Automated workflows
+
+**Benefits:**
+- Fast plan generation
+- Zero AST allocation overhead
+- Natural branch pruning (skip unused code paths)
+- Minimal memory footprint
+
+### Path 2: Events → AST (Tooling)
+
+For **development tooling**, events are materialized into a typed AST:
+
+```
+Source → Lexer → Parser → Events → AST Builder → Typed AST
+                          ^^^^^^^^
+                     Lazy construction
+```
+
+**Use cases:**
+- LSP (Language Server Protocol): go-to-definition, find references, hover
+- Code formatters: preserve comments and whitespace
+- Linters: static analysis, style checking
+- Documentation generators: extract function signatures
+- Refactoring tools: rename, extract function
+
+**Benefits:**
+- Strongly typed node access
+- Parent/child relationships
+- Symbol table construction
+- Semantic analysis
+- Source location mapping
+
+### When to Use Each Path
+
+| Feature | Execution Path | Tooling Path |
+|---------|---------------|--------------|
+| **Memory** | Events only | Events + AST |
+| **Use case** | Run commands | Analyze code |
+| **Construction** | Never builds AST | Lazy AST from events |
+| **Optimization** | Branch pruning | Full tree |
+
+**Key insight**: The AST is **optional**. For execution, we never build it. For tooling, we build it lazily only when needed. This dual-path design gives us both speed (for execution) and rich analysis (for development).
+
+**Implementation details**: See [AST_DESIGN.md](AST_DESIGN.md) for event-based parsing, zero-copy pipelines, and tooling integration.
+
+## Plan Generation Process
+
+Opal generates execution plans through a three-phase pipeline:
+
+```
+Source → Parse → Plan → Execute
+         ↓       ↓       ↓
+      Events  Contract  Work
+```
+
+**Phase 1: Parse** - Source code becomes parser events (no AST for execution path)
+**Phase 2: Plan** - Events become deterministic execution contract with hash verification
+**Phase 3: Execute** - Contract-verified execution performs the actual work
+
+### Key Mechanisms
+
+**Branch pruning**: Conditionals (`if`/`when`) evaluate at plan-time, only selected branch enters plan
+```opal
+when @var.ENV {
+    "production" -> kubectl apply -f k8s/prod/  # Only this if ENV="production"
+    "staging" -> kubectl apply -f k8s/staging/  # Pruned
+}
+```
+
+**Loop unrolling**: `for` loops expand into concrete steps at plan-time
+```opal
+for service in ["api", "worker"] {
+    kubectl scale deployment/@var.service --replicas=3
+}
+# Plan: Two concrete steps (api, worker)
+```
+
+**Parallel resolution**: Independent value decorators resolve concurrently
+```opal
+deploy: {
+    @env.DATABASE_URL        # Resolve in parallel
+    @aws.secret.api_key      # Resolve in parallel
+    kubectl apply -f k8s/
+}
+```
+
+**Performance**: Event-based pipeline avoids AST allocation for execution, achieving <10ms plan generation for typical scripts.
+
+**See [AST_DESIGN.md](AST_DESIGN.md)** for implementation details: event streaming, zero-copy pipelines, and AST construction for tooling.
 
 ## Safety Guarantees
 
@@ -201,14 +359,14 @@ Two-phase resolution optimizes for both speed and determinism:
 
 **Quick plans** defer expensive operations and show placeholders:
 ```
-kubectl create secret --token=¹@aws.secret("api-token")
-Deferred: 1. @aws.secret("api-token") → <expensive: AWS lookup>
+kubectl create secret --token=¹@aws.secret.api_token
+Deferred: 1. @aws.secret.api_token → <expensive: AWS lookup>
 ```
 
 **Resolved plans** materialize all values for deterministic execution:
 ```  
 kubectl create secret --token=¹<32:sha256:a1b2c3>
-Resolved: 1. @aws.secret("api-token") → <32:sha256:a1b2c3>
+Resolved: 1. @aws.secret.api_token → <32:sha256:a1b2c3>
 ```
 
 Smart optimizations happen automatically:
@@ -222,7 +380,7 @@ The placeholder system protects sensitive values while enabling change detection
 
 **Placeholder format**: `<length:algorithm:hash>` like `<32:sha256:a1b2c3>`. The length gives size hints for debugging, the algorithm future-proofs against changes, and the hash detects value changes without exposing content.
 
-**Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env()`, `@aws.secret()`, whatever. Compliance teams can review plans confidently.
+**Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env.NAME`, `@aws.secret.NAME`, whatever. Compliance teams can review plans confidently.
 
 **Hash scope**: Plan hashes cover ordered steps, arguments, operator graphs, and timing flags. They exclude ephemeral data like run IDs or timestamps that shouldn't invalidate a plan.
 
@@ -333,7 +491,7 @@ var DB_PASS = @random.password(length=24, alphabet="A-Za-z0-9!@#")
 var API_KEY = @crypto.generate_key(type="ed25519")
 
 deploy: {
-    kubectl create secret generic db --from-literal=password=@var(DB_PASS)
+    kubectl create secret generic db --from-literal=password=@var.DB_PASS
 }
 ```
 
@@ -420,7 +578,7 @@ Control flow expands during plan generation, not execution:
 ```opal
 // Source code
 for service in ["api", "worker"] {
-    kubectl apply -f k8s/${service}/
+    kubectl apply -f k8s/@var.service/
 }
 
 // Plan shows expanded steps
@@ -506,13 +664,13 @@ The compilation flow ensures contract verification works reliably:
 
 The key insight: meta-programming happens during transform, so all downstream stages work with predictable, static command sequences.
 
-## Performance Requirements
+## Performance Design
 
-**Lexer performance**: Target >5000 lines/ms with zero allocations for hot paths. Use pre-compiled patterns and avoid regex where possible.
+**Lexer**: Zero allocations for hot paths. Use pre-compiled patterns and avoid regex where possible.
 
 **Resolution optimization**: Expensive value decorators resolve in parallel using DAG analysis. Unused branches never execute, preventing unnecessary side effects.
 
-**Plan caching**: Plans should be cacheable and reusable between runs. Plan hashes enable this optimization.
+**Plan caching**: Plans are cacheable and reusable between runs. Plan hashes enable this optimization.
 
 **Partial execution**: Support resuming from specific steps with `--from step:path` for long pipelines.
 
@@ -523,8 +681,6 @@ The key insight: meta-programming happens during transform, so all downstream st
 **Plugin verification**: External value decorators and execution decorators get the same compliance testing plus binary integrity verification through source hashing.
 
 **Contract testing**: Comprehensive scenarios covering source changes, infrastructure drift, and all verification error types.
-
-**Performance validation**: Lexer throughput, resolution DAG efficiency, and memory usage under load.
 
 ## IaC + Operations Together
 

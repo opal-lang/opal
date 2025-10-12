@@ -1,12 +1,37 @@
+---
+title: "Opal Testing Strategy"
+audience: "Core Developers & Contributors"
+summary: "Systematic testing approach for contract-based operations"
+---
+
 # Opal Testing Strategy
 
 **Goal: Ridiculously stable contract-based operations through systematic testing**
 
-Build stability into the process, not just the code. This guide implements easy testing wins early while establishing the foundation for production-grade reliability.
+**Audience**: Core developers and contributors implementing tests for the Opal runtime.
+
+Build stability into the process, not just the code. Start with high-value tests that catch 80% of issues, then layer in comprehensive testing as the system matures.
+
+## Testing Layer Model
+
+```
+SPECIFICATION.md → Defines guarantees
+       ↓
+ARCHITECTURE.md → Implements guarantees
+       ↓
+TESTING_STRATEGY.md → Verifies guarantees
+       ↓
+OBSERVABILITY.md → Monitors guarantees in production
+```
+
+**Each layer verifies the layer above it:**
+- Tests verify architecture implements spec correctly
+- Observability verifies tests caught real-world issues
+- Feedback loop improves all layers
 
 ## Non-Negotiable Invariants
 
-These align with the core specification principles and must never break:
+These protect the guarantees defined in [SPECIFICATION.md](SPECIFICATION.md) and must never break:
 
 * **Resolved plans are execution contracts**: same input → identical plan bytes; execution refuses if structure/hash differs
 * **Security invariant**: No raw secrets in plans/logs - only `<length:algorithm:hash>` placeholders 
@@ -15,7 +40,7 @@ These align with the core specification principles and must never break:
 
 ## Testing Phases
 
-### Phase 1: Foundation (Implement Now)
+### Core Tests (Implement Now)
 Essential tests that catch 80% of issues with minimal effort.
 
 #### Golden Plan Tests
@@ -137,7 +162,7 @@ deploy: {
 }
 ```
 
-### Phase 2: Reliability (Build Up)
+### Advanced Tests (Build Up)
 More sophisticated testing as the system matures.
 
 #### Contract Verification Tests
@@ -368,9 +393,9 @@ func TestPlanTimeExpansion(t *testing.T) {
             name: "for-loop-unrolling",
             input: `
 deploy: {
-    for service in @var(SERVICES) {
-        kubectl apply -f k8s/${service}/
-        kubectl rollout status deployment/${service}
+    for service in @var.SERVICES {
+        kubectl apply -f k8s/@var.service/
+        kubectl rollout status deployment/@var.service
     }
 }`,
             variables: map[string]interface{}{
@@ -393,13 +418,13 @@ deploy: {
             name: "when-pattern-selection",
             input: `
 deploy: {
-    when @var(ENV) {
+    when @var.ENV {
         "production" -> {
             kubectl apply -f k8s/prod/
             kubectl scale --replicas=3 deployment/app
         }
         "staging" -> kubectl apply -f k8s/staging/
-        else -> echo "Unknown environment: @var(ENV)"
+        else -> echo "Unknown environment: @var.ENV"
     }
 }`,
             variables: map[string]interface{}{
@@ -438,13 +463,13 @@ deploy: {
             planString := plan.String()
             assert.NotContains(t, planString, "for service in",
                 "Plan should not contain unexpanded for loops")
-            assert.NotContains(t, planString, "when @var(ENV)",
+            assert.NotContains(t, planString, "when @var.ENV",
                 "Plan should not contain unexpanded when statements")
                 
             // Verify no chaining allowed per specification
             invalidInputs := []string{
-                "for service in @var(SERVICES) { echo $service } && echo 'done'",
-                "when @var(ENV) { prod: kubectl apply } || echo 'failed'",
+                "for service in @var.SERVICES { echo @var.service } && echo 'done'",
+                "when @var.ENV { prod: kubectl apply } || echo 'failed'",
                 "try { kubectl apply } catch { rollback } | tee log.txt",
             }
             
@@ -526,7 +551,7 @@ func TestPSEContractVerification(t *testing.T) {
     input := `
 deploy: {
     var API_KEY = @random.password(length=32, regen_key="api-key-v1")
-    kubectl create secret generic api --from-literal=key=@var(API_KEY)
+    kubectl create secret generic api --from-literal=key=@var.API_KEY
 }`
     
     // Generate resolved plan with PSE

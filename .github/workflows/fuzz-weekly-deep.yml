@@ -1,0 +1,179 @@
+name: Weekly Deep Fuzzing
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'   # Sundays 04:00 UTC
+  workflow_dispatch:      # Allow manual trigger
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: '1.25.x'
+
+jobs:
+  fuzz-deep:
+    name: Deep Fuzzing (10min per target)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Snapshot corpus before fuzzing
+        run: |
+          echo "==> Corpus snapshot (before)"
+          BEFORE_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          BEFORE_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          echo "Files: $BEFORE_COUNT"
+          echo "Bytes: $BEFORE_SIZE"
+          echo "before_count=$BEFORE_COUNT" >> $GITHUB_OUTPUT
+          echo "before_size=$BEFORE_SIZE" >> $GITHUB_OUTPUT
+        id: before
+
+      - name: Run deep fuzz targets (10 min each)
+        env:
+          SEED: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cd runtime/parser
+          
+          echo "==> Deep fuzzing session (10 minutes per target)"
+          echo "This is the weekly long run to find rare edge cases"
+          echo ""
+          
+          # All fuzz targets with extended time
+          FUZZ_TARGETS=(
+            "FuzzParserDeterminism"
+            "FuzzParserNoPanic"
+            "FuzzParserEventBalance"
+            "FuzzParserMemorySafety"
+            "FuzzParserPathologicalDepth"
+            "FuzzParserErrorRecovery"
+            "FuzzParserWhitespaceInvariance"
+          )
+          
+          for target in "${FUZZ_TARGETS[@]}"; do
+            echo "==> Deep fuzzing $target (10 minutes)"
+            START_TIME=$(date +%s)
+            
+            go test -run '^$' -fuzz "^${target}$" -fuzztime=10m || {
+              echo "ERROR: $target failed"
+              exit 1
+            }
+            
+            END_TIME=$(date +%s)
+            DURATION=$((END_TIME - START_TIME))
+            echo "✅ $target completed in ${DURATION}s"
+            echo ""
+          done
+          
+          echo "==> All deep fuzz targets completed successfully"
+
+      - name: Snapshot corpus after fuzzing
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "==> Corpus snapshot (after) on ${{ matrix.os }}"
+          AFTER_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          AFTER_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          BEFORE_COUNT=${{ steps.before.outputs.before_count }}
+          BEFORE_SIZE=${{ steps.before.outputs.before_size }}
+          
+          NEW_FILES=$((AFTER_COUNT - BEFORE_COUNT))
+          SIZE_GROWTH=$((AFTER_SIZE - BEFORE_SIZE))
+          
+          echo "Files: $AFTER_COUNT (+ $NEW_FILES new)"
+          echo "Bytes: $AFTER_SIZE (+ $SIZE_GROWTH bytes)"
+          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          echo "size_growth=$SIZE_GROWTH" >> $GITHUB_OUTPUT
+          
+          # Check corpus size cap (warn if > 10MB)
+          if [ $AFTER_SIZE -gt 10485760 ]; then
+            echo "::warning title=Corpus Size::Corpus is ${AFTER_SIZE} bytes (>10MB). Consider pruning."
+          fi
+          
+          if [ $NEW_FILES -gt 0 ]; then
+            echo "::notice title=Deep Fuzzing Results (${{ matrix.os }})::Discovered $NEW_FILES new interesting inputs (+$SIZE_GROWTH bytes) in 70-minute deep fuzzing session"
+          else
+            echo "::notice title=Deep Fuzzing Results (${{ matrix.os }})::No new inputs discovered. Corpus is very stable!"
+          fi
+        id: after
+
+      - name: Create corpus summary
+        if: always()
+        run: |
+          set -euo pipefail
+          cat > corpus-summary-${{ matrix.os }}.txt << EOF
+          Deep Fuzzing Session Summary (${{ matrix.os }})
+          =============================
+          Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Platform: ${{ matrix.os }}
+          Duration: ~70 minutes (10 min × 7 targets)
+          
+          Corpus Growth:
+          - Before: ${{ steps.before.outputs.before_count }} files (${{ steps.before.outputs.before_size }} bytes)
+          - After: $(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l) files ($(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1) bytes)
+          - New files: ${{ steps.after.outputs.new_files }}
+          - Size growth: ${{ steps.after.outputs.size_growth }} bytes
+          
+          Targets Tested:
+          - FuzzParserDeterminism (10 min)
+          - FuzzParserNoPanic (10 min)
+          - FuzzParserEventBalance (10 min)
+          - FuzzParserMemorySafety (10 min)
+          - FuzzParserPathologicalDepth (10 min)
+          - FuzzParserErrorRecovery (10 min)
+          - FuzzParserWhitespaceInvariance (10 min)
+          
+          Next Steps:
+          1. Auto-PR will be created if new files discovered
+          2. Review PR for interesting edge cases
+          3. Merge to add to permanent test suite
+          4. Keep corpus under 10MB total
+          EOF
+          
+          cat corpus-summary-${{ matrix.os }}.txt
+
+      - name: Upload corpus summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-summary-${{ matrix.os }}-${{ github.run_number }}
+          path: corpus-summary-${{ matrix.os }}.txt
+          retention-days: 90
+
+      - name: Upload updated corpus
+        if: always()
+        run: |
+          set -euo pipefail
+          tar czf corpus-deep-${{ matrix.os }}-${{ github.run_number }}.tgz runtime/parser/testdata/fuzz corpus-summary-${{ matrix.os }}.txt || true
+        continue-on-error: true
+
+      - name: Upload corpus artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-deep-${{ matrix.os }}-${{ github.run_number }}
+          path: corpus-deep-${{ matrix.os }}-${{ github.run_number }}.tgz
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Suggest corpus commit
+        if: steps.after.outputs.new_files > 5
+        run: |
+          echo "::warning title=Corpus Growth::Discovered ${{ steps.after.outputs.new_files }} new inputs. Consider reviewing and committing them to maintain regression coverage."

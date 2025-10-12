@@ -1,0 +1,7 @@
+fun deploy(env: String, replicas = 3 {
+  kubectl apply -f k8s/@var.env/
+  kubectl scale --replicas=@var.replicas deployment/app
+}
+
+fun greet(name {
+  echo "Hello @var.name!"
