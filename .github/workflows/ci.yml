@@ -220,9 +220,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "==> Fuzz corpus snapshot"
-          CORPUS_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          CORPUS_BYTES=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
-          CORPUS_SIZE=$(du -sh runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo "0")
+          CORPUS_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          CORPUS_BYTES=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          CORPUS_SIZE=$(du -sh testdata/fuzz 2>/dev/null | cut -f1 || echo "0")
           echo "Corpus files: $CORPUS_COUNT"
           echo "Corpus size: $CORPUS_SIZE ($CORPUS_BYTES bytes)"
           echo "corpus_count=$CORPUS_COUNT" >> $GITHUB_OUTPUT

@@ -37,8 +37,8 @@ jobs:
       - name: Snapshot corpus before fuzzing
         run: |
           echo "==> Corpus snapshot (before)"
-          BEFORE_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          BEFORE_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          BEFORE_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          BEFORE_SIZE=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
           echo "Files: $BEFORE_COUNT"
           echo "Bytes: $BEFORE_SIZE"
           echo "before_count=$BEFORE_COUNT" >> $GITHUB_OUTPUT
@@ -89,8 +89,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "==> Corpus snapshot (after) on ${{ matrix.os }}"
-          AFTER_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          AFTER_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          AFTER_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          AFTER_SIZE=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
           BEFORE_COUNT=${{ steps.before.outputs.before_count }}
           BEFORE_SIZE=${{ steps.before.outputs.before_size }}
           
@@ -127,7 +127,7 @@ jobs:
           
           Corpus Growth:
           - Before: ${{ steps.before.outputs.before_count }} files (${{ steps.before.outputs.before_size }} bytes)
-          - After: $(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l) files ($(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1) bytes)
+          - After: $(find testdata/fuzz -type f 2>/dev/null | wc -l) files ($(du -sb testdata/fuzz 2>/dev/null | cut -f1) bytes)
           - New files: ${{ steps.after.outputs.new_files }}
           - Size growth: ${{ steps.after.outputs.size_growth }} bytes
           
@@ -161,7 +161,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          tar czf corpus-deep-${{ matrix.os }}-${{ github.run_number }}.tgz runtime/parser/testdata/fuzz corpus-summary-${{ matrix.os }}.txt || true
+          tar czf corpus-deep-${{ matrix.os }}-${{ github.run_number }}.tgz testdata/fuzz corpus-summary-${{ matrix.os }}.txt || true
         continue-on-error: true
 
       - name: Upload corpus artifact

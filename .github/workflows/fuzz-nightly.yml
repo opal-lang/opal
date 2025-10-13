@@ -34,8 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "==> Corpus snapshot (before)"
-          BEFORE_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          BEFORE_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          BEFORE_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          BEFORE_SIZE=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
           echo "Files: $BEFORE_COUNT"
           echo "Bytes: $BEFORE_SIZE"
           echo "before_count=$BEFORE_COUNT" >> $GITHUB_OUTPUT
@@ -45,10 +45,11 @@ jobs:
       - name: Run fuzz targets (2 min each)
         run: |
           set -euo pipefail
-          cd runtime/parser
           
-          # List of fuzz targets to run (each gets full 2 minutes)
-          FUZZ_TARGETS=(
+          # Parser fuzz targets
+          echo "==> Fuzzing runtime/parser"
+          cd runtime/parser
+          PARSER_TARGETS=(
             "FuzzParserDeterminism"
             "FuzzParserNoPanic"
             "FuzzParserEventBalance"
@@ -58,7 +59,23 @@ jobs:
             "FuzzParserWhitespaceInvariance"
           )
           
-          for target in "${FUZZ_TARGETS[@]}"; do
+          for target in "${PARSER_TARGETS[@]}"; do
+            echo "==> Fuzzing $target (2 minutes)"
+            go test -run '^$' -fuzz "^${target}$" -fuzztime=2m || {
+              echo "ERROR: $target failed"
+              exit 1
+            }
+          done
+          
+          # Plan format fuzz targets
+          echo ""
+          echo "==> Fuzzing core/planfmt"
+          cd ../../core/planfmt
+          PLANFMT_TARGETS=(
+            "FuzzReadPlan"
+          )
+          
+          for target in "${PLANFMT_TARGETS[@]}"; do
             echo "==> Fuzzing $target (2 minutes)"
             go test -run '^$' -fuzz "^${target}$" -fuzztime=2m || {
               echo "ERROR: $target failed"
@@ -74,8 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "==> Corpus snapshot (after)"
-          AFTER_COUNT=$(find runtime/parser/testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          AFTER_SIZE=$(du -sb runtime/parser/testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          AFTER_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          AFTER_SIZE=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
           BEFORE_COUNT=${{ steps.before.outputs.before_count }}
           BEFORE_SIZE=${{ steps.before.outputs.before_size }}
           
@@ -103,7 +120,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          tar czf corpus-nightly-${{ github.run_number }}.tgz runtime/parser/testdata/fuzz || true
+          tar czf corpus-nightly-${{ github.run_number }}.tgz testdata/fuzz || true
         continue-on-error: true
 
       - name: Upload corpus artifact

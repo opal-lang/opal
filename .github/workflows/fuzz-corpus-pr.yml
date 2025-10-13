@@ -35,7 +35,8 @@ jobs:
       - name: Extract and check for new corpus files
         id: check
         run: |
-          if [ ! -f ./artifacts/corpus-*.tgz ]; then
+          # Check if any corpus files exist
+          if ! compgen -G "./artifacts/corpus-*.tgz" > /dev/null; then
             echo "No corpus artifact found"
             echo "has_changes=false" >> $GITHUB_OUTPUT
             exit 0
@@ -45,7 +46,7 @@ jobs:
           tar xzf ./artifacts/corpus-*.tgz
           
           # Check if there are new files
-          git add runtime/parser/testdata/fuzz/
+          git add testdata/fuzz/
           if git diff --cached --quiet; then
             echo "No new corpus files"
             echo "has_changes=false" >> $GITHUB_OUTPUT
