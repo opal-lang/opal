@@ -329,6 +329,419 @@ git clone repo
 
 ## Language Evolution
 
+### Runtime Values with `let` and `@out` (⚙️ Feasible)
+
+**Goal:** Pass runtime resource identifiers (VPC IDs, instance IPs, job refs) between execution steps without breaking plan-time determinism.
+
+**The Problem:**
+```opal
+// VPC ID doesn't exist at plan-time
+@aws.vpc.create(cidr="10.0.0.0/16", name="prod-vpc")
+
+// How do we pass the VPC ID to the next step?
+@aws.subnet.create(
+  vpc=???,  // Need the VPC ID from previous step
+  cidr="10.0.1.0/24"
+)
+```
+
+**The Solution: `let` for Runtime Values**
+
+```opal
+// let binds execution results (runtime values)
+let vpc = @aws.vpc.create(cidr="10.0.0.0/16", name="prod-vpc")
+let subnet = @aws.subnet.create(vpc=@out.vpc.id, cidr="10.0.1.0/24")
+let instance = @aws.instance.create(subnet=@out.subnet.id, type="t3.medium")
+
+// Access runtime values with @out
+echo "Instance IP: @out.instance.ip"
+@aws.instance.ssh(instance=@out.instance) {
+  apt-get update
+}
+```
+
+**Core Distinction:**
+- **`var`** = plan-time values (resolved during planning, concrete in plans)
+- **`let`** = runtime values (resolved during execution, placeholders in plans)
+
+**Syntax (conceptual):**
+```ebnf
+let_stmt  = "let" identifier "=" execution_decorator ;
+out_ref   = "@out." identifier ("." property)* ;
+```
+
+**Critical Constraints:**
+
+1. **`let` only binds execution decorators:**
+   ```opal
+   let vpc = @aws.vpc.create(...)        # ✅ Execution decorator
+   let port = @env.PORT                  # ❌ Value decorator (use var)
+   let name = "prod"                     # ❌ Literal (use var)
+   ```
+
+2. **Block-scoped, cannot escape to parent:**
+   ```opal
+   {
+     let vpc = @aws.vpc.create(...)
+     echo "VPC: @out.vpc.id"             # ✅ Visible in same block
+   }
+   echo "VPC: @out.vpc.id"               # ❌ Not visible in parent
+   ```
+
+3. **Can be passed (copied) to child blocks:**
+   ```opal
+   let vpc = @aws.vpc.create(...)
+   {
+     // vpc is visible in child block
+     let subnet = @aws.subnet.create(vpc=@out.vpc.id, ...)
+   }
+   ```
+
+4. **Cannot be used in metaprogramming constructs:**
+   ```opal
+   let count = @aws.instance.count()
+   
+   for i in @out.count {                 # ❌ Cannot use in for loop
+     echo "Item @var.i"
+   }
+   
+   when @out.vpc.region {                # ❌ Cannot use in when
+     "us-east-1" -> { ... }
+   }
+   
+   if @out.instance.ready {              # ❌ Cannot use in if
+     echo "Ready"
+   }
+   ```
+
+5. **Shadowing works like `var`:**
+   ```opal
+   let web = @aws.instance.create(name="web-prod")
+   {
+     let web = @aws.instance.create(name="web-canary")
+     echo "@out.web.ip"                  # Refers to canary
+   }
+   echo "@out.web.ip"                    # Refers to prod
+   ```
+
+**Plan Representation:**
+
+Plans show placeholders for runtime values:
+
+```
+Plan (deterministic structure):
+  1. let vpc = @aws.vpc.create(cidr="10.0.0.0/16")
+     → <handle:vpc>
+  2. let subnet = @aws.subnet.create(vpc=<handle:vpc>.id, cidr="10.0.1.0/24")
+     → <handle:subnet>
+  3. echo "Subnet: <handle:subnet>.id"
+```
+
+**Why This Works:**
+
+1. **Preserves plan-time determinism** - Plans show structure, not concrete IDs
+2. **Clear mental model** - `var` = plan-time, `let` = runtime
+3. **Value decorators stay pure** - No execution-time resolution for `@var.NAME`
+4. **Solves real operational need** - Pass VPC IDs, instance IPs, job refs between steps
+
+**When to Use:**
+- Creating cloud resources (VPCs, instances, databases) and passing IDs
+- Capturing job IDs, signed URLs, ephemeral tokens
+- Any execution result needed in subsequent steps
+
+**When NOT to Use:**
+- Plan-time values (use `var` with value decorators)
+- Metaprogramming (use `var` for loop ranges, conditionals)
+- Configuration (use `var` for settings, flags, paths)
+
+---
+
+### Execution Control Operators: `ensure` and `rollback` (⚙️ Feasible)
+
+**Goal:** Automatic rollback on failure for deployments, migrations, and multi-step workflows (day-2 operations safety).
+
+**The Problem:**
+
+```opal
+// Deploy new version
+kubectl apply -f k8s/app-v2.yaml
+kubectl rollout status deployment/app
+
+// Check health
+curl -fsS http://app/health
+
+// If health check fails... manual rollback needed
+// kubectl rollout undo deployment/app
+```
+
+**The Solution: Execution Control Operators**
+
+Work happens first, then operators chain verification and rollback logic:
+
+```opal
+kubectl apply -f k8s/app-v2.yaml
+kubectl rollout status deployment/app
+  |> ensure { curl -fsS http://app/health }
+  |> rollback { kubectl rollout undo }
+```
+
+**Reads as:** "Do work, ensure this check passes, rollback if it fails"
+
+**Semantics (Chain Execution):**
+
+Each operator in the chain responds to the result of what came before it:
+
+1. **Work executes** (before any operators)
+2. **`|> ensure { check }`** - runs if work succeeded
+   - If check passes → continue chain
+   - If check fails → continue to next operator (typically `rollback` or `catch`)
+3. **`|> rollback { ... }`** - runs if anything before it failed
+   - Catches work failures OR ensure failures
+   - Executes compensation logic
+   - **Error still propagates** (rollback doesn't recover)
+4. **`|> catch { ... }`** - runs if anything before it failed
+   - Handles the failure
+   - **Recovers and continues** (error does not propagate)
+5. **`|> finally { ... }`** - always runs
+   - Executes regardless of success or failure
+   - Used for cleanup (temp files, locks, notifications)
+
+**Standalone operator behavior:**
+
+```opal
+// Just work - errors if fails
+kubectl apply -f k8s/app-v2.yaml
+
+// Work + rollback - rollback runs if work fails, error propagates
+kubectl apply -f k8s/app-v2.yaml
+  |> rollback { kubectl rollout undo }
+
+// Work + ensure - check runs if work succeeds, errors if check fails
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure { curl -fsS http://app/health }
+
+// Work + ensure + rollback - rollback runs if ensure fails, error propagates
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure { curl -fsS http://app/health }
+  |> rollback { kubectl rollout undo }
+
+// Work + ensure + catch - catch runs if ensure fails, recovers and continues
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure { curl -fsS http://app/health }
+  |> catch { 
+    kubectl rollout undo
+    echo "Rolled back, continuing..."
+  }
+
+// Work + finally - cleanup always runs
+kubectl apply -f k8s/app-v2.yaml
+  |> finally { rm -f /tmp/deploy.lock }
+```
+
+**Key distinction:**
+- **`rollback`** - compensate for failure (error still propagates, script stops)
+- **`catch`** - handle failure and recover (error absorbed, script continues)
+
+**Each operator makes sense standalone and composes naturally in chains.**
+
+**Why Operators, Not Special Syntax:**
+
+- **Consistent with existing operators** - Opal already has `|`, `&&`, `||`, `;`
+- **Composable** - Can chain multiple operators together
+- **Natural left-to-right flow** - Work → verify → compensate
+- **Each operator makes sense standalone** - Can use `|> ensure` without `|> rollback`
+- **Extensible** - Easy to add new operators in the future
+
+**Operator Precedence:**
+
+```
+|  (pipe)           - data flow (highest)
+|> (ensure/rollback) - execution control
+&& ||              - conditional execution
+;                  - sequence
+newline            - fail-fast sequence (lowest)
+```
+
+**With Retry Parameters:**
+
+Optional parameters apply to the check only (not the work):
+
+```opal
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure(attempts=3, delay=5s, timeout=30s) { curl -fsS http://app/health }
+  |> rollback { kubectl rollout undo }
+```
+
+**LIFO Unwind for Multi-Step Workflows:**
+
+**Core mechanism:** `|> rollback` registers a compensator on a per-scope stack. Any unrecovered failure triggers a stack unroll (LIFO).
+
+**Registration rules:**
+1. Each scope maintains a `CompStack` (compensation stack)
+2. After a frame **succeeds** (work ok + all `ensure` ok), every attached `rollback` is **pushed** to `CompStack`
+3. On failure: run local handlers, then **unwind `CompStack` LIFO**
+4. Recovery: any `catch` may absorb the error; if recovered, **do not unwind** outer stack
+
+**Example:**
+
+```opal
+// Frame 1: Database migration
+psql -f migrations/003-add-users.sql
+  |> ensure { psql -c "SELECT COUNT(*) FROM users;" }
+  |> rollback { psql -f migrations/003-rollback.sql }
+// Success: rollback registered on CompStack
+
+// Frame 2: Deploy app v2
+kubectl apply -f k8s/app-v2.yaml
+kubectl rollout status deployment/app
+  |> ensure { curl -fsS http://app/health }
+  |> rollback { kubectl rollout undo }
+// Success: rollback registered on CompStack
+
+// Frame 3: Route traffic to v2
+@lb.route_to("app-v2")
+sleep 5
+  |> ensure { curl -fsS http://lb/health }
+  |> rollback { @lb.route_to("app-v1") }
+// Failure: ensure fails
+
+// Execution on Frame 3 failure:
+// 1. Run Frame 3 rollback: @lb.route_to("app-v1")
+// 2. UNWIND CompStack (LIFO):
+//    - Pop and run Frame 2 rollback: kubectl rollout undo
+//    - Pop and run Frame 1 rollback: psql -f migrations/003-rollback.sql
+// 3. Propagate error (script exits with failure)
+```
+
+**Key insight:** LIFO emerges naturally from the stack. Rollbacks are registered on success, unwound on failure.
+
+**Using `catch` to recover and continue:**
+
+```opal
+// Try deploying v2, fall back to v1 if it fails, continue either way
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure { curl -fsS http://app/health }
+  |> catch { 
+    kubectl rollout undo
+    echo "Rolled back to v1"
+  }
+
+// This still runs because catch recovered
+echo "Deployment complete"
+```
+
+**Combining operators:**
+
+```opal
+kubectl apply -f k8s/app-v2.yaml
+  |> ensure { curl -fsS http://app/health }
+  |> rollback { kubectl rollout undo }
+  |> catch { echo "Handled deployment failure" }
+  |> finally { rm -f /tmp/deploy.lock }
+
+// Execution on ensure failure:
+// 1. ensure fails
+// 2. rollback runs (compensate)
+// 3. catch runs (recover)
+// 4. finally runs (cleanup)
+// 5. Continue (success, because catch recovered)
+```
+
+**Integration with `let`/`@out`:**
+
+Checks and rollbacks can reference runtime values:
+
+```opal
+let instance = @aws.instance.create(type="t3.medium")
+
+@aws.instance.ssh(instance=@out.instance) {
+  docker run -d --name app myapp:v2
+}
+  |> ensure { curl -fsS http://@out.instance.ip/health }
+  |> rollback {
+    @aws.instance.ssh(instance=@out.instance) {
+      docker rm -f app
+    }
+  }
+```
+
+**Plan Representation:**
+
+Plans show all possible paths (execution control flow):
+
+```
+Plan (deterministic structure):
+  1. kubectl apply -f k8s/app-v2.yaml
+  2. kubectl rollout status deployment/app
+  3. |> ensure frame pushed
+  4. check: curl -fsS http://app/health
+  5a. [success path] frame popped, continue
+  5b. [failure path] execute rollback: kubectl rollout undo
+```
+
+**Why This Works:**
+
+1. **Operators, not special syntax** - Extends Opal's existing operator model
+2. **Composable** - Works with other operators (`&&`, `||`, `|`)
+3. **Natural reading** - Left-to-right flow matches execution order
+4. **Automatic LIFO** - Runtime manages rollback stack
+5. **Day-2 ops focus** - Solves real deployment safety problems
+
+**Use Cases:**
+- Application deployments with health checks
+- Database migrations with schema validation
+- Multi-step workflows (deploy → verify → route traffic)
+- Any operation where failure requires cleanup
+
+**Runtime Execution Model:**
+
+```
+For each frame F:
+  1. Run work
+  2. If work fails:
+     - Run catch handlers (if any); if recovered → goto DONE
+     - Run rollback handlers; UNWIND(); propagate error
+  3. If work succeeds:
+     - Run ensure handlers
+     - If any ensure fails:
+       - Run rollback handlers; UNWIND(); propagate error
+     - If all ensure pass:
+       - Push all rollback handlers onto CompStack (registration)
+  4. DONE: Run finally handlers
+
+UNWIND():
+  While CompStack not empty:
+    Pop and run compensator (LIFO)
+```
+
+**Determinism:** The plan records all possible paths (work, ensure, rollback, catch, finally, unwind steps). Runtime only chooses which path to take. This preserves contract verification.
+
+**Note:** Some details are still being refined (e.g., exact error propagation rules, parallel branch aggregation). The core concept is solid: operators chain with `|>`, rollbacks register on success and unwind LIFO on failure.
+
+**Relationship to `try/catch/finally`:**
+
+If execution control operators are implemented, traditional `try/catch/finally` block syntax would likely be removed in favor of the operator model. The operators provide the same functionality with better composability:
+
+```opal
+// Traditional try/catch (would be removed)
+try {
+  kubectl apply -f k8s/app-v2.yaml
+} catch {
+  kubectl rollout undo
+} finally {
+  echo "Done"
+}
+
+// Operator equivalent (preferred)
+kubectl apply -f k8s/app-v2.yaml
+  |> catch { kubectl rollout undo }
+  |> finally { echo "Done" }
+```
+
+The operator model is more flexible (can add `ensure` for verification) and consistent with Opal's existing operator system (`|`, `&&`, `||`).
+
+---
+
 ### Plan Verification (⚙️ Feasible)
 
 **Audit trail:** (See [SPECIFICATION.md](SPECIFICATION.md#contract-verification) for current contract model)
