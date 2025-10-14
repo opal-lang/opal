@@ -115,6 +115,143 @@ This separation means:
 - **Execution model** is unified through decorators (no special cases for different work types)  
 - **New features** integrate by adding decorators, not special execution paths
 
+## Steps, Decorators, and Operators
+
+Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.
+
+### What is a Step?
+
+A **step** is a unit of work in Opal - one line of code that performs an action. Steps are the building blocks of execution plans.
+
+```opal
+// Three steps (three lines)
+echo "First"
+echo "Second"
+echo "Third"
+```
+
+**Key insight**: Newlines separate steps. Each step is independently controlled by Opal's execution engine.
+
+### Operators: Intra-Step Control Flow
+
+**Operators** (`&&`, `||`, `|`, `;`) control flow **within a single step**. They are part of the shell command string and handled by bash, not Opal.
+
+```opal
+// ONE step with operators (bash controls flow within step)
+echo "First" && echo "Second" || echo "Fallback"
+```
+
+When this executes:
+- Opal sees **one step** containing the entire command string
+- Bash receives `echo "First" && echo "Second" || echo "Fallback"`
+- Bash handles the `&&` and `||` logic internally
+- Opal only sees the final exit code
+
+**Operator semantics** (bash-controlled):
+- `&&` - Execute next command only if previous succeeded (exit 0)
+- `||` - Execute next command only if previous failed (exit non-zero)
+- `|` - Pipe stdout of previous command to stdin of next
+- `;` - Execute commands sequentially regardless of exit codes
+
+### Newlines: Inter-Step Boundaries
+
+**Newlines** separate steps and give Opal control over execution order, error handling, and flow.
+
+```opal
+// TWO steps (Opal controls flow between steps)
+echo "First"
+echo "Second"
+```
+
+When this executes:
+- Opal sees **two steps**
+- Step 1: `@shell("echo \"First\"")`
+- Step 2: `@shell("echo \"Second\"")`
+- Opal controls: Should step 2 run? When? In parallel? With retry?
+- Opal can log, time, and track each step independently
+
+**Newline semantics** (Opal-controlled):
+- Sequential execution by default
+- Fail-fast: Stop on first error (unless wrapped in `@retry` or `try/catch`)
+- Independent logging and telemetry per step
+- Parallelization possible with `@parallel`
+
+### Decorators: Work Execution
+
+**Decorators** wrap steps and control how they execute. All work in Opal is performed by decorators.
+
+```opal
+// Explicit decorator
+@retry(3) {
+    curl https://api.example.com/deploy
+}
+
+// Implicit @shell decorator (parser converts)
+echo "Hello, World!"  // Becomes: @shell("echo \"Hello, World!\"")
+```
+
+**Decorator responsibilities**:
+- Execute the actual work (shell commands, API calls, etc.)
+- Handle errors and retries
+- Control parallelism and concurrency
+- Inject values and interpolate variables
+
+### Examples: Operators vs Newlines
+
+**Example 1: Operators (bash controls)**
+```opal
+// ONE step - bash handles && logic
+mkdir -p /tmp/build && cd /tmp/build && npm install
+```
+
+If `mkdir` fails, bash stops and never runs `cd` or `npm install`. Opal sees one step that either succeeded or failed.
+
+**Example 2: Newlines (Opal controls)**
+```opal
+// THREE steps - Opal handles each independently
+mkdir -p /tmp/build
+cd /tmp/build
+npm install
+```
+
+If `mkdir` fails, Opal stops execution and never runs `cd` or `npm install`. Each step is logged separately with timing and exit codes.
+
+**Example 3: Mixed (both)**
+```opal
+// TWO steps - bash controls within, Opal controls between
+mkdir -p /tmp/build && cd /tmp/build
+npm install && npm run build
+```
+
+Step 1: `mkdir -p /tmp/build && cd /tmp/build` (bash handles `&&`)
+Step 2: `npm install && npm run build` (bash handles `&&`)
+
+Opal controls whether step 2 runs based on step 1's exit code.
+
+### Why This Matters
+
+**For plan generation**:
+- Operators are part of the command string (opaque to planner)
+- Newlines create distinct steps in the plan
+- Each step gets a unique ID and can be tracked independently
+
+**For execution**:
+- Operators are bash's responsibility (fast, no Opal overhead)
+- Newlines are Opal's responsibility (logging, telemetry, error handling)
+- Decorators wrap steps and control execution behavior
+
+**For contract verification**:
+- Operators are part of the command string hash
+- Steps are the unit of comparison (step count, step order, step content)
+- Changing operators changes the command hash, failing verification
+
+### Design Principle: Separation of Concerns
+
+**Bash is good at**: Piping, chaining, conditional execution within a command
+**Opal is good at**: Orchestration, error handling, parallelism, contract verification
+
+By separating intra-step (operators) from inter-step (newlines), Opal leverages bash's strengths while adding orchestration capabilities bash lacks.
+
 ## Two-Layer Architecture
 
 ```
