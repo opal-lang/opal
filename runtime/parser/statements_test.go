@@ -18,6 +18,7 @@ func TestSimpleVarDecl(t *testing.T) {
 			input: "var x = 42",
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
 				{Kind: EventToken, Data: 0}, // VAR
 				{Kind: EventToken, Data: 1}, // x
@@ -26,6 +27,7 @@ func TestSimpleVarDecl(t *testing.T) {
 				{Kind: EventToken, Data: 3}, // 42
 				{Kind: EventClose, Data: uint32(NodeLiteral)},
 				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -34,6 +36,7 @@ func TestSimpleVarDecl(t *testing.T) {
 			input: `var name = "alice"`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
 				{Kind: EventToken, Data: 0}, // VAR
 				{Kind: EventToken, Data: 1}, // name
@@ -42,6 +45,7 @@ func TestSimpleVarDecl(t *testing.T) {
 				{Kind: EventToken, Data: 3}, // "alice"
 				{Kind: EventClose, Data: uint32(NodeLiteral)},
 				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -50,6 +54,7 @@ func TestSimpleVarDecl(t *testing.T) {
 			input: "var ready = true",
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
 				{Kind: EventToken, Data: 0},                  // VAR
 				{Kind: EventToken, Data: 1},                  // ready
@@ -58,6 +63,7 @@ func TestSimpleVarDecl(t *testing.T) {
 				{Kind: EventToken, Data: 3},                  // true (lexed as BOOLEAN)
 				{Kind: EventClose, Data: uint32(NodeLiteral)},
 				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -96,7 +102,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // total
 				{EventToken, 4}, // +=
@@ -104,7 +111,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 5}, // 5
 				{EventClose, uint32(NodeLiteral)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 6}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 6},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -120,7 +128,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // remaining
 				{EventToken, 4}, // -=
@@ -131,7 +140,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 8}, // cost
 				{EventClose, uint32(NodeDecorator)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 9}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 9},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -147,7 +157,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // replicas
 				{EventToken, 4}, // *=
@@ -155,7 +166,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 5}, // 3
 				{EventClose, uint32(NodeLiteral)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 6}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 6},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -171,7 +183,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // batch_size
 				{EventToken, 4}, // /=
@@ -179,7 +192,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 5}, // 2
 				{EventClose, uint32(NodeLiteral)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 6}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 6},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -195,7 +209,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // index
 				{EventToken, 4}, // %=
@@ -203,7 +218,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 5}, // 10
 				{EventClose, uint32(NodeLiteral)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 6}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 6},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -219,7 +235,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeAssignment)},
 				{EventToken, 3}, // total
 				{EventToken, 4}, // +=
@@ -233,7 +250,8 @@ func TestAssignmentOperators(t *testing.T) {
 				{EventClose, uint32(NodeIdentifier)},
 				{EventClose, uint32(NodeBinaryExpr)},
 				{EventClose, uint32(NodeAssignment)},
-				{EventToken, 8}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 8},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},

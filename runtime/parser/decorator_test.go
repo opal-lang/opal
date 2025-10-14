@@ -136,12 +136,14 @@ func TestDecoratorParameters(t *testing.T) {
 			input: "@var.username",
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // var
 				{Kind: EventToken, Data: 2}, // .
 				{Kind: EventToken, Data: 3}, // username
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -150,6 +152,7 @@ func TestDecoratorParameters(t *testing.T) {
 			input: `@env.HOME(default="")`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // env
@@ -165,6 +168,7 @@ func TestDecoratorParameters(t *testing.T) {
 				{Kind: EventToken, Data: 8}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -173,6 +177,7 @@ func TestDecoratorParameters(t *testing.T) {
 			input: `@env.HOME(default="/home/user")`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // env
@@ -188,6 +193,7 @@ func TestDecoratorParameters(t *testing.T) {
 				{Kind: EventToken, Data: 8}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -196,6 +202,7 @@ func TestDecoratorParameters(t *testing.T) {
 			input: `@env(property="HOME")`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // env
@@ -209,6 +216,7 @@ func TestDecoratorParameters(t *testing.T) {
 				{Kind: EventToken, Data: 6}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -753,6 +761,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 			input: `@retry(times=3) { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // retry
@@ -770,6 +779,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 				{Kind: EventToken, Data: 8}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -778,6 +788,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 			input: `@parallel { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // parallel
@@ -786,6 +797,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 				{Kind: EventToken, Data: 3}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -794,6 +806,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 			input: `@retry(times=3)`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // retry
@@ -807,6 +820,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 				{Kind: EventToken, Data: 6}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -815,6 +829,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 			input: `@parallel(maxConcurrency=5) { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
 				{Kind: EventToken, Data: 1}, // parallel
@@ -832,6 +847,7 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 				{Kind: EventToken, Data: 8}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},

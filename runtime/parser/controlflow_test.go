@@ -17,32 +17,34 @@ func TestIfStatement(t *testing.T) {
 			name:  "simple if with boolean",
 			input: "fun test { if true { echo \"yes\" } }",
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // test
-				{EventOpen, 3},   // Block
-				{EventToken, 2},  // {
-				{EventOpen, 10},  // If
-				{EventToken, 3},  // if
-				{EventToken, 4},  // true (condition)
-				{EventOpen, 3},   // Block
-				{EventToken, 5},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 6},  // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 7},  // "yes"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 8},  // }
-				{EventClose, 3},  // Block
-				{EventClose, 10}, // If
-				{EventToken, 9},  // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},      // Source
+				{EventOpen, 1},      // Function
+				{EventToken, 0},     // fun
+				{EventToken, 1},     // test
+				{EventOpen, 3},      // Block
+				{EventToken, 2},     // {
+				{EventOpen, 10},     // If
+				{EventToken, 3},     // if
+				{EventToken, 4},     // true (condition)
+				{EventOpen, 3},      // Block
+				{EventToken, 5},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 6},     // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 7},     // "yes"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 8},     // }
+				{EventClose, 3},     // Block
+				{EventClose, 10},    // If
+				{EventToken, 9},     // }
+				{EventClose, 3},     // Block
+				{EventClose, 1},     // Function
+				{EventClose, 0},     // Source
 			},
 		},
 	}
@@ -72,47 +74,51 @@ func TestIfElseStatement(t *testing.T) {
 			name:  "if-else",
 			input: "fun test { if true { echo \"yes\" } else { echo \"no\" } }",
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // test
-				{EventOpen, 3},   // Block
-				{EventToken, 2},  // {
-				{EventOpen, 10},  // If
-				{EventToken, 3},  // if
-				{EventToken, 4},  // true
-				{EventOpen, 3},   // Block
-				{EventToken, 5},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 6},  // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 7},  // "yes"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 8},  // }
-				{EventClose, 3},  // Block
-				{EventOpen, 11},  // Else
-				{EventToken, 9},  // else
-				{EventOpen, 3},   // Block
-				{EventToken, 10}, // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 11}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 12}, // "no"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 13}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 11}, // Else
-				{EventClose, 10}, // If
-				{EventToken, 14}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},      // Source
+				{EventOpen, 1},      // Function
+				{EventToken, 0},     // fun
+				{EventToken, 1},     // test
+				{EventOpen, 3},      // Block
+				{EventToken, 2},     // {
+				{EventOpen, 10},     // If
+				{EventToken, 3},     // if
+				{EventToken, 4},     // true
+				{EventOpen, 3},      // Block
+				{EventToken, 5},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 6},     // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 7},     // "yes"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 8},     // }
+				{EventClose, 3},     // Block
+				{EventOpen, 11},     // Else
+				{EventToken, 9},     // else
+				{EventOpen, 3},      // Block
+				{EventToken, 10},    // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 11},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 12},    // "no"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 13},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 11},    // Else
+				{EventClose, 10},    // If
+				{EventToken, 14},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 1},     // Function
+				{EventClose, 0},     // Source
 			},
 		},
 	}
@@ -142,66 +148,72 @@ func TestIfElseIfChain(t *testing.T) {
 			name:  "if-else-if-else",
 			input: "fun test { if true { echo \"a\" } else if false { echo \"b\" } else { echo \"c\" } }",
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // test
-				{EventOpen, 3},   // Block
-				{EventToken, 2},  // {
-				{EventOpen, 10},  // If
-				{EventToken, 3},  // if
-				{EventToken, 4},  // true
-				{EventOpen, 3},   // Block
-				{EventToken, 5},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 6},  // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 7},  // "a"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 8},  // }
-				{EventClose, 3},  // Block
-				{EventOpen, 11},  // Else
-				{EventToken, 9},  // else
-				{EventOpen, 10},  // If (nested)
-				{EventToken, 10}, // if
-				{EventToken, 11}, // false
-				{EventOpen, 3},   // Block
-				{EventToken, 12}, // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 13}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 14}, // "b"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 15}, // }
-				{EventClose, 3},  // Block
-				{EventOpen, 11},  // Else
-				{EventToken, 16}, // else
-				{EventOpen, 3},   // Block
-				{EventToken, 17}, // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 18}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 19}, // "c"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 20}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 11}, // Else
-				{EventClose, 10}, // If (nested)
-				{EventClose, 11}, // Else
-				{EventClose, 10}, // If
-				{EventToken, 21}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},      // Source
+				{EventOpen, 1},      // Function
+				{EventToken, 0},     // fun
+				{EventToken, 1},     // test
+				{EventOpen, 3},      // Block
+				{EventToken, 2},     // {
+				{EventOpen, 10},     // If
+				{EventToken, 3},     // if
+				{EventToken, 4},     // true
+				{EventOpen, 3},      // Block
+				{EventToken, 5},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 6},     // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 7},     // "a"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 8},     // }
+				{EventClose, 3},     // Block
+				{EventOpen, 11},     // Else
+				{EventToken, 9},     // else
+				{EventOpen, 10},     // If (nested)
+				{EventToken, 10},    // if
+				{EventToken, 11},    // false
+				{EventOpen, 3},      // Block
+				{EventToken, 12},    // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 13},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 14},    // "b"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 15},    // }
+				{EventClose, 3},     // Block
+				{EventOpen, 11},     // Else
+				{EventToken, 16},    // else
+				{EventOpen, 3},      // Block
+				{EventToken, 17},    // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 18},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 19},    // "c"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 20},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 11},    // Else
+				{EventClose, 10},    // If (nested)
+				{EventClose, 11},    // Else
+				{EventClose, 10},    // If
+				{EventToken, 21},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 1},     // Function
+				{EventClose, 0},     // Source
 			},
 		},
 	}
@@ -497,37 +509,39 @@ func TestForLoop(t *testing.T) {
 			name:  "simple for loop",
 			input: "fun test { for item in items { echo @var.item } }",
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // test
-				{EventOpen, 3},   // Block
-				{EventToken, 2},  // {
-				{EventOpen, 12},  // For (NodeFor = 12)
-				{EventToken, 3},  // for
-				{EventToken, 4},  // item (loop variable)
-				{EventToken, 5},  // in
-				{EventToken, 6},  // items (collection)
-				{EventOpen, 3},   // Block
-				{EventToken, 7},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 8},  // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 9},  // @
-				{EventToken, 10}, // var
-				{EventToken, 11}, // .
-				{EventToken, 12}, // item
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 13}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 12}, // For
-				{EventToken, 14}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},      // Source
+				{EventOpen, 1},      // Function
+				{EventToken, 0},     // fun
+				{EventToken, 1},     // test
+				{EventOpen, 3},      // Block
+				{EventToken, 2},     // {
+				{EventOpen, 12},     // For (NodeFor = 12)
+				{EventToken, 3},     // for
+				{EventToken, 4},     // item (loop variable)
+				{EventToken, 5},     // in
+				{EventToken, 6},     // items (collection)
+				{EventOpen, 3},      // Block
+				{EventToken, 7},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 8},     // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 9},     // @
+				{EventToken, 10},    // var
+				{EventToken, 11},    // .
+				{EventToken, 12},    // item
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 13},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 12},    // For
+				{EventToken, 14},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 1},     // Function
+				{EventClose, 0},     // Source
 			},
 		},
 	}
@@ -667,46 +681,50 @@ func TestTryCatch(t *testing.T) {
 			name:  "simple try-catch",
 			input: "fun test { try { echo \"attempting\" } catch { echo \"failed\" } }",
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // test
-				{EventOpen, 3},   // Block
-				{EventToken, 2},  // {
-				{EventOpen, 19},  // Try (NodeTry = 19)
-				{EventToken, 3},  // try
-				{EventOpen, 3},   // Block
-				{EventToken, 4},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 5},  // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 6},  // "attempting"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 7},  // }
-				{EventClose, 3},  // Block
-				{EventOpen, 20},  // Catch (NodeCatch = 20)
-				{EventToken, 8},  // catch
-				{EventOpen, 3},   // Block
-				{EventToken, 9},  // {
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 10}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 11}, // "failed"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventToken, 12}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 20}, // Catch
-				{EventClose, 19}, // Try
-				{EventToken, 13}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},      // Source
+				{EventOpen, 1},      // Function
+				{EventToken, 0},     // fun
+				{EventToken, 1},     // test
+				{EventOpen, 3},      // Block
+				{EventToken, 2},     // {
+				{EventOpen, 19},     // Try (NodeTry = 19)
+				{EventToken, 3},     // try
+				{EventOpen, 3},      // Block
+				{EventToken, 4},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 5},     // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 6},     // "attempting"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 7},     // }
+				{EventClose, 3},     // Block
+				{EventOpen, 20},     // Catch (NodeCatch = 20)
+				{EventToken, 8},     // catch
+				{EventOpen, 3},      // Block
+				{EventToken, 9},     // {
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 10},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 11},    // "failed"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventToken, 12},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 20},    // Catch
+				{EventClose, 19},    // Try
+				{EventToken, 13},    // }
+				{EventClose, 3},     // Block
+				{EventClose, 1},     // Function
+				{EventClose, 0},     // Source
 			},
 		},
 	}
@@ -990,36 +1008,40 @@ func TestWhenStatement(t *testing.T) {
 				{EventToken, 8},  // {
 
 				// First arm: "production" -> echo "prod"
-				{EventOpen, 23},  // WhenArm (NodeWhenArm = 23)
-				{EventOpen, 24},  // PatternLiteral (NodePatternLiteral = 24)
-				{EventToken, 9},  // "production"
-				{EventClose, 24}, // PatternLiteral
-				{EventToken, 10}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 11}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 12}, // "prod"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm (NodeWhenArm = 23)
+				{EventOpen, 24},     // PatternLiteral (NodePatternLiteral = 24)
+				{EventToken, 9},     // "production"
+				{EventClose, 24},    // PatternLiteral
+				{EventToken, 10},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 11},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 12},    // "prod"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				// Second arm: else -> echo "other"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 25},  // PatternElse (NodePatternElse = 25)
-				{EventToken, 13}, // else
-				{EventClose, 25}, // PatternElse
-				{EventToken, 14}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 15}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 16}, // "other"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 25},     // PatternElse (NodePatternElse = 25)
+				{EventToken, 13},    // else
+				{EventClose, 25},    // PatternElse
+				{EventToken, 14},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 15},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 16},    // "other"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				{EventToken, 17}, // }
 				{EventClose, 22}, // When
@@ -1235,37 +1257,41 @@ func TestWhenRegexPatterns(t *testing.T) {
 				{EventToken, 8},  // {
 
 				// First arm: r"^release/" -> echo "release"
-				{EventOpen, 23},  // WhenArm (NodeWhenArm = 23)
-				{EventOpen, 26},  // PatternRegex (NodePatternRegex = 26) - NEW NODE TYPE
-				{EventToken, 9},  // r
-				{EventToken, 10}, // "^release/"
-				{EventClose, 26}, // PatternRegex
-				{EventToken, 11}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 12}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 13}, // "release"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm (NodeWhenArm = 23)
+				{EventOpen, 26},     // PatternRegex (NodePatternRegex = 26) - NEW NODE TYPE
+				{EventToken, 9},     // r
+				{EventToken, 10},    // "^release/"
+				{EventClose, 26},    // PatternRegex
+				{EventToken, 11},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 12},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 13},    // "release"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				// Second arm: else -> echo "other"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 25},  // PatternElse (NodePatternElse = 25)
-				{EventToken, 14}, // else
-				{EventClose, 25}, // PatternElse
-				{EventToken, 15}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 16}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 17}, // "other"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 25},     // PatternElse (NodePatternElse = 25)
+				{EventToken, 14},    // else
+				{EventClose, 25},    // PatternElse
+				{EventToken, 15},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 16},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 17},    // "other"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				{EventToken, 18}, // }
 				{EventClose, 22}, // When
@@ -1300,54 +1326,60 @@ func TestWhenRegexPatterns(t *testing.T) {
 				{EventToken, 8},  // {
 
 				// First arm: r"^main$" -> echo "main"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 26},  // PatternRegex
-				{EventToken, 10}, // r (token 9 is newline, skipped)
-				{EventToken, 11}, // "^main$"
-				{EventClose, 26}, // PatternRegex
-				{EventToken, 12}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 13}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 14}, // "main"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 26},     // PatternRegex
+				{EventToken, 10},    // r (token 9 is newline, skipped)
+				{EventToken, 11},    // "^main$"
+				{EventClose, 26},    // PatternRegex
+				{EventToken, 12},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 13},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 14},    // "main"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				// Second arm: r"^dev-" -> echo "dev"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 26},  // PatternRegex
-				{EventToken, 16}, // r (token 15 is newline, skipped)
-				{EventToken, 17}, // "^dev-"
-				{EventClose, 26}, // PatternRegex
-				{EventToken, 18}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 19}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 20}, // "dev"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 26},     // PatternRegex
+				{EventToken, 16},    // r (token 15 is newline, skipped)
+				{EventToken, 17},    // "^dev-"
+				{EventClose, 26},    // PatternRegex
+				{EventToken, 18},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 19},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 20},    // "dev"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				// Third arm: else -> echo "other"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 25},  // PatternElse
-				{EventToken, 22}, // else (token 21 is newline, skipped)
-				{EventClose, 25}, // PatternElse
-				{EventToken, 23}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 24}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 25}, // "other"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 25},     // PatternElse
+				{EventToken, 22},    // else (token 21 is newline, skipped)
+				{EventClose, 25},    // PatternElse
+				{EventToken, 23},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 24},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 25},    // "other"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				{EventToken, 27}, // } (token 26 is newline, skipped)
 				{EventClose, 22}, // When
@@ -1402,38 +1434,42 @@ func TestWhenRangePatterns(t *testing.T) {
 				{EventToken, 8},  // {
 
 				// First arm: 200...299 -> echo "success"
-				{EventOpen, 23},  // WhenArm (NodeWhenArm = 23)
-				{EventOpen, 27},  // PatternRange (NodePatternRange = 27) - NEW NODE TYPE
-				{EventToken, 9},  // 200
-				{EventToken, 10}, // ...
-				{EventToken, 11}, // 299
-				{EventClose, 27}, // PatternRange
-				{EventToken, 12}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 13}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 14}, // "success"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm (NodeWhenArm = 23)
+				{EventOpen, 27},     // PatternRange (NodePatternRange = 27) - NEW NODE TYPE
+				{EventToken, 9},     // 200
+				{EventToken, 10},    // ...
+				{EventToken, 11},    // 299
+				{EventClose, 27},    // PatternRange
+				{EventToken, 12},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 13},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 14},    // "success"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				// Second arm: else -> echo "error"
-				{EventOpen, 23},  // WhenArm
-				{EventOpen, 25},  // PatternElse (NodePatternElse = 25)
-				{EventToken, 15}, // else
-				{EventClose, 25}, // PatternElse
-				{EventToken, 16}, // ->
-				{EventOpen, 8},   // ShellCommand
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 17}, // echo
-				{EventClose, 9},  // ShellArg
-				{EventOpen, 9},   // ShellArg
-				{EventToken, 18}, // "error"
-				{EventClose, 9},  // ShellArg
-				{EventClose, 8},  // ShellCommand
-				{EventClose, 23}, // WhenArm
+				{EventOpen, 23},     // WhenArm
+				{EventOpen, 25},     // PatternElse (NodePatternElse = 25)
+				{EventToken, 15},    // else
+				{EventClose, 25},    // PatternElse
+				{EventToken, 16},    // ->
+				{EventStepEnter, 0}, // Step boundary
+				{EventOpen, 8},      // ShellCommand
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 17},    // echo
+				{EventClose, 9},     // ShellArg
+				{EventOpen, 9},      // ShellArg
+				{EventToken, 18},    // "error"
+				{EventClose, 9},     // ShellArg
+				{EventClose, 8},     // ShellCommand
+				{EventStepExit, 0},  // Step boundary
+				{EventClose, 23},    // WhenArm
 
 				{EventToken, 19}, // }
 				{EventClose, 22}, // When

@@ -211,6 +211,15 @@ func (p *parser) file() {
 			continue
 		}
 
+		// Check if this is an executable step (not control flow)
+		// Steps: var declarations, decorators, shell commands
+		// NOT steps: fun, if, for, when, try (control flow/metaprogramming/definitions)
+		isStep := p.at(lexer.VAR) || p.at(lexer.AT) || p.at(lexer.IDENTIFIER)
+
+		if isStep {
+			p.events = append(p.events, Event{Kind: EventStepEnter, Data: 0})
+		}
+
 		if p.at(lexer.FUN) {
 			p.function()
 		} else if p.at(lexer.VAR) {
@@ -258,6 +267,10 @@ func (p *parser) file() {
 		} else {
 			// Unknown token, skip for now
 			p.advance()
+		}
+
+		if isStep {
+			p.events = append(p.events, Event{Kind: EventStepExit, Data: 0})
 		}
 
 		// INVARIANT: Parser must make progress in each iteration
@@ -488,6 +501,15 @@ func (p *parser) statement() {
 		p.advance()
 	}
 
+	// Check if this is an executable step (not control flow)
+	// Steps: var declarations, decorators, assignments, shell commands
+	// NOT steps: if, for, when, try (control flow/metaprogramming)
+	isStep := p.at(lexer.VAR) || p.at(lexer.AT) || p.at(lexer.IDENTIFIER)
+
+	if isStep {
+		p.events = append(p.events, Event{Kind: EventStepEnter, Data: 0})
+	}
+
 	if p.at(lexer.FUN) {
 		// Function declarations not allowed inside blocks
 		p.errors = append(p.errors, ParseError{
@@ -559,11 +581,14 @@ func (p *parser) statement() {
 				nextType == lexer.DIVIDE_ASSIGN ||
 				nextType == lexer.MODULO_ASSIGN {
 				p.assignmentStmt()
-				return
+			} else {
+				// Shell command
+				p.shellCommand()
 			}
+		} else {
+			// No next token, treat as shell command
+			p.shellCommand()
 		}
-		// Shell command
-		p.shellCommand()
 	} else if !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
 		// Unknown statement - error recovery
 		if p.config.debug >= DebugDetailed {
@@ -584,6 +609,10 @@ func (p *parser) statement() {
 			}
 			p.advance()
 		}
+	}
+
+	if isStep {
+		p.events = append(p.events, Event{Kind: EventStepExit, Data: 0})
 	}
 }
 

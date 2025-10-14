@@ -22,7 +22,8 @@ func TestUnaryExpression(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // x
@@ -34,7 +35,8 @@ func TestUnaryExpression(t *testing.T) {
 				{EventClose, uint32(NodeLiteral)},
 				{EventClose, uint32(NodeUnaryExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 8}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 8},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -50,7 +52,8 @@ func TestUnaryExpression(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // result
@@ -68,7 +71,8 @@ func TestUnaryExpression(t *testing.T) {
 				{EventClose, uint32(NodeIdentifier)},
 				{EventClose, uint32(NodeBinaryExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 10}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 10},   // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -107,7 +111,8 @@ func TestPrefixIncrementDecrement(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // x
@@ -119,7 +124,8 @@ func TestPrefixIncrementDecrement(t *testing.T) {
 				{EventClose, uint32(NodeIdentifier)},
 				{EventClose, uint32(NodePrefixExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 8}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 8},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -135,7 +141,8 @@ func TestPrefixIncrementDecrement(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // y
@@ -150,7 +157,8 @@ func TestPrefixIncrementDecrement(t *testing.T) {
 				{EventClose, uint32(NodeDecorator)},
 				{EventClose, uint32(NodePrefixExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 11}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 11},   // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -189,7 +197,8 @@ func TestPostfixIncrementDecrement(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // x
@@ -201,7 +210,8 @@ func TestPostfixIncrementDecrement(t *testing.T) {
 				{EventToken, 7}, // ++
 				{EventClose, uint32(NodePostfixExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 8}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 8},    // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -217,7 +227,8 @@ func TestPostfixIncrementDecrement(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // y
@@ -232,7 +243,8 @@ func TestPostfixIncrementDecrement(t *testing.T) {
 				{EventToken, 10}, // --
 				{EventClose, uint32(NodePostfixExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 11}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 11},   // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -271,7 +283,8 @@ func TestIncrementDecrementPrecedence(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // result
@@ -289,7 +302,8 @@ func TestIncrementDecrementPrecedence(t *testing.T) {
 				{EventClose, uint32(NodeIdentifier)},
 				{EventClose, uint32(NodeBinaryExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 10}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 10},   // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},
@@ -305,7 +319,8 @@ func TestIncrementDecrementPrecedence(t *testing.T) {
 				{EventToken, 0}, // fun
 				{EventToken, 1}, // test
 				{EventOpen, uint32(NodeBlock)},
-				{EventToken, 2}, // {
+				{EventToken, 2},     // {
+				{EventStepEnter, 0}, // Step boundary
 				{EventOpen, uint32(NodeVarDecl)},
 				{EventToken, 3}, // var
 				{EventToken, 4}, // result
@@ -323,7 +338,8 @@ func TestIncrementDecrementPrecedence(t *testing.T) {
 				{EventClose, uint32(NodeIdentifier)},
 				{EventClose, uint32(NodeBinaryExpr)},
 				{EventClose, uint32(NodeVarDecl)},
-				{EventToken, 10}, // }
+				{EventStepExit, 0}, // Step boundary
+				{EventToken, 10},   // }
 				{EventClose, uint32(NodeBlock)},
 				{EventClose, uint32(NodeFunction)},
 				{EventClose, uint32(NodeSource)},

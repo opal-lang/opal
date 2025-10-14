@@ -18,6 +18,7 @@ func TestSimpleShellCommand(t *testing.T) {
 			input: `echo "hello"`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 0}, // echo
@@ -26,6 +27,7 @@ func TestSimpleShellCommand(t *testing.T) {
 				{Kind: EventToken, Data: 1}, // "hello"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -34,6 +36,7 @@ func TestSimpleShellCommand(t *testing.T) {
 			input: `kubectl apply -f deployment.yaml`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 0}, // kubectl
@@ -51,6 +54,7 @@ func TestSimpleShellCommand(t *testing.T) {
 				{Kind: EventToken, Data: 6}, // yaml
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -59,6 +63,7 @@ func TestSimpleShellCommand(t *testing.T) {
 			input: `npm run build`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 0}, // npm
@@ -70,6 +75,7 @@ func TestSimpleShellCommand(t *testing.T) {
 				{Kind: EventToken, Data: 2}, // build
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -102,6 +108,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 			input: `echo "first" && echo "second"`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // ONE step for both commands
 				// First command
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
@@ -122,6 +129,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 				{Kind: EventToken, Data: 4}, // "second"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // End of step
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -130,6 +138,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 			input: `echo "try" || echo "fallback"`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // ONE step for both commands
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 0}, // echo
@@ -147,6 +156,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 				{Kind: EventToken, Data: 4}, // "fallback"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // End of step
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -155,6 +165,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 			input: `cat file.txt | grep pattern`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // ONE step for both commands
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 0}, // cat
@@ -174,6 +185,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 				{Kind: EventToken, Data: 6}, // pattern
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // End of step
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -182,6 +194,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 			input: `npm run build && npm test || echo "failed"`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // ONE step for all three commands
 				// npm run build
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
@@ -214,6 +227,7 @@ func TestShellCommandWithOperators(t *testing.T) {
 				{Kind: EventToken, Data: 8}, // "failed"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0}, // End of step
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
@@ -247,7 +261,8 @@ echo "second"`
 
 	expected := []Event{
 		{Kind: EventOpen, Data: uint32(NodeSource)},
-		// First command
+		// First command - FIRST STEP
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 		{Kind: EventOpen, Data: uint32(NodeShellArg)},
 		{Kind: EventToken, Data: 0}, // echo
@@ -256,7 +271,9 @@ echo "second"`
 		{Kind: EventToken, Data: 1}, // "first"
 		{Kind: EventClose, Data: uint32(NodeShellArg)},
 		{Kind: EventClose, Data: uint32(NodeShellCommand)},
-		// Second command (token 2 is NEWLINE, skipped)
+		{Kind: EventStepExit, Data: 0},
+		// Second command (token 2 is NEWLINE, skipped) - SECOND STEP
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 		{Kind: EventOpen, Data: uint32(NodeShellArg)},
 		{Kind: EventToken, Data: 3}, // echo
@@ -265,6 +282,7 @@ echo "second"`
 		{Kind: EventToken, Data: 4}, // "second"
 		{Kind: EventClose, Data: uint32(NodeShellArg)},
 		{Kind: EventClose, Data: uint32(NodeShellCommand)},
+		{Kind: EventStepExit, Data: 0},
 		{Kind: EventClose, Data: uint32(NodeSource)},
 	}
 
@@ -293,7 +311,8 @@ func TestShellCommandInFunctionBody(t *testing.T) {
 		{Kind: EventOpen, Data: uint32(NodeBlock)},
 		{Kind: EventToken, Data: 2}, // {
 		// Token 3 is NEWLINE (skipped in statement parsing)
-		// Shell command inside block
+		// Shell command inside block - this is a STEP
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 		{Kind: EventOpen, Data: uint32(NodeShellArg)},
 		{Kind: EventToken, Data: 4}, // kubectl
@@ -310,6 +329,7 @@ func TestShellCommandInFunctionBody(t *testing.T) {
 		{Kind: EventToken, Data: 9}, // / (DIVIDE)
 		{Kind: EventClose, Data: uint32(NodeShellArg)},
 		{Kind: EventClose, Data: uint32(NodeShellCommand)},
+		{Kind: EventStepExit, Data: 0},
 		// Token 10 is NEWLINE
 		{Kind: EventToken, Data: 11}, // }
 		{Kind: EventClose, Data: uint32(NodeBlock)},
@@ -413,7 +433,8 @@ kubectl apply -f k8s/`
 
 	expected := []Event{
 		{Kind: EventOpen, Data: uint32(NodeSource)},
-		// Var declaration
+		// Var declaration - STEP 1
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeVarDecl)},
 		{Kind: EventToken, Data: 0}, // var
 		{Kind: EventToken, Data: 1}, // ENV
@@ -422,7 +443,9 @@ kubectl apply -f k8s/`
 		{Kind: EventToken, Data: 3}, // "prod"
 		{Kind: EventClose, Data: uint32(NodeLiteral)},
 		{Kind: EventClose, Data: uint32(NodeVarDecl)},
-		// First shell command
+		{Kind: EventStepExit, Data: 0},
+		// First shell command - STEP 2
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 		{Kind: EventOpen, Data: uint32(NodeShellArg)},
 		{Kind: EventToken, Data: 5}, // echo (token 4 is NEWLINE)
@@ -431,7 +454,9 @@ kubectl apply -f k8s/`
 		{Kind: EventToken, Data: 6}, // "Deploying"
 		{Kind: EventClose, Data: uint32(NodeShellArg)},
 		{Kind: EventClose, Data: uint32(NodeShellCommand)},
-		// Second shell command
+		{Kind: EventStepExit, Data: 0},
+		// Second shell command - STEP 3
+		{Kind: EventStepEnter, Data: 0},
 		{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 		{Kind: EventOpen, Data: uint32(NodeShellArg)},
 		{Kind: EventToken, Data: 8}, // kubectl (token 7 is NEWLINE)
@@ -448,6 +473,7 @@ kubectl apply -f k8s/`
 		{Kind: EventToken, Data: 13}, // /
 		{Kind: EventClose, Data: uint32(NodeShellArg)},
 		{Kind: EventClose, Data: uint32(NodeShellCommand)},
+		{Kind: EventStepExit, Data: 0},
 		{Kind: EventClose, Data: uint32(NodeSource)},
 	}
 

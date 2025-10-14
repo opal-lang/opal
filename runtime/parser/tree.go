@@ -24,9 +24,11 @@ type Event struct {
 type EventKind uint8
 
 const (
-	EventOpen  EventKind = iota // Open syntax node
-	EventClose                  // Close syntax node
-	EventToken                  // Consume token
+	EventOpen      EventKind = iota // Open syntax node
+	EventClose                      // Close syntax node
+	EventToken                      // Consume token
+	EventStepEnter                  // Enter a step (newline-separated executable statement)
+	EventStepExit                   // Exit a step
 )
 
 // NodeKind represents syntax node types
