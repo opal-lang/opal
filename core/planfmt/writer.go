@@ -48,8 +48,8 @@ type Writer struct {
 // Format: MAGIC(4) | VERSION(2) | FLAGS(2) | HEADER_LEN(4) | BODY_LEN(8) | HEADER | BODY
 // Returns the BLAKE2b-256 hash of the entire file.
 func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
-	// Canonicalize plan for deterministic encoding (sorts args, preserves child order)
-	p.Canonicalize()
+	// Canonicalize plan for deterministic encoding (sorts args, preserves command order)
+	p.canonicalize()
 
 	// Use buffer-then-write pattern: build header and body first, then write preamble with correct lengths
 	var headerBuf, bodyBuf bytes.Buffer
@@ -169,59 +169,89 @@ func (wr *Writer) writeHeader(buf *bytes.Buffer, p *Plan) error {
 
 // writeBody writes the plan body (TOC + sections) to the buffer
 func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
-	// For now, write a minimal STEPS section (no TOC yet)
-	// This is just enough to make child order tests pass
-	if p.Root != nil {
-		return wr.writeStep(buf, p.Root)
+	// Write step count (2 bytes, uint16)
+	stepCount := uint16(len(p.Steps))
+	if err := binary.Write(buf, binary.LittleEndian, stepCount); err != nil {
+		return err
 	}
+
+	// Write each step
+	for i := range p.Steps {
+		if err := wr.writeStep(buf, &p.Steps[i]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// writeStep writes a single step and its children recursively
+// writeStep writes a single step and its commands recursively
 func (wr *Writer) writeStep(buf *bytes.Buffer, s *Step) error {
 	// Write step ID (8 bytes, uint64, little-endian)
 	if err := binary.Write(buf, binary.LittleEndian, s.ID); err != nil {
 		return err
 	}
 
-	// Write kind (1 byte)
-	if err := buf.WriteByte(uint8(s.Kind)); err != nil {
+	// Write command count (2 bytes, uint16)
+	cmdCount := uint16(len(s.Commands))
+	if err := binary.Write(buf, binary.LittleEndian, cmdCount); err != nil {
 		return err
 	}
 
-	// Write op (2-byte length + string)
-	opLen := uint16(len(s.Op))
-	if err := binary.Write(buf, binary.LittleEndian, opLen); err != nil {
+	// Write each command
+	for i := range s.Commands {
+		if err := wr.writeCommand(buf, &s.Commands[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeCommand writes a single command
+func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *Command) error {
+	// Write decorator (2-byte length + string)
+	decoratorLen := uint16(len(cmd.Decorator))
+	if err := binary.Write(buf, binary.LittleEndian, decoratorLen); err != nil {
 		return err
 	}
-	if _, err := buf.WriteString(s.Op); err != nil {
+	if _, err := buf.WriteString(cmd.Decorator); err != nil {
 		return err
 	}
 
 	// Write args count (2 bytes, uint16)
-	argsCount := uint16(len(s.Args))
+	argsCount := uint16(len(cmd.Args))
 	if err := binary.Write(buf, binary.LittleEndian, argsCount); err != nil {
 		return err
 	}
 
 	// Write each arg
-	for _, arg := range s.Args {
-		if err := wr.writeArg(buf, &arg); err != nil {
+	for i := range cmd.Args {
+		if err := wr.writeArg(buf, &cmd.Args[i]); err != nil {
 			return err
 		}
 	}
 
-	// Write children count (2 bytes, uint16)
-	childrenCount := uint16(len(s.Children))
-	if err := binary.Write(buf, binary.LittleEndian, childrenCount); err != nil {
+	// Write block step count (2 bytes, uint16)
+	blockCount := uint16(len(cmd.Block))
+	if err := binary.Write(buf, binary.LittleEndian, blockCount); err != nil {
 		return err
 	}
 
-	// Write each child recursively
-	for _, child := range s.Children {
-		if err := wr.writeStep(buf, child); err != nil {
+	// Write each block step recursively
+	for i := range cmd.Block {
+		if err := wr.writeStep(buf, &cmd.Block[i]); err != nil {
 			return err
 		}
+	}
+
+	// Write operator (2-byte length + string)
+	operatorLen := uint16(len(cmd.Operator))
+	if err := binary.Write(buf, binary.LittleEndian, operatorLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(cmd.Operator); err != nil {
+		return err
 	}
 
 	return nil

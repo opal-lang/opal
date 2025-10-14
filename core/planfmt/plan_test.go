@@ -18,7 +18,7 @@ func TestPlanValidation(t *testing.T) {
 			name: "empty plan is valid",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root:   nil,
+				Steps:  nil,
 			},
 			wantErr: false,
 		},
@@ -26,12 +26,17 @@ func TestPlanValidation(t *testing.T) {
 			name: "single step is valid",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -41,13 +46,28 @@ func TestPlanValidation(t *testing.T) {
 			name: "duplicate step IDs are invalid",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "retry",
-					Children: []*planfmt.Step{
-						{ID: 2, Kind: planfmt.KindDecorator, Op: "shell"},
-						{ID: 2, Kind: planfmt.KindDecorator, Op: "shell"}, // Duplicate!
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@retry",
+								Block: []planfmt.Step{
+									{
+										ID: 2,
+										Commands: []planfmt.Command{
+											{Decorator: "@shell"},
+										},
+									},
+									{
+										ID: 2, // Duplicate!
+										Commands: []planfmt.Command{
+											{Decorator: "@shell"},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -58,13 +78,18 @@ func TestPlanValidation(t *testing.T) {
 			name: "unsorted args are invalid",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo"}}, // Out of order!
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo"}}, // Out of order!
+								},
+							},
+						},
 					},
 				},
 			},

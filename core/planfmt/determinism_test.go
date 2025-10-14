@@ -40,12 +40,17 @@ func TestByteAccounting(t *testing.T) {
 					CreatedAt: 9876543210,
 					PlanKind:  1,
 				},
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -93,14 +98,19 @@ func TestCanonicalArgOrder(t *testing.T) {
 	// Plan with args in order A, B, C
 	p1 := &planfmt.Plan{
 		Target: "test",
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
-			Args: []planfmt.Arg{
-				{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
-				{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
-				{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
+							{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
+							{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -108,14 +118,19 @@ func TestCanonicalArgOrder(t *testing.T) {
 	// Plan with args in order C, A, B (semantically identical)
 	p2 := &planfmt.Plan{
 		Target: "test",
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
-			Args: []planfmt.Arg{
-				{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
-				{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
-				{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
+							{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
+							{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -164,13 +179,18 @@ func TestStability(t *testing.T) {
 			Compiler:  [16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
 			PlanKind:  1,
 		},
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
-			Args: []planfmt.Arg{
-				{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-				{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+							{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -213,33 +233,33 @@ func TestStability(t *testing.T) {
 	}
 }
 
-// TestCanonicalChildOrder verifies that child order is preserved
-// (children order IS semantically significant, unlike args)
-func TestCanonicalChildOrder(t *testing.T) {
-	// Plan with children in order A, B
+// TestCanonicalCommandOrder verifies that command order is preserved
+// (command order IS semantically significant, unlike args)
+func TestCanonicalCommandOrder(t *testing.T) {
+	// Plan with commands in order A, B (chained with &&)
 	p1 := &planfmt.Plan{
 		Target: "test",
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "parallel",
-			Children: []*planfmt.Step{
-				{ID: 2, Kind: planfmt.KindDecorator, Op: "task_a"},
-				{ID: 3, Kind: planfmt.KindDecorator, Op: "task_b"},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{Decorator: "@task_a", Operator: "&&"},
+					{Decorator: "@task_b"},
+				},
 			},
 		},
 	}
 
-	// Plan with children in order B, A (semantically DIFFERENT)
+	// Plan with commands in order B, A (semantically DIFFERENT)
 	p2 := &planfmt.Plan{
 		Target: "test",
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "parallel",
-			Children: []*planfmt.Step{
-				{ID: 3, Kind: planfmt.KindDecorator, Op: "task_b"},
-				{ID: 2, Kind: planfmt.KindDecorator, Op: "task_a"},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{Decorator: "@task_b", Operator: "&&"},
+					{Decorator: "@task_a"},
+				},
 			},
 		},
 	}

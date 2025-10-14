@@ -24,7 +24,7 @@ import (
 type Plan struct {
 	Header PlanHeader
 	Target string // Function/command being executed (e.g., "deploy")
-	Root   *Step  // Root of execution tree (nil for empty plan)
+	Steps  []Step // List of steps (newline-separated statements)
 }
 
 // PlanHeader contains metadata about the plan.
@@ -38,25 +38,28 @@ type PlanHeader struct {
 	_         [3]byte  // Reserved for future use (align to 8 bytes)
 }
 
-// StepKind identifies the type of step
-type StepKind uint8
-
-const (
-	KindDecorator StepKind = iota // Execution decorator (@shell, @retry, @parallel)
-	KindTryCatch                  // Runtime branching (try/catch/finally)
-)
-
-// Step represents a single step in the execution tree.
+// Step represents a single step (newline-separated statement).
+// A step can contain multiple commands chained with operators.
 // Invariants:
 // - ID must be unique within a plan
-// - Args must be sorted by Key (for determinism)
-// - Children order is semantically significant
+// - Commands order is semantically significant (operators depend on order)
+// - Last command in step must have empty Operator
 type Step struct {
-	ID       uint64   // Unique identifier (stable across plan versions)
-	Kind     StepKind // Decorator or TryCatch
-	Op       string   // "shell", "retry", "parallel", "try", "catch", "finally"
-	Args     []Arg    // Sorted by Key for deterministic encoding
-	Children []*Step  // Nested steps (order matters)
+	ID       uint64    // Unique identifier (stable across plan versions)
+	Commands []Command // Commands in this step (operator-chained)
+}
+
+// Command represents a single decorator invocation within a step.
+// Commands are chained with operators (&&, ||, |, ;) which are handled by bash.
+// Invariants:
+// - Args must be sorted by Key (for determinism)
+// - Operator must be empty for last command in step
+// - Block steps follow same rules as top-level steps
+type Command struct {
+	Decorator string // "@shell", "@retry", "@parallel", etc.
+	Args      []Arg  // Sorted by Key for deterministic encoding
+	Block     []Step // Nested steps (for decorators with blocks)
+	Operator  string // "&&", "||", "|", ";" - how to chain to NEXT command (empty for last)
 }
 
 // Arg represents a typed argument to a decorator.
@@ -90,25 +93,29 @@ const (
 
 // Validate checks plan invariants
 func (p *Plan) Validate() error {
-	if p.Root == nil {
+	if len(p.Steps) == 0 {
 		return nil // Empty plan is valid
 	}
 
 	// Check for duplicate step IDs
 	seen := make(map[uint64]bool)
-	return p.Root.validate(seen)
+	for i := range p.Steps {
+		if err := p.Steps[i].validate(seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Canonicalize ensures the plan is in canonical form for deterministic encoding.
-// This sorts args by key and recursively canonicalizes children.
+// canonicalize ensures the plan is in canonical form for deterministic encoding.
+// This sorts args by key within each command and recursively canonicalizes blocks.
 // Must be called before writing to ensure deterministic output.
 //
-// Note: String comparison is bytewise (Go's native < operator).
-// For cross-platform Unicode reproducibility, consider normalizing strings
-// to NFC form before encoding if visual equality matters.
-func (p *Plan) Canonicalize() {
-	if p.Root != nil {
-		p.Root.canonicalize()
+// Note: Command order is preserved (operator semantics depend on order).
+// String comparison is bytewise (Go's native < operator).
+func (p *Plan) canonicalize() {
+	for i := range p.Steps {
+		p.Steps[i].canonicalize()
 	}
 }
 
@@ -120,35 +127,53 @@ func (s *Step) validate(seen map[uint64]bool) error {
 	}
 	seen[s.ID] = true
 
-	// Check args are sorted
-	for i := 1; i < len(s.Args); i++ {
-		if s.Args[i-1].Key >= s.Args[i].Key {
-			return fmt.Errorf("step %d: args not sorted (key %q >= %q)",
-				s.ID, s.Args[i-1].Key, s.Args[i].Key)
+	// Validate each command
+	for i, cmd := range s.Commands {
+		// Check args are sorted
+		for j := 1; j < len(cmd.Args); j++ {
+			if cmd.Args[j-1].Key >= cmd.Args[j].Key {
+				return fmt.Errorf("step %d command %d: args not sorted (key %q >= %q)",
+					s.ID, i, cmd.Args[j-1].Key, cmd.Args[j].Key)
+			}
 		}
-	}
 
-	// Validate children recursively
-	for _, child := range s.Children {
-		if err := child.validate(seen); err != nil {
-			return err
+		// Last command must have empty operator
+		if i == len(s.Commands)-1 && cmd.Operator != "" {
+			return fmt.Errorf("step %d: last command has non-empty operator %q", s.ID, cmd.Operator)
+		}
+
+		// Non-last commands should have an operator
+		if i < len(s.Commands)-1 && cmd.Operator == "" {
+			return fmt.Errorf("step %d command %d: non-last command has empty operator", s.ID, i)
+		}
+
+		// Validate block steps recursively
+		for j := range cmd.Block {
+			if err := cmd.Block[j].validate(seen); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-// canonicalize sorts args and recursively canonicalizes children
+// canonicalize sorts args and recursively canonicalizes blocks
 func (s *Step) canonicalize() {
-	// Sort args by key for deterministic encoding
-	if len(s.Args) > 1 {
-		sort.Slice(s.Args, func(i, j int) bool {
-			return s.Args[i].Key < s.Args[j].Key
-		})
-	}
+	// Canonicalize each command (preserve command order - operators depend on it)
+	for i := range s.Commands {
+		cmd := &s.Commands[i]
 
-	// Recursively canonicalize children (preserve order, but canonicalize each)
-	for _, child := range s.Children {
-		child.canonicalize()
+		// Sort args by key for deterministic encoding
+		if len(cmd.Args) > 1 {
+			sort.Slice(cmd.Args, func(j, k int) bool {
+				return cmd.Args[j].Key < cmd.Args[k].Key
+			})
+		}
+
+		// Recursively canonicalize block steps
+		for j := range cmd.Block {
+			cmd.Block[j].canonicalize()
+		}
 	}
 }

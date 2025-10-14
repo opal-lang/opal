@@ -163,27 +163,32 @@ func (rd *Reader) readHeader(r io.Reader) (*Plan, error) {
 
 // readBody reads the plan body (steps)
 func (rd *Reader) readBody(r io.Reader, plan *Plan, maxDepth int) error {
-	// Check if body is empty
-	var peek [1]byte
-	n, err := r.Read(peek[:])
-	if err == io.EOF || n == 0 {
-		// Empty body, no root step
-		return nil
+	// Read step count (2 bytes, uint16, little-endian)
+	var stepCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &stepCount); err != nil {
+		if err == io.EOF {
+			// Empty body, no steps
+			return nil
+		}
+		return fmt.Errorf("read step count: %w", err)
 	}
 
-	// Body has content, read root step
-	// Create a new reader with the peeked byte prepended
-	bodyReader := io.MultiReader(bytes.NewReader(peek[:n]), r)
-	root, err := rd.readStep(bodyReader, 0, maxDepth)
-	if err != nil {
-		return err
+	// Read each step
+	if stepCount > 0 {
+		plan.Steps = make([]Step, stepCount)
+		for i := 0; i < int(stepCount); i++ {
+			step, err := rd.readStep(r, 0, maxDepth)
+			if err != nil {
+				return fmt.Errorf("read step %d: %w", i, err)
+			}
+			plan.Steps[i] = *step
+		}
 	}
-	plan.Root = root
 
 	return nil
 }
 
-// readStep reads a single step and its children recursively
+// readStep reads a single step and its commands recursively
 func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) {
 	// Check depth limit to prevent stack overflow
 	if depth >= maxDepth {
@@ -197,25 +202,43 @@ func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) 
 		return nil, fmt.Errorf("read step ID: %w", err)
 	}
 
-	// Read kind (1 byte)
-	var kind byte
-	if err := binary.Read(r, binary.LittleEndian, &kind); err != nil {
-		return nil, fmt.Errorf("read step kind: %w", err)
-	}
-	step.Kind = StepKind(kind)
-
-	// Read op length (2 bytes, uint16, little-endian)
-	var opLen uint16
-	if err := binary.Read(r, binary.LittleEndian, &opLen); err != nil {
-		return nil, fmt.Errorf("read op length: %w", err)
+	// Read command count (2 bytes, uint16, little-endian)
+	var cmdCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &cmdCount); err != nil {
+		return nil, fmt.Errorf("read command count: %w", err)
 	}
 
-	// Read op string
-	opBuf := make([]byte, opLen)
-	if _, err := io.ReadFull(r, opBuf); err != nil {
-		return nil, fmt.Errorf("read op: %w", err)
+	// Read each command
+	if cmdCount > 0 {
+		step.Commands = make([]Command, cmdCount)
+		for i := 0; i < int(cmdCount); i++ {
+			cmd, err := rd.readCommand(r, depth, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read command %d: %w", i, err)
+			}
+			step.Commands[i] = *cmd
+		}
 	}
-	step.Op = string(opBuf)
+
+	return step, nil
+}
+
+// readCommand reads a single command
+func (rd *Reader) readCommand(r io.Reader, depth int, maxDepth int) (*Command, error) {
+	cmd := &Command{}
+
+	// Read decorator length (2 bytes, uint16, little-endian)
+	var decoratorLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &decoratorLen); err != nil {
+		return nil, fmt.Errorf("read decorator length: %w", err)
+	}
+
+	// Read decorator string
+	decoratorBuf := make([]byte, decoratorLen)
+	if _, err := io.ReadFull(r, decoratorBuf); err != nil {
+		return nil, fmt.Errorf("read decorator: %w", err)
+	}
+	cmd.Decorator = string(decoratorBuf)
 
 	// Read args count (2 bytes, uint16, little-endian)
 	var argsCount uint16
@@ -225,35 +248,48 @@ func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) 
 
 	// Read each arg
 	if argsCount > 0 {
-		step.Args = make([]Arg, argsCount)
+		cmd.Args = make([]Arg, argsCount)
 		for i := 0; i < int(argsCount); i++ {
 			arg, err := rd.readArg(r)
 			if err != nil {
 				return nil, fmt.Errorf("read arg %d: %w", i, err)
 			}
-			step.Args[i] = *arg
+			cmd.Args[i] = *arg
 		}
 	}
 
-	// Read children count (2 bytes, uint16, little-endian)
-	var childrenCount uint16
-	if err := binary.Read(r, binary.LittleEndian, &childrenCount); err != nil {
-		return nil, fmt.Errorf("read children count: %w", err)
+	// Read block step count (2 bytes, uint16, little-endian)
+	var blockCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &blockCount); err != nil {
+		return nil, fmt.Errorf("read block count: %w", err)
 	}
 
-	// Read each child recursively
-	if childrenCount > 0 {
-		step.Children = make([]*Step, childrenCount)
-		for i := 0; i < int(childrenCount); i++ {
-			child, err := rd.readStep(r, depth+1, maxDepth)
+	// Read each block step recursively
+	if blockCount > 0 {
+		cmd.Block = make([]Step, blockCount)
+		for i := 0; i < int(blockCount); i++ {
+			step, err := rd.readStep(r, depth+1, maxDepth)
 			if err != nil {
-				return nil, fmt.Errorf("read child %d: %w", i, err)
+				return nil, fmt.Errorf("read block step %d: %w", i, err)
 			}
-			step.Children[i] = child
+			cmd.Block[i] = *step
 		}
 	}
 
-	return step, nil
+	// Read operator length (2 bytes, uint16, little-endian)
+	var operatorLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &operatorLen); err != nil {
+		return nil, fmt.Errorf("read operator length: %w", err)
+	}
+
+	// Read operator string
+	operatorBuf := make([]byte, operatorLen)
+	if _, err := io.ReadFull(r, operatorBuf); err != nil {
+		return nil, fmt.Errorf("read operator: %w", err)
+	}
+	cmd.Operator = string(operatorBuf)
+
+	return cmd, nil
 }
 
 // readArg reads a single argument

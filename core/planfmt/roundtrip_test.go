@@ -41,12 +41,17 @@ func TestRoundTrip(t *testing.T) {
 					CreatedAt: 9876543210,
 					PlanKind:  1,
 				},
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -55,25 +60,36 @@ func TestRoundTrip(t *testing.T) {
 			name: "plan with nested steps",
 			plan: &planfmt.Plan{
 				Target: "test",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "parallel",
-					Children: []*planfmt.Step{
-						{
-							ID:   2,
-							Kind: planfmt.KindDecorator,
-							Op:   "shell",
-							Args: []planfmt.Arg{
-								{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task1"}},
-							},
-						},
-						{
-							ID:   3,
-							Kind: planfmt.KindDecorator,
-							Op:   "shell",
-							Args: []planfmt.Arg{
-								{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task2"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@parallel",
+								Block: []planfmt.Step{
+									{
+										ID: 2,
+										Commands: []planfmt.Command{
+											{
+												Decorator: "@shell",
+												Args: []planfmt.Arg{
+													{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task1"}},
+												},
+											},
+										},
+									},
+									{
+										ID: 3,
+										Commands: []planfmt.Command{
+											{
+												Decorator: "@shell",
+												Args: []planfmt.Arg{
+													{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task2"}},
+												},
+											},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -84,14 +100,19 @@ func TestRoundTrip(t *testing.T) {
 			name: "plan with all value types",
 			plan: &planfmt.Plan{
 				Target: "complex",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "test",
-					Args: []planfmt.Arg{
-						{Key: "bool_val", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
-						{Key: "int_val", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 42}},
-						{Key: "str_val", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@test",
+								Args: []planfmt.Arg{
+									{Key: "bool_val", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
+									{Key: "int_val", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 42}},
+									{Key: "str_val", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -155,29 +176,40 @@ func TestRoundTripPreservesSemantics(t *testing.T) {
 			Compiler:  [16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
 			PlanKind:  1,
 		},
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "parallel",
-			Args: []planfmt.Arg{
-				{Key: "max_concurrent", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
-			},
-			Children: []*planfmt.Step{
-				{
-					ID:   2,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task1"}},
-						{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-					},
-				},
-				{
-					ID:   3,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task2"}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@parallel",
+						Args: []planfmt.Arg{
+							{Key: "max_concurrent", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
+						},
+						Block: []planfmt.Step{
+							{
+								ID: 2,
+								Commands: []planfmt.Command{
+									{
+										Decorator: "@shell",
+										Args: []planfmt.Arg{
+											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task1"}},
+											{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
+										},
+									},
+								},
+							},
+							{
+								ID: 3,
+								Commands: []planfmt.Command{
+									{
+										Decorator: "@shell",
+										Args: []planfmt.Arg{
+											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task2"}},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},

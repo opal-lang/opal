@@ -11,24 +11,24 @@ import (
 // TestDepthLimit verifies that deeply nested plans are rejected
 func TestDepthLimit(t *testing.T) {
 	// Create a very deep plan (1001 levels deep - exceeds 1000 limit)
+	// Build deep chain of nested blocks
 	plan := &planfmt.Plan{
 		Target: "deep",
+		Steps:  []planfmt.Step{{ID: 1}},
 	}
 
-	// Build deep chain
-	var current *planfmt.Step
+	// Build deep nesting through blocks
+	current := &plan.Steps[0]
 	for i := 0; i < 1001; i++ {
-		step := &planfmt.Step{
-			ID:   uint64(i + 1),
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
+		current.Commands = []planfmt.Command{
+			{
+				Decorator: "@shell",
+				Block: []planfmt.Step{
+					{ID: uint64(i + 2)},
+				},
+			},
 		}
-		if current != nil {
-			current.Children = []*planfmt.Step{step}
-		} else {
-			plan.Root = step
-		}
-		current = step
+		current = &current.Commands[0].Block[0]
 	}
 
 	// Write should succeed (no depth check on write)
@@ -127,25 +127,31 @@ func TestSignedFlagRejected(t *testing.T) {
 	}
 }
 
-// TestMaxChildrenLimit verifies reasonable limits on children count
-func TestMaxChildrenLimit(t *testing.T) {
-	// uint16 max is 65535 - create a plan with that many children
+// TestMaxBlockStepsLimit verifies reasonable limits on block step count
+func TestMaxBlockStepsLimit(t *testing.T) {
+	// uint16 max is 65535 - create a plan with that many block steps
 	// This tests that we can handle the format limit
 	plan := &planfmt.Plan{
 		Target: "wide",
-		Root: &planfmt.Step{
-			ID:       1,
-			Kind:     planfmt.KindDecorator,
-			Op:       "parallel",
-			Children: make([]*planfmt.Step, 65535),
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@parallel",
+						Block:     make([]planfmt.Step, 65535),
+					},
+				},
+			},
 		},
 	}
 
 	for i := 0; i < 65535; i++ {
-		plan.Root.Children[i] = &planfmt.Step{
-			ID:   uint64(i + 2),
-			Kind: planfmt.KindDecorator,
-			Op:   "task",
+		plan.Steps[0].Commands[0].Block[i] = planfmt.Step{
+			ID: uint64(i + 2),
+			Commands: []planfmt.Command{
+				{Decorator: "@task"},
+			},
 		}
 	}
 

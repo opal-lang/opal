@@ -17,12 +17,17 @@ func TestHashDeterminism(t *testing.T) {
 			Compiler:  [16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
 			PlanKind:  1,
 		},
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
-			Args: []planfmt.Arg{
-				{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -76,21 +81,27 @@ func TestHashUniqueness(t *testing.T) {
 			name: "with_step",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{Decorator: "@shell"},
+						},
+					},
 				},
 			},
 		},
 		{
-			name: "different_op",
+			name: "different_decorator",
 			plan: &planfmt.Plan{
 				Target: "deploy",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "retry",
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{Decorator: "@retry"},
+						},
+					},
 				},
 			},
 		},
@@ -118,12 +129,17 @@ func TestHashUniqueness(t *testing.T) {
 func TestHashRoundTrip(t *testing.T) {
 	plan := &planfmt.Plan{
 		Target: "test",
-		Root: &planfmt.Step{
-			ID:   1,
-			Kind: planfmt.KindDecorator,
-			Op:   "shell",
-			Args: []planfmt.Arg{
-				{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+						},
+					},
+				},
 			},
 		},
 	}

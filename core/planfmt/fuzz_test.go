@@ -73,12 +73,17 @@ func addSeedCorpus(f *testing.F) {
 			name: "single_step",
 			plan: &planfmt.Plan{
 				Target: "build",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -87,13 +92,28 @@ func addSeedCorpus(f *testing.F) {
 			name: "nested_steps",
 			plan: &planfmt.Plan{
 				Target: "parallel",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "parallel",
-					Children: []*planfmt.Step{
-						{ID: 2, Kind: planfmt.KindDecorator, Op: "task1"},
-						{ID: 3, Kind: planfmt.KindDecorator, Op: "task2"},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@parallel",
+								Block: []planfmt.Step{
+									{
+										ID: 2,
+										Commands: []planfmt.Command{
+											{Decorator: "@task1"},
+										},
+									},
+									{
+										ID: 3,
+										Commands: []planfmt.Command{
+											{Decorator: "@task2"},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -102,15 +122,20 @@ func addSeedCorpus(f *testing.F) {
 			name: "all_value_types",
 			plan: &planfmt.Plan{
 				Target: "types",
-				Root: &planfmt.Step{
-					ID:   1,
-					Kind: planfmt.KindDecorator,
-					Op:   "test",
-					Args: []planfmt.Arg{
-						{Key: "a_bool", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
-						{Key: "b_int", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: -42}},
-						{Key: "c_str", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
-						{Key: "d_ref", Val: planfmt.Value{Kind: planfmt.ValuePlaceholder, Ref: 0}},
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Commands: []planfmt.Command{
+							{
+								Decorator: "@test",
+								Args: []planfmt.Arg{
+									{Key: "a_bool", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
+									{Key: "b_int", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: -42}},
+									{Key: "c_str", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
+									{Key: "d_ref", Val: planfmt.Value{Kind: planfmt.ValuePlaceholder, Ref: 0}},
+								},
+							},
+						},
 					},
 				},
 			},
