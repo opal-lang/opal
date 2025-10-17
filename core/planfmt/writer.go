@@ -46,7 +46,15 @@ type Writer struct {
 
 // WritePlan writes the plan to the underlying writer.
 // Format: MAGIC(4) | VERSION(2) | FLAGS(2) | HEADER_LEN(4) | BODY_LEN(8) | HEADER | BODY
-// Returns the BLAKE2b-256 hash of the entire file.
+//
+// Returns the BLAKE2b-256 hash of target + body (execution semantics only).
+// Header metadata (SchemaID, CreatedAt, Compiler) is NOT included in the hash
+// to ensure contract stability. Only execution semantics affect the hash:
+//   - Target: which function to execute
+//   - Body: the steps to execute
+//
+// This means you can set CreatedAt timestamps, compiler versions, etc. without
+// invalidating contracts.
 func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 	// Canonicalize plan for deterministic encoding (sorts args, preserves command order)
 	p.canonicalize()
@@ -59,40 +67,52 @@ func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 		return [32]byte{}, err
 	}
 
-	// Build body in buffer (TODO: implement sections)
+	// Build body in buffer
 	if err := wr.writeBody(&bodyBuf, p); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Create hasher and multi-writer to compute hash while writing
+	// Compute hash of target + body (execution semantics only, not metadata)
+	// Target is part of execution semantics (which function to run)
+	// Metadata (SchemaID, CreatedAt, Compiler) is excluded from hash
 	hasher, err := blake2b.New256(nil)
 	if err != nil {
 		return [32]byte{}, err
 	}
-	mw := io.MultiWriter(hasher, wr.w)
 
-	// Write preamble with actual lengths (to both hasher and output)
+	// Hash target (execution semantic)
+	targetBytes := []byte(p.Target)
+	if _, err := hasher.Write(targetBytes); err != nil {
+		return [32]byte{}, err
+	}
+
+	// Hash body (execution semantics)
+	if _, err := hasher.Write(bodyBuf.Bytes()); err != nil {
+		return [32]byte{}, err
+	}
+
+	var digest [32]byte
+	copy(digest[:], hasher.Sum(nil))
+
+	// Write preamble
 	var preambleBuf bytes.Buffer
 	if err := wr.writePreambleToBuffer(&preambleBuf, uint32(headerBuf.Len()), uint64(bodyBuf.Len())); err != nil {
 		return [32]byte{}, err
 	}
-	if _, err := mw.Write(preambleBuf.Bytes()); err != nil {
+	if _, err := wr.w.Write(preambleBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Write header (to both hasher and output)
-	if _, err := mw.Write(headerBuf.Bytes()); err != nil {
+	// Write header (metadata only, not in hash)
+	if _, err := wr.w.Write(headerBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Write body (to both hasher and output)
-	if _, err := mw.Write(bodyBuf.Bytes()); err != nil {
+	// Write body (this is what was hashed)
+	if _, err := wr.w.Write(bodyBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Extract hash
-	var digest [32]byte
-	copy(digest[:], hasher.Sum(nil))
 	return digest, nil
 }
 
@@ -308,10 +328,15 @@ func (wr *Writer) writeArg(buf *bytes.Buffer, arg *Arg) error {
 	return nil
 }
 
-// WriteContract writes a minimal contract file (target + hash only).
-// Contract format: MAGIC(4) "OPAL" | VERSION(2) 0x0001 | TYPE(1) 'C' | TARGET_LEN(2) | TARGET(var) | HASH(32)
-// This is much smaller than a full plan - just enough to verify the plan hasn't changed.
-func WriteContract(w io.Writer, target string, planHash [32]byte) error {
+// WriteContract writes a contract file with target, hash, and full plan.
+//
+// Contract format: MAGIC(4) "OPAL" | VERSION(2) 0x0001 | TYPE(1) 'C' | TARGET_LEN(2) | TARGET(var) | HASH(32) | PLAN(binary)
+//
+// The hash is for fast verification (cryptographic comparison).
+// The full plan enables detailed diff display when verification fails, showing users
+// exactly what changed (steps added/removed/modified). The plan also enables future
+// capabilities like visualization, format conversion, and audit inspection.
+func WriteContract(w io.Writer, target string, planHash [32]byte, plan *Plan) error {
 	// Create hasher to compute contract hash (not used yet, but for future verification)
 	hasher, err := blake2b.New256(nil)
 	if err != nil {
@@ -350,5 +375,7 @@ func WriteContract(w io.Writer, target string, planHash [32]byte) error {
 		return err
 	}
 
-	return nil
+	// Write full binary plan (for diff display when verification fails)
+	_, err = Write(w, plan)
+	return err
 }

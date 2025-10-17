@@ -1,3 +1,24 @@
+// Package planner converts parser events into execution plans.
+//
+// # Contract Stability
+//
+// Plans are function-scoped by design. When planning a target function, only that
+// function's events are processed - other functions in the file are skipped entirely.
+// This means changing unrelated functions doesn't invalidate existing contracts.
+//
+// Example:
+//
+//	fun hello = echo "Hello"  // Contract hash: abc123
+//	fun log = echo "Log"      // Contract hash: def456
+//
+// Changing 'log' doesn't invalidate 'hello' contract because:
+//   - planTargetFunction() finds 'hello' and returns immediately
+//   - planFunctionBody() uses depth tracking to process only 'hello' events
+//   - Plan contains only 'hello' steps
+//   - Hash is computed from Plan (not entire source file)
+//
+// Future: When @cmd.function() calls are added, dependency tracking will be needed.
+// If 'hello' calls 'log', then 'hello' contract must include both functions.
 package planner
 
 import (
@@ -85,7 +106,7 @@ func (e *PlanError) Error() string {
 	return b.String()
 }
 
-// Plan consumes parser events and generates an execution plan
+// Plan consumes parser events and generates an execution plan.
 func Plan(events []parser.Event, tokens []lexer.Token, config Config) (*planfmt.Plan, error) {
 	result, err := PlanWithObservability(events, tokens, config)
 	if err != nil {
@@ -210,7 +231,8 @@ func (p *planner) plan() (*planfmt.Plan, error) {
 	return plan, nil
 }
 
-// planTargetFunction finds and plans a specific function
+// planTargetFunction finds the target function and returns immediately after planning it.
+// Other functions in the file are never processed (contract stability).
 func (p *planner) planTargetFunction() ([]planfmt.Step, error) {
 	if p.config.Debug >= DebugPaths {
 		p.recordDebugEvent("enter_planTargetFunction", "target="+p.config.Target)
@@ -274,7 +296,8 @@ func (p *planner) planTargetFunction() ([]planfmt.Step, error) {
 	}
 }
 
-// planFunctionBody plans the body of a function (assumes p.pos is at OPEN Function)
+// planFunctionBody plans the body of a function using depth tracking.
+// Stops when depth reaches 0 (exited function), ensuring only target function events are processed.
 func (p *planner) planFunctionBody() ([]planfmt.Step, error) {
 	if p.config.Debug >= DebugPaths {
 		p.recordDebugEvent("enter_planFunctionBody", fmt.Sprintf("pos=%d", p.pos))

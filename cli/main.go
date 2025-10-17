@@ -36,17 +36,19 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:   "opal [command]",
-		Short: "Execute commands defined in opal files",
-		Args:  cobra.MaximumNArgs(1), // 0 args if --plan, 1 arg otherwise
+		Use:           "opal [command]",
+		Short:         "Execute commands defined in opal files",
+		Args:          cobra.MaximumNArgs(1), // 0 args if --plan, 1 arg otherwise
+		SilenceErrors: true,                  // We handle error printing ourselves
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Mode 4: Execute from plan file (contract verification)
 			if planFile != "" {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot specify command name with --plan flag")
 				}
-				exitCode, err := runFromPlan(planFile, file, debug, scrubber, &outputBuf)
+				exitCode, err := runFromPlan(planFile, file, debug, noColor, scrubber, &outputBuf)
 				if err != nil {
+					cmd.SilenceUsage = true // We've already printed detailed error
 					return err
 				}
 				if exitCode != 0 {
@@ -61,6 +63,7 @@ func main() {
 			}
 			exitCode, err := runCommand(cmd, args, file, dryRun, resolve, debug, noColor, scrubber, &outputBuf)
 			if err != nil {
+				cmd.SilenceUsage = true // We've already printed detailed error
 				return err
 			}
 			if exitCode != 0 {
@@ -123,8 +126,15 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	// Parse
 	tree := parser.Parse(source)
 	if len(tree.Errors) > 0 {
+		// Use parser's error formatter for nice output
+		formatter := &parser.ErrorFormatter{
+			Source:   source,
+			Filename: file,
+			Compact:  false, // Use detailed format
+			Color:    !noColor,
+		}
 		for _, parseErr := range tree.Errors {
-			fmt.Fprintf(os.Stderr, "Parse error: %v\n", parseErr)
+			fmt.Fprint(os.Stderr, formatter.Format(parseErr))
 		}
 		return 1, fmt.Errorf("parse errors encountered")
 	}
@@ -184,10 +194,10 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 				return 1, fmt.Errorf("failed to compute plan hash: %w", err)
 			}
 
-			// Write minimal contract to stdout (target + hash only)
+			// Write contract to stdout (target + hash + full plan)
 			// Note: Don't write messages to stderr here - they go through lockdown
 			// and end up in the output buffer along with the contract
-			if err := planfmt.WriteContract(os.Stdout, commandName, planHash); err != nil {
+			if err := planfmt.WriteContract(os.Stdout, commandName, planHash, plan); err != nil {
 				return 1, fmt.Errorf("failed to write contract: %w", err)
 			}
 
@@ -271,7 +281,7 @@ func hasPipedInput() bool {
 
 // runFromPlan executes with contract verification (Mode 4: Contract Execution)
 // Flow: Load contract → Replan fresh → Compare hashes → Execute if match
-func runFromPlan(planFile, sourceFile string, debug bool, scrubber *executor.SecretScrubber, outputBuf *bytes.Buffer) (int, error) {
+func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *executor.SecretScrubber, outputBuf *bytes.Buffer) (int, error) {
 	// Step 1: Load contract from plan file
 	f, err := os.Open(planFile)
 	if err != nil {
@@ -279,7 +289,7 @@ func runFromPlan(planFile, sourceFile string, debug bool, scrubber *executor.Sec
 	}
 	defer func() { _ = f.Close() }()
 
-	target, contractHash, err := planfmt.ReadContract(f)
+	target, contractHash, contractPlan, err := planfmt.ReadContract(f)
 	if err != nil {
 		return 1, fmt.Errorf("failed to read contract: %w", err)
 	}
@@ -288,6 +298,7 @@ func runFromPlan(planFile, sourceFile string, debug bool, scrubber *executor.Sec
 		fmt.Fprintf(os.Stderr, "Loaded contract from %s\n", planFile)
 		fmt.Fprintf(os.Stderr, "Contract hash: %x\n", contractHash)
 		fmt.Fprintf(os.Stderr, "Target: %s\n", target)
+		fmt.Fprintf(os.Stderr, "Contract plan steps: %d\n", len(contractPlan.Steps))
 	}
 
 	// Step 2: Replan from current source
@@ -310,6 +321,16 @@ func runFromPlan(planFile, sourceFile string, debug bool, scrubber *executor.Sec
 	// Parse
 	tree := parser.Parse(source)
 	if len(tree.Errors) > 0 {
+		// Use parser's error formatter for nice output
+		formatter := &parser.ErrorFormatter{
+			Source:   source,
+			Filename: sourceFile,
+			Compact:  false, // Use detailed format
+			Color:    !noColor,
+		}
+		for _, parseErr := range tree.Errors {
+			fmt.Fprint(os.Stderr, formatter.Format(parseErr))
+		}
 		return 1, fmt.Errorf("parse errors in source (contract verification failed)")
 	}
 
@@ -340,14 +361,16 @@ func runFromPlan(planFile, sourceFile string, debug bool, scrubber *executor.Sec
 	}
 
 	if freshHash != contractHash {
-		fmt.Fprintf(os.Stderr, "CONTRACT VERIFICATION FAILED\n")
-		fmt.Fprintf(os.Stderr, "Contract hash: %x\n", contractHash)
-		fmt.Fprintf(os.Stderr, "Fresh hash:    %x\n", freshHash)
-		fmt.Fprintf(os.Stderr, "\nThe current source does not match the contract.\n")
-		fmt.Fprintf(os.Stderr, "This could mean:\n")
-		fmt.Fprintf(os.Stderr, "  - Source code has changed since contract was generated\n")
-		fmt.Fprintf(os.Stderr, "  - Environment or context has changed\n")
-		fmt.Fprintf(os.Stderr, "  - Contract file is corrupted\n")
+		// Use error formatter for consistent output
+		FormatContractVerificationError(os.Stderr, contractPlan, freshPlan, !noColor)
+
+		// Show hashes for debugging
+		if debug {
+			fmt.Fprintf(os.Stderr, "\n%s\n", Colorize("Debug info:", ColorCyan, !noColor))
+			fmt.Fprintf(os.Stderr, "  Contract hash: %x\n", contractHash)
+			fmt.Fprintf(os.Stderr, "  Fresh hash:    %x\n", freshHash)
+		}
+
 		return 1, fmt.Errorf("contract verification failed")
 	}
 

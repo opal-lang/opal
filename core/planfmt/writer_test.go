@@ -197,3 +197,63 @@ func TestWriteActualHeader(t *testing.T) {
 		t.Errorf("Target mismatch: got %q, expected %q", target, plan.Target)
 	}
 }
+
+// TestContractRoundtrip verifies WriteContract and ReadContract work together
+func TestContractRoundtrip(t *testing.T) {
+	// Given: a plan with steps
+	plan := &planfmt.Plan{
+		Target: "hello",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Commands: []planfmt.Command{
+					{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// When: compute hash first
+	var hashBuf bytes.Buffer
+	hash, err := planfmt.Write(&hashBuf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Write contract to separate buffer
+	var contractBuf bytes.Buffer
+	err = planfmt.WriteContract(&contractBuf, plan.Target, hash, plan)
+	if err != nil {
+		t.Fatalf("WriteContract failed: %v", err)
+	}
+
+	// Then: read contract back
+	target, readHash, readPlan, err := planfmt.ReadContract(&contractBuf)
+	if err != nil {
+		t.Fatalf("ReadContract failed: %v", err)
+	}
+
+	// Verify target
+	if target != plan.Target {
+		t.Errorf("Target mismatch: got %q, want %q", target, plan.Target)
+	}
+
+	// Verify hash
+	if readHash != hash {
+		t.Errorf("Hash mismatch: got %x, want %x", readHash, hash)
+	}
+
+	// Verify plan structure
+	if len(readPlan.Steps) != len(plan.Steps) {
+		t.Errorf("Step count mismatch: got %d, want %d", len(readPlan.Steps), len(plan.Steps))
+	}
+
+	if readPlan.Steps[0].ID != plan.Steps[0].ID {
+		t.Errorf("Step ID mismatch: got %d, want %d", readPlan.Steps[0].ID, plan.Steps[0].ID)
+	}
+}

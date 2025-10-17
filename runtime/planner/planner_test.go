@@ -1,10 +1,12 @@
 package planner_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/aledsdavies/opal/runtime/lexer"
 	"github.com/aledsdavies/opal/runtime/parser"
 	"github.com/aledsdavies/opal/runtime/planner"
 )
@@ -457,5 +459,110 @@ echo "D"`)
 	}
 	if plan.Steps[1].Commands[0].Operator != "" {
 		t.Errorf("Step 1, cmd 0: expected empty operator, got %q", plan.Steps[1].Commands[0].Operator)
+	}
+}
+
+// TestContractStability verifies that changing an unrelated function
+// doesn't invalidate the contract for the target function
+func TestContractStability(t *testing.T) {
+	// Original source with two functions
+	source1 := []byte(`fun hello = echo "Hello"
+fun log = echo "Log"`)
+
+	// Modified source (only log changed)
+	source2 := []byte(`fun hello = echo "Hello"
+fun log = echo "Different log"`)
+
+	// Plan hello from source1
+	tree1 := parser.Parse(source1)
+	lex1 := lexer.NewLexer()
+	lex1.Init(source1)
+	plan1, err := planner.Plan(tree1.Events, lex1.GetTokens(), planner.Config{
+		Target: "hello",
+	})
+	if err != nil {
+		t.Fatalf("Plan1 failed: %v", err)
+	}
+
+	// Compute hash for plan1
+	var buf1 bytes.Buffer
+	hash1, err := planfmt.Write(&buf1, plan1)
+	if err != nil {
+		t.Fatalf("Write plan1 failed: %v", err)
+	}
+
+	// Plan hello from source2
+	tree2 := parser.Parse(source2)
+	lex2 := lexer.NewLexer()
+	lex2.Init(source2)
+	plan2, err := planner.Plan(tree2.Events, lex2.GetTokens(), planner.Config{
+		Target: "hello",
+	})
+	if err != nil {
+		t.Fatalf("Plan2 failed: %v", err)
+	}
+
+	// Compute hash for plan2
+	var buf2 bytes.Buffer
+	hash2, err := planfmt.Write(&buf2, plan2)
+	if err != nil {
+		t.Fatalf("Write plan2 failed: %v", err)
+	}
+
+	// Hashes should be IDENTICAL (hello didn't change)
+	if hash1 != hash2 {
+		t.Errorf("Contract instability detected!\nChanging 'log' function invalidated 'hello' contract\nhash1: %x\nhash2: %x", hash1, hash2)
+	}
+}
+
+// TestContractStabilityWithNewFunction verifies that adding a new function
+// doesn't invalidate existing contracts
+func TestContractStabilityWithNewFunction(t *testing.T) {
+	// Original source
+	source1 := []byte(`fun hello = echo "Hello"`)
+
+	// Modified source (new function added)
+	source2 := []byte(`fun hello = echo "Hello"
+fun log = echo "Log"`)
+
+	// Plan hello from source1
+	tree1 := parser.Parse(source1)
+	lex1 := lexer.NewLexer()
+	lex1.Init(source1)
+	plan1, err := planner.Plan(tree1.Events, lex1.GetTokens(), planner.Config{
+		Target: "hello",
+	})
+	if err != nil {
+		t.Fatalf("Plan1 failed: %v", err)
+	}
+
+	// Compute hash for plan1
+	var buf1 bytes.Buffer
+	hash1, err := planfmt.Write(&buf1, plan1)
+	if err != nil {
+		t.Fatalf("Write plan1 failed: %v", err)
+	}
+
+	// Plan hello from source2
+	tree2 := parser.Parse(source2)
+	lex2 := lexer.NewLexer()
+	lex2.Init(source2)
+	plan2, err := planner.Plan(tree2.Events, lex2.GetTokens(), planner.Config{
+		Target: "hello",
+	})
+	if err != nil {
+		t.Fatalf("Plan2 failed: %v", err)
+	}
+
+	// Compute hash for plan2
+	var buf2 bytes.Buffer
+	hash2, err := planfmt.Write(&buf2, plan2)
+	if err != nil {
+		t.Fatalf("Write plan2 failed: %v", err)
+	}
+
+	// Hashes should be IDENTICAL (hello didn't change)
+	if hash1 != hash2 {
+		t.Errorf("Contract instability detected!\nAdding 'log' function invalidated 'hello' contract\nhash1: %x\nhash2: %x", hash1, hash2)
 	}
 }

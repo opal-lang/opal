@@ -15,6 +15,32 @@
 # Lint: nix-shell -p golangci-lint --run "cd cli && golangci-lint run --timeout=5m"
 ```
 
+## File Editing Guidelines (CRITICAL)
+
+**ALWAYS use the Edit tool for modifying files. NEVER use `cat >` or `cat >>` to write files.**
+
+- ✅ **Use Edit tool**: Precise, shows exactly what changed, preserves file structure
+- ❌ **Never use `cat >`**: Overwrites entire file, error-prone, hard to review
+- ❌ **Never use `cat >>`**: Appends blindly, can create duplicates, breaks syntax
+
+**Why Edit tool is better:**
+- Shows exact old/new strings in diff
+- Catches errors (duplicate code, wrong location)
+- Preserves formatting and structure
+- Easy to review changes
+- Fails safely if oldString not found
+
+**Example:**
+```bash
+# ❌ BAD: Using cat to append
+cat >> file.go << 'EOF'
+func NewFunction() {}
+EOF
+
+# ✅ GOOD: Using Edit tool
+# (Use Edit tool with oldString/newString parameters)
+```
+
 ## Coding Guidelines (CRITICAL)
 
 **ALWAYS follow the coding guidelines documented in this file and the global OpenCode configuration.**
