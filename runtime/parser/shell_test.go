@@ -358,6 +358,8 @@ func TestShellCommandAfterEquals(t *testing.T) {
 				{Kind: EventToken, Data: 0}, // fun
 				{Kind: EventToken, Data: 1}, // hello
 				{Kind: EventToken, Data: 2}, // =
+				// Step boundary for function body (consistency with block syntax)
+				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
 				{Kind: EventToken, Data: 3}, // echo
@@ -366,6 +368,7 @@ func TestShellCommandAfterEquals(t *testing.T) {
 				{Kind: EventToken, Data: 4}, // "Hello World!"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeFunction)},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
@@ -379,6 +382,8 @@ func TestShellCommandAfterEquals(t *testing.T) {
 				{Kind: EventToken, Data: 0}, // fun
 				{Kind: EventToken, Data: 1}, // test
 				{Kind: EventToken, Data: 2}, // =
+				// Step boundary for function body (ONE step with operators)
+				{Kind: EventStepEnter, Data: 0},
 				// First command
 				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
 				{Kind: EventOpen, Data: uint32(NodeShellArg)},
@@ -398,7 +403,66 @@ func TestShellCommandAfterEquals(t *testing.T) {
 				{Kind: EventToken, Data: 7}, // "second"
 				{Kind: EventClose, Data: uint32(NodeShellArg)},
 				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeFunction)},
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name: "function with operators and newline - two steps",
+			input: `fun hello = echo "A" && echo "B" || echo "C"
+echo "D"`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventOpen, Data: uint32(NodeFunction)},
+				{Kind: EventToken, Data: 0}, // fun
+				{Kind: EventToken, Data: 1}, // hello
+				{Kind: EventToken, Data: 2}, // =
+				// STEP 1: Three commands with operators (function body with step boundaries)
+				{Kind: EventStepEnter, Data: 0},
+				// First command: echo "A"
+				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 3}, // echo
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 4}, // "A"
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventToken, Data: 5}, // &&
+				// Second command: echo "B"
+				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 6}, // echo
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 7}, // "B"
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventToken, Data: 8}, // ||
+				// Third command: echo "C"
+				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 9}, // echo
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 10}, // "C"
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeFunction)},
+				// Token 11 is NEWLINE (separates steps)
+				// STEP 2: echo "D" (top-level, has EventStepEnter/Exit)
+				{Kind: EventStepEnter, Data: 0},
+				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 12}, // echo
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 13}, // "D"
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventStepExit, Data: 0},
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},

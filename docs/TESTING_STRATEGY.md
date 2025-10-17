@@ -38,6 +38,137 @@ These protect the guarantees defined in [SPECIFICATION.md](SPECIFICATION.md) and
 * **Determinism**: Plan Seed Envelopes (PSE) for seeded randomness; forbid non-deterministic decorators in resolved plans
 * **Crash isolation**: plugin failures can't crash the engine; bounded CPU/mem/time per step
 
+## Security Testing Requirements
+
+All decorators and SDK usage must include security tests to prevent secret leakage:
+
+### Secret Leakage Prevention Tests
+
+Every decorator that handles secrets must test:
+
+```go
+func TestSecretNotLeakedInPlan(t *testing.T) {
+    // Test that secrets are replaced with placeholders
+    secret := secret.NewHandle("my-secret-password")
+    
+    // Verify placeholder format: 🔒 opal:secret:ID
+    placeholder := secret.IDWithEmoji()
+    assert.Contains(t, placeholder, "🔒 opal:secret:")
+    assert.NotContains(t, placeholder, "my-secret-password")
+}
+
+func TestSecretNotLeakedInOutput(t *testing.T) {
+    // Test that command output is scrubbed
+    secret := secret.NewHandle("api-key-12345")
+    
+    cmd := executor.Command("echo", "api-key-12345")
+    output, err := cmd.Output()
+    
+    assert.NoError(t, err)
+    assert.NotContains(t, string(output), "api-key-12345")
+    assert.Contains(t, string(output), "opal:secret:")
+}
+
+func TestSecretNotLeakedInLogs(t *testing.T) {
+    // Test that execution logs don't contain raw secrets
+    secret := secret.NewHandle("password123")
+    
+    result := executeWithSecrets(plan, []secret.Handle{secret})
+    
+    logContent := readExecutionLog(result.LogFile)
+    assert.NotContains(t, logContent, "password123")
+}
+
+func TestSecretNotLeakedInErrors(t *testing.T) {
+    // Test that error messages don't leak secrets
+    secret := secret.NewHandle("secret-token")
+    
+    // Intentionally cause an error
+    cmd := executor.Command("false")
+    cmd.AppendEnv(map[string]string{"TOKEN": secret.ForEnv("TOKEN")})
+    
+    _, err := cmd.Run()
+    
+    assert.Error(t, err)
+    assert.NotContains(t, err.Error(), "secret-token")
+}
+```
+
+### SDK Test Patterns
+
+**Testing `secret.Handle`:**
+```go
+func TestSecretHandleAPI(t *testing.T) {
+    secret := secret.NewHandle("my-password")
+    
+    // Safe operations always available
+    assert.NotEmpty(t, secret.ID())
+    assert.NotEmpty(t, secret.IDWithEmoji())
+    assert.Equal(t, 11, secret.Len())
+    
+    // Constant-time comparison
+    other := secret.NewHandle("my-password")
+    assert.True(t, secret.Equal(other))
+    
+    // Taint tracking: String() panics on tainted secrets
+    if os.Getenv("OPAL_SECRET_DEBUG") == "1" {
+        assert.Panics(t, func() { _ = secret.String() })
+    }
+}
+
+func TestSecretCapabilityGating(t *testing.T) {
+    secret := secret.NewHandle("my-password")
+    
+    // Controlled access requires capability
+    env := secret.ForEnv("PASSWORD")
+    assert.Contains(t, env, "PASSWORD=")
+    
+    // Raw access explicit and panics in debug mode
+    if os.Getenv("OPAL_SECRET_DEBUG") == "1" {
+        assert.Panics(t, func() { _ = secret.UnsafeUnwrap() })
+    }
+}
+```
+
+**Testing `executor.Command`:**
+```go
+func TestCommandScrubbing(t *testing.T) {
+    secret := secret.NewHandle("api-key-secret")
+    
+    cmd := executor.Command("echo", secret.UnsafeUnwrap())
+    output, err := cmd.Output()
+    
+    assert.NoError(t, err)
+    assert.NotContains(t, string(output), "api-key-secret")
+}
+
+func TestCommandEnvironmentScrubbing(t *testing.T) {
+    secret := secret.NewHandle("db-password")
+    
+    cmd := executor.Command("printenv", "DB_PASS")
+    cmd.AppendEnv(map[string]string{
+        "DB_PASS": secret.ForEnv("DB_PASS"),
+    })
+    
+    output, err := cmd.Output()
+    
+    assert.NoError(t, err)
+    assert.NotContains(t, string(output), "db-password")
+}
+```
+
+### Decorator Security Checklist
+
+Every decorator must verify:
+
+- [ ] No raw secrets in plan output (use `secret.Handle`)
+- [ ] No raw secrets in execution logs
+- [ ] No raw secrets in error messages
+- [ ] Command output automatically scrubbed
+- [ ] Environment variables scrubbed
+- [ ] Subprocess output scrubbed
+- [ ] Tests run with `OPAL_SECRET_DEBUG=1` to catch leaks
+
 ## Testing Phases
 
 ### Core Tests (Implement Now)

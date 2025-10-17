@@ -1,34 +1,24 @@
 # Opal
 
-**Deterministic task runner for operations and developer workflows**
+**Plan-first execution platform for deployments, infrastructure, and operations**
 
-## The Problem
+Turn operational workflows into verifiable contracts. See what will execute before it executes.
 
-After infrastructure is provisioned (Terraform, CloudFormation, etc.), teams fall back on shell scripts, Makefiles, or ad-hoc pipelines for day-2 operations and developer tasks. These are brittle, non-deterministic, and hard to audit.
-
-Opal fills the gap between "infrastructure is up" and "services are reliably operated."
-
-## Philosophy
-
-**Outcome-focused execution:**
-
-Opal doesn't maintain state files or enforce a rigid model. Instead:
+## How It Works
 
 1. **Reality is truth** - Query the world as it actually is
-2. **Plan from reality** - Based on what exists now, here's what we'll do
-3. **Execute the plan** - Accomplish the outcomes
-4. **Verify the contract** - If reality changed between plan and execute, catch it
+2. **Plan from reality** - Generate execution plan based on current state
+3. **Execute the plan** - Run the operations
+4. **Verify the contract** - Catch changes between plan and execution
 
-The **plan is your contract** - it shows what will happen before it happens. Not bureaucracy, just clarity.
+No state files. No "desired state" to maintain. The plan is your contract.
 
-No state files. No "desired state" to maintain. Just: see the world, make a plan, execute it.
+## Features
 
-## What Opal Does
-
-- **Enforces determinism**: Same inputs always produce the same plan
-- **Produces execution contracts**: Verifiable plans that can be reviewed before running
-- **Keeps secrets safe**: Never logs or exposes credentials
-- **Fails fast**: Catches errors during planning, not execution
+- **Contract verified**: Hash-based verification ensures reviewed plans match execution
+- **Stateless**: No state files to corrupt—query reality fresh each run
+- **Unified**: Deployments, infrastructure, and operations in one tool
+- **Secure**: Secrets never logged or exposed
 
 ## Quick Start
 
@@ -36,77 +26,56 @@ Define your tasks:
 
 ```bash
 # commands.opl
-build: npm run build
-test: npm test
-deploy: kubectl apply -f k8s/
+fun build = npm run build
+fun test = npm test
+fun deploy = kubectl apply -f k8s/
 ```
 
-Run with planning:
+Run them:
 
 ```bash
-# See what will execute
-opal deploy --dry-run
-
-# Run the operation
 opal deploy
 ```
 
+## Execution Modes
+
+1. **Direct execution**: `opal hello` - parse, plan, execute
+2. **Quick plan**: `opal hello --dry-run` - show tree without executing
+3. **Contract generation**: `opal hello --dry-run --resolve > hello.contract`
+4. **Contract execution**: `opal --plan hello.contract` - verify and execute
+
 ## Current Scope
 
-**Developer tasks**: Repeatable build/test/deploy workflows
+**Developer tasks**: Repeatable build/test/deploy workflows  
 **Operations tasks**: Day-2 activities like deployments, migrations, restarts, health checks
-
-**Why this scope?** Fills the gap between "infrastructure is up" and "services are reliably operated" - the operational workflows that teams run daily.
-
-## Planning Modes
-
-```bash
-# Quick plan - fast preview
-opal deploy --dry-run
-
-# Resolved plan - complete execution contract  
-opal deploy --dry-run --resolve > prod.plan
-
-# Contract execution - verify plan matches reality
-opal run --plan prod.plan
-```
 
 ## Basic Syntax
 
 ```opal
-# Variables and environment
-var ENV = @env.ENVIRONMENT
-var REPLICAS = @env.REPLICAS
+# Simple commands
+fun build = npm run build
+fun test = npm test
 
-# Conditional operations
-deploy: {
-    when @var.ENV {
-        "production" -> {
-            kubectl apply -f k8s/prod/
-            kubectl scale --replicas=@var.REPLICAS deployment/app
-        }
-        else -> kubectl apply -f k8s/dev/
-    }
+# Shell commands with operators
+fun deploy = {
+    kubectl apply -f k8s/ && kubectl rollout status deployment/app
 }
 
-# Retry and timeout
-migrate: @retry(attempts=3, delay=10s) {
-    @timeout(duration=5m) {
-        psql @env.DATABASE_URL -f migrations/
-    }
+# Multiple steps (newline-separated)
+fun migrate = {
+    psql $DATABASE_URL -f migrations/001-users.sql
+    psql $DATABASE_URL -f migrations/002-indexes.sql
 }
 ```
 
-## Value Decorators
+## Planned Features
 
-Inject values inline:
+**Value decorators** (inject values inline):
 - `@env.PORT` - Environment variables
 - `@var.REPLICAS` - Script variables  
-- `@aws.secret.api_key(auth=prodAuth)` - External value lookups
+- `@aws.secret.api_key` - External value lookups
 
-## Execution Decorators  
-
-Enhance command execution:
+**Execution decorators** (enhance command execution):
 - `@retry(attempts=3) { ... }` - Retry failed operations
 - `@timeout(duration=5m) { ... }` - Timeout protection
 - `@parallel { ... }` - Concurrent execution
@@ -139,37 +108,20 @@ nix run github:aledsdavies/opal -- deploy --dry-run
 
 ### Web Application Deployment
 ```opal
-var ENV = @env.ENVIRONMENT
-var VERSION = @env.APP_VERSION
-
-deploy: {
-    echo "Deploying @var.VERSION to @var.ENV"
-    
-    when @var.ENV {
-        "production" -> {
-            @retry(attempts=3) {
-                kubectl apply -f k8s/prod/
-                kubectl set image deployment/app app=@var.VERSION
-                kubectl rollout status deployment/app
-            }
-        }
-        else -> kubectl apply -f k8s/dev/
-    }
+fun deploy = {
+    kubectl apply -f k8s/
+    kubectl set image deployment/app app=$VERSION
+    kubectl rollout status deployment/app
 }
 ```
 
 ### Database Migration
 ```opal
-migrate: {
-    try {
-        echo "Starting migration..."
-        psql @env.DATABASE_URL -f migrations/001-users.sql
-        psql @env.DATABASE_URL -f migrations/002-indexes.sql
-        echo "Migration complete"
-    } catch {
-        echo "Migration failed, rolling back"
-        psql @env.DATABASE_URL -f rollback.sql
-    }
+fun migrate = {
+    echo "Starting migration..."
+    psql $DATABASE_URL -f migrations/001-users.sql
+    psql $DATABASE_URL -f migrations/002-indexes.sql
+    echo "Migration complete"
 }
 ```
 

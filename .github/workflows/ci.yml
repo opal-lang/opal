@@ -122,14 +122,14 @@ jobs:
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
             -o opal-${{ matrix.goos }}-${{ matrix.goarch }} \
-            ./cli/main.go
+            ./cli
 
       - name: Test binary
         run: |
           echo "Testing built binary..."
           ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --help
 
-          echo 'test: echo "Binary test successful"' > test.opl
+          echo 'fun test = echo "Binary test successful"' > test.opl
           ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.opl test
 
       - name: Upload binary
@@ -273,7 +273,7 @@ jobs:
 
           ./opal --help
 
-          echo 'test: echo "CI test successful"' > test.opl
+          echo 'fun test = echo "CI test successful"' > test.opl
           ./opal --dry-run -f test.opl test
 
   # =============================================================================
@@ -462,7 +462,7 @@ jobs:
             CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
               -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -o "release/$BINARY_NAME" \
-              ./cli/main.go
+              ./cli
           done
 
       - name: Create checksums

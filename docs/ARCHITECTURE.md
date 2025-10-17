@@ -115,6 +115,149 @@ This separation means:
 - **Execution model** is unified through decorators (no special cases for different work types)  
 - **New features** integrate by adding decorators, not special execution paths
 
+## The Execution Context Pattern
+
+### How Decorators Execute Blocks
+
+**Core insight:** Decorators take a declaration of what needs to run and wrap it in their execution context.
+
+When you write:
+```opal
+@aws.instance.ssh(host="prod-server") {
+    cat /var/log/app.log
+}
+```
+
+The decorator does three things:
+1. **Setup** - Establish SSH connection to prod-server
+2. **Execute** - Run the block (cat command) within SSH context
+3. **Teardown** - Close connection
+
+### The Pattern: Execution Context with Callback
+
+**Decorators receive:**
+- **Parameters** - Configuration (`host="prod-server"`)
+- **Block** - Child steps to execute
+- **Execution Context** - Callback to executor
+
+**Handler signature:**
+```go
+type ExecutionHandler func(
+    ctx ExecutionContext,    // Execution context with args and I/O
+    block []Step,            // Child steps to execute
+) (exitCode int, err error)
+```
+
+**Execution context provides:**
+```go
+type ExecutionContext interface {
+    // Execute block within this context
+    ExecuteBlock(steps []Step) (exitCode int, err error)
+    Context() context.Context  // For cancellation and deadlines
+    
+    // Decorator arguments (typed accessors)
+    ArgString(key string) string
+    ArgInt(key string) int64
+    ArgBool(key string) bool
+    ArgDuration(key string) time.Duration
+    Args() map[string]Value  // Snapshot for logging
+    
+    // Controlled I/O (executor scrubs secrets automatically)
+    // Decorators CANNOT write directly to streams
+    LogOutput(message string)  // Scrubbed before output
+    LogError(message string)   // Scrubbed before output
+    
+    // Environment and working directory
+    Environ() map[string]string
+    Workdir() string
+    
+    // Context wrapping (returns new context with modifications)
+    WithContext(ctx context.Context) ExecutionContext
+    WithEnviron(env map[string]string) ExecutionContext
+    WithWorkdir(dir string) ExecutionContext
+}
+```
+
+**Security model:**
+
+Decorators have **no direct access to I/O streams**. All output flows through the executor which:
+1. Maintains a registry of secret values from value decorator resolutions
+2. Automatically replaces secret values with opaque DisplayIDs: `opal:s:3J98t56A`
+3. Ensures audit trail shows which secrets were used without exposing values
+
+This prevents decorators from accidentally (or maliciously) leaking secrets.
+
+### Recursive Execution: Nested Decorators
+
+When decorators are nested, each wraps the next:
+
+```opal
+@retry(times=3) {
+    @aws.instance.ssh(host="prod") {
+        cat /var/log/app.log
+    }
+}
+```
+
+**Execution flow:**
+1. Executor calls `retryHandler(ctx, block=[ssh step])`
+2. Retry handler loops 3 times, calling `ctx.ExecuteBlock(block)` each time
+3. Executor receives ssh step, calls `sshHandler(ctx, block=[cat command])`
+4. SSH handler establishes connection, wraps context, calls `sshCtx.ExecuteBlock(block)`
+5. Executor receives cat command, calls `shellHandler(ctx, block=[])`
+6. Shell handler executes command and returns exit code
+7. Exit code bubbles back up through SSH handler → Retry handler → Executor
+
+Each decorator wraps the execution context, creating a chain of responsibility where:
+- **Retry** controls whether to retry
+- **SSH** controls how to execute (on remote host)
+- **Shell** controls what to execute (the actual command)
+
+### Context Wrapping: Modifying Execution Behavior
+
+Decorators can wrap the execution context to modify behavior:
+
+```go
+type SSHExecutionContext struct {
+    parent ExecutionContext  // Original context
+    conn   *ssh.Client       // SSH connection
+}
+
+func (s *SSHExecutionContext) ExecuteBlock(steps []Step) (int, error) {
+    // Redirect stdout/stderr through SSH
+    // Run commands on remote host
+    // Return exit code
+}
+```
+
+This allows decorators to:
+- **Redirect I/O** - Capture, filter, or transform output
+- **Modify environment** - Set variables, change working directory
+- **Add constraints** - Enforce timeouts, resource limits
+- **Control flow** - Retry, parallelize, conditionally execute
+
+### Why This Pattern Works
+
+**1. Separation of Concerns**
+- Executor doesn't know about SSH, retry logic, or timeouts
+- Decorators don't know about plan structure or step ordering
+- Each component has a single responsibility
+
+**2. Extensibility**
+- New decorators are just new handlers registered in the registry
+- No changes to executor needed
+- External packages can provide decorators
+
+**3. Composability**
+- Decorators can be nested arbitrarily deep
+- Each decorator is independent and testable
+- Composition is declarative (visible in source code)
+
+**4. Observability**
+- Each decorator can emit telemetry
+- Execution context provides hooks for logging
+- Full traceability without special cases
+
 ## Steps, Decorators, and Operators
 
 Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.
@@ -420,7 +563,7 @@ type ExecutionStep struct {
 }
 
 type ResolvedValue struct {
-    Placeholder ValuePlaceholder    // <length:algo:hash> for display/hashing
+    Placeholder ValuePlaceholder    // opal:s:ID for display/hashing
     value       interface{}         // Actual value (memory only, never serialized)
 }
 
@@ -620,12 +763,12 @@ Flow: Load contract → Replan fresh → Compare hashes → Execute if match
 
 ### Value Placeholder Format
 
-All resolved values use security placeholder format: `<length:algorithm:hash>`
+All resolved values use security placeholder format: `opal:s:ID`
 
 Examples:
-- `<1:sha256:abc123>` - single character (e.g., "3")
-- `<32:sha256:def456>` - 32 characters (e.g., secret token)
-- `<8:sha256:xyz789>` - 8 characters (e.g., hostname)
+- `opal:s:3J98t56A` - single character (e.g., "3")
+- `opal:s:7Kx9mN2p` - 32 characters (e.g., secret token)
+- `opal:s:mQp4Tn8X` - 8 characters (e.g., hostname)
 
 **Benefits:**
 - **No value leakage** in plans or logs
@@ -1018,9 +1161,9 @@ const (
     }
   ],
   "values": {
-    "var.REPLICAS": "<1:sha256:abc123>",
-    "env.HOME": "<21:sha256:def456>",
-    "aws.secret.api_key": "<32:sha256:xyz789>"
+    "var.REPLICAS": "opal:s:3J98t56A",
+    "env.HOME": "opal:s:nR5wKp2Y",
+    "aws.secret.api_key": "opal:s:sQ9aTt6C"
   },
   "provenance": {
     "compiler_version": "1.0.0",
@@ -1066,12 +1209,12 @@ Plan Hash: <algorithm>:<hash>
 ```
 deploy:
 ├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=<32:sha256:a1b2c3>
-└─ kubectl scale --replicas=<1:sha256:def789> deployment/app
+├─ kubectl create secret --token=opal:s:qN7yOr4A
+└─ kubectl scale --replicas=opal:s:rP8zQs5B deployment/app
 
 Values:
-  var.REPLICAS = <1:sha256:def789>
-  env.HOME = <21:sha256:abc123>
+  var.REPLICAS = opal:s:rP8zQs5B
+  env.HOME = opal:s:pL6xMq3Z
 
 Plan Hash: sha256:xyz789...
 ```
@@ -1158,13 +1301,13 @@ const (
 ```
 ERROR: Contract verification failed
 
-Expected: kubectl scale --replicas=<1:sha256:abc123> deployment/app
-Actual:   kubectl scale --replicas=<1:sha256:def456> deployment/app
+Expected: kubectl scale --replicas=opal:s:3J98t56A deployment/app
+Actual:   kubectl scale --replicas=opal:s:tR1bUv7D deployment/app
 
 Value changed:
   var.REPLICAS
-    Contract: <1:sha256:abc123...> (was "3")
-    Current:  <1:sha256:def456...> (now "5")
+    Contract: opal:s:3J98t56A (was "3")
+    Current:  opal:s:tR1bUv7D (now "5")
 
 Drift Code: env_changed
 Action: Run 'opal deploy --dry-run --resolve' to generate new plan
@@ -1256,6 +1399,72 @@ When building decorators, follow these principles to maintain the contract model
 
 **Handle infrastructure drift gracefully**. When current infrastructure doesn't match plan expectations, provide clear error messages and suggested actions rather than cryptic failures.
 
+## SDK for Decorator Authors
+
+Opal provides a secure-by-default SDK in `core/sdk/` for building decorators:
+
+### Secret Handling (`core/sdk/secret`)
+
+All value decorators return `secret.Handle` for automatic scrubbing:
+
+```go
+import "github.com/aledsdavies/opal/core/sdk/secret"
+
+func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error) {
+    secretName := ctx.ArgString("secretName")
+    value := fetchFromAWS(secretName)
+    return secret.NewHandle(value), nil
+}
+```
+
+**Safe operations:**
+- `handle.ID()` - Opaque display ID: `opal:s:3J98t56A`
+- `handle.Mask(3)` - Masked display: `abc***xyz`
+- `handle.ForEnv("KEY")` - Environment variable: `KEY=value` (requires capability)
+- `handle.Bytes()` - Raw bytes (requires capability)
+
+**Unsafe operations (explicit, capability-gated):**
+- `handle.UnsafeUnwrap()` - Raw value (panics in debug mode without capability)
+
+**Capability gating**: Only the executor can issue capabilities. This prevents accidental leaks in plugins while enabling legitimate subprocess/environment wiring.
+
+### Command Execution (`core/sdk/executor`)
+
+Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
+
+```go
+import "github.com/aledsdavies/opal/core/sdk/executor"
+
+cmd := executor.Command("kubectl", "get", "pods")
+cmd.AppendEnv(map[string]string{
+    "KUBECONFIG": kubeconfigPath,
+})
+exitCode, err := cmd.Run()
+```
+
+**Why this is safe:**
+- Output automatically routes through scrubber
+- Secrets are redacted before display
+- No way to bypass security
+
+**API:**
+- `Command(name, args...)` - Create command
+- `Bash(script)` - Execute bash script
+- `AppendEnv(map)` - Add environment (preserves PATH)
+- `SetStdin(reader)` - Feed input
+- `Run()` - Execute and wait
+- `Start()` / `Wait()` - Async execution
+- `Output()` / `CombinedOutput()` - Capture output (not scrubbed)
+
+### Security Model
+
+- **Taint tracking**: Secrets panic on `String()` to catch accidental leaks
+- **Per-run keyed fingerprints**: Prevent cross-run correlation
+- **Locked-down I/O**: All subprocess output goes through scrubber
+- **Capability gating**: Raw access requires executor-issued token
+
+See `docs/SDK_GUIDE.md` for complete API reference and examples.
+
 ## Plugin System
 
 Decorators work through a dual-path plugin system that balances safety with flexibility:
@@ -1319,8 +1528,8 @@ Deferred: 1. @aws.secret.api_token → <expensive: AWS lookup>
 
 **Resolved plans** materialize all values for deterministic execution:
 ```  
-kubectl create secret --token=¹<32:sha256:a1b2c3>
-Resolved: 1. @aws.secret.api_token → <32:sha256:a1b2c3>
+kubectl create secret --token=¹opal:s:qN7yOr4A
+Resolved: 1. @aws.secret.api_token → opal:s:qN7yOr4A
 ```
 
 Smart optimizations happen automatically:
@@ -1330,13 +1539,59 @@ Smart optimizations happen automatically:
 
 ## Security Model
 
-The placeholder system protects sensitive values while enabling change detection:
+The placeholder system protects sensitive values while enabling change detection using a **two-track identity model**:
 
-**Placeholder format**: `<length:algorithm:hash>` like `<32:sha256:a1b2c3>`. The length gives size hints for debugging, the algorithm future-proofs against changes, and the hash detects value changes without exposing content.
+**Placeholder format (user-visible)**: `🔒 opal:s:3J98t56A` - opaque random ID, no length leak, no correlation across runs.
 
 **Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env.NAME`, `@aws.secret.NAME`, whatever. Compliance teams can review plans confidently.
 
 **Hash scope**: Plan hashes cover ordered steps, arguments, operator graphs, and timing flags. They exclude ephemeral data like run IDs or timestamps that shouldn't invalidate a plan.
+
+### Two-Track Identity Model
+
+Secrets need two representations for different purposes:
+
+**Track 1: Display (User-Visible)**
+- Format: `🔒 opal:s:3J98t56A` (Base58 encoded, context-aware ID)
+- Used in: Terminal output, logs, CLI display, plan files
+- Properties: No length leak, context-sensitive, deterministic in resolved plans
+- Example: `API_KEY: 🔒 opal:s:3J98t56A`
+
+**Track 2: Internal (Machine-Readable)**
+- Format: BLAKE2b-256 keyed hash with per-run key
+- Used in: Scrubber matching, secret detection, internal verification
+- Properties: Keyed (per-run), deterministic within run, prevents oracle attacks
+- Never displayed to users
+
+**DisplayID Generation (Keyed PRF):**
+
+DisplayIDs use a keyed BLAKE2s-128 PRF over `(plan_hash, step_path, decorator, key_name, hash(value))`:
+
+- **Resolved plans** (`ModePlan`): Deterministic IDs derived from plan digest
+  - Key: `plan_key = HKDF(plan_digest, "opal/displayid/plan/v1")`
+  - Same plan + context + value → same DisplayID
+  - Enables contract verification (plan hash includes DisplayIDs)
+  - Different plans → different DisplayIDs (unlinkability)
+
+- **Direct execution** (`ModeRun`): Random-looking IDs with fresh per-run key
+  - Key: `run_key = CSPRNG(32 bytes)`
+  - Different runs → different DisplayIDs
+  - Prevents correlation and tracking
+
+**Why this works:**
+- **Contract verification**: Deterministic DisplayIDs in resolved plans ensure same plan → same hash
+- **Security**: Context-aware PRF prevents oracle attacks; per-run keys prevent correlation
+- **Unlinkability**: Different plans produce different DisplayIDs even for same value
+- **No length leak**: `hash(value)` used in PRF input, not raw value
+- **UX**: Users see short, readable identifiers (11 chars typical)
+
+**Implementation:**
+- `secret.IDFactory` interface with `ModePlan` and `ModeRun` modes
+- `planfmt.NewPlanIDFactory(plan)` creates deterministic factory for resolved plans
+- `planfmt.NewRunIDFactory()` creates random factory for direct execution
+- `secret.Handle.ID()` returns DisplayID from factory
+- `secret.Handle.Fingerprint(key)` returns keyed hash for scrubber (separate from DisplayID)
+- Scrubber uses fingerprints for matching, displays DisplayIDs in output
 
 ### Plan Provenance Headers
 
@@ -1451,7 +1706,7 @@ deploy: {
 
 **Plan display**: Shows placeholders maintaining security invariant:
 ```
-kubectl create secret generic db --from-literal=password=¹<24:sha256:abcd>
+kubectl create secret generic db --from-literal=password=¹opal:s:uS2cVw8E
 ```
 
 **Execution flow**:

@@ -32,7 +32,7 @@ const (
 	// Bits 2-15 reserved for future use
 )
 
-// Write writes a plan to w and returns the 32-byte file hash (BLAKE3).
+// Write writes a plan to w and returns the 32-byte file hash (BLAKE2b-256).
 // The plan is canonicalized before writing to ensure deterministic output.
 func Write(w io.Writer, p *Plan) ([32]byte, error) {
 	wr := &Writer{w: w}
@@ -303,6 +303,51 @@ func (wr *Writer) writeArg(buf *bytes.Buffer, arg *Arg) error {
 		if err := binary.Write(buf, binary.LittleEndian, arg.Val.Ref); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// WriteContract writes a minimal contract file (target + hash only).
+// Contract format: MAGIC(4) "OPAL" | VERSION(2) 0x0001 | TYPE(1) 'C' | TARGET_LEN(2) | TARGET(var) | HASH(32)
+// This is much smaller than a full plan - just enough to verify the plan hasn't changed.
+func WriteContract(w io.Writer, target string, planHash [32]byte) error {
+	// Create hasher to compute contract hash (not used yet, but for future verification)
+	hasher, err := blake2b.New256(nil)
+	if err != nil {
+		return err
+	}
+	mw := io.MultiWriter(hasher, w)
+
+	// Write magic "OPAL"
+	if _, err := mw.Write([]byte(Magic)); err != nil {
+		return err
+	}
+
+	// Write version (2 bytes, little-endian)
+	if err := binary.Write(mw, binary.LittleEndian, Version); err != nil {
+		return err
+	}
+
+	// Write type byte 'C' for Contract (distinguishes from full plan)
+	if err := binary.Write(mw, binary.LittleEndian, byte('C')); err != nil {
+		return err
+	}
+
+	// Write target length (2 bytes, little-endian)
+	targetLen := uint16(len(target))
+	if err := binary.Write(mw, binary.LittleEndian, targetLen); err != nil {
+		return err
+	}
+
+	// Write target string
+	if _, err := mw.Write([]byte(target)); err != nil {
+		return err
+	}
+
+	// Write plan hash (32 bytes)
+	if _, err := mw.Write(planHash[:]); err != nil {
+		return err
 	}
 
 	return nil

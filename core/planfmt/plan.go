@@ -1,6 +1,7 @@
 package planfmt
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 )
@@ -22,9 +23,23 @@ import (
 // Plan is the in-memory representation of an execution plan.
 // This is the stable contract between planner, executor, and formatters.
 type Plan struct {
-	Header PlanHeader
-	Target string // Function/command being executed (e.g., "deploy")
-	Steps  []Step // List of steps (newline-separated statements)
+	Header  PlanHeader
+	Target  string   // Function/command being executed (e.g., "deploy")
+	Steps   []Step   // List of steps (newline-separated statements)
+	Secrets []Secret // Secrets to scrub from output (value decorators)
+}
+
+// Secret represents a resolved value that must be scrubbed from output.
+// ALL value decorators produce secrets - even @env.HOME or @git.commit_hash
+// could leak sensitive system information. Scrub everything by default.
+//
+// Two-track identity:
+// - DisplayID: Opaque random ID shown to users (no length leak, no correlation)
+// - RuntimeValue: Actual secret value (runtime only, never serialized)
+type Secret struct {
+	Key          string // Variable name (e.g., "db_password", "HOME", "commit_hash")
+	RuntimeValue string // Actual resolved value (runtime only, never serialized)
+	DisplayID    string // Opaque ID for display: opal:secret:3J98t56A
 }
 
 // PlanHeader contains metadata about the plan.
@@ -176,4 +191,20 @@ func (s *Step) canonicalize() {
 			cmd.Block[j].canonicalize()
 		}
 	}
+}
+
+// Digest computes an unkeyed BLAKE2b-256 hash of the canonical plan bytes
+// Used for: integrity checks, cache keys, deduplication
+// This is about plan structure, NOT secret values
+// Returns hex-encoded hash: "blake2b:a3f8b2c1d4e5f6a7..."
+func (p *Plan) Digest() (string, error) {
+	// Serialize plan to canonical bytes
+	var buf bytes.Buffer
+	hash, err := Write(&buf, p)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize plan for digest: %w", err)
+	}
+
+	// Return hex-encoded hash with algorithm prefix
+	return fmt.Sprintf("blake2b:%x", hash), nil
 }

@@ -212,7 +212,7 @@ schema := types.NewSchema("retry", "execution").
         Description("Backoff strategy").
         Default("exponential").
         Done().
-    AcceptsBlock().
+    WithBlock(types.BlockRequired).
     Build()
 ```
 
@@ -314,6 +314,82 @@ All three forms are valid. Use what's clearest for your use case.
 ❌ Bad:  level="INFO|Warning|err"  # Inconsistent casing
 ```
 
+## SDK for Decorator Authors
+
+Opal provides a secure-by-default SDK for building decorators safely.
+
+### Secret Handling (`core/sdk/secret`)
+
+All value decorators return `secret.Handle` for automatic scrubbing:
+
+```go
+import "github.com/aledsdavies/opal/core/sdk/secret"
+
+func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error) {
+    secretName := ctx.ArgString("secretName")
+    value := fetchFromAWS(secretName)
+    return secret.NewHandle(value), nil
+}
+```
+
+**Safe operations (always available):**
+- `handle.ID()` - Opaque display ID: `opal:s:3J98t56A`
+- `handle.IDWithEmoji()` - Display with emoji: `🔒 opal:s:3J98t56A`
+- `handle.Mask(3)` - Masked display: `abc***xyz`
+- `handle.Len()` - Length without exposing value
+- `handle.Equal(other)` - Constant-time comparison
+
+**Controlled access (requires capability from executor):**
+- `handle.ForEnv("KEY")` - Environment variable: `KEY=value`
+- `handle.Bytes()` - Raw bytes for subprocess
+- `handle.UnsafeUnwrap()` - Raw value (explicit, panics in debug mode)
+
+**Why capability gating?** Prevents accidental leaks in plugins while enabling legitimate subprocess/environment wiring. Only the executor can issue capabilities.
+
+### Command Execution (`core/sdk/executor`)
+
+Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
+
+```go
+import "github.com/aledsdavies/opal/core/sdk/executor"
+
+cmd := executor.Command("kubectl", "get", "pods")
+cmd.AppendEnv(map[string]string{
+    "KUBECONFIG": kubeconfigPath,
+})
+exitCode, err := cmd.Run()
+```
+
+**Why this is safe:**
+- Output automatically routes through scrubber
+- Secrets are redacted before display
+- No way to bypass security
+
+**API:**
+- `Command(name, args...)` - Create command
+- `Bash(script)` - Execute bash script
+- `AppendEnv(map)` - Add environment (preserves PATH)
+- `SetEnv([]string)` - Replace entire environment
+- `SetStdin(reader)` - Feed input
+- `SetDir(path)` - Set working directory
+- `Run()` - Execute and wait (normalizes timeouts to exit code 124)
+- `Start()` / `Wait()` - Async execution
+- `Output()` / `CombinedOutput()` - Capture output (not scrubbed)
+
+### Security Model
+
+**Taint tracking**: Secrets panic on `String()` to catch accidental leaks during testing.
+
+**Per-run keyed fingerprints**: Prevent cross-run correlation and oracle attacks.
+
+**Locked-down I/O**: All subprocess output goes through scrubber automatically.
+
+**Capability gating**: Raw access (ForEnv, Bytes, UnsafeUnwrap) requires executor-issued token.
+
+**Debug mode**: Set `OPAL_SECRET_DEBUG=1` to catch leaks during testing.
+
+See `docs/SDK_GUIDE.md` for complete API reference and examples.
+
 ## Design Patterns
 
 ### Pattern: Opaque Capability Handles
@@ -404,7 +480,7 @@ for instance in @var.webServers {
 
 ### Pattern: Memoized Resolution
 
-**Use case**: Avoid redundant API calls for the same value.
+**Use case:** Avoid redundant API calls for the same value.
 
 ```opal
 # First access: API call (~150ms)
@@ -416,6 +492,38 @@ var db_pass_copy = @aws.secret.db_password(prodAuth)
 # Different args: New API call
 var api_key = @aws.secret.api_key(prodAuth)
 ```
+
+**Memoization semantics:**
+- **Scope**: Per-plan execution only (not across runs)
+- **Keying**: `(decorator path, canonicalized args)`
+- **Invalidation**: Cleared after plan execution completes
+- **Thread-safe**: Safe for concurrent access during parallel resolution
+
+**Provenance captures effective context:**
+
+When a value decorator is used inside a scoped execution decorator, provenance includes the context chain:
+
+```opal
+# Outside auth block - uses default auth context
+var secret1 = @aws.secret.db_password
+# Provenance: decorator="aws.secret.db_password", auth=<default>
+# Hash: <len:algo:hash1>
+
+# Inside auth block - uses prod auth context
+@aws.auth(profile="prod") {
+    var secret2 = @aws.secret.db_password
+    # Provenance: decorator="aws.secret.db_password", auth=<prod>
+    # Hash: <len:algo:hash2>  (different hash!)
+}
+
+# These are NOT memoized together (different effective contexts)
+# Contract verification: same call in different contexts = different hashes
+```
+
+**Why this matters for verification:**
+- Same decorator call in different contexts produces different hashes
+- Contract verification detects context changes (e.g., auth profile changed)
+- Ensures execution matches the exact context from planning
 
 ### Pattern: Batch Resolution
 
@@ -563,8 +671,13 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
     kubectl rollout status deployment/app
 }
 
-# Timeout has no effect - no block to apply to
+# ❌ Timeout has no effect - no block to apply to
 @timeout(5m) && kubectl apply -f k8s/
+
+# ✅ Use block form for decorator to apply
+@timeout(5m) {
+    kubectl apply -f k8s/
+}
 ```
 
 **Why this matters:**
@@ -576,6 +689,72 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
 ```opal
 # Both decorators apply to their respective blocks
 @timeout(5m) { kubectl apply } && @retry(3) { kubectl rollout status }
+```
+
+### @parallel Semantics
+
+**Complete isolation per branch:**
+
+Each branch in `@parallel` gets its own isolated execution context:
+
+```opal
+@parallel {
+    cd /tmp && echo "Branch A: $(pwd)"     # Step 1
+    cd /var && echo "Branch B: $(pwd)"     # Step 2
+    echo "Branch C: $(pwd)"                # Step 3
+}
+```
+
+**Output:**
+```
+Branch A: /tmp
+Branch B: /var
+Branch C: /home/user  # Original directory
+```
+
+**What's isolated:**
+- **Working directory**: Each branch starts from parent's cwd, changes don't affect siblings
+- **Environment variables**: Mutations in one branch don't leak to others
+- **Stdout/stderr**: Buffered per branch, merged deterministically by step ID
+
+**What's shared (read-only):**
+- **Parent environment**: All branches see parent's environment variables
+- **Parent working directory**: All branches start from same initial directory
+
+**Deterministic final output:**
+
+When parallel execution completes, final output is ordered by step ID (not completion time):
+
+```opal
+@parallel {
+    sleep 2 && echo "Slow"   # Step 1: completes last
+    echo "Fast"              # Step 2: completes first
+}
+```
+
+**Final output (always):**
+```
+Slow
+Fast
+```
+
+Even though "Fast" completes first, final output is reordered by step ID for determinism.
+
+**During execution:** TUI may show live progress per branch (last N lines), but final output is always deterministic.
+
+**Exit code policy:**
+- Returns first non-zero exit code (by step ID order)
+- Returns 0 if all branches succeed
+- Fail-fast: Remaining branches cancelled on first failure
+
+**Example with failure:**
+```opal
+@parallel {
+    echo "Success"     # Step 1: exit 0
+    exit 1             # Step 2: exit 1 (fails)
+    sleep 10           # Step 3: cancelled
+}
+# Returns exit code 1, Step 3 never completes
 ```
 
 **When to use blocks:**
@@ -781,6 +960,256 @@ opal test decorators/@your.decorator
 # ✓ Memoization works
 ```
 
+## The Execution Context Pattern
+
+### What Decorators Really Do
+
+**Core insight:** Decorators take a declaration of what needs to run and wrap it in their execution context.
+
+```opal
+# User writes a declaration:
+@aws.instance.ssh(host="prod-server") {
+    cat /var/log/app.log
+}
+
+# Decorator does:
+# 1. Setup: Establish SSH connection
+# 2. Execute: Run the block in SSH context
+# 3. Teardown: Close connection
+```
+
+### The Pattern: Execution Context with Callback
+
+**Execution decorators receive three things:**
+
+1. **Parameters** - Configuration for the decorator (`host="prod-server"`)
+2. **Block** - The work to execute (the child steps)
+3. **Execution Context** - A callback to execute the block
+
+**Handler signature:**
+```go
+type ExecutionHandler func(
+    ctx ExecutionContext,    // Execution context with args and I/O
+    block []Step,            // Child steps to execute
+) (exitCode int, err error)
+```
+
+**Execution context interface:**
+```go
+type ExecutionContext interface {
+    // Execute block within this context
+    ExecuteBlock(steps []Step) (exitCode int, err error)
+    Context() context.Context  // For cancellation and deadlines
+    
+    // Decorator arguments (typed accessors)
+    ArgString(key string) string
+    ArgInt(key string) int64
+    ArgBool(key string) bool
+    ArgDuration(key string) time.Duration
+    Args() map[string]Value  // Snapshot for logging
+    
+    // Controlled I/O (executor scrubs secrets automatically)
+    // Decorators CANNOT write directly to streams
+    LogOutput(message string)  // Scrubbed before output
+    LogError(message string)   // Scrubbed before output
+    
+    // Environment and working directory
+    Environ() map[string]string
+    Workdir() string
+    
+    // Context wrapping (returns new context with modifications)
+    WithContext(ctx context.Context) ExecutionContext
+    WithEnviron(env map[string]string) ExecutionContext
+    WithWorkdir(dir string) ExecutionContext
+}
+```
+
+**Security model:**
+
+Decorators have **no direct access to I/O streams**. All output flows through the executor which:
+1. Maintains a registry of secret values from value decorator resolutions
+2. Automatically replaces secret values with plan placeholders: `opal:s:ID`
+3. Ensures audit trail shows which secrets were used without exposing values
+
+This prevents decorators from accidentally (or maliciously) leaking secrets.
+
+### Example: SSH Decorator
+
+```go
+func sshHandler(ctx ExecutionContext, block []Step) (int, error) {
+    // 1. SETUP: Extract parameters and establish connection
+    host := ctx.ArgString("host")
+    conn, err := ssh.Dial("tcp", host+":22", sshConfig)
+    if err != nil {
+        return 1, err
+    }
+    defer conn.Close()
+    
+    // 2. EXECUTE: Create wrapped context and run block
+    sshCtx := &SSHExecutionContext{
+        parent: ctx,
+        conn:   conn,
+    }
+    exitCode, err := sshCtx.ExecuteBlock(block)
+    
+    // 3. TEARDOWN: Connection closed via defer
+    return exitCode, err
+}
+```
+
+**Error Precedence (Normative):**
+
+All handlers must follow this precedence:
+
+1. **`err != nil`** → Failure (exit code informational)
+2. **`err == nil` + `exitCode == 0`** → Success
+3. **`err == nil` + `exitCode != 0`** → Failure
+
+This ensures consistent behavior across all decorators and executors.
+
+**Typed errors for policy decisions:**
+```go
+// Decorator can return typed errors for policy decisions
+if err := validateConnection(conn); err != nil {
+    return 1, &RetryableError{Cause: err}  // @retry can handle this
+}
+```
+
+**Available typed errors:**
+- `RetryableError` - Network failures, rate limits (decorator can retry)
+- `TimeoutError` - Exceeded time limit (decorator can extend or fail)
+- `CancelledError` - Context cancelled (user interrupt, deadline)
+
+### How It Works: Recursive Execution
+
+```
+User writes:
+  @retry(times=3) {
+      @aws.instance.ssh(host="prod") {
+          cat /var/log/app.log
+      }
+  }
+
+Executor calls:
+  retryHandler(ctx, block=[ssh step])
+  # ctx.ArgInt("times") returns 3
+
+Retry handler does:
+  for attempt := 1; attempt <= ctx.ArgInt("times"); attempt++ {
+      exitCode := ctx.ExecuteBlock(block)  ← Calls back to executor
+      if exitCode == 0 { return 0 }
+  }
+
+Executor receives ssh step, calls:
+  sshHandler(ctx, block=[cat command])
+  # ctx.ArgString("host") returns "prod"
+
+SSH handler does:
+  conn := ssh.Dial(ctx.ArgString("host") + ":22", ...)
+  sshCtx := wrapContext(ctx, conn)
+  exitCode := sshCtx.ExecuteBlock(block)  ← Calls back to executor
+
+Executor receives cat command, calls:
+  shellHandler(ctx, block=[])
+
+Shell handler does:
+  cmd := exec.Command("bash", "-c", "cat /var/log/app.log")
+  return cmd.Run()
+```
+
+### Key Properties
+
+**1. Decorator Controls Execution**
+- **When**: Immediately, after setup, conditionally, in parallel
+- **How**: With modified stdout, within SSH session, with timeout
+- **Whether**: Can skip block entirely, retry, or execute multiple times
+
+**2. Context Wrapping**
+Decorators can wrap the execution context to modify behavior:
+
+```go
+type SSHExecutionContext struct {
+    parent ExecutionContext  // Original context
+    conn   *ssh.Client       // SSH connection
+}
+
+func (s *SSHExecutionContext) ExecuteBlock(steps []Step) (int, error) {
+    // Redirect stdout/stderr through SSH
+    // Run commands on remote host
+    // Return exit code
+}
+```
+
+**3. Recursive Composition**
+Decorators can be nested arbitrarily deep:
+
+```opal
+@retry(times=3) {
+    @timeout(30s) {
+        @aws.instance.ssh(host="prod") {
+            @parallel {
+                kubectl apply -f deployment.yaml
+                kubectl rollout status deployment/app
+            }
+        }
+    }
+}
+```
+
+Each decorator wraps the next, creating a chain of execution contexts.
+
+### Pattern Classification
+
+**Name:** Execution Context Pattern
+
+**Combines:**
+- **Middleware's** wrap-around behavior (setup/execute/teardown)
+- **Inversion of Control's** callback mechanism (handler calls executor)
+- **Context pattern's** state management (ExecutionContext)
+- **Registry pattern's** extensibility (decorator registration)
+
+**Similar to:**
+- Python's `with` statement (context managers)
+- React's Context API (providers wrapping children)
+- Go's http.Handler middleware (wrapping with `next.ServeHTTP()`)
+
+### Implementing a Block-Based Decorator
+
+**Step 1: Define schema with block**
+```go
+schema := types.NewSchema("timeout", "execution").
+    Description("Execute block with timeout").
+    Param("duration", "duration").
+        Description("Maximum execution time").
+        Required().
+        Done().
+    WithBlock(types.BlockRequired).  // ← Accepts block
+    Build()
+```
+
+**Step 2: Implement handler**
+```go
+func timeoutHandler(ctx ExecutionContext, block []Step) (int, error) {
+    duration := ctx.ArgDuration("duration")
+    
+    // Create context with timeout (composes with parent context)
+    timeoutCtx, cancel := context.WithTimeout(ctx.Context(), duration)
+    defer cancel()
+    
+    // Execute block with timeout context
+    return ctx.WithContext(timeoutCtx).ExecuteBlock(block)
+}
+```
+
+**Note:** This simplified version composes with parent context automatically. If parent has a deadline, the shorter one wins.
+
+**Step 3: Register decorator**
+```go
+func init() {
+    types.Global().RegisterExecutionWithSchema(schema, timeoutHandler)
+}
+```
+
 ## Summary
 
 These patterns enable:
@@ -790,5 +1219,7 @@ These patterns enable:
 - **Observable operations** - Full traceability without exposing secrets
 - **Type safety** - Optional types catch errors at plan-time
 - **Natural composition** - Decorators work together seamlessly
+- **Context wrapping** - Decorators establish execution environments
+- **Recursive execution** - Arbitrary nesting of decorators
 
 All while maintaining Opal's core guarantee: **resolved plans are execution contracts**.

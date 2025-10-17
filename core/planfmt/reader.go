@@ -356,3 +356,55 @@ func (rd *Reader) readArg(r io.Reader) (*Arg, error) {
 
 	return arg, nil
 }
+
+// ReadContract reads a minimal contract file (target + hash only).
+// Contract format: MAGIC(4) "OPAL" | VERSION(2) 0x0001 | TYPE(1) 'C' | TARGET_LEN(2) | TARGET(var) | HASH(32)
+// Returns the target command name and plan hash.
+func ReadContract(r io.Reader) (target string, planHash [32]byte, err error) {
+	// Read and verify magic
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(r, magic); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read magic: %w", err)
+	}
+	if string(magic) != Magic {
+		return "", [32]byte{}, fmt.Errorf("invalid magic: expected %q, got %q", Magic, string(magic))
+	}
+
+	// Read and verify version
+	var version uint16
+	if err := binary.Read(r, binary.LittleEndian, &version); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read version: %w", err)
+	}
+	if version != Version {
+		return "", [32]byte{}, fmt.Errorf("unsupported version: %d (expected %d)", version, Version)
+	}
+
+	// Read and verify type byte
+	var typeByte byte
+	if err := binary.Read(r, binary.LittleEndian, &typeByte); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read type: %w", err)
+	}
+	if typeByte != 'C' {
+		return "", [32]byte{}, fmt.Errorf("not a contract file: type byte is %q (expected 'C')", typeByte)
+	}
+
+	// Read target length
+	var targetLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &targetLen); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read target length: %w", err)
+	}
+
+	// Read target string
+	targetBytes := make([]byte, targetLen)
+	if _, err := io.ReadFull(r, targetBytes); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read target: %w", err)
+	}
+	target = string(targetBytes)
+
+	// Read plan hash (32 bytes)
+	if _, err := io.ReadFull(r, planHash[:]); err != nil {
+		return "", [32]byte{}, fmt.Errorf("failed to read plan hash: %w", err)
+	}
+
+	return target, planHash, nil
+}

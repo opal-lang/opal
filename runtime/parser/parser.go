@@ -311,6 +311,9 @@ func (p *parser) function() {
 	if p.at(lexer.EQUALS) {
 		p.token() // Consume '='
 
+		// Emit step boundary for function body (consistency with block syntax)
+		p.events = append(p.events, Event{Kind: EventStepEnter, Data: 0})
+
 		// After '=', could be shell command or expression
 		if p.at(lexer.IDENTIFIER) {
 			// Shell command
@@ -319,6 +322,8 @@ func (p *parser) function() {
 			// Expression
 			p.expression()
 		}
+
+		p.events = append(p.events, Event{Kind: EventStepExit, Data: 0})
 	} else if p.at(lexer.LBRACE) {
 		// Block
 		p.block()

@@ -3,13 +3,16 @@
 **opal** - CLI generation tool that creates standalone binaries from declarative command definitions.
 
 ## Build/Test Commands
+
+**CRITICAL: Always use nix-shell or nix develop for tools, never install globally**
+
 ```bash
 # Single test: go test ./module/package -run TestName -v
 # Module test: cd module && go test ./...
 # All tests: go test ./...
 # Build CLI: cd cli && go build -o opal .
-# Format: go fmt ./...
-# Lint: golangci-lint run (if available)
+# Format: nix-shell -p gofumpt --run "gofumpt -w ."
+# Lint: nix-shell -p golangci-lint --run "cd cli && golangci-lint run --timeout=5m"
 ```
 
 ## Coding Guidelines (CRITICAL)
@@ -160,6 +163,11 @@ jj git push -b feature-name --allow-new
 # 6. Update existing PR
 jj bookmark set feature-name -r @
 jj git push -b feature-name
+
+# 7. Create GitHub PR (gh CLI with JJ)
+# NOTE: gh CLI doesn't detect JJ branches automatically
+# MUST pass branch name explicitly with --head flag
+gh pr create --head feature-name --title "Title" --body "Description"
 ```
 
 **Why fine-grained commits matter:**
