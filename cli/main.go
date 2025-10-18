@@ -217,7 +217,11 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 		execDebug = executor.DebugDetailed
 	}
 
-	result, err := executor.Execute(plan, executor.Config{
+	// Convert plan to SDK steps at the boundary
+	// The executor only sees SDK types - it has no knowledge of planfmt
+	steps := planfmt.ToSDKSteps(plan.Steps)
+
+	result, err := executor.Execute(steps, executor.Config{
 		Debug:              execDebug,
 		Telemetry:          executor.TelemetryBasic,
 		LockdownStdStreams: false, // Already locked down at CLI level
@@ -229,7 +233,7 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	// Print execution summary if debug enabled
 	if debug {
 		fmt.Fprintf(os.Stderr, "\nExecution summary:\n")
-		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(plan.Steps))
+		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(steps))
 		fmt.Fprintf(os.Stderr, "  Duration: %v\n", result.Duration)
 		fmt.Fprintf(os.Stderr, "  Exit code: %d\n", result.ExitCode)
 	}
@@ -390,7 +394,10 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *exe
 		execDebug = executor.DebugDetailed
 	}
 
-	result, err := executor.Execute(freshPlan, executor.Config{
+	// Convert plan to SDK steps at the boundary
+	steps := planfmt.ToSDKSteps(freshPlan.Steps)
+
+	result, err := executor.Execute(steps, executor.Config{
 		Debug:              execDebug,
 		Telemetry:          executor.TelemetryBasic,
 		LockdownStdStreams: false, // Already locked down at CLI level
@@ -402,7 +409,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *exe
 	// Print execution summary if debug enabled
 	if debug {
 		fmt.Fprintf(os.Stderr, "\nExecution summary:\n")
-		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(freshPlan.Steps))
+		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(steps))
 		fmt.Fprintf(os.Stderr, "  Duration: %v\n", result.Duration)
 		fmt.Fprintf(os.Stderr, "  Exit code: %d\n", result.ExitCode)
 	}

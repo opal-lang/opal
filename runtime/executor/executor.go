@@ -2,16 +2,17 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/aledsdavies/opal/core/sdk"
+	"github.com/aledsdavies/opal/core/types"
 )
 
 // Config configures the executor
@@ -175,7 +176,6 @@ func LockDownStdStreams(config *LockdownConfig) (restore func()) {
 
 // executor holds execution state
 type executor struct {
-	plan   *planfmt.Plan
 	config Config
 
 	// Execution state
@@ -188,10 +188,12 @@ type executor struct {
 	startTime   time.Time
 }
 
-// Execute runs a plan and returns the result
-func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
+// Execute runs SDK steps and returns the result.
+// The executor only sees SDK types - it has no knowledge of planfmt.
+// Secret scrubbing is handled by the CLI before calling Execute.
+func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 	// INPUT CONTRACT (preconditions)
-	invariant.NotNil(plan, "plan")
+	invariant.NotNil(steps, "steps")
 
 	// Set up stdout/stderr lockdown if enabled
 	var outputBuf bytes.Buffer
@@ -209,11 +211,8 @@ func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
 			scrubber = NewSecretScrubber(&outputBuf)
 		}
 
-		// Register all secrets from plan
-		for _, secret := range plan.Secrets {
-			// Use DisplayID as placeholder (e.g., "opal:secret:3J98t56A")
-			scrubber.RegisterSecret(secret.RuntimeValue, secret.DisplayID)
-		}
+		// Note: Secret registration is handled by CLI before calling Execute
+		// The executor has no knowledge of secrets - that's a CLI concern
 
 		// Lock down stdout/stderr
 		restore = LockDownStdStreams(&LockdownConfig{
@@ -224,7 +223,6 @@ func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
 	}
 
 	e := &executor{
-		plan:      plan,
 		config:    config,
 		startTime: time.Now(),
 	}
@@ -232,20 +230,20 @@ func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
 	// Initialize telemetry if enabled
 	if config.Telemetry != TelemetryOff {
 		e.telemetry = &ExecutionTelemetry{
-			StepCount: len(plan.Steps),
+			StepCount: len(steps),
 		}
 		if config.Telemetry == TelemetryTiming {
-			e.telemetry.StepTimings = make([]StepTiming, 0, len(plan.Steps))
+			e.telemetry.StepTimings = make([]StepTiming, 0, len(steps))
 		}
 	}
 
 	// Record debug event: enter_execute
 	if config.Debug >= DebugPaths {
-		e.recordDebugEvent("enter_execute", 0, fmt.Sprintf("target=%s, steps=%d", plan.Target, len(plan.Steps)))
+		e.recordDebugEvent("enter_execute", 0, fmt.Sprintf("steps=%d", len(steps)))
 	}
 
 	// Execute all steps sequentially
-	for _, step := range plan.Steps {
+	for _, step := range steps {
 		stepStart := time.Now()
 
 		if config.Debug >= DebugDetailed {
@@ -301,7 +299,7 @@ func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
 	// OUTPUT CONTRACT (postconditions)
 	invariant.InRange(e.exitCode, 0, 255, "exit code")
 	invariant.Postcondition(e.stepsRun >= 0, "steps run must be non-negative")
-	invariant.Postcondition(e.stepsRun <= len(plan.Steps), "steps run cannot exceed total steps")
+	invariant.Postcondition(e.stepsRun <= len(steps), "steps run cannot exceed total steps")
 
 	return &ExecutionResult{
 		ExitCode:    e.exitCode,
@@ -313,60 +311,49 @@ func Execute(plan *planfmt.Plan, config Config) (*ExecutionResult, error) {
 	}, nil
 }
 
-// executeStep executes a single step (which may contain multiple commands)
-func (e *executor) executeStep(step planfmt.Step) int {
+// executeStep executes a single step using the decorator registry
+func (e *executor) executeStep(step sdk.Step) int {
 	// INPUT CONTRACT
 	invariant.Precondition(len(step.Commands) > 0, "step must have at least one command")
 
-	// Build the full command string by chaining commands with operators
-	var cmdParts []string
-	for i, cmd := range step.Commands {
-		// Assert invariants
-		invariant.Precondition(cmd.Decorator == "@shell", "only @shell decorator supported in MVP")
-
-		// Extract command string
-		cmdStr := e.getCommandString(cmd)
-		invariant.Precondition(cmdStr != "", "shell command cannot be empty")
-
-		cmdParts = append(cmdParts, cmdStr)
-
-		// Add operator if not last command
-		if i < len(step.Commands)-1 {
-			invariant.Precondition(cmd.Operator != "", "non-last command must have operator")
-			cmdParts = append(cmdParts, cmd.Operator)
-		} else {
-			invariant.Postcondition(cmd.Operator == "", "last command must have empty operator")
-		}
+	// For MVP: Only support single command per step (no operators yet)
+	if len(step.Commands) > 1 {
+		panic("operator chaining not yet implemented in Phase 3E")
 	}
 
-	// Join all parts into single shell command
-	fullCmd := strings.Join(cmdParts, " ")
+	cmd := step.Commands[0]
 
-	// Execute via bash
-	cmd := exec.Command("bash", "-c", fullCmd)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Strip @ prefix from decorator name for registry lookup
+	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		// Other errors (e.g., command not found) return 127
-		return 127
+	// Look up handler from registry
+	handler, kind, exists := types.Global().GetSDKHandler(decoratorName)
+	if !exists {
+		panic(fmt.Sprintf("unknown decorator: %s", cmd.Name))
 	}
 
-	return 0
-}
-
-// getCommandString extracts the command string from a shell decorator
-func (e *executor) getCommandString(cmd planfmt.Command) string {
-	for _, arg := range cmd.Args {
-		if arg.Key == "command" {
-			invariant.Precondition(arg.Val.Kind == planfmt.ValueString, "command arg must be string")
-			return arg.Val.Str
-		}
+	// Verify it's an execution decorator
+	if kind != types.DecoratorKindExecution {
+		panic(fmt.Sprintf("%s is not an execution decorator", cmd.Name))
 	}
-	panic("shell decorator missing 'command' argument")
+
+	// Type assert to SDK handler
+	sdkHandler, ok := handler.(func(sdk.ExecutionContext, []sdk.Step) (int, error))
+	if !ok {
+		panic(fmt.Sprintf("invalid handler type for %s", cmd.Name))
+	}
+
+	// Create execution context with SDK args directly
+	ctx := newExecutionContext(cmd.Args, e, context.Background())
+
+	// Call handler with SDK block
+	exitCode, err := sdkHandler(ctx, cmd.Block)
+	if err != nil {
+		// Log error but return exit code
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+
+	return exitCode
 }
 
 // recordDebugEvent records a debug event (only if debug enabled)

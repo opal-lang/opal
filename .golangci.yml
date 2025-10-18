@@ -1,0 +1,53 @@
+version: "2"
+
+linters:
+  disable:
+    - exhaustruct  # Too noisy for Go
+    - varnamelen   # Short names are idiomatic in Go
+    - ireturn      # Interfaces are fine to return
+    - wrapcheck    # Not always necessary
+    - nlreturn     # Stylistic preference
+    - wsl          # Too opinionated
+    - testpackage  # Internal tests are fine
+  exclusions:
+    rules:
+      # Exclude some linters from running on test files
+      - path: _test\.go
+        linters:
+          - errcheck      # Tests often intentionally ignore errors
+          - gocyclo       # Test functions can be complex
+          - dupl          # Test cases often have similar structure
+          - gosec         # Security checks less relevant in tests
+          - funlen        # Test functions can be long
+          - goconst       # Test literals don't need constants
+          - gocognit      # Cognitive complexity less important in tests
+          - govet         # lostcancel warnings often false positives in tests
+          - staticcheck   # SA1029 (string context keys) is fine in tests
+      # Exclude all linters from fuzz test corpus
+      - path: testdata/
+        linters:
+          - all
+      # Allow long lines in go:generate comments
+      - linters:
+          - lll
+        source: "^//go:generate "
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - unnamedResult  # Named returns are sometimes clearer
+    revive:
+      rules:
+        - name: exported
+          disabled: true  # Don't require comments on all exports
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags: []
+  modules-download-mode: readonly

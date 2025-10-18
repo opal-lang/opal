@@ -2,18 +2,72 @@
 
 **opal** - CLI generation tool that creates standalone binaries from declarative command definitions.
 
-## Build/Test Commands
+## Build/Test Commands (CRITICAL)
 
-**CRITICAL: Always use nix-shell or nix develop for tools, never install globally**
+**ALWAYS use `nix develop` for all development commands. NEVER use `nix-shell` or install tools globally.**
 
 ```bash
-# Single test: go test ./module/package -run TestName -v
-# Module test: cd module && go test ./...
-# All tests: go test ./...
-# Build CLI: cd cli && go build -o opal .
-# Format: nix-shell -p gofumpt --run "gofumpt -w ."
-# Lint: nix-shell -p golangci-lint --run "cd cli && golangci-lint run --timeout=5m"
+# Test individual module
+cd core && go test ./...
+cd runtime && go test ./...
+cd cli && go test ./...
+
+# Format code (REQUIRED before PR)
+nix develop --command gofumpt -w .
+
+# Lint code (REQUIRED before PR)
+cd core && nix develop ..#default --command golangci-lint run --timeout=5m
+cd runtime && nix develop ..#default --command golangci-lint run --timeout=5m
+cd cli && nix develop ..#default --command golangci-lint run --timeout=5m
+
+# Build Nix package (REQUIRED before PR)
+nix build
+
+# If Nix build fails with hash mismatch:
+# 1. Copy the "got:" hash from error message
+# 2. Update vendorHash in .nix/package.nix with the new hash
+# 3. Run `nix build` again to verify
 ```
+
+## Pre-PR Checklist (MANDATORY)
+
+**STOP. Before creating ANY PR, verify ALL of these pass IN THIS ORDER:**
+
+1. ✅ **All tests pass**
+   ```bash
+   cd core && go test ./...
+   cd runtime && go test ./...
+   cd cli && go test ./...
+   ```
+
+2. ✅ **Nix build succeeds** (MUST be done before format/lint since nix develop depends on it)
+   ```bash
+   nix build
+   # If hash mismatch:
+   # 1. Copy the "got:" hash from error message
+   # 2. Update vendorHash in .nix/package.nix (line 26)
+   # 3. Run `nix build` again to verify
+   ```
+
+3. ✅ **Code is formatted**
+   ```bash
+   nix develop --command gofumpt -w .
+   # Should show no changes
+   ```
+
+4. ✅ **All linters pass**
+   ```bash
+   cd core && nix develop ..#default --command golangci-lint run --timeout=5m
+   cd runtime && nix develop ..#default --command golangci-lint run --timeout=5m
+   cd cli && nix develop ..#default --command golangci-lint run --timeout=5m
+   ```
+
+5. ✅ **No uncommitted changes** (except intentional)
+   ```bash
+   jj status
+   ```
+
+**If ANY of these fail, FIX IT before creating the PR.**
 
 ## File Editing Guidelines (CRITICAL)
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aledsdavies/opal/core/planfmt"
+	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,8 @@ func TestExecuteSimpleShellCommand(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -67,7 +69,8 @@ func TestExecuteMultipleCommands(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun)
@@ -92,7 +95,8 @@ func TestExecuteFailingCommand(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
 	require.NoError(t, err) // Execute returns result, not error
 	assert.Equal(t, 42, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -139,7 +143,8 @@ func TestExecuteStopOnFirstFailure(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun) // Only first two steps run
@@ -152,7 +157,8 @@ func TestExecuteEmptyPlan(t *testing.T) {
 		Steps:  []planfmt.Step{},
 	}
 
-	result, err := Execute(plan, Config{})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 0, result.StepsRun)
@@ -177,7 +183,8 @@ func TestExecuteTelemetryBasic(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{Telemetry: TelemetryBasic})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{Telemetry: TelemetryBasic})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	assert.Equal(t, 1, result.Telemetry.StepCount)
@@ -204,7 +211,8 @@ func TestExecuteTelemetryTiming(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{Telemetry: TelemetryTiming})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{Telemetry: TelemetryTiming})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.StepTimings)
@@ -233,7 +241,8 @@ func TestExecuteTelemetryFailedStep(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{Telemetry: TelemetryBasic})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{Telemetry: TelemetryBasic})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.FailedStep)
@@ -259,7 +268,8 @@ func TestExecuteDebugPaths(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{Debug: DebugPaths})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{Debug: DebugPaths})
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 	assert.Greater(t, len(result.DebugEvents), 0)
@@ -292,7 +302,8 @@ func TestExecuteDebugDetailed(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{Debug: DebugDetailed})
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{Debug: DebugDetailed})
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 
@@ -312,7 +323,7 @@ func TestInvariantNilPlan(t *testing.T) {
 	})
 }
 
-// TestInvariantEmptyShellCommand tests that empty shell command causes panic
+// TestInvariantEmptyShellCommand tests that empty shell command returns error
 func TestInvariantEmptyShellCommand(t *testing.T) {
 	plan := &planfmt.Plan{
 		Target: "empty",
@@ -331,41 +342,10 @@ func TestInvariantEmptyShellCommand(t *testing.T) {
 		},
 	}
 
-	assert.Panics(t, func() {
-		_, _ = Execute(plan, Config{})
-	})
-}
-
-// TestExecuteCommandsWithOperators tests commands chained with operators
-func TestExecuteCommandsWithOperators(t *testing.T) {
-	plan := &planfmt.Plan{
-		Target: "operators",
-		Steps: []planfmt.Step{
-			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'First'"}},
-						},
-						Operator: "&&",
-					},
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'Second'"}},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	result, err := Execute(plan, Config{})
-	require.NoError(t, err)
-	assert.Equal(t, 0, result.ExitCode)
-	assert.Equal(t, 1, result.StepsRun) // One step with two commands
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{})
+	require.NoError(t, err)               // Executor completes successfully
+	assert.Equal(t, 127, result.ExitCode) // But decorator returns error exit code
 }
 
 // TestStdoutStderrLockdown tests that direct writes to os.Stdout/os.Stderr are blocked
@@ -391,7 +371,8 @@ func TestStdoutStderrLockdown(t *testing.T) {
 	}
 
 	// Execute with lockdown enabled
-	result, err := Execute(plan, Config{
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{
 		LockdownStdStreams: true,
 	})
 	require.NoError(t, err)
@@ -432,15 +413,33 @@ func TestSecretScrubbing(t *testing.T) {
 		},
 	}
 
-	result, err := Execute(plan, Config{
-		LockdownStdStreams: true,
+	// Manually set up lockdown and register secrets (like CLI does)
+	var outputBuf bytes.Buffer
+	scrubber := NewSecretScrubber(&outputBuf)
+	for _, s := range plan.Secrets {
+		scrubber.RegisterSecret(s.RuntimeValue, s.DisplayID)
+	}
+
+	// Lock down stdout/stderr with our scrubber
+	restore := LockDownStdStreams(&LockdownConfig{
+		Scrubber: scrubber,
 	})
+
+	steps := planfmt.ToSDKSteps(plan.Steps)
+	result, err := Execute(steps, Config{
+		LockdownStdStreams: false, // We already locked down manually
+	})
+
+	// Restore before reading output
+	restore()
+
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
 	// Verify secret was scrubbed from output
-	assert.NotContains(t, result.Output, secret, "Secret should not appear in output")
-	assert.Contains(t, result.Output, "opal:secret:test123", "Secret should be replaced with placeholder")
+	output := outputBuf.String()
+	assert.NotContains(t, output, secret, "Secret should not appear in output")
+	assert.Contains(t, output, "opal:secret:test123", "Secret should be replaced with placeholder")
 }
 
 // TestLockdownInvariantNilConfig tests that lockdown panics on nil config

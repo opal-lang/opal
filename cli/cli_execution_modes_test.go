@@ -15,7 +15,7 @@ import (
 // TestCLIExecutionModes tests the 3 modes of CLI operation:
 // 1. stdin mode (explicit with -f - or piped input)
 // 2. file argument mode (user provides specific file)
-// 3. default mode (looks for commands.cli)
+// 3. default mode (looks for commands.opl)
 func TestCLIExecutionModes(t *testing.T) {
 	// Sample command content for testing
 	sampleCommands := `test-cmd: echo "hello world"`
@@ -67,8 +67,8 @@ func TestCLIExecutionModes(t *testing.T) {
 
 			defer func() { os.Stdin = oldStdin }()
 
-			// Test getInputReader
-			reader, closeFunc, err := getInputReader("commands.cli")
+			// Test getInputReader with default file name
+			reader, closeFunc, err := getInputReader("commands.opl")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -290,11 +290,11 @@ func TestStdinDetection(t *testing.T) {
 
 		defer func() { os.Stdin = oldStdin }()
 
-		reader, closeFunc, err := getInputReader("commands.cli")
+		reader, closeFunc, err := getInputReader("commands.opl")
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
-		// Should read from stdin, not try to open commands.cli
+		// Should read from stdin, not try to open commands.opl
 		content, err := io.ReadAll(reader)
 		require.NoError(t, err)
 		assert.Equal(t, testData, string(content))
