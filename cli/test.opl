@@ -1,1 +1,1 @@
-test-cmd: echo 'hello from stdin'
+fun test = echo "hello world"

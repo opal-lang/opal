@@ -2,25 +2,25 @@ package main
 
 import (
 	"os"
+
+	"github.com/aledsdavies/opal/core/planfmt/formatter"
 )
 
-// ANSI color codes
+// Re-export color constants from formatter package for convenience
 const (
-	ColorReset  = "\033[0m"
-	ColorRed    = "\033[31m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorBlue   = "\033[34m"
-	ColorCyan   = "\033[36m"
-	ColorGray   = "\033[90m"
+	ColorReset  = formatter.ColorReset
+	ColorRed    = formatter.ColorRed
+	ColorGreen  = formatter.ColorGreen
+	ColorYellow = formatter.ColorYellow
+	ColorBlue   = formatter.ColorBlue
+	ColorCyan   = formatter.ColorCyan
+	ColorGray   = formatter.ColorGray
 )
 
 // Colorize wraps text in ANSI color codes if color is enabled
+// This is a convenience wrapper around formatter.Colorize
 func Colorize(text, color string, useColor bool) string {
-	if !useColor {
-		return text
-	}
-	return color + text + ColorReset
+	return formatter.Colorize(text, color, useColor)
 }
 
 // ShouldUseColor determines if color output should be used
