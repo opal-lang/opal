@@ -1,13 +1,10 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aledsdavies/opal/core/invariant"
@@ -17,10 +14,8 @@ import (
 
 // Config configures the executor
 type Config struct {
-	Debug              DebugLevel     // Debug tracing (development only)
-	Telemetry          TelemetryLevel // Telemetry collection (production-safe)
-	LockdownStdStreams bool           // Lock down stdout/stderr (security)
-	Scrubber           io.Writer      // Output writer with secret scrubbing (optional)
+	Debug     DebugLevel     // Debug tracing (development only)
+	Telemetry TelemetryLevel // Telemetry collection (production-safe)
 }
 
 // DebugLevel controls debug tracing (development only)
@@ -46,7 +41,6 @@ type ExecutionResult struct {
 	ExitCode    int                 // Final exit code (0 = success)
 	Duration    time.Duration       // Total execution time
 	StepsRun    int                 // Number of steps executed
-	Output      string              // Captured output (scrubbed)
 	Telemetry   *ExecutionTelemetry // Additional metrics (nil if TelemetryOff)
 	DebugEvents []DebugEvent        // Debug events (nil if DebugOff)
 }
@@ -74,106 +68,6 @@ type DebugEvent struct {
 	Context   string // Additional context
 }
 
-// SecretScrubber wraps an io.Writer and redacts registered secrets
-type SecretScrubber struct {
-	writer  io.Writer
-	secrets map[string]string // secret value -> placeholder
-	mu      sync.RWMutex
-}
-
-// NewSecretScrubber creates a new secret scrubber
-func NewSecretScrubber(w io.Writer) *SecretScrubber {
-	invariant.NotNil(w, "writer")
-	return &SecretScrubber{
-		writer:  w,
-		secrets: make(map[string]string),
-	}
-}
-
-// RegisterSecret marks a value for redaction with its placeholder
-func (s *SecretScrubber) RegisterSecret(value, placeholder string) {
-	invariant.Precondition(value != "", "secret value cannot be empty")
-	invariant.Precondition(placeholder != "", "placeholder cannot be empty")
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.secrets[value] = placeholder
-}
-
-// Write implements io.Writer, redacting secrets before output
-func (s *SecretScrubber) Write(p []byte) (int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	output := string(p)
-	for secret, placeholder := range s.secrets {
-		output = strings.ReplaceAll(output, secret, placeholder)
-	}
-
-	n, err := s.writer.Write([]byte(output))
-	// Return original length to satisfy io.Writer contract
-	if err == nil {
-		return len(p), nil
-	}
-	return n, err
-}
-
-// LockdownConfig configures stdout/stderr lockdown
-type LockdownConfig struct {
-	Scrubber io.Writer // Writer to redirect output to (must not be nil)
-}
-
-// LockDownStdStreams redirects stdout/stderr to a controlled writer
-// Returns a restore function that must be called to restore original streams
-func LockDownStdStreams(config *LockdownConfig) (restore func()) {
-	// INPUT CONTRACT
-	invariant.NotNil(config, "config")
-	invariant.NotNil(config.Scrubber, "config.Scrubber")
-
-	// Save original streams
-	originalStdout := os.Stdout
-	originalStderr := os.Stderr
-
-	// Create pipes that redirect to scrubber
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	// Copy from pipes to scrubber in background
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(config.Scrubber, rOut)
-	}()
-
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(config.Scrubber, rErr)
-	}()
-
-	// Return restore function
-	return func() {
-		// Close write ends to signal EOF to copy goroutines
-		_ = wOut.Close()
-		_ = wErr.Close()
-
-		// Wait for copy goroutines to finish
-		wg.Wait()
-
-		// Close read ends
-		_ = rOut.Close()
-		_ = rErr.Close()
-
-		// Restore original streams
-		os.Stdout = originalStdout
-		os.Stderr = originalStderr
-	}
-}
-
 // executor holds execution state
 type executor struct {
 	config Config
@@ -190,37 +84,10 @@ type executor struct {
 
 // Execute runs SDK steps and returns the result.
 // The executor only sees SDK types - it has no knowledge of planfmt.
-// Secret scrubbing is handled by the CLI before calling Execute.
+// Secret scrubbing is handled by the CLI (stdout/stderr already locked down).
 func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 	// INPUT CONTRACT (preconditions)
 	invariant.NotNil(steps, "steps")
-
-	// Set up stdout/stderr lockdown if enabled
-	var outputBuf bytes.Buffer
-	var restore func()
-	var needsRestore bool
-
-	if config.LockdownStdStreams {
-		// Create scrubber
-		var scrubber *SecretScrubber
-		if config.Scrubber != nil {
-			// Use provided scrubber
-			scrubber = NewSecretScrubber(config.Scrubber)
-		} else {
-			// Default: capture to buffer
-			scrubber = NewSecretScrubber(&outputBuf)
-		}
-
-		// Note: Secret registration is handled by CLI before calling Execute
-		// The executor has no knowledge of secrets - that's a CLI concern
-
-		// Lock down stdout/stderr
-		restore = LockDownStdStreams(&LockdownConfig{
-			Scrubber: scrubber,
-		})
-		needsRestore = true
-		// Note: We call restore() explicitly before reading outputBuf to avoid race
-	}
 
 	e := &executor{
 		config:    config,
@@ -290,12 +157,6 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 		e.recordDebugEvent("exit_execute", 0, fmt.Sprintf("steps_run=%d, exit=%d, duration=%v", e.stepsRun, e.exitCode, duration))
 	}
 
-	// Restore stdout/stderr BEFORE reading outputBuf to avoid race condition
-	// The goroutines in LockDownStdStreams must finish writing before we read
-	if needsRestore {
-		restore()
-	}
-
 	// OUTPUT CONTRACT (postconditions)
 	invariant.InRange(e.exitCode, 0, 255, "exit code")
 	invariant.Postcondition(e.stepsRun >= 0, "steps run must be non-negative")
@@ -305,7 +166,6 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 		ExitCode:    e.exitCode,
 		Duration:    duration,
 		StepsRun:    e.stepsRun,
-		Output:      outputBuf.String(), // Captured and scrubbed output (safe after restore())
 		Telemetry:   e.telemetry,
 		DebugEvents: e.debugEvents,
 	}, nil

@@ -8,10 +8,12 @@ import (
 
 	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/aledsdavies/opal/core/sdk/secret"
+	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
 	"github.com/aledsdavies/opal/runtime/executor"
 	"github.com/aledsdavies/opal/runtime/lexer"
 	"github.com/aledsdavies/opal/runtime/parser"
 	"github.com/aledsdavies/opal/runtime/planner"
+	"github.com/aledsdavies/opal/runtime/streamscrub"
 	"github.com/spf13/cobra"
 )
 
@@ -19,12 +21,19 @@ func main() {
 	// CRITICAL: Lock down stdout/stderr at CLI entry point
 	// This ensures even lexer/parser/planner cannot leak secrets
 	var outputBuf bytes.Buffer
-	scrubber := executor.NewSecretScrubber(&outputBuf)
+
+	// Create Opal-specific placeholder generator (format: opal:s:hash)
+	opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: failed to create placeholder generator: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create scrubber with Opal placeholders
+	scrubber := streamscrub.New(&outputBuf, streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()))
 
 	// Redirect all stdout/stderr through scrubber
-	restore := executor.LockDownStdStreams(&executor.LockdownConfig{
-		Scrubber: scrubber,
-	})
+	restore := scrubber.LockdownStreams()
 
 	var (
 		file     string
@@ -102,7 +111,7 @@ func main() {
 	}
 }
 
-func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve, debug, noColor bool, scrubber *executor.SecretScrubber, outputBuf *bytes.Buffer) (int, error) {
+func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve, debug, noColor bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	commandName := args[0]
 
 	// Get input reader based on file options
@@ -176,7 +185,7 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	// Register all secrets with scrubber (ALL value decorator results are secrets)
 	for _, secret := range plan.Secrets {
 		// Use DisplayID as placeholder (e.g., "opal:secret:3J98t56A")
-		scrubber.RegisterSecret(secret.RuntimeValue, secret.DisplayID)
+		scrubber.RegisterSecret([]byte(secret.RuntimeValue), []byte(secret.DisplayID))
 	}
 
 	// Dry-run mode: show plan or generate contract
@@ -222,9 +231,8 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	steps := planfmt.ToSDKSteps(plan.Steps)
 
 	result, err := executor.Execute(steps, executor.Config{
-		Debug:              execDebug,
-		Telemetry:          executor.TelemetryBasic,
-		LockdownStdStreams: false, // Already locked down at CLI level
+		Debug:     execDebug,
+		Telemetry: executor.TelemetryBasic,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("execution failed: %w", err)
@@ -285,7 +293,7 @@ func hasPipedInput() bool {
 
 // runFromPlan executes with contract verification (Mode 4: Contract Execution)
 // Flow: Load contract → Replan fresh → Compare hashes → Execute if match
-func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *executor.SecretScrubber, outputBuf *bytes.Buffer) (int, error) {
+func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	// Step 1: Load contract from plan file
 	f, err := os.Open(planFile)
 	if err != nil {
@@ -385,7 +393,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *exe
 
 	// Register all secrets with scrubber
 	for _, secret := range freshPlan.Secrets {
-		scrubber.RegisterSecret(secret.RuntimeValue, secret.DisplayID)
+		scrubber.RegisterSecret([]byte(secret.RuntimeValue), []byte(secret.DisplayID))
 	}
 
 	// Step 4: Execute the verified plan
@@ -398,9 +406,8 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *exe
 	steps := planfmt.ToSDKSteps(freshPlan.Steps)
 
 	result, err := executor.Execute(steps, executor.Config{
-		Debug:              execDebug,
-		Telemetry:          executor.TelemetryBasic,
-		LockdownStdStreams: false, // Already locked down at CLI level
+		Debug:     execDebug,
+		Telemetry: executor.TelemetryBasic,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("execution failed: %w", err)
