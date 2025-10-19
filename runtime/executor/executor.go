@@ -172,36 +172,73 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 }
 
 // executeStep executes a single step using the decorator registry
+// Handles operator chaining with bash-compatible semantics
 func (e *executor) executeStep(step sdk.Step) int {
 	// INPUT CONTRACT
 	invariant.Precondition(len(step.Commands) > 0, "step must have at least one command")
 
-	// For MVP: Only support single command per step (no operators yet)
-	if len(step.Commands) > 1 {
-		panic("operator chaining not yet implemented in Phase 3E")
+	var lastExitCode int
+
+	// Execute commands with operator chaining
+	for i, cmd := range step.Commands {
+		shouldExecute := true
+
+		// Check if we should execute based on previous operator
+		if i > 0 {
+			prevOp := step.Commands[i-1].Operator
+			switch prevOp {
+			case "&&":
+				// AND: Execute next only if previous succeeded
+				if lastExitCode != 0 {
+					shouldExecute = false // Skip this command
+				}
+			case "||":
+				// OR: Execute next only if previous failed
+				if lastExitCode == 0 {
+					shouldExecute = false // Skip this command
+				}
+			case "|":
+				// PIPE: Not yet implemented
+				// TODO: Pipe requires:
+				// 1. Capture stdout from previous command (buffer it)
+				// 2. Pass captured output as stdin to next command
+				// 3. Handle buffering (commands still run sequentially, but need to wire stdout→stdin)
+				// Note: Only makes sense for @shell decorator - other decorators don't use stdin/stdout
+				invariant.Invariant(false, "pipe operator not yet implemented")
+			case ";":
+				// SEMICOLON: Always execute next (no-op)
+			case "":
+				// No operator (shouldn't happen for non-last command)
+				invariant.Invariant(false, "command %d has no operator but is not last", i)
+			default:
+				invariant.Invariant(false, "unknown operator: %q", prevOp)
+			}
+		}
+
+		// Execute the command if we should
+		if shouldExecute {
+			lastExitCode = e.executeCommand(cmd)
+		}
 	}
 
-	cmd := step.Commands[0]
+	return lastExitCode
+}
 
+// executeCommand executes a single command (extracted from executeStep)
+func (e *executor) executeCommand(cmd sdk.Command) int {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
 	// Look up handler from registry
 	handler, kind, exists := types.Global().GetSDKHandler(decoratorName)
-	if !exists {
-		panic(fmt.Sprintf("unknown decorator: %s", cmd.Name))
-	}
+	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
 
 	// Verify it's an execution decorator
-	if kind != types.DecoratorKindExecution {
-		panic(fmt.Sprintf("%s is not an execution decorator", cmd.Name))
-	}
+	invariant.Invariant(kind == types.DecoratorKindExecution, "%s is not an execution decorator", cmd.Name)
 
 	// Type assert to SDK handler
 	sdkHandler, ok := handler.(func(sdk.ExecutionContext, []sdk.Step) (int, error))
-	if !ok {
-		panic(fmt.Sprintf("invalid handler type for %s", cmd.Name))
-	}
+	invariant.Invariant(ok, "invalid handler type for %s", cmd.Name)
 
 	// Create execution context with SDK args directly
 	ctx := newExecutionContext(cmd.Args, e, context.Background())

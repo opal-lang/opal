@@ -1321,13 +1321,13 @@ func (p *parser) shellArg() {
 func (p *parser) isShellOperator() bool {
 	return p.at(lexer.AND_AND) || // &&
 		p.at(lexer.OR_OR) || // ||
-		p.at(lexer.PIPE) // |
+		p.at(lexer.PIPE) || // |
+		p.at(lexer.SEMICOLON) // ;
 }
 
 // isStatementBoundary checks if current token ends a statement
 func (p *parser) isStatementBoundary() bool {
 	return p.at(lexer.NEWLINE) ||
-		p.at(lexer.SEMICOLON) ||
 		p.at(lexer.RBRACE) ||
 		p.at(lexer.EOF) ||
 		p.at(lexer.ELSE) // Stop at else (for when arms and if/else)

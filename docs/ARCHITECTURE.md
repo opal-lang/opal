@@ -277,23 +277,23 @@ echo "Third"
 
 ### Operators: Intra-Step Control Flow
 
-**Operators** (`&&`, `||`, `|`, `;`) control flow **within a single step**. They are part of the shell command string and handled by bash, not Opal.
+**Operators** (`&&`, `||`, `|`, `;`) control flow **within a single step**. Opal implements bash-compatible operator semantics for cross-platform consistency.
 
 ```opal
-// ONE step with operators (bash controls flow within step)
+// ONE step with operators (Opal controls flow within step)
 echo "First" && echo "Second" || echo "Fallback"
 ```
 
 When this executes:
-- Opal sees **one step** containing the entire command string
-- Bash receives `echo "First" && echo "Second" || echo "Fallback"`
-- Bash handles the `&&` and `||` logic internally
-- Opal only sees the final exit code
+- Opal sees **one step** with multiple commands
+- Opal executes each command sequentially, applying operator logic
+- Operator semantics match bash behavior exactly
+- Result: Cross-platform consistency (same behavior on Windows, Linux, macOS)
 
-**Operator semantics** (bash-controlled):
+**Operator semantics** (Opal-controlled, bash-compatible):
 - `&&` - Execute next command only if previous succeeded (exit 0)
 - `||` - Execute next command only if previous failed (exit non-zero)
-- `|` - Pipe stdout of previous command to stdin of next
+- `|` - Pipe stdout of previous command to stdin of next (not yet implemented)
 - `;` - Execute commands sequentially regardless of exit codes
 
 ### Newlines: Inter-Step Boundaries
@@ -341,13 +341,13 @@ echo "Hello, World!"  // Becomes: @shell("echo \"Hello, World!\"")
 
 ### Examples: Operators vs Newlines
 
-**Example 1: Operators (bash controls)**
+**Example 1: Operators (Opal controls)**
 ```opal
-// ONE step - bash handles && logic
+// ONE step - Opal handles && logic
 mkdir -p /tmp/build && cd /tmp/build && npm install
 ```
 
-If `mkdir` fails, bash stops and never runs `cd` or `npm install`. Opal sees one step that either succeeded or failed.
+If `mkdir` fails, Opal stops and never runs `cd` or `npm install`. Opal sees one step with three commands and applies `&&` semantics.
 
 **Example 2: Newlines (Opal controls)**
 ```opal
@@ -361,39 +361,42 @@ If `mkdir` fails, Opal stops execution and never runs `cd` or `npm install`. Eac
 
 **Example 3: Mixed (both)**
 ```opal
-// TWO steps - bash controls within, Opal controls between
+// TWO steps - Opal controls within and between
 mkdir -p /tmp/build && cd /tmp/build
 npm install && npm run build
 ```
 
-Step 1: `mkdir -p /tmp/build && cd /tmp/build` (bash handles `&&`)
-Step 2: `npm install && npm run build` (bash handles `&&`)
+Step 1: `mkdir -p /tmp/build && cd /tmp/build` (Opal handles `&&`)
+Step 2: `npm install && npm run build` (Opal handles `&&`)
 
-Opal controls whether step 2 runs based on step 1's exit code.
+Opal controls whether step 2 runs based on step 1's exit code (newline = fail-fast).
 
 ### Why This Matters
 
 **For plan generation**:
-- Operators are part of the command string (opaque to planner)
+- Operators create multiple commands within a single step
 - Newlines create distinct steps in the plan
 - Each step gets a unique ID and can be tracked independently
 
 **For execution**:
-- Operators are bash's responsibility (fast, no Opal overhead)
+- Operators are Opal's responsibility (cross-platform consistency)
 - Newlines are Opal's responsibility (logging, telemetry, error handling)
 - Decorators wrap steps and control execution behavior
+- All decorators automatically support operators (no decorator-specific code needed)
 
 **For contract verification**:
-- Operators are part of the command string hash
+- Operators are part of the step structure (command count, operator types)
 - Steps are the unit of comparison (step count, step order, step content)
-- Changing operators changes the command hash, failing verification
+- Changing operators changes the step hash, failing verification
 
-### Design Principle: Separation of Concerns
+### Design Principle: Cross-Platform Consistency
 
-**Bash is good at**: Piping, chaining, conditional execution within a command
-**Opal is good at**: Orchestration, error handling, parallelism, contract verification
+**Opal controls all operators** to ensure consistent behavior across platforms:
+- Same `&&`, `||`, `;` semantics on Windows, Linux, macOS
+- No dependency on shell-specific behavior
+- Operators work with all decorators (`@retry`, `@timeout`, etc.)
 
-By separating intra-step (operators) from inter-step (newlines), Opal leverages bash's strengths while adding orchestration capabilities bash lacks.
+By implementing bash-compatible operator semantics in Go, Opal provides the familiarity of bash with the reliability of cross-platform execution.
 
 ## Two-Layer Architecture
 

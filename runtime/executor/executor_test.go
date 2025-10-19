@@ -345,3 +345,294 @@ func TestInvariantEmptyShellCommand(t *testing.T) {
 	require.NoError(t, err)               // Executor completes successfully
 	assert.Equal(t, 127, result.ExitCode) // But decorator returns error exit code
 }
+
+// TestOperatorSemicolon tests semicolon operator (always execute next)
+func TestOperatorSemicolon(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []planfmt.Command
+		wantExit int
+	}{
+		{
+			name: "all succeed",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
+					Operator:  ";",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
+					Operator:  ";",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'c'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0,
+		},
+		{
+			name: "first fails, rest run",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
+					Operator:  ";",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'still runs'"}}},
+					Operator:  ";",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 0"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0, // Last command succeeds
+		},
+		{
+			name: "last fails",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
+					Operator:  ";",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 42"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 42, // Last command's exit code
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := &planfmt.Plan{
+				Target: "test",
+				Steps: []planfmt.Step{
+					{
+						ID:       1,
+						Commands: tt.commands,
+					},
+				},
+			}
+
+			steps := planfmt.ToSDKSteps(plan.Steps)
+			result, err := Execute(steps, Config{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantExit, result.ExitCode)
+			assert.Equal(t, 1, result.StepsRun)
+		})
+	}
+}
+
+// TestOperatorAND tests AND operator (execute next only if previous succeeded)
+func TestOperatorAND(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []planfmt.Command
+		wantExit int
+	}{
+		{
+			name: "both succeed",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0,
+		},
+		{
+			name: "first fails, second skipped",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 1, // First command's exit code
+		},
+		{
+			name: "chain of ANDs all succeed",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'c'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0,
+		},
+		{
+			name: "chain of ANDs, middle fails",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 42"}}},
+					Operator:  "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 42, // Middle command's exit code
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := &planfmt.Plan{
+				Target: "test",
+				Steps: []planfmt.Step{
+					{
+						ID:       1,
+						Commands: tt.commands,
+					},
+				},
+			}
+
+			steps := planfmt.ToSDKSteps(plan.Steps)
+			result, err := Execute(steps, Config{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantExit, result.ExitCode)
+			assert.Equal(t, 1, result.StepsRun)
+		})
+	}
+}
+
+// TestOperatorOR tests OR operator (execute next only if previous failed)
+func TestOperatorOR(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []planfmt.Command
+		wantExit int
+	}{
+		{
+			name: "first succeeds, second skipped",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'success'"}}},
+					Operator:  "||",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0,
+		},
+		{
+			name: "first fails, second runs and succeeds",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
+					Operator:  "||",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0, // Fallback succeeds
+		},
+		{
+			name: "first fails, second fails too",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
+					Operator:  "||",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 2"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 2, // Second command's exit code
+		},
+		{
+			name: "chain of ORs, first succeeds",
+			commands: []planfmt.Command{
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'success'"}}},
+					Operator:  "||",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback1'"}}},
+					Operator:  "||",
+				},
+				{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback2'"}}},
+					Operator:  "",
+				},
+			},
+			wantExit: 0, // First succeeds, rest skipped
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := &planfmt.Plan{
+				Target: "test",
+				Steps: []planfmt.Step{
+					{
+						ID:       1,
+						Commands: tt.commands,
+					},
+				},
+			}
+
+			steps := planfmt.ToSDKSteps(plan.Steps)
+			result, err := Execute(steps, Config{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantExit, result.ExitCode)
+			assert.Equal(t, 1, result.StepsRun)
+		})
+	}
+}

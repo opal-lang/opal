@@ -1,0 +1,63 @@
+# Operator Examples
+# Demonstrates shell operator support in Opal
+
+# Semicolon (;) - Always execute next command
+fun demo_semicolon {
+    echo "Command 1"; echo "Command 2"; echo "Command 3"
+    echo "All three commands run regardless of exit codes"
+}
+
+# AND (&&) - Execute next only if previous succeeded
+fun demo_and {
+    echo "Building..." && echo "Build succeeded!" && echo "Ready to deploy"
+    echo "All commands run only if previous ones succeed"
+}
+
+fun demo_and_fail {
+    echo "Starting..."
+    false && echo "This won't run because previous command failed"
+    echo "But this runs (newline = new step)"
+}
+
+# OR (||) - Execute next only if previous failed
+fun demo_or {
+    echo "Trying primary..." || echo "Fallback executed"
+    echo "Primary succeeded, so fallback was skipped"
+}
+
+fun demo_or_fallback {
+    false || echo "Primary failed, running fallback"
+    echo "Fallback ran successfully"
+}
+
+# Mixed operators - Demonstrates precedence
+fun demo_mixed {
+    echo "Test 1" && echo "Success" || echo "Fallback"
+    echo "Both Test 1 and Success ran, Fallback skipped"
+}
+
+fun demo_mixed_fallback {
+    false && echo "Won't run" || echo "Fallback runs"
+    echo "First command failed, AND skipped second, OR ran fallback"
+}
+
+# Real-world examples
+fun build_and_test {
+    echo "Building project..." &&
+    echo "Running tests..." &&
+    echo "All tests passed!" ||
+    echo "Build or tests failed"
+}
+
+fun deploy_with_fallback {
+    echo "Deploying to production..." ||
+    echo "Production deploy failed, trying staging..." ||
+    echo "All deploys failed!"
+}
+
+# Operators work with all decorators
+fun retry_with_operators {
+    @retry(times=3) {
+        curl https://api.example.com && echo "API call succeeded" || echo "API call failed after retries"
+    }
+}
