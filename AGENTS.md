@@ -29,6 +29,45 @@ nix build
 # 3. Run `nix build` again to verify
 ```
 
+## Performance & Telemetry
+
+**Pipeline timing flag:**
+```bash
+# Show timing breakdown for all pipeline stages
+opal -f commands.opl deploy --timing
+```
+
+**Output format:**
+```
+Pipeline Timing:
+  Parse:   67.5µs
+  Plan:    8.2µs
+  Execute: 3.2ms (1 steps)
+    Step 1: 3.1ms (exit 0)
+  Total:   3.3ms
+```
+
+**Benchmarks:**
+```bash
+# Benchmark planner
+cd runtime/planner && go test -bench=. -benchmem
+
+# Benchmark executor
+cd runtime/executor && go test -bench=. -benchmem
+```
+
+**Performance baselines (from benchmarks):**
+- Planner (simple command): ~361ns/op, 392 B/op, 9 allocs/op
+- Planner (complex script): ~4.7µs/op, 6480 B/op, 151 allocs/op
+- Executor (single echo): ~2.46ms/op, 53476 B/op, 186 allocs/op
+
+**Overhead breakdown:**
+- Bash spawn: 81% (unavoidable OS overhead)
+- SDK wrapper: 15% (safety + ergonomics)
+- Executor: 4% (registry + telemetry)
+
+**Conclusion:** Performance is excellent for MVP. No optimization needed.
+
 ## Pre-PR Checklist (MANDATORY)
 
 **STOP. Before creating ANY PR, verify ALL of these pass IN THIS ORDER:**

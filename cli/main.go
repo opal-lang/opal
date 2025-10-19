@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/aledsdavies/opal/core/sdk/secret"
@@ -42,6 +43,7 @@ func main() {
 		resolve  bool
 		debug    bool
 		noColor  bool
+		timing   bool
 	)
 
 	rootCmd := &cobra.Command{
@@ -70,7 +72,7 @@ func main() {
 			if len(args) != 1 {
 				return fmt.Errorf("command name required (or use --plan)")
 			}
-			exitCode, err := runCommand(cmd, args, file, dryRun, resolve, debug, noColor, scrubber, &outputBuf)
+			exitCode, err := runCommand(cmd, args, file, dryRun, resolve, debug, noColor, timing, scrubber, &outputBuf)
 			if err != nil {
 				cmd.SilenceUsage = true // We've already printed detailed error
 				return err
@@ -90,6 +92,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&resolve, "resolve", false, "Resolve all values in plan (use with --dry-run)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
+	rootCmd.PersistentFlags().BoolVar(&timing, "timing", false, "Show pipeline timing breakdown")
 
 	// Execute command and capture exit code
 	exitCode := 0
@@ -111,7 +114,7 @@ func main() {
 	}
 }
 
-func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve, debug, noColor bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
+func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	commandName := args[0]
 
 	// Get input reader based on file options
@@ -132,8 +135,22 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	l.Init(source)
 	tokens := l.GetTokens()
 
-	// Parse
-	tree := parser.Parse(source)
+	// Parse with telemetry if timing enabled
+	var tree *parser.ParseTree
+	var pipelineTiming struct {
+		ParseTime   time.Duration
+		PlanTime    time.Duration
+		ExecuteTime time.Duration
+	}
+
+	if timing {
+		tree = parser.Parse(source, parser.WithTelemetryTiming())
+		if tree.Telemetry != nil {
+			pipelineTiming.ParseTime = tree.Telemetry.TotalTime
+		}
+	} else {
+		tree = parser.Parse(source)
+	}
 	if len(tree.Errors) > 0 {
 		// Use parser's error formatter for nice output
 		formatter := &parser.ErrorFormatter{
@@ -173,13 +190,30 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	// For resolve mode, leave idFactory as nil for now (MVP has no value decorators)
 	// When we add value decorators, we'll need to plan twice to get deterministic IDs
 
-	plan, err := planner.Plan(tree.Events, tokens, planner.Config{
-		Target:    commandName,
-		IDFactory: idFactory,
-		Debug:     debugLevel,
-	})
-	if err != nil {
-		return 1, fmt.Errorf("planning failed: %w", err)
+	// Plan with telemetry if timing enabled
+	var plan *planfmt.Plan
+	if timing {
+		planResult, err := planner.PlanWithObservability(tree.Events, tokens, planner.Config{
+			Target:    commandName,
+			IDFactory: idFactory,
+			Debug:     debugLevel,
+			Telemetry: planner.TelemetryTiming,
+		})
+		if err != nil {
+			return 1, fmt.Errorf("planning failed: %w", err)
+		}
+		plan = planResult.Plan
+		pipelineTiming.PlanTime = planResult.PlanTime
+	} else {
+		var err error
+		plan, err = planner.Plan(tree.Events, tokens, planner.Config{
+			Target:    commandName,
+			IDFactory: idFactory,
+			Debug:     debugLevel,
+		})
+		if err != nil {
+			return 1, fmt.Errorf("planning failed: %w", err)
+		}
 	}
 
 	// Register all secrets with scrubber (ALL value decorator results are secrets)
@@ -230,12 +264,25 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	// The executor only sees SDK types - it has no knowledge of planfmt
 	steps := planfmt.ToSDKSteps(plan.Steps)
 
+	// Execute with telemetry level based on timing flag
+	telemetryLevel := executor.TelemetryBasic
+	if timing {
+		telemetryLevel = executor.TelemetryTiming
+	}
+
 	result, err := executor.Execute(steps, executor.Config{
 		Debug:     execDebug,
-		Telemetry: executor.TelemetryBasic,
+		Telemetry: telemetryLevel,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("execution failed: %w", err)
+	}
+
+	pipelineTiming.ExecuteTime = result.Duration
+
+	// Print timing breakdown if timing flag enabled
+	if timing {
+		displayPipelineTiming(pipelineTiming, result)
 	}
 
 	// Print execution summary if debug enabled
@@ -422,4 +469,33 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 	}
 
 	return result.ExitCode, nil
+}
+
+// displayPipelineTiming shows a breakdown of pipeline timing
+func displayPipelineTiming(timing struct {
+	ParseTime   time.Duration
+	PlanTime    time.Duration
+	ExecuteTime time.Duration
+}, result *executor.ExecutionResult,
+) {
+	totalTime := timing.ParseTime + timing.PlanTime + timing.ExecuteTime
+
+	fmt.Fprintf(os.Stderr, "\nPipeline Timing:\n")
+	fmt.Fprintf(os.Stderr, "  Parse:   %v\n", timing.ParseTime)
+	fmt.Fprintf(os.Stderr, "  Plan:    %v\n", timing.PlanTime)
+
+	if result != nil && result.Telemetry != nil {
+		fmt.Fprintf(os.Stderr, "  Execute: %v (%d steps)\n", timing.ExecuteTime, result.StepsRun)
+
+		// Show per-step timing if available
+		if len(result.Telemetry.StepTimings) > 0 {
+			for _, st := range result.Telemetry.StepTimings {
+				fmt.Fprintf(os.Stderr, "    Step %d: %v (exit %d)\n", st.StepID, st.Duration, st.ExitCode)
+			}
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "  Execute: %v\n", timing.ExecuteTime)
+	}
+
+	fmt.Fprintf(os.Stderr, "  Total:   %v\n", totalTime)
 }
