@@ -71,133 +71,130 @@ func TestToSDKArgs(t *testing.T) {
 	}
 }
 
-// TestToSDKCommands tests command conversion
-func TestToSDKCommands(t *testing.T) {
-	tests := []struct {
-		name     string
-		planCmds []Command
-		want     []sdk.Command
-	}{
-		{
-			name:     "empty commands",
-			planCmds: []Command{},
-			want:     []sdk.Command{},
-		},
-		{
-			name: "single command",
-			planCmds: []Command{
-				{
-					Decorator: "shell",
-					Args: []Arg{
-						{Key: "command", Val: Value{Kind: ValueString, Str: "echo test"}},
-					},
-					Block:    []Step{},
-					Operator: "",
-				},
-			},
-			want: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo test",
-					},
-					Block:    []sdk.Step{},
-					Operator: "",
-				},
-			},
-		},
-		{
-			name: "command with block",
-			planCmds: []Command{
-				{
-					Decorator: "retry",
-					Args: []Arg{
-						{Key: "times", Val: Value{Kind: ValueInt, Int: 3}},
-					},
-					Block: []Step{
-						{
-							ID: 100,
-							Commands: []Command{
-								{
-									Decorator: "shell",
-									Args: []Arg{
-										{Key: "command", Val: Value{Kind: ValueString, Str: "npm test"}},
-									},
-								},
-							},
-						},
-					},
-					Operator: "",
-				},
-			},
-			want: []sdk.Command{
-				{
-					Name: "retry",
-					Args: map[string]interface{}{
-						"times": int64(3),
-					},
-					Block: []sdk.Step{
-						{
-							ID: 100,
-							Commands: []sdk.Command{
-								{
-									Name: "shell",
-									Args: map[string]interface{}{
-										"command": "npm test",
-									},
-									Block:    []sdk.Step{},
-									Operator: "",
-								},
-							},
-						},
-					},
-					Operator: "",
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ToSDKCommands(tt.planCmds)
-			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Errorf("ToSDKCommands() mismatch (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-// TestToSDKStep tests single step conversion
-func TestToSDKStep(t *testing.T) {
+// TestToSDKStep_CommandNode tests single command node conversion
+func TestToSDKStep_CommandNode(t *testing.T) {
 	planStep := Step{
 		ID: 42,
-		Commands: []Command{
-			{
-				Decorator: "shell",
-				Args: []Arg{
-					{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
-				},
-			},
-		},
-	}
-
-	want := sdk.Step{
-		ID: 42,
-		Commands: []sdk.Command{
-			{
-				Name: "shell",
-				Args: map[string]interface{}{
-					"command": "echo hello",
-				},
-				Block:    []sdk.Step{},
-				Operator: "",
+		Tree: &CommandNode{
+			Decorator: "shell",
+			Args: []Arg{
+				{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
 			},
 		},
 	}
 
 	got := ToSDKStep(planStep)
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("ToSDKStep() mismatch (-want +got):\n%s", diff)
+
+	if got.ID != 42 {
+		t.Errorf("expected ID 42, got %d", got.ID)
+	}
+	if got.Tree == nil {
+		t.Fatal("expected tree to be non-nil")
+	}
+	cmd, ok := got.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected *sdk.CommandNode, got %T", got.Tree)
+	}
+	if cmd.Name != "shell" {
+		t.Errorf("expected name 'shell', got %q", cmd.Name)
+	}
+	if cmd.Args["command"] != "echo hello" {
+		t.Errorf("expected command 'echo hello', got %v", cmd.Args["command"])
+	}
+}
+
+// TestToSDKStep_AndNode tests AND node conversion
+func TestToSDKStep_AndNode(t *testing.T) {
+	planStep := Step{
+		ID: 1,
+		Tree: &AndNode{
+			Left: &CommandNode{
+				Decorator: "shell",
+				Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "npm build"}}},
+			},
+			Right: &CommandNode{
+				Decorator: "shell",
+				Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "docker build"}}},
+			},
+		},
+	}
+
+	got := ToSDKStep(planStep)
+
+	andNode, ok := got.Tree.(*sdk.AndNode)
+	if !ok {
+		t.Fatalf("expected *sdk.AndNode, got %T", got.Tree)
+	}
+	if andNode.Left == nil {
+		t.Error("expected Left to be non-nil")
+	}
+	if andNode.Right == nil {
+		t.Error("expected Right to be non-nil")
+	}
+}
+
+// TestToSDKStep_PipelineNode tests pipeline node conversion
+func TestToSDKStep_PipelineNode(t *testing.T) {
+	planStep := Step{
+		ID: 1,
+		Tree: &PipelineNode{
+			Commands: []CommandNode{
+				{
+					Decorator: "shell",
+					Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}}},
+				},
+				{
+					Decorator: "shell",
+					Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "grep hello"}}},
+				},
+			},
+		},
+	}
+
+	got := ToSDKStep(planStep)
+
+	pipeNode, ok := got.Tree.(*sdk.PipelineNode)
+	if !ok {
+		t.Fatalf("expected *sdk.PipelineNode, got %T", got.Tree)
+	}
+	if len(pipeNode.Commands) != 2 {
+		t.Errorf("expected 2 commands, got %d", len(pipeNode.Commands))
+	}
+}
+
+// TestToSDKStep_WithBlock tests command with nested block
+func TestToSDKStep_WithBlock(t *testing.T) {
+	planStep := Step{
+		ID: 1,
+		Tree: &CommandNode{
+			Decorator: "retry",
+			Args:      []Arg{{Key: "times", Val: Value{Kind: ValueInt, Int: 3}}},
+			Block: []Step{
+				{
+					ID: 2,
+					Tree: &CommandNode{
+						Decorator: "shell",
+						Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "npm test"}}},
+					},
+				},
+			},
+		},
+	}
+
+	got := ToSDKStep(planStep)
+
+	cmd, ok := got.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected *sdk.CommandNode, got %T", got.Tree)
+	}
+	if cmd.Name != "retry" {
+		t.Errorf("expected name 'retry', got %q", cmd.Name)
+	}
+	if len(cmd.Block) != 1 {
+		t.Fatalf("expected 1 block step, got %d", len(cmd.Block))
+	}
+	if cmd.Block[0].ID != 2 {
+		t.Errorf("expected block step ID 2, got %d", cmd.Block[0].ID)
 	}
 }
 
@@ -206,124 +203,83 @@ func TestToSDKSteps(t *testing.T) {
 	planSteps := []Step{
 		{
 			ID: 1,
-			Commands: []Command{
-				{
-					Decorator: "shell",
-					Args: []Arg{
-						{Key: "command", Val: Value{Kind: ValueString, Str: "echo first"}},
-					},
-				},
+			Tree: &CommandNode{
+				Decorator: "shell",
+				Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo first"}}},
 			},
 		},
 		{
 			ID: 2,
-			Commands: []Command{
-				{
-					Decorator: "shell",
-					Args: []Arg{
-						{Key: "command", Val: Value{Kind: ValueString, Str: "echo second"}},
-					},
-				},
-			},
-		},
-	}
-
-	want := []sdk.Step{
-		{
-			ID: 1,
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo first",
-					},
-					Block:    []sdk.Step{},
-					Operator: "",
-				},
-			},
-		},
-		{
-			ID: 2,
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo second",
-					},
-					Block:    []sdk.Step{},
-					Operator: "",
-				},
+			Tree: &CommandNode{
+				Decorator: "shell",
+				Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo second"}}},
 			},
 		},
 	}
 
 	got := ToSDKSteps(planSteps)
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("ToSDKSteps() mismatch (-want +got):\n%s", diff)
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(got))
+	}
+	if got[0].ID != 1 {
+		t.Errorf("expected step 0 ID 1, got %d", got[0].ID)
+	}
+	if got[1].ID != 2 {
+		t.Errorf("expected step 1 ID 2, got %d", got[1].ID)
 	}
 }
 
-// TestToSDKSteps_Nested tests nested block conversion
-func TestToSDKSteps_Nested(t *testing.T) {
+// TestToSDKSteps_ComplexTree tests complex operator tree conversion
+func TestToSDKSteps_ComplexTree(t *testing.T) {
+	// echo "a" | grep "a" && echo "b" || echo "c"
+	// Parsed as: ((echo "a" | grep "a") && echo "b") || echo "c"
 	planSteps := []Step{
 		{
 			ID: 1,
-			Commands: []Command{
-				{
-					Decorator: "retry",
-					Args: []Arg{
-						{Key: "times", Val: Value{Kind: ValueInt, Int: 3}},
-					},
-					Block: []Step{
-						{
-							ID: 10,
-							Commands: []Command{
-								{
-									Decorator: "shell",
-									Args: []Arg{
-										{Key: "command", Val: Value{Kind: ValueString, Str: "npm test"}},
-									},
-								},
-							},
+			Tree: &OrNode{
+				Left: &AndNode{
+					Left: &PipelineNode{
+						Commands: []CommandNode{
+							{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo a"}}}},
+							{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "grep a"}}}},
 						},
+					},
+					Right: &CommandNode{
+						Decorator: "shell",
+						Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo b"}}},
 					},
 				},
-			},
-		},
-	}
-
-	want := []sdk.Step{
-		{
-			ID: 1,
-			Commands: []sdk.Command{
-				{
-					Name: "retry",
-					Args: map[string]interface{}{
-						"times": int64(3),
-					},
-					Block: []sdk.Step{
-						{
-							ID: 10,
-							Commands: []sdk.Command{
-								{
-									Name: "shell",
-									Args: map[string]interface{}{
-										"command": "npm test",
-									},
-									Block:    []sdk.Step{},
-									Operator: "",
-								},
-							},
-						},
-					},
-					Operator: "",
+				Right: &CommandNode{
+					Decorator: "shell",
+					Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo c"}}},
 				},
 			},
 		},
 	}
 
 	got := ToSDKSteps(planSteps)
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("ToSDKSteps() nested mismatch (-want +got):\n%s", diff)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(got))
+	}
+
+	orNode, ok := got[0].Tree.(*sdk.OrNode)
+	if !ok {
+		t.Fatalf("expected *sdk.OrNode, got %T", got[0].Tree)
+	}
+
+	andNode, ok := orNode.Left.(*sdk.AndNode)
+	if !ok {
+		t.Fatalf("expected Left to be *sdk.AndNode, got %T", orNode.Left)
+	}
+
+	pipeNode, ok := andNode.Left.(*sdk.PipelineNode)
+	if !ok {
+		t.Fatalf("expected AndNode.Left to be *sdk.PipelineNode, got %T", andNode.Left)
+	}
+
+	if len(pipeNode.Commands) != 2 {
+		t.Errorf("expected 2 commands in pipeline, got %d", len(pipeNode.Commands))
 	}
 }

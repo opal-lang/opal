@@ -20,15 +20,17 @@ func TestDepthLimit(t *testing.T) {
 	// Build deep nesting through blocks
 	current := &plan.Steps[0]
 	for i := 0; i < 1001; i++ {
-		current.Commands = []planfmt.Command{
-			{
-				Decorator: "@shell",
-				Block: []planfmt.Step{
-					{ID: uint64(i + 2)},
+		current.Tree = &planfmt.CommandNode{
+			Decorator: "@shell",
+			Block: []planfmt.Step{
+				{
+					ID:   uint64(i + 2),
+					Tree: &planfmt.CommandNode{Decorator: "@noop"}, // Placeholder, will be overwritten in next iteration
 				},
 			},
 		}
-		current = &current.Commands[0].Block[0]
+		cmdNode := current.Tree.(*planfmt.CommandNode)
+		current = &cmdNode.Block[0]
 	}
 
 	// Write should succeed (no depth check on write)
@@ -136,22 +138,19 @@ func TestMaxBlockStepsLimit(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@parallel",
-						Block:     make([]planfmt.Step, 65535),
-					},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@parallel",
+					Block:     make([]planfmt.Step, 65535),
 				},
 			},
 		},
 	}
 
+	cmdNode := plan.Steps[0].Tree.(*planfmt.CommandNode)
 	for i := 0; i < 65535; i++ {
-		plan.Steps[0].Commands[0].Block[i] = planfmt.Step{
-			ID: uint64(i + 2),
-			Commands: []planfmt.Command{
-				{Decorator: "@task"},
-			},
+		cmdNode.Block[i] = planfmt.Step{
+			ID:   uint64(i + 2),
+			Tree: &planfmt.CommandNode{Decorator: "@task"},
 		}
 	}
 

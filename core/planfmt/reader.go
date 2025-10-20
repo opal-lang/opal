@@ -209,30 +209,114 @@ func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) 
 		return nil, fmt.Errorf("read step ID: %w", err)
 	}
 
-	// Read command count (2 bytes, uint16, little-endian)
-	var cmdCount uint16
-	if err := binary.Read(r, binary.LittleEndian, &cmdCount); err != nil {
-		return nil, fmt.Errorf("read command count: %w", err)
+	// Read execution tree (Commands field not serialized - only exists in-memory for executor)
+	node, err := rd.readExecutionNode(r, depth, maxDepth)
+	if err != nil {
+		return nil, fmt.Errorf("read execution tree: %w", err)
 	}
-
-	// Read each command
-	if cmdCount > 0 {
-		step.Commands = make([]Command, cmdCount)
-		for i := 0; i < int(cmdCount); i++ {
-			cmd, err := rd.readCommand(r, depth, maxDepth)
-			if err != nil {
-				return nil, fmt.Errorf("read command %d: %w", i, err)
-			}
-			step.Commands[i] = *cmd
-		}
-	}
+	step.Tree = node
 
 	return step, nil
 }
 
+// readExecutionNode reads an execution tree node recursively
+func (rd *Reader) readExecutionNode(r io.Reader, depth int, maxDepth int) (ExecutionNode, error) {
+	// Check depth limit
+	if depth >= maxDepth {
+		return nil, fmt.Errorf("max recursion depth %d exceeded", maxDepth)
+	}
+
+	// Read node type (1 byte)
+	var nodeType byte
+	if err := binary.Read(r, binary.LittleEndian, &nodeType); err != nil {
+		return nil, fmt.Errorf("read node type: %w", err)
+	}
+
+	switch nodeType {
+	case 0x01: // CommandNode
+		// Read command data
+		cmd, err := rd.readCommand(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read command node: %w", err)
+		}
+		return &CommandNode{
+			Decorator: cmd.Decorator,
+			Args:      cmd.Args,
+			Block:     cmd.Block,
+		}, nil
+
+	case 0x02: // PipelineNode
+		// Read command count
+		var cmdCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &cmdCount); err != nil {
+			return nil, fmt.Errorf("read pipeline command count: %w", err)
+		}
+		// Read commands
+		commands := make([]CommandNode, cmdCount)
+		for i := 0; i < int(cmdCount); i++ {
+			node, err := rd.readExecutionNode(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read pipeline command %d: %w", i, err)
+			}
+			cmdNode, ok := node.(*CommandNode)
+			if !ok {
+				return nil, fmt.Errorf("pipeline must contain CommandNodes, got %T", node)
+			}
+			commands[i] = *cmdNode
+		}
+		return &PipelineNode{Commands: commands}, nil
+
+	case 0x03: // AndNode
+		// Read left node
+		left, err := rd.readExecutionNode(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read AND left: %w", err)
+		}
+		// Read right node
+		right, err := rd.readExecutionNode(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read AND right: %w", err)
+		}
+		return &AndNode{Left: left, Right: right}, nil
+
+	case 0x04: // OrNode
+		// Read left node
+		left, err := rd.readExecutionNode(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read OR left: %w", err)
+		}
+		// Read right node
+		right, err := rd.readExecutionNode(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read OR right: %w", err)
+		}
+		return &OrNode{Left: left, Right: right}, nil
+
+	case 0x05: // SequenceNode
+		// Read node count
+		var nodeCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &nodeCount); err != nil {
+			return nil, fmt.Errorf("read sequence node count: %w", err)
+		}
+		// Read nodes
+		nodes := make([]ExecutionNode, nodeCount)
+		for i := 0; i < int(nodeCount); i++ {
+			node, err := rd.readExecutionNode(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read sequence node %d: %w", i, err)
+			}
+			nodes[i] = node
+		}
+		return &SequenceNode{Nodes: nodes}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown node type: 0x%02x", nodeType)
+	}
+}
+
 // readCommand reads a single command
-func (rd *Reader) readCommand(r io.Reader, depth int, maxDepth int) (*Command, error) {
-	cmd := &Command{}
+func (rd *Reader) readCommand(r io.Reader, depth int, maxDepth int) (*CommandNode, error) {
+	cmd := &CommandNode{}
 
 	// Read decorator length (2 bytes, uint16, little-endian)
 	var decoratorLen uint16
@@ -282,19 +366,6 @@ func (rd *Reader) readCommand(r io.Reader, depth int, maxDepth int) (*Command, e
 			cmd.Block[i] = *step
 		}
 	}
-
-	// Read operator length (2 bytes, uint16, little-endian)
-	var operatorLen uint16
-	if err := binary.Read(r, binary.LittleEndian, &operatorLen); err != nil {
-		return nil, fmt.Errorf("read operator length: %w", err)
-	}
-
-	// Read operator string
-	operatorBuf := make([]byte, operatorLen)
-	if _, err := io.ReadFull(r, operatorBuf); err != nil {
-		return nil, fmt.Errorf("read operator: %w", err)
-	}
-	cmd.Operator = string(operatorBuf)
 
 	return cmd, nil
 }

@@ -73,11 +73,24 @@ func formatCLIError(w io.Writer, err *CLIError, useColor bool) {
 	_, _ = fmt.Fprintf(w, "%s%s%s\n", Colorize("Error: ", ColorRed, useColor), err.Message, ColorReset)
 
 	if err.Details != "" {
-		_, _ = fmt.Fprintf(w, "\n%s\n", err.Details)
+		_, _ = fmt.Fprintf(w, "\n")
+		// Indent each line of details
+		for _, line := range strings.Split(err.Details, "\n") {
+			_, _ = fmt.Fprintf(w, "  %s\n", line)
+		}
 	}
 
 	if err.Hint != "" {
-		_, _ = fmt.Fprintf(w, "%s%s%s\n", Colorize("Hint: ", ColorYellow, useColor), err.Hint, ColorReset)
+		_, _ = fmt.Fprintf(w, "\n%s", Colorize("Hint: ", ColorYellow, useColor))
+		// Indent continuation lines
+		lines := strings.Split(err.Hint, "\n")
+		for i, line := range lines {
+			if i == 0 {
+				_, _ = fmt.Fprintf(w, "%s%s\n", line, ColorReset)
+			} else {
+				_, _ = fmt.Fprintf(w, "      %s%s\n", line, ColorReset)
+			}
+		}
 	}
 }
 

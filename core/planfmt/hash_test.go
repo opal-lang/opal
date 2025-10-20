@@ -20,12 +20,10 @@ func TestHashDeterminism(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 					},
 				},
 			},
@@ -83,10 +81,8 @@ func TestHashUniqueness(t *testing.T) {
 				Target: "deploy",
 				Steps: []planfmt.Step{
 					{
-						ID: 1,
-						Commands: []planfmt.Command{
-							{Decorator: "@shell"},
-						},
+						ID:   1,
+						Tree: &planfmt.CommandNode{Decorator: "@shell"},
 					},
 				},
 			},
@@ -97,10 +93,8 @@ func TestHashUniqueness(t *testing.T) {
 				Target: "deploy",
 				Steps: []planfmt.Step{
 					{
-						ID: 1,
-						Commands: []planfmt.Command{
-							{Decorator: "@retry"},
-						},
+						ID:   1,
+						Tree: &planfmt.CommandNode{Decorator: "@retry"},
 					},
 				},
 			},
@@ -132,12 +126,10 @@ func TestHashRoundTrip(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 					},
 				},
 			},

@@ -574,6 +574,17 @@ func (p *parser) statement() {
 	} else if p.at(lexer.AT) {
 		// Decorator (execution decorator with block)
 		p.decorator()
+
+		// Check for shell operators after decorator (for piping, chaining)
+		// e.g., @timeout(5s) { echo "test" } | grep "pattern"
+		if p.isShellOperator() {
+			p.token() // Consume operator (&&, ||, |)
+
+			// Parse next command after operator
+			if !p.isStatementBoundary() && !p.at(lexer.EOF) {
+				p.shellCommand()
+			}
+		}
 	} else if p.at(lexer.IDENTIFIER) {
 		// Check if this is an assignment statement or shell command
 		// Look ahead to see if next token is an assignment operator
@@ -1251,7 +1262,7 @@ func (p *parser) shellCommand() {
 		p.recordDebugEvent("exit_shell_command", "shell command complete")
 	}
 
-	// If we stopped at a shell operator, consume it and parse next command
+	// If we stopped at a shell operator, validate and consume it
 	if p.isShellOperator() {
 		p.token() // Consume operator (&&, ||, |)
 
@@ -1496,14 +1507,60 @@ func (p *parser) decorator() {
 		return
 	}
 
-	// Get the decorator name
+	// Build the decorator path by trying progressively longer dot-separated names
+	//
+	// Decorator syntax: @namespace.subnamespace.function.primaryParam
+	//   - Namespace can be arbitrarily long (like a URI): @aws.secret.api_key
+	//   - Primary param is dot syntax for the main parameter: @var.name where "name" is the primary param
+	//   - We try progressively longer paths until we find a registered decorator
+	//
+	// Examples:
+	//   @var.name        → try "var" (registered) → use "var", ".name" is primary param
+	//   @file.read       → try "file" (not registered), try "file.read" (registered) → use "file.read"
+	//   @aws.secret.key  → try "aws", "aws.secret", "aws.secret.key" until one is registered
+	//   @file.read.path  → try "file", "file.read" (registered) → use "file.read", ".path" is primary param
 	decoratorName := string(p.current().Text)
+	tempPos := p.pos
 
-	// Check if it's a registered decorator
-	if !types.Global().IsRegistered(decoratorName) {
-		// Not a registered decorator, treat @ as literal
-		// Don't consume the identifier, let it be parsed normally
-		return
+	// Try the first identifier
+	if types.Global().IsRegistered(decoratorName) {
+		// Found it - use this name
+		p.pos = tempPos
+	} else {
+		// Not found - try adding dot-separated parts
+		foundRegistered := false
+		for {
+			p.advance() // Move to next token
+			if p.at(lexer.DOT) {
+				p.advance() // Move past dot
+				if p.at(lexer.IDENTIFIER) {
+					// Try adding this part to the name
+					testName := decoratorName + "." + string(p.current().Text)
+					if types.Global().IsRegistered(testName) {
+						// Found it!
+						decoratorName = testName
+						foundRegistered = true
+						break
+					}
+					// Not found yet - add it and keep trying
+					decoratorName = testName
+				} else {
+					// Dot not followed by identifier - stop here
+					break
+				}
+			} else {
+				// No more dots
+				break
+			}
+		}
+
+		// Reset position
+		p.pos = tempPos
+
+		// If we never found a registered decorator, treat @ as literal
+		if !foundRegistered {
+			return
+		}
 	}
 
 	// Get the schema for validation
@@ -1517,13 +1574,31 @@ func (p *parser) decorator() {
 	// Consume @ token (emit it)
 	p.token()
 
-	// Consume decorator name (IDENTIFIER or VAR keyword)
+	// Consume decorator name (may be dot-separated: file.read, aws.secret.api_key)
+	// Count dots in decorator name to know how many tokens to consume
+	dotCount := 0
+	for _, ch := range decoratorName {
+		if ch == '.' {
+			dotCount++
+		}
+	}
+
+	// Consume first identifier
 	p.token()
+
+	// Consume remaining dot + identifier pairs
+	for i := 0; i < dotCount; i++ {
+		p.token() // Consume DOT
+		p.token() // Consume IDENTIFIER
+	}
 
 	// Track if primary parameter was provided via dot syntax
 	hasPrimaryViaDot := false
 
-	// Parse property access: .property
+	// Parse primary parameter via dot syntax (e.g., @var.name where "name" is the primary param)
+	// This is AFTER the decorator name, so @file.read.property would have:
+	//   - decorator: "file.read"
+	//   - primary param: "property"
 	if p.at(lexer.DOT) {
 		p.token() // Consume DOT
 		if p.at(lexer.IDENTIFIER) {
@@ -1748,6 +1823,34 @@ func (p *parser) validateParameterType(paramName string, paramSchema types.Param
 		p.recordDebugEvent("validate_param_type",
 			fmt.Sprintf("param=%s, expected=%s, actual=%s, match=%v",
 				paramName, expectedType, actualType, actualType == expectedType))
+	}
+
+	// Special case: Enum parameters accept STRING tokens
+	// The enum type (e.g., TypeScrubMode) is just a string with restricted values
+	if len(paramSchema.Enum) > 0 && valueToken.Type == lexer.STRING {
+		// Validate the string value is in the allowed enum values
+		value := string(valueToken.Text)
+		// Remove quotes from string literal
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = value[1 : len(value)-1]
+		}
+
+		validValue := false
+		for _, allowed := range paramSchema.Enum {
+			if value == allowed {
+				validValue = true
+				break
+			}
+		}
+
+		if !validValue {
+			p.errorWithDetails(
+				fmt.Sprintf("parameter '%s' has invalid value %q", paramName, value),
+				"decorator parameter",
+				fmt.Sprintf("Allowed values: %v", paramSchema.Enum),
+			)
+		}
+		return // Enum validation complete
 	}
 
 	if actualType != expectedType {

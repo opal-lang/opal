@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 
+	"github.com/aledsdavies/opal/core/invariant"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -205,31 +206,117 @@ func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
 	return nil
 }
 
-// writeStep writes a single step and its commands recursively
+// writeStep writes a single step and its execution tree
 func (wr *Writer) writeStep(buf *bytes.Buffer, s *Step) error {
+	// INPUT CONTRACT
+	invariant.Precondition(s.Tree != nil, "Step.Tree must not be nil (Commands field is ignored)")
+
 	// Write step ID (8 bytes, uint64, little-endian)
 	if err := binary.Write(buf, binary.LittleEndian, s.ID); err != nil {
 		return err
 	}
 
-	// Write command count (2 bytes, uint16)
-	cmdCount := uint16(len(s.Commands))
-	if err := binary.Write(buf, binary.LittleEndian, cmdCount); err != nil {
+	// Write execution tree (Commands field is ignored - only exists for executor during transition)
+	if err := wr.writeExecutionNode(buf, s.Tree); err != nil {
 		return err
 	}
 
-	// Write each command
-	for i := range s.Commands {
-		if err := wr.writeCommand(buf, &s.Commands[i]); err != nil {
+	return nil
+}
+
+// Node type constants for binary serialization
+const (
+	nodeTypeCommand  = 0x01
+	nodeTypePipeline = 0x02
+	nodeTypeAnd      = 0x03
+	nodeTypeOr       = 0x04
+	nodeTypeSequence = 0x05
+)
+
+// writeExecutionNode writes an execution tree node recursively
+func (wr *Writer) writeExecutionNode(buf *bytes.Buffer, node ExecutionNode) error {
+	switch n := node.(type) {
+	case *CommandNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypeCommand); err != nil {
 			return err
 		}
+		// Write command data (reuse writeCommand logic)
+		return wr.writeCommand(buf, &CommandNode{
+			Decorator: n.Decorator,
+			Args:      n.Args,
+			Block:     n.Block,
+		})
+
+	case *PipelineNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypePipeline); err != nil {
+			return err
+		}
+		// Write command count
+		cmdCount := uint16(len(n.Commands))
+		if err := binary.Write(buf, binary.LittleEndian, cmdCount); err != nil {
+			return err
+		}
+		// Write each command
+		for i := range n.Commands {
+			if err := wr.writeExecutionNode(buf, &n.Commands[i]); err != nil {
+				return err
+			}
+		}
+
+	case *AndNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypeAnd); err != nil {
+			return err
+		}
+		// Write left and right nodes
+		if err := wr.writeExecutionNode(buf, n.Left); err != nil {
+			return err
+		}
+		if err := wr.writeExecutionNode(buf, n.Right); err != nil {
+			return err
+		}
+
+	case *OrNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypeOr); err != nil {
+			return err
+		}
+		// Write left and right nodes
+		if err := wr.writeExecutionNode(buf, n.Left); err != nil {
+			return err
+		}
+		if err := wr.writeExecutionNode(buf, n.Right); err != nil {
+			return err
+		}
+
+	case *SequenceNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypeSequence); err != nil {
+			return err
+		}
+		// Write node count
+		nodeCount := uint16(len(n.Nodes))
+		if err := binary.Write(buf, binary.LittleEndian, nodeCount); err != nil {
+			return err
+		}
+		// Write each node
+		for i := range n.Nodes {
+			if err := wr.writeExecutionNode(buf, n.Nodes[i]); err != nil {
+				return err
+			}
+		}
+
+	default:
+		return io.ErrUnexpectedEOF // Unknown node type
 	}
 
 	return nil
 }
 
 // writeCommand writes a single command
-func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *Command) error {
+func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *CommandNode) error {
 	// Write decorator (2-byte length + string)
 	decoratorLen := uint16(len(cmd.Decorator))
 	if err := binary.Write(buf, binary.LittleEndian, decoratorLen); err != nil {
@@ -263,15 +350,6 @@ func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *Command) error {
 		if err := wr.writeStep(buf, &cmd.Block[i]); err != nil {
 			return err
 		}
-	}
-
-	// Write operator (2-byte length + string)
-	operatorLen := uint16(len(cmd.Operator))
-	if err := binary.Write(buf, binary.LittleEndian, operatorLen); err != nil {
-		return err
-	}
-	if _, err := buf.WriteString(cmd.Operator); err != nil {
-		return err
 	}
 
 	return nil

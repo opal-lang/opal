@@ -69,10 +69,15 @@ func main() {
 			}
 
 			// Modes 1-3: Execute from source
-			if len(args) != 1 {
-				return fmt.Errorf("command name required (or use --plan)")
+			// 0 args = script mode (execute all top-level commands)
+			// 1 arg = command mode (execute specific function)
+			var commandName string
+			if len(args) == 1 {
+				commandName = args[0]
 			}
-			exitCode, err := runCommand(cmd, args, file, dryRun, resolve, debug, noColor, timing, scrubber, &outputBuf)
+			// else: commandName = "" (script mode)
+
+			exitCode, err := runCommand(cmd, commandName, file, dryRun, resolve, debug, noColor, timing, scrubber, &outputBuf)
 			if err != nil {
 				cmd.SilenceUsage = true // We've already printed detailed error
 				return err
@@ -98,7 +103,8 @@ func main() {
 	exitCode := 0
 	if err := rootCmd.Execute(); err != nil {
 		// Error messages go through scrubber
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use FormatError for consistent, colored error output
+		FormatError(os.Stderr, err, !noColor)
 		exitCode = 1
 	}
 
@@ -114,8 +120,8 @@ func main() {
 	}
 }
 
-func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
-	commandName := args[0]
+func runCommand(cmd *cobra.Command, commandName string, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
+	// commandName is empty string for script mode, function name for command mode
 
 	// Get input reader based on file options
 	reader, closeFunc, err := getInputReader(file)
@@ -129,6 +135,23 @@ func runCommand(cmd *cobra.Command, args []string, file string, dryRun, resolve,
 	if err != nil {
 		return 1, fmt.Errorf("error reading input: %w", err)
 	}
+
+	// Check for shebang - if present, force script mode
+	// Shebang is a clear signal: this is a script, not a command library
+	hasShebang := len(source) >= 2 && source[0] == '#' && source[1] == '!'
+	if hasShebang && commandName != "" {
+		err := &CLIError{
+			Type:    "usage",
+			Message: fmt.Sprintf("Cannot execute function %q in shebang script", commandName),
+			Details: "Script files with shebang (#!/usr/bin/env opal) are executable scripts, not command libraries.\nThey run in script mode only.",
+			Hint:    fmt.Sprintf("Remove the shebang line to use this file as a command library\nOr run in script mode: opal -f %s", file),
+		}
+		return 1, err
+	}
+
+	// TODO: Support shebang properly in parser (add # as comment character)
+	// For now, strip shebang line if present to allow executable scripts
+	source = stripShebang(source)
 
 	// Lex
 	l := lexer.NewLexer()
@@ -372,6 +395,9 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 		return 1, fmt.Errorf("error reading source: %w", err)
 	}
 
+	// Strip shebang if present
+	source = stripShebang(source)
+
 	// Lex
 	l := lexer.NewLexer()
 	l.Init(source)
@@ -498,4 +524,22 @@ func displayPipelineTiming(timing struct {
 	}
 
 	fmt.Fprintf(os.Stderr, "  Total:   %v\n", totalTime)
+}
+
+// stripShebang removes shebang line if present (#!/usr/bin/env opal)
+// TODO: Support shebang properly in parser by adding # as comment character
+func stripShebang(source []byte) []byte {
+	// Check if source starts with shebang
+	if len(source) >= 2 && source[0] == '#' && source[1] == '!' {
+		// Find first newline
+		for i := 2; i < len(source); i++ {
+			if source[i] == '\n' {
+				// Return everything after the newline
+				return source[i+1:]
+			}
+		}
+		// No newline found - entire file is shebang line
+		return []byte{}
+	}
+	return source
 }

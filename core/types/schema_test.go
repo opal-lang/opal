@@ -344,3 +344,278 @@ func TestParameterOrderValidation(t *testing.T) {
 		t.Error("expected error for parameter in order but not in parameters map")
 	}
 }
+
+func TestIOCapabilityWithFlags(t *testing.T) {
+	tests := []struct {
+		name         string
+		flags        []IOFlag
+		expectStdin  bool
+		expectStdout bool
+		expectScrub  bool
+	}{
+		{
+			name:         "shell: full I/O with scrubbing",
+			flags:        []IOFlag{AcceptsStdin, ProducesStdout, ScrubByDefault},
+			expectStdin:  true,
+			expectStdout: true,
+			expectScrub:  true,
+		},
+		{
+			name:         "file.write: stdin only with scrubbing",
+			flags:        []IOFlag{AcceptsStdin, ScrubByDefault},
+			expectStdin:  true,
+			expectStdout: false,
+			expectScrub:  true,
+		},
+		{
+			name:         "http.get: stdout only with scrubbing",
+			flags:        []IOFlag{ProducesStdout, ScrubByDefault},
+			expectStdin:  false,
+			expectStdout: true,
+			expectScrub:  true,
+		},
+		{
+			name:         "image.process: binary data, no scrubbing",
+			flags:        []IOFlag{AcceptsStdin, ProducesStdout},
+			expectStdin:  true,
+			expectStdout: true,
+			expectScrub:  false,
+		},
+		{
+			name:         "order doesn't matter",
+			flags:        []IOFlag{ScrubByDefault, ProducesStdout, AcceptsStdin},
+			expectStdin:  true,
+			expectStdout: true,
+			expectScrub:  true,
+		},
+		{
+			name:         "empty flags",
+			flags:        []IOFlag{},
+			expectStdin:  false,
+			expectStdout: false,
+			expectScrub:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := NewSchema("test", KindExecution).
+				Description("Test decorator").
+				WithIO(tt.flags...).
+				Build()
+
+			if schema.IO == nil {
+				t.Fatal("expected IO capability to be set")
+			}
+
+			if schema.IO.SupportsStdin != tt.expectStdin {
+				t.Errorf("SupportsStdin: expected %v, got %v", tt.expectStdin, schema.IO.SupportsStdin)
+			}
+			if schema.IO.SupportsStdout != tt.expectStdout {
+				t.Errorf("SupportsStdout: expected %v, got %v", tt.expectStdout, schema.IO.SupportsStdout)
+			}
+			if schema.IO.DefaultScrub != tt.expectScrub {
+				t.Errorf("DefaultScrub: expected %v, got %v", tt.expectScrub, schema.IO.DefaultScrub)
+			}
+		})
+	}
+}
+
+func TestIOCapabilityNotSet(t *testing.T) {
+	// Decorators that don't call WithIO should have nil IO capability
+	schema := NewSchema("retry", KindExecution).
+		Description("Retry decorator").
+		RequiresBlock().
+		Build()
+
+	if schema.IO != nil {
+		t.Error("expected IO capability to be nil for decorator without WithIO")
+	}
+}
+
+func TestIOCapabilityScrubParameter(t *testing.T) {
+	tests := []struct {
+		name            string
+		flags           []IOFlag
+		expectedDefault ScrubMode
+		expectedStdin   bool
+		expectedStdout  bool
+	}{
+		{
+			name:            "shell: no scrubbing by default (bash-compatible)",
+			flags:           []IOFlag{AcceptsStdin, ProducesStdout},
+			expectedDefault: ScrubNone,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name:            "shell with ScrubByDefault: scrub both",
+			flags:           []IOFlag{AcceptsStdin, ProducesStdout, ScrubByDefault},
+			expectedDefault: ScrubBoth,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name:            "file.write: scrub stdin only",
+			flags:           []IOFlag{AcceptsStdin, ScrubByDefault},
+			expectedDefault: ScrubStdin,
+			expectedStdin:   true,
+			expectedStdout:  false,
+		},
+		{
+			name:            "http.get: scrub stdout only",
+			flags:           []IOFlag{ProducesStdout, ScrubByDefault},
+			expectedDefault: ScrubStdout,
+			expectedStdin:   false,
+			expectedStdout:  true,
+		},
+		{
+			name:            "image.process: no scrubbing (binary data)",
+			flags:           []IOFlag{AcceptsStdin, ProducesStdout},
+			expectedDefault: ScrubNone,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := NewSchema("test", KindExecution).
+				Description("Test decorator").
+				WithIO(tt.flags...).
+				Build()
+
+			// Verify IO capability
+			if schema.IO == nil {
+				t.Fatal("expected IO capability to be set")
+			}
+			if schema.IO.SupportsStdin != tt.expectedStdin {
+				t.Errorf("SupportsStdin: expected %v, got %v", tt.expectedStdin, schema.IO.SupportsStdin)
+			}
+			if schema.IO.SupportsStdout != tt.expectedStdout {
+				t.Errorf("SupportsStdout: expected %v, got %v", tt.expectedStdout, schema.IO.SupportsStdout)
+			}
+
+			// Verify scrub parameter was added
+			scrubParam, exists := schema.Parameters["scrub"]
+			if !exists {
+				t.Fatal("expected scrub parameter to be added automatically")
+			}
+
+			// Verify scrub parameter type
+			if scrubParam.Type != TypeScrubMode {
+				t.Errorf("scrub parameter type: expected %v, got %v", TypeScrubMode, scrubParam.Type)
+			}
+
+			// Verify scrub parameter default
+			if scrubParam.Default != string(tt.expectedDefault) {
+				t.Errorf("scrub parameter default: expected %q, got %q", tt.expectedDefault, scrubParam.Default)
+			}
+
+			// Verify scrub parameter enum values
+			expectedEnum := []string{string(ScrubNone), string(ScrubStdin), string(ScrubStdout), string(ScrubBoth)}
+			if len(scrubParam.Enum) != len(expectedEnum) {
+				t.Errorf("scrub parameter enum: expected %v, got %v", expectedEnum, scrubParam.Enum)
+			}
+
+			// Verify scrub parameter is optional
+			if scrubParam.Required {
+				t.Error("scrub parameter should be optional")
+			}
+		})
+	}
+}
+
+func TestIOCapabilityWithOpts(t *testing.T) {
+	tests := []struct {
+		name            string
+		opts            IOOpts
+		expectedDefault ScrubMode
+		expectedStdin   bool
+		expectedStdout  bool
+	}{
+		{
+			name: "explicit scrub stdin only",
+			opts: IOOpts{
+				AcceptsStdin:     true,
+				ProducesStdout:   true,
+				DefaultScrubMode: ScrubStdin,
+			},
+			expectedDefault: ScrubStdin,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name: "explicit scrub stdout only",
+			opts: IOOpts{
+				AcceptsStdin:     true,
+				ProducesStdout:   true,
+				DefaultScrubMode: ScrubStdout,
+			},
+			expectedDefault: ScrubStdout,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name: "explicit scrub both",
+			opts: IOOpts{
+				AcceptsStdin:     true,
+				ProducesStdout:   true,
+				DefaultScrubMode: ScrubBoth,
+			},
+			expectedDefault: ScrubBoth,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name: "explicit scrub none",
+			opts: IOOpts{
+				AcceptsStdin:     true,
+				ProducesStdout:   true,
+				DefaultScrubMode: ScrubNone,
+			},
+			expectedDefault: ScrubNone,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+		{
+			name: "empty default scrub mode defaults to none",
+			opts: IOOpts{
+				AcceptsStdin:   true,
+				ProducesStdout: true,
+			},
+			expectedDefault: ScrubNone,
+			expectedStdin:   true,
+			expectedStdout:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := NewSchema("test", KindExecution).
+				Description("Test decorator").
+				WithIOOpts(tt.opts).
+				Build()
+
+			// Verify IO capability
+			if schema.IO == nil {
+				t.Fatal("expected IO capability to be set")
+			}
+			if schema.IO.SupportsStdin != tt.expectedStdin {
+				t.Errorf("SupportsStdin: expected %v, got %v", tt.expectedStdin, schema.IO.SupportsStdin)
+			}
+			if schema.IO.SupportsStdout != tt.expectedStdout {
+				t.Errorf("SupportsStdout: expected %v, got %v", tt.expectedStdout, schema.IO.SupportsStdout)
+			}
+
+			// Verify scrub parameter
+			scrubParam, exists := schema.Parameters["scrub"]
+			if !exists {
+				t.Fatal("expected scrub parameter to be added automatically")
+			}
+			if scrubParam.Default != string(tt.expectedDefault) {
+				t.Errorf("scrub parameter default: expected %q, got %q", tt.expectedDefault, scrubParam.Default)
+			}
+		})
+	}
+}

@@ -44,12 +44,10 @@ func TestRoundTrip(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@shell",
-								Args: []planfmt.Arg{
-									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 							},
 						},
 					},
@@ -63,30 +61,24 @@ func TestRoundTrip(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@parallel",
-								Block: []planfmt.Step{
-									{
-										ID: 2,
-										Commands: []planfmt.Command{
-											{
-												Decorator: "@shell",
-												Args: []planfmt.Arg{
-													{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task1"}},
-												},
-											},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@parallel",
+							Block: []planfmt.Step{
+								{
+									ID: 2,
+									Tree: &planfmt.CommandNode{
+										Decorator: "@shell",
+										Args: []planfmt.Arg{
+											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task1"}},
 										},
 									},
-									{
-										ID: 3,
-										Commands: []planfmt.Command{
-											{
-												Decorator: "@shell",
-												Args: []planfmt.Arg{
-													{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task2"}},
-												},
-											},
+								},
+								{
+									ID: 3,
+									Tree: &planfmt.CommandNode{
+										Decorator: "@shell",
+										Args: []planfmt.Arg{
+											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "task2"}},
 										},
 									},
 								},
@@ -103,14 +95,12 @@ func TestRoundTrip(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@test",
-								Args: []planfmt.Arg{
-									{Key: "bool_val", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
-									{Key: "int_val", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 42}},
-									{Key: "str_val", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@test",
+							Args: []planfmt.Arg{
+								{Key: "bool_val", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
+								{Key: "int_val", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 42}},
+								{Key: "str_val", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
 							},
 						},
 					},
@@ -179,34 +169,28 @@ func TestRoundTripPreservesSemantics(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@parallel",
-						Args: []planfmt.Arg{
-							{Key: "max_concurrent", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
-						},
-						Block: []planfmt.Step{
-							{
-								ID: 2,
-								Commands: []planfmt.Command{
-									{
-										Decorator: "@shell",
-										Args: []planfmt.Arg{
-											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task1"}},
-											{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-										},
-									},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@parallel",
+					Args: []planfmt.Arg{
+						{Key: "max_concurrent", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
+					},
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task1"}},
+									{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
 								},
 							},
-							{
-								ID: 3,
-								Commands: []planfmt.Command{
-									{
-										Decorator: "@shell",
-										Args: []planfmt.Arg{
-											{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task2"}},
-										},
-									},
+						},
+						{
+							ID: 3,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo task2"}},
 								},
 							},
 						},

@@ -83,34 +83,34 @@ func CountingExecuteBlock(counter *int, fn func([]sdk.Step) (int, error)) func([
 	}
 }
 
-// NewTestStep creates a test sdk.Step with given ID and commands.
+// NewTestStep creates a test sdk.Step with given ID and tree node.
 // Helper for building test blocks.
-func NewTestStep(id uint64, commands ...sdk.Command) sdk.Step {
+func NewTestStep(id uint64, tree sdk.TreeNode) sdk.Step {
 	return sdk.Step{
-		ID:       id,
-		Commands: commands,
+		ID:   id,
+		Tree: tree,
 	}
 }
 
-// NewTestCommand creates a test sdk.Command with given name and args.
+// NewTestCommand creates a test sdk.CommandNode with given name and args.
 // Helper for building test steps.
-func NewTestCommand(name string, args map[string]interface{}) sdk.Command {
+func NewTestCommand(name string, args map[string]interface{}) *sdk.CommandNode {
 	if args == nil {
 		args = make(map[string]interface{})
 	}
-	return sdk.Command{
+	return &sdk.CommandNode{
 		Name: name,
 		Args: args,
 	}
 }
 
-// NewTestCommandWithBlock creates a test sdk.Command with a block.
+// NewTestCommandWithBlock creates a test sdk.CommandNode with a block.
 // Helper for building nested test structures.
-func NewTestCommandWithBlock(name string, args map[string]interface{}, block []sdk.Step) sdk.Command {
+func NewTestCommandWithBlock(name string, args map[string]interface{}, block []sdk.Step) *sdk.CommandNode {
 	if args == nil {
 		args = make(map[string]interface{})
 	}
-	return sdk.Command{
+	return &sdk.CommandNode{
 		Name:  name,
 		Args:  args,
 		Block: block,

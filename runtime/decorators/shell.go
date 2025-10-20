@@ -16,6 +16,7 @@ func init() {
 		Description("Shell command to execute").
 		Required().
 		Done().
+		WithIO(types.AcceptsStdin, types.ProducesStdout). // No ScrubByDefault = bash-compatible
 		Build()
 
 	if err := types.Global().RegisterSDKHandlerWithSchema(schema, shellHandler); err != nil {

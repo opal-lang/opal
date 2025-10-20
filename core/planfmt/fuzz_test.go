@@ -76,12 +76,10 @@ func addSeedCorpus(f *testing.F) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@shell",
-								Args: []planfmt.Arg{
-									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 							},
 						},
 					},
@@ -95,22 +93,16 @@ func addSeedCorpus(f *testing.F) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@parallel",
-								Block: []planfmt.Step{
-									{
-										ID: 2,
-										Commands: []planfmt.Command{
-											{Decorator: "@task1"},
-										},
-									},
-									{
-										ID: 3,
-										Commands: []planfmt.Command{
-											{Decorator: "@task2"},
-										},
-									},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@parallel",
+							Block: []planfmt.Step{
+								{
+									ID:   2,
+									Tree: &planfmt.CommandNode{Decorator: "@task1"},
+								},
+								{
+									ID:   3,
+									Tree: &planfmt.CommandNode{Decorator: "@task2"},
 								},
 							},
 						},
@@ -125,15 +117,13 @@ func addSeedCorpus(f *testing.F) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@test",
-								Args: []planfmt.Arg{
-									{Key: "a_bool", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
-									{Key: "b_int", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: -42}},
-									{Key: "c_str", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
-									{Key: "d_ref", Val: planfmt.Value{Kind: planfmt.ValuePlaceholder, Ref: 0}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@test",
+							Args: []planfmt.Arg{
+								{Key: "a_bool", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
+								{Key: "b_int", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: -42}},
+								{Key: "c_str", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "hello"}},
+								{Key: "d_ref", Val: planfmt.Value{Kind: planfmt.ValuePlaceholder, Ref: 0}},
 							},
 						},
 					},

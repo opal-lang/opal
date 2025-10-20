@@ -14,12 +14,10 @@ func TestNewPlanIDFactory(t *testing.T) {
 		Steps: []Step{
 			{
 				ID: 1,
-				Commands: []Command{
-					{
-						Decorator: "@shell",
-						Args: []Arg{
-							{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
-						},
+				Tree: &CommandNode{
+					Decorator: "@shell",
+					Args: []Arg{
+						{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
 					},
 				},
 			},
@@ -58,12 +56,10 @@ func TestNewPlanIDFactoryDifferentPlans(t *testing.T) {
 		Steps: []Step{
 			{
 				ID: 1,
-				Commands: []Command{
-					{
-						Decorator: "@shell",
-						Args: []Arg{
-							{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
-						},
+				Tree: &CommandNode{
+					Decorator: "@shell",
+					Args: []Arg{
+						{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}},
 					},
 				},
 			},
@@ -75,12 +71,10 @@ func TestNewPlanIDFactoryDifferentPlans(t *testing.T) {
 		Steps: []Step{
 			{
 				ID: 1,
-				Commands: []Command{
-					{
-						Decorator: "@shell",
-						Args: []Arg{
-							{Key: "command", Val: Value{Kind: ValueString, Str: "echo goodbye"}},
-						},
+				Tree: &CommandNode{
+					Decorator: "@shell",
+					Args: []Arg{
+						{Key: "command", Val: Value{Kind: ValueString, Str: "echo goodbye"}},
 					},
 				},
 			},

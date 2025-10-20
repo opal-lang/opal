@@ -206,12 +206,10 @@ func TestContractRoundtrip(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
 					},
 				},
 			},

@@ -27,13 +27,11 @@ func generatePlan(stepCount int) *planfmt.Plan {
 	for i := 0; i < stepCount; i++ {
 		plan.Steps[i] = planfmt.Step{
 			ID: nextID,
-			Commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-						{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-					},
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+					{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
 				},
 			},
 		}
@@ -200,14 +198,12 @@ func BenchmarkCanonicalizeOverhead(b *testing.B) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@test",
-						Args: []planfmt.Arg{
-							{Key: "z_last", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
-							{Key: "m_middle", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
-							{Key: "a_first", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@test",
+					Args: []planfmt.Arg{
+						{Key: "z_last", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
+						{Key: "m_middle", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
+						{Key: "a_first", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"}},
 					},
 				},
 			},
@@ -263,25 +259,22 @@ func BenchmarkWideTree(b *testing.B) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@parallel",
-						Block:     make([]planfmt.Step, 1000),
-					},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@parallel",
+					Block:     make([]planfmt.Step, 1000),
 				},
 			},
 		},
 	}
 
+	parallelNode := plan.Steps[0].Tree.(*planfmt.CommandNode)
 	for i := 0; i < 1000; i++ {
-		plan.Steps[0].Commands[0].Block[i] = planfmt.Step{
+		parallelNode.Block[i] = planfmt.Step{
 			ID: uint64(i + 2),
-			Commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args: []planfmt.Arg{
-						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-					},
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 				},
 			},
 		}
@@ -325,11 +318,9 @@ func BenchmarkArgsHeavy(b *testing.B) {
 		}
 		plan.Steps[i] = planfmt.Step{
 			ID: nextID,
-			Commands: []planfmt.Command{
-				{
-					Decorator: "@test",
-					Args:      args,
-				},
+			Tree: &planfmt.CommandNode{
+				Decorator: "@test",
+				Args:      args,
 			},
 		}
 		nextID++

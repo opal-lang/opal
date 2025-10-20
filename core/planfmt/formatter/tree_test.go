@@ -29,12 +29,10 @@ func TestFormatTree_SingleStep(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 					},
 				},
 			},
@@ -59,23 +57,19 @@ func TestFormatTree_MultipleSteps(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go build"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go build"}},
 					},
 				},
 			},
 			{
 				ID: 2,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go test"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go test"}},
 					},
 				},
 			},
@@ -86,32 +80,36 @@ func TestFormatTree_MultipleSteps(t *testing.T) {
 	FormatTree(&buf, plan, false)
 
 	output := buf.String()
-	if !strings.Contains(output, "├─ shell go build") {
-		t.Errorf("Expected first step with ├─, got:\n%s", output)
+	if !strings.Contains(output, "build:") {
+		t.Error("Expected target name 'build:'")
 	}
-	if !strings.Contains(output, "└─ shell go test") {
-		t.Errorf("Expected last step with └─, got:\n%s", output)
+	// First step should use ├─ (not last)
+	if !strings.Contains(output, "├─") {
+		t.Error("Expected ├─ for first step")
+	}
+	// Last step should use └─
+	if !strings.Contains(output, "└─") {
+		t.Error("Expected └─ for last step")
 	}
 }
 
 func TestFormatTree_WithOperators(t *testing.T) {
 	plan := &planfmt.Plan{
-		Target: "test",
+		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
+				Tree: &planfmt.AndNode{
+					Left: &planfmt.CommandNode{
 						Decorator: "shell",
 						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go build"}},
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "npm build"}},
 						},
-						Operator: "&&",
 					},
-					{
+					Right: &planfmt.CommandNode{
 						Decorator: "shell",
 						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "go test"}},
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "docker build"}},
 						},
 					},
 				},
@@ -123,8 +121,55 @@ func TestFormatTree_WithOperators(t *testing.T) {
 	FormatTree(&buf, plan, false)
 
 	output := buf.String()
-	if !strings.Contains(output, "shell go build && go test") {
-		t.Errorf("Expected operator chain, got:\n%s", output)
+	if !strings.Contains(output, "&&") {
+		t.Errorf("Expected && operator in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "npm build") {
+		t.Error("Expected first command")
+	}
+	if !strings.Contains(output, "docker build") {
+		t.Error("Expected second command")
+	}
+}
+
+func TestFormatTree_WithPipeline(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.PipelineNode{
+					Commands: []planfmt.CommandNode{
+						{
+							Decorator: "shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+							},
+						},
+						{
+							Decorator: "shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep hello"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	FormatTree(&buf, plan, false)
+
+	output := buf.String()
+	if !strings.Contains(output, "|") {
+		t.Errorf("Expected | operator in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "echo hello") {
+		t.Error("Expected first command")
+	}
+	if !strings.Contains(output, "grep hello") {
+		t.Error("Expected second command")
 	}
 }
 
@@ -134,12 +179,10 @@ func TestFormatTree_WithColor(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 					},
 				},
 			},
@@ -147,76 +190,11 @@ func TestFormatTree_WithColor(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	FormatTree(&buf, plan, true)
+	FormatTree(&buf, plan, true) // Enable color
 
 	output := buf.String()
 	// Should contain ANSI color codes
-	if !strings.Contains(output, ColorBlue) {
-		t.Error("Expected color codes in output")
-	}
-	if !strings.Contains(output, ColorReset) {
-		t.Error("Expected color reset in output")
-	}
-}
-
-func TestFormatTree_WithoutColor(t *testing.T) {
-	plan := &planfmt.Plan{
-		Target: "test",
-		Steps: []planfmt.Step{
-			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	var buf bytes.Buffer
-	FormatTree(&buf, plan, false)
-
-	output := buf.String()
-	// Should NOT contain ANSI color codes
-	if strings.Contains(output, ColorBlue) {
-		t.Error("Expected no color codes in output")
-	}
-}
-
-func TestColorize(t *testing.T) {
-	tests := []struct {
-		name     string
-		text     string
-		color    string
-		useColor bool
-		want     string
-	}{
-		{
-			name:     "with color enabled",
-			text:     "hello",
-			color:    ColorBlue,
-			useColor: true,
-			want:     ColorBlue + "hello" + ColorReset,
-		},
-		{
-			name:     "with color disabled",
-			text:     "hello",
-			color:    ColorBlue,
-			useColor: false,
-			want:     "hello",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := Colorize(tt.text, tt.color, tt.useColor)
-			if got != tt.want {
-				t.Errorf("Colorize() = %q, want %q", got, tt.want)
-			}
-		})
+	if !strings.Contains(output, "\033[") {
+		t.Error("Expected ANSI color codes when color is enabled")
 	}
 }

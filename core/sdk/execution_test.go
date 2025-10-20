@@ -6,16 +6,14 @@ import (
 	"github.com/aledsdavies/opal/core/sdk"
 )
 
-// TestStep_Construction verifies Step can be constructed
+// TestStep_Construction verifies Step can be constructed with a tree
 func TestStep_Construction(t *testing.T) {
 	step := sdk.Step{
 		ID: 1,
-		Commands: []sdk.Command{
-			{
-				Name: "shell",
-				Args: map[string]interface{}{
-					"command": "echo hello",
-				},
+		Tree: &sdk.CommandNode{
+			Name: "shell",
+			Args: map[string]interface{}{
+				"command": "echo hello",
 			},
 		},
 	}
@@ -23,17 +21,21 @@ func TestStep_Construction(t *testing.T) {
 	if step.ID != 1 {
 		t.Errorf("expected ID 1, got %d", step.ID)
 	}
-	if len(step.Commands) != 1 {
-		t.Errorf("expected 1 command, got %d", len(step.Commands))
+	if step.Tree == nil {
+		t.Fatal("expected tree to be non-nil")
 	}
-	if step.Commands[0].Name != "shell" {
-		t.Errorf("expected command name 'shell', got %q", step.Commands[0].Name)
+	cmd, ok := step.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected CommandNode, got %T", step.Tree)
+	}
+	if cmd.Name != "shell" {
+		t.Errorf("expected command name 'shell', got %q", cmd.Name)
 	}
 }
 
-// TestCommand_WithBlock verifies Command can have nested steps
-func TestCommand_WithBlock(t *testing.T) {
-	cmd := sdk.Command{
+// TestCommandNode_WithBlock verifies CommandNode can have nested steps
+func TestCommandNode_WithBlock(t *testing.T) {
+	cmd := &sdk.CommandNode{
 		Name: "retry",
 		Args: map[string]interface{}{
 			"times": int64(3),
@@ -41,8 +43,9 @@ func TestCommand_WithBlock(t *testing.T) {
 		Block: []sdk.Step{
 			{
 				ID: 2,
-				Commands: []sdk.Command{
-					{Name: "shell", Args: map[string]interface{}{"command": "echo nested"}},
+				Tree: &sdk.CommandNode{
+					Name: "shell",
+					Args: map[string]interface{}{"command": "echo nested"},
 				},
 			},
 		},
@@ -59,9 +62,9 @@ func TestCommand_WithBlock(t *testing.T) {
 	}
 }
 
-// TestCommand_NoBlock verifies Command can have empty block (leaf decorator)
-func TestCommand_NoBlock(t *testing.T) {
-	cmd := sdk.Command{
+// TestCommandNode_NoBlock verifies CommandNode can have empty block (leaf decorator)
+func TestCommandNode_NoBlock(t *testing.T) {
+	cmd := &sdk.CommandNode{
 		Name: "shell",
 		Args: map[string]interface{}{
 			"command": "echo hello",
@@ -74,16 +77,44 @@ func TestCommand_NoBlock(t *testing.T) {
 	}
 }
 
-// TestCommand_WithOperator verifies Command can have operator for chaining
-func TestCommand_WithOperator(t *testing.T) {
-	cmd := sdk.Command{
-		Name:     "shell",
-		Args:     map[string]interface{}{"command": "echo first"},
-		Operator: "&&",
+// TestAndNode_Structure verifies AndNode structure
+func TestAndNode_Structure(t *testing.T) {
+	node := &sdk.AndNode{
+		Left: &sdk.CommandNode{
+			Name: "shell",
+			Args: map[string]interface{}{"command": "echo first"},
+		},
+		Right: &sdk.CommandNode{
+			Name: "shell",
+			Args: map[string]interface{}{"command": "echo second"},
+		},
 	}
 
-	if cmd.Operator != "&&" {
-		t.Errorf("expected operator '&&', got %q", cmd.Operator)
+	if node.Left == nil {
+		t.Error("expected Left to be non-nil")
+	}
+	if node.Right == nil {
+		t.Error("expected Right to be non-nil")
+	}
+}
+
+// TestPipelineNode_Structure verifies PipelineNode structure
+func TestPipelineNode_Structure(t *testing.T) {
+	node := &sdk.PipelineNode{
+		Commands: []sdk.CommandNode{
+			{
+				Name: "shell",
+				Args: map[string]interface{}{"command": "echo hello"},
+			},
+			{
+				Name: "shell",
+				Args: map[string]interface{}{"command": "grep hello"},
+			},
+		},
+	}
+
+	if len(node.Commands) != 2 {
+		t.Errorf("expected 2 commands, got %d", len(node.Commands))
 	}
 }
 
@@ -137,27 +168,21 @@ func TestStep_NestedBlocks(t *testing.T) {
 	// @retry(3) { @timeout(30s) { @shell("echo nested") } }
 	step := sdk.Step{
 		ID: 1,
-		Commands: []sdk.Command{
-			{
-				Name: "retry",
-				Args: map[string]interface{}{"times": int64(3)},
-				Block: []sdk.Step{
-					{
-						ID: 2,
-						Commands: []sdk.Command{
+		Tree: &sdk.CommandNode{
+			Name: "retry",
+			Args: map[string]interface{}{"times": int64(3)},
+			Block: []sdk.Step{
+				{
+					ID: 2,
+					Tree: &sdk.CommandNode{
+						Name: "timeout",
+						Args: map[string]interface{}{"duration": "30s"},
+						Block: []sdk.Step{
 							{
-								Name: "timeout",
-								Args: map[string]interface{}{"duration": "30s"},
-								Block: []sdk.Step{
-									{
-										ID: 3,
-										Commands: []sdk.Command{
-											{
-												Name: "shell",
-												Args: map[string]interface{}{"command": "echo nested"},
-											},
-										},
-									},
+								ID: 3,
+								Tree: &sdk.CommandNode{
+									Name: "shell",
+									Args: map[string]interface{}{"command": "echo nested"},
 								},
 							},
 						},
@@ -168,11 +193,10 @@ func TestStep_NestedBlocks(t *testing.T) {
 	}
 
 	// Verify structure
-	if len(step.Commands) != 1 {
-		t.Fatalf("expected 1 top-level command, got %d", len(step.Commands))
+	retryCmd, ok := step.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected CommandNode, got %T", step.Tree)
 	}
-
-	retryCmd := step.Commands[0]
 	if retryCmd.Name != "retry" {
 		t.Errorf("expected 'retry', got %q", retryCmd.Name)
 	}
@@ -181,11 +205,10 @@ func TestStep_NestedBlocks(t *testing.T) {
 	}
 
 	timeoutStep := retryCmd.Block[0]
-	if len(timeoutStep.Commands) != 1 {
-		t.Fatalf("expected 1 command in timeout step, got %d", len(timeoutStep.Commands))
+	timeoutCmd, ok := timeoutStep.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected CommandNode, got %T", timeoutStep.Tree)
 	}
-
-	timeoutCmd := timeoutStep.Commands[0]
 	if timeoutCmd.Name != "timeout" {
 		t.Errorf("expected 'timeout', got %q", timeoutCmd.Name)
 	}
@@ -194,11 +217,10 @@ func TestStep_NestedBlocks(t *testing.T) {
 	}
 
 	shellStep := timeoutCmd.Block[0]
-	if len(shellStep.Commands) != 1 {
-		t.Fatalf("expected 1 command in shell step, got %d", len(shellStep.Commands))
+	shellCmd, ok := shellStep.Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected CommandNode, got %T", shellStep.Tree)
 	}
-
-	shellCmd := shellStep.Commands[0]
 	if shellCmd.Name != "shell" {
 		t.Errorf("expected 'shell', got %q", shellCmd.Name)
 	}

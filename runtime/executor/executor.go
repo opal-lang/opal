@@ -114,7 +114,7 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 		stepStart := time.Now()
 
 		if config.Debug >= DebugDetailed {
-			e.recordDebugEvent("step_start", step.ID, fmt.Sprintf("commands=%d", len(step.Commands)))
+			e.recordDebugEvent("step_start", step.ID, "executing tree")
 		}
 
 		exitCode := e.executeStep(step)
@@ -171,61 +171,66 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 	}, nil
 }
 
-// executeStep executes a single step using the decorator registry
-// Handles operator chaining with bash-compatible semantics
+// executeStep executes a single step by executing its tree
 func (e *executor) executeStep(step sdk.Step) int {
 	// INPUT CONTRACT
-	invariant.Precondition(len(step.Commands) > 0, "step must have at least one command")
+	invariant.Precondition(step.Tree != nil, "step must have a tree")
 
-	var lastExitCode int
-
-	// Execute commands with operator chaining
-	for i, cmd := range step.Commands {
-		shouldExecute := true
-
-		// Check if we should execute based on previous operator
-		if i > 0 {
-			prevOp := step.Commands[i-1].Operator
-			switch prevOp {
-			case "&&":
-				// AND: Execute next only if previous succeeded
-				if lastExitCode != 0 {
-					shouldExecute = false // Skip this command
-				}
-			case "||":
-				// OR: Execute next only if previous failed
-				if lastExitCode == 0 {
-					shouldExecute = false // Skip this command
-				}
-			case "|":
-				// PIPE: Not yet implemented
-				// TODO: Pipe requires:
-				// 1. Capture stdout from previous command (buffer it)
-				// 2. Pass captured output as stdin to next command
-				// 3. Handle buffering (commands still run sequentially, but need to wire stdout→stdin)
-				// Note: Only makes sense for @shell decorator - other decorators don't use stdin/stdout
-				invariant.Invariant(false, "pipe operator not yet implemented")
-			case ";":
-				// SEMICOLON: Always execute next (no-op)
-			case "":
-				// No operator (shouldn't happen for non-last command)
-				invariant.Invariant(false, "command %d has no operator but is not last", i)
-			default:
-				invariant.Invariant(false, "unknown operator: %q", prevOp)
-			}
-		}
-
-		// Execute the command if we should
-		if shouldExecute {
-			lastExitCode = e.executeCommand(cmd)
-		}
-	}
-
-	return lastExitCode
+	return e.executeTree(step.Tree)
 }
 
-// executeCommand executes a single command (extracted from executeStep)
-func (e *executor) executeCommand(cmd sdk.Command) int {
+// executeTree executes a tree node and returns the exit code
+func (e *executor) executeTree(node sdk.TreeNode) int {
+	switch n := node.(type) {
+	case *sdk.CommandNode:
+		return e.executeCommand(n)
+
+	case *sdk.PipelineNode:
+		return e.executePipeline(n)
+
+	case *sdk.AndNode:
+		// Execute left, then right only if left succeeded
+		leftExit := e.executeTree(n.Left)
+		if leftExit != 0 {
+			return leftExit // Short-circuit on failure
+		}
+		return e.executeTree(n.Right)
+
+	case *sdk.OrNode:
+		// Execute left, then right only if left failed
+		leftExit := e.executeTree(n.Left)
+		if leftExit == 0 {
+			return leftExit // Short-circuit on success
+		}
+		return e.executeTree(n.Right)
+
+	case *sdk.SequenceNode:
+		// Execute all nodes, return last exit code
+		var lastExit int
+		for _, child := range n.Nodes {
+			lastExit = e.executeTree(child)
+		}
+		return lastExit
+
+	default:
+		invariant.Invariant(false, "unknown TreeNode type: %T", node)
+		return 1 // Unreachable
+	}
+}
+
+// executePipeline executes a pipeline of commands with stdout→stdin streaming
+func (e *executor) executePipeline(pipeline *sdk.PipelineNode) int {
+	// TODO: Implement pipe operator with io.Pipe()
+	// For now, just execute commands sequentially (no piping)
+	var lastExit int
+	for _, cmd := range pipeline.Commands {
+		lastExit = e.executeCommand(&cmd)
+	}
+	return lastExit
+}
+
+// executeCommand executes a single command node
+func (e *executor) executeCommand(cmd *sdk.CommandNode) int {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 

@@ -29,12 +29,10 @@ func TestPlanValidation(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@shell",
-								Args: []planfmt.Arg{
-									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 							},
 						},
 					},
@@ -49,22 +47,16 @@ func TestPlanValidation(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@retry",
-								Block: []planfmt.Step{
-									{
-										ID: 2,
-										Commands: []planfmt.Command{
-											{Decorator: "@shell"},
-										},
-									},
-									{
-										ID: 2, // Duplicate!
-										Commands: []planfmt.Command{
-											{Decorator: "@shell"},
-										},
-									},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@retry",
+							Block: []planfmt.Step{
+								{
+									ID:   2,
+									Tree: &planfmt.CommandNode{Decorator: "@shell"},
+								},
+								{
+									ID:   2, // Duplicate!
+									Tree: &planfmt.CommandNode{Decorator: "@shell"},
 								},
 							},
 						},
@@ -81,13 +73,11 @@ func TestPlanValidation(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@shell",
-								Args: []planfmt.Arg{
-									{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo"}}, // Out of order!
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo"}}, // Out of order!
 							},
 						},
 					},
@@ -138,12 +128,10 @@ func TestPlanDigest(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 					},
 				},
 			},
@@ -178,12 +166,10 @@ func TestPlanDigestDifferentPlans(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 					},
 				},
 			},
@@ -195,12 +181,10 @@ func TestPlanDigestDifferentPlans(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 					},
 				},
 			},

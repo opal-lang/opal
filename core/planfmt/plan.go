@@ -55,26 +55,30 @@ type PlanHeader struct {
 
 // Step represents a single step (newline-separated statement).
 // A step can contain multiple commands chained with operators.
+//
+// IMPORTANT: Always set Tree when creating a Step!
+// Binary format only serializes Tree (Commands field is ignored).
+//
+// Example:
+//
+//	step := Step{
+//	    ID: 1,
+//	    Tree: &CommandNode{
+//	        Decorator: "@shell",
+//	        Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}}},
+//	    },
+//	}
+//
+// Binary Serialization:
+// - Writer: Only Tree is serialized (Commands ignored, Tree must not be nil)
+// - Reader: Only Tree is deserialized
+//
 // Invariants:
 // - ID must be unique within a plan
-// - Commands order is semantically significant (operators depend on order)
-// - Last command in step must have empty Operator
+// - Tree must not be nil (enforced by writer precondition)
 type Step struct {
-	ID       uint64    // Unique identifier (stable across plan versions)
-	Commands []Command // Commands in this step (operator-chained)
-}
-
-// Command represents a single decorator invocation within a step.
-// Commands are chained with operators (&&, ||, |, ;) which are handled by bash.
-// Invariants:
-// - Args must be sorted by Key (for determinism)
-// - Operator must be empty for last command in step
-// - Block steps follow same rules as top-level steps
-type Command struct {
-	Decorator string // "@shell", "@retry", "@parallel", etc.
-	Args      []Arg  // Sorted by Key for deterministic encoding
-	Block     []Step // Nested steps (for decorators with blocks)
-	Operator  string // "&&", "||", "|", ";" - how to chain to NEXT command (empty for last)
+	ID   uint64        // Unique identifier (stable across plan versions)
+	Tree ExecutionNode // Operator precedence tree (REQUIRED - must not be nil)
 }
 
 // Arg represents a typed argument to a decorator.
@@ -142,29 +146,58 @@ func (s *Step) validate(seen map[uint64]bool) error {
 	}
 	seen[s.ID] = true
 
-	// Validate each command
-	for i, cmd := range s.Commands {
+	// Validate tree (if present)
+	if s.Tree != nil {
+		return validateNode(s.Tree, s.ID, seen)
+	}
+
+	return nil
+}
+
+// validateNode recursively validates tree nodes
+func validateNode(node ExecutionNode, stepID uint64, seen map[uint64]bool) error {
+	switch n := node.(type) {
+	case *CommandNode:
 		// Check args are sorted
-		for j := 1; j < len(cmd.Args); j++ {
-			if cmd.Args[j-1].Key >= cmd.Args[j].Key {
-				return fmt.Errorf("step %d command %d: args not sorted (key %q >= %q)",
-					s.ID, i, cmd.Args[j-1].Key, cmd.Args[j].Key)
+		for j := 1; j < len(n.Args); j++ {
+			if n.Args[j-1].Key >= n.Args[j].Key {
+				return fmt.Errorf("step %d: args not sorted (key %q >= %q)",
+					stepID, n.Args[j-1].Key, n.Args[j].Key)
+			}
+		}
+		// Validate block steps recursively
+		for j := range n.Block {
+			if err := n.Block[j].validate(seen); err != nil {
+				return err
 			}
 		}
 
-		// Last command must have empty operator
-		if i == len(s.Commands)-1 && cmd.Operator != "" {
-			return fmt.Errorf("step %d: last command has non-empty operator %q", s.ID, cmd.Operator)
+	case *PipelineNode:
+		for i := range n.Commands {
+			if err := validateNode(&n.Commands[i], stepID, seen); err != nil {
+				return err
+			}
 		}
 
-		// Non-last commands should have an operator
-		if i < len(s.Commands)-1 && cmd.Operator == "" {
-			return fmt.Errorf("step %d command %d: non-last command has empty operator", s.ID, i)
+	case *AndNode:
+		if err := validateNode(n.Left, stepID, seen); err != nil {
+			return err
+		}
+		if err := validateNode(n.Right, stepID, seen); err != nil {
+			return err
 		}
 
-		// Validate block steps recursively
-		for j := range cmd.Block {
-			if err := cmd.Block[j].validate(seen); err != nil {
+	case *OrNode:
+		if err := validateNode(n.Left, stepID, seen); err != nil {
+			return err
+		}
+		if err := validateNode(n.Right, stepID, seen); err != nil {
+			return err
+		}
+
+	case *SequenceNode:
+		for i := range n.Nodes {
+			if err := validateNode(n.Nodes[i], stepID, seen); err != nil {
 				return err
 			}
 		}
@@ -173,22 +206,44 @@ func (s *Step) validate(seen map[uint64]bool) error {
 	return nil
 }
 
-// canonicalize sorts args and recursively canonicalizes blocks
+// canonicalize sorts args in the execution tree
 func (s *Step) canonicalize() {
-	// Canonicalize each command (preserve command order - operators depend on it)
-	for i := range s.Commands {
-		cmd := &s.Commands[i]
+	if s.Tree != nil {
+		canonicalizeNode(s.Tree)
+	}
+}
 
+// canonicalizeNode recursively sorts args in all tree nodes
+func canonicalizeNode(node ExecutionNode) {
+	switch n := node.(type) {
+	case *CommandNode:
 		// Sort args by key for deterministic encoding
-		if len(cmd.Args) > 1 {
-			sort.Slice(cmd.Args, func(j, k int) bool {
-				return cmd.Args[j].Key < cmd.Args[k].Key
+		if len(n.Args) > 1 {
+			sort.Slice(n.Args, func(i, j int) bool {
+				return n.Args[i].Key < n.Args[j].Key
 			})
 		}
-
 		// Recursively canonicalize block steps
-		for j := range cmd.Block {
-			cmd.Block[j].canonicalize()
+		for i := range n.Block {
+			n.Block[i].canonicalize()
+		}
+
+	case *PipelineNode:
+		for i := range n.Commands {
+			canonicalizeNode(&n.Commands[i])
+		}
+
+	case *AndNode:
+		canonicalizeNode(n.Left)
+		canonicalizeNode(n.Right)
+
+	case *OrNode:
+		canonicalizeNode(n.Left)
+		canonicalizeNode(n.Right)
+
+	case *SequenceNode:
+		for i := range n.Nodes {
+			canonicalizeNode(n.Nodes[i])
 		}
 	}
 }

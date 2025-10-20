@@ -10,22 +10,76 @@ import (
 //
 // Knowledge domain: How to execute work
 // NOT: How to serialize/deserialize plans
+//
+// Example:
+//
+//	Step with single command:
+//	  Step{ID: 1, Tree: &CommandNode{Name: "shell", Args: {"command": "echo hi"}}}
+//
+//	Step with operators:
+//	  Step{ID: 2, Tree: &AndNode{
+//	    Left:  &CommandNode{Name: "shell", Args: {"command": "npm build"}},
+//	    Right: &CommandNode{Name: "shell", Args: {"command": "docker build"}},
+//	  }}
 type Step struct {
-	ID       uint64    // Unique identifier (from plan)
-	Commands []Command // Commands in this step (operator-chained)
+	ID   uint64   // Unique identifier (from plan)
+	Tree TreeNode // Execution tree (operator precedence)
 }
 
-// Command represents a decorator invocation (runtime execution model).
-// This is separate from planfmt.Command (binary serialization format).
+// TreeNode represents a node in the execution tree.
+// The tree structure captures operator precedence within a step.
 //
-// Knowledge domain: How to invoke decorators
-// NOT: How to encode/decode binary format
-type Command struct {
-	Name     string                 // Decorator name: "shell", "retry", "parallel"
-	Args     map[string]interface{} // Decorator arguments (typed values)
-	Block    []Step                 // Nested steps (for decorators with blocks)
-	Operator string                 // "&&", "||", "|", ";" - how to chain to NEXT command
+// Operator precedence (high to low): | > && > || > ;
+//
+// Example: echo "a" | grep "a" && echo "b" || echo "c"
+// Parsed as: ((echo "a" | grep "a") && echo "b") || echo "c"
+type TreeNode interface {
+	isTreeNode()
 }
+
+// CommandNode is a leaf node - represents a single decorator invocation.
+type CommandNode struct {
+	Name  string                 // Decorator name: "shell", "retry", "parallel"
+	Args  map[string]interface{} // Decorator arguments (typed values)
+	Block []Step                 // Nested steps (for decorators with blocks)
+}
+
+func (*CommandNode) isTreeNode() {}
+
+// PipelineNode executes a chain of piped commands (cmd1 | cmd2 | cmd3).
+// All commands run concurrently with stdout→stdin streaming.
+type PipelineNode struct {
+	Commands []CommandNode // All commands in the pipeline
+}
+
+func (*PipelineNode) isTreeNode() {}
+
+// AndNode executes left, then right only if left succeeded (exit 0).
+// Implements bash && operator semantics.
+type AndNode struct {
+	Left  TreeNode
+	Right TreeNode
+}
+
+func (*AndNode) isTreeNode() {}
+
+// OrNode executes left, then right only if left failed (exit != 0).
+// Implements bash || operator semantics.
+type OrNode struct {
+	Left  TreeNode
+	Right TreeNode
+}
+
+func (*OrNode) isTreeNode() {}
+
+// SequenceNode executes all nodes sequentially (semicolon operator).
+// Always executes all nodes regardless of exit codes.
+// Returns exit code of last node.
+type SequenceNode struct {
+	Nodes []TreeNode
+}
+
+func (*SequenceNode) isTreeNode() {}
 
 // ExecutionContext provides execution environment for decorators.
 // This is the interface decorators receive - it abstracts away the executor implementation.

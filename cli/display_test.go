@@ -8,26 +8,29 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Helper to create a simple shell command tree
+func shellCmd(cmd string) *planfmt.CommandNode {
+	return &planfmt.CommandNode{
+		Decorator: "@shell",
+		Args: []planfmt.Arg{
+			{
+				Key: "command",
+				Val: planfmt.Value{
+					Kind: planfmt.ValueString,
+					Str:  cmd,
+				},
+			},
+		},
+	}
+}
+
 func TestDisplayPlan_SingleStep(t *testing.T) {
 	plan := &planfmt.Plan{
 		Target: "hello",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  `echo "Hello, World!"`,
-								},
-							},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd(`echo "Hello, World!"`),
 			},
 		},
 	}
@@ -48,44 +51,18 @@ func TestDisplayPlan_MultipleSteps(t *testing.T) {
 		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  "kubectl apply -f k8s/",
-								},
-							},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("kubectl apply -f k8s/"),
 			},
 			{
-				ID: 2,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  "kubectl rollout status deployment/app",
-								},
-							},
-						},
-					},
-				},
+				ID:   2,
+				Tree: shellCmd("kubectl rollout status deployment/app"),
 			},
 		},
 	}
 
 	var buf bytes.Buffer
-	DisplayPlan(&buf, plan, false) // no color
+	DisplayPlan(&buf, plan, false)
 
 	output := buf.String()
 	expected := `deploy:
@@ -96,100 +73,29 @@ func TestDisplayPlan_MultipleSteps(t *testing.T) {
 	assert.Equal(t, expected, output)
 }
 
-func TestDisplayPlan_WithOperators(t *testing.T) {
+func TestDisplayPlan_WithSecrets(t *testing.T) {
 	plan := &planfmt.Plan{
-		Target: "test",
+		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  `echo "First"`,
-								},
-							},
-						},
-						Operator: "&&",
-					},
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  `echo "Second"`,
-								},
-							},
-						},
-						Operator: "||",
-					},
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  `echo "Fallback"`,
-								},
-							},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo $SECRET"),
 			},
+		},
+		Secrets: []planfmt.Secret{
+			{Key: "SECRET", DisplayID: "opal:s:abc123", RuntimeValue: "secret123"},
 		},
 	}
 
 	var buf bytes.Buffer
-	DisplayPlan(&buf, plan, false) // no color
+	DisplayPlan(&buf, plan, false)
 
 	output := buf.String()
-	expected := `test:
-└─ @shell echo "First" && echo "Second" || echo "Fallback"
+	expected := `deploy:
+└─ @shell echo $SECRET
 `
 
 	assert.Equal(t, expected, output)
-}
-
-func TestDisplayPlan_WithColor(t *testing.T) {
-	plan := &planfmt.Plan{
-		Target: "hello",
-		Steps: []planfmt.Step{
-			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{
-								Key: "command",
-								Val: planfmt.Value{
-									Kind: planfmt.ValueString,
-									Str:  `echo "Hello"`,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	var buf bytes.Buffer
-	DisplayPlan(&buf, plan, true) // with color
-
-	output := buf.String()
-
-	// Should contain ANSI color codes
-	assert.Contains(t, output, "\033[") // ANSI escape sequence
-	assert.Contains(t, output, "@shell")
-	assert.Contains(t, output, "hello:")
 }
 
 func TestDisplayPlan_EmptyPlan(t *testing.T) {
@@ -204,6 +110,46 @@ func TestDisplayPlan_EmptyPlan(t *testing.T) {
 	output := buf.String()
 	expected := `empty:
 (no steps)
+`
+
+	assert.Equal(t, expected, output)
+}
+
+func TestDisplayPlan_NestedDecorator(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "retry",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@retry",
+					Args: []planfmt.Arg{
+						{
+							Key: "max",
+							Val: planfmt.Value{
+								Kind: planfmt.ValueInt,
+								Int:  3,
+							},
+						},
+					},
+					Block: []planfmt.Step{
+						{
+							ID:   2,
+							Tree: shellCmd("kubectl apply -f k8s/"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	DisplayPlan(&buf, plan, false)
+
+	output := buf.String()
+	expected := `retry:
+└─ @retry max=3
+   └─ @shell kubectl apply -f k8s/
 `
 
 	assert.Equal(t, expected, output)

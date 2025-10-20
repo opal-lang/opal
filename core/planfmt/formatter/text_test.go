@@ -7,57 +7,7 @@ import (
 	"github.com/aledsdavies/opal/core/planfmt/formatter"
 )
 
-// TestFormatCommand verifies command formatting
-func TestFormatCommand(t *testing.T) {
-	tests := []struct {
-		name     string
-		cmd      planfmt.Command
-		expected string
-	}{
-		{
-			name: "simple shell command",
-			cmd: planfmt.Command{
-				Decorator: "@shell",
-				Args: []planfmt.Arg{
-					{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
-				},
-			},
-			expected: `@shell echo "Hello"`,
-		},
-		{
-			name: "command with operator (operator handled by FormatStep)",
-			cmd: planfmt.Command{
-				Decorator: "@shell",
-				Args: []planfmt.Arg{
-					{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}},
-				},
-				Operator: "&&",
-			},
-			expected: `@shell echo "A"`, // Operator not included in command format
-		},
-		{
-			name: "retry decorator",
-			cmd: planfmt.Command{
-				Decorator: "@retry",
-				Args: []planfmt.Arg{
-					{Key: "attempts", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 3}},
-				},
-			},
-			expected: `@retry(attempts=3)`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatter.FormatCommand(&tt.cmd)
-			if result != tt.expected {
-				t.Errorf("FormatCommand() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatStep verifies step formatting
+// TestFormatStep verifies step formatting with trees
 func TestFormatStep(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -65,33 +15,30 @@ func TestFormatStep(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "single command",
+			name: "simple shell command",
 			step: planfmt.Step{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
 					},
 				},
 			},
 			expected: `@shell echo "Hello"`,
 		},
 		{
-			name: "chained commands",
+			name: "command with AND operator",
 			step: planfmt.Step{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
+				Tree: &planfmt.AndNode{
+					Left: &planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}},
 						},
-						Operator: "&&",
 					},
-					{
+					Right: &planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}},
@@ -100,6 +47,42 @@ func TestFormatStep(t *testing.T) {
 				},
 			},
 			expected: `@shell echo "A" && @shell echo "B"`,
+		},
+		{
+			name: "pipeline",
+			step: planfmt.Step{
+				ID: 1,
+				Tree: &planfmt.PipelineNode{
+					Commands: []planfmt.CommandNode{
+						{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+							},
+						},
+						{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep hello"}},
+							},
+						},
+					},
+				},
+			},
+			expected: `@shell echo hello | @shell grep hello`,
+		},
+		{
+			name: "retry decorator",
+			step: planfmt.Step{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@retry",
+					Args: []planfmt.Arg{
+						{Key: "attempts", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 3}},
+					},
+				},
+			},
+			expected: `@retry(attempts=3)`,
 		},
 	}
 
@@ -116,40 +99,33 @@ func TestFormatStep(t *testing.T) {
 // TestFormat verifies full plan formatting
 func TestFormat(t *testing.T) {
 	plan := &planfmt.Plan{
-		Target: "hello",
+		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Hello"`}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "npm build"}},
 					},
 				},
 			},
 			{
 				ID: 2,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "World"`}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "docker build"}},
 					},
 				},
 			},
 		},
 	}
 
-	expected := `target: hello
-step 1: @shell echo "Hello"
-step 2: @shell echo "World"
-`
-
 	result := formatter.Format(plan)
+	expected := "target: deploy\nstep 1: @shell npm build\nstep 2: @shell docker build\n"
+
 	if result != expected {
-		t.Errorf("Format() mismatch:\nGot:\n%s\nWant:\n%s", result, expected)
+		t.Errorf("Format() mismatch\nGot:\n%s\nWant:\n%s", result, expected)
 	}
 }

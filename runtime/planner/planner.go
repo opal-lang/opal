@@ -34,6 +34,16 @@ import (
 	"github.com/lithammer/fuzzysearch/fuzzy"
 )
 
+// Command represents a single decorator invocation during planning (internal type).
+// Commands are collected from parser events and then converted to ExecutionNode tree.
+// This is an intermediate representation - the final Step only contains the Tree.
+type Command struct {
+	Decorator string         // "@shell", "@retry", "@parallel", etc.
+	Args      []planfmt.Arg  // Decorator arguments
+	Block     []planfmt.Step // Nested steps (for decorators with blocks)
+	Operator  string         // "&&", "||", "|", ";" - how to chain to NEXT command (empty for last)
+}
+
 // Config configures the planner
 type Config struct {
 	Target    string           // Command name (e.g., "hello") or "" for script mode
@@ -428,7 +438,7 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	// We're at EventStepEnter, move past it
 	p.pos++
 
-	var commands []planfmt.Command
+	var commands []Command
 
 	// Collect all shell commands until EventStepExit
 	for p.pos < len(p.events) {
@@ -464,8 +474,8 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	}
 
 	step := planfmt.Step{
-		ID:       p.nextStepID(),
-		Commands: commands,
+		ID:   p.nextStepID(),
+		Tree: buildStepTree(commands),
 	}
 
 	if p.config.Debug >= DebugDetailed {
@@ -476,7 +486,7 @@ func (p *planner) planStep() (planfmt.Step, error) {
 }
 
 // planCommand plans a single command within a step (shell command + optional operator)
-func (p *planner) planCommand() (planfmt.Command, error) {
+func (p *planner) planCommand() (Command, error) {
 	if p.config.Debug >= DebugDetailed {
 		p.recordDebugEvent("enter_planCommand", fmt.Sprintf("pos=%d", p.pos))
 	}
@@ -546,7 +556,7 @@ func (p *planner) planCommand() (planfmt.Command, error) {
 		}
 	}
 
-	cmd := planfmt.Command{
+	cmd := Command{
 		Decorator: "@shell",
 		Args: []planfmt.Arg{
 			{

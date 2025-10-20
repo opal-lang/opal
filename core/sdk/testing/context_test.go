@@ -74,7 +74,7 @@ func TestExecuteBlockRecording(t *testing.T) {
 
 	// Execute a block
 	steps := []sdk.Step{
-		{ID: 1, Commands: []sdk.Command{{Name: "shell"}}},
+		{ID: 1, Tree: &sdk.CommandNode{Name: "shell"}},
 	}
 	_, _ = ctx.ExecuteBlock(steps)
 
@@ -270,8 +270,8 @@ func TestHelperFunctions(t *testing.T) {
 	if step.ID != 1 {
 		t.Errorf("expected ID 1, got %d", step.ID)
 	}
-	if len(step.Commands) != 1 {
-		t.Errorf("expected 1 command, got %d", len(step.Commands))
+	if step.Tree == nil {
+		t.Error("expected tree to be non-nil")
 	}
 
 	// NewTestCommandWithBlock

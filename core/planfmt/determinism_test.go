@@ -43,12 +43,10 @@ func TestByteAccounting(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID: 1,
-						Commands: []planfmt.Command{
-							{
-								Decorator: "@shell",
-								Args: []planfmt.Arg{
-									{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
-								},
+						Tree: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 							},
 						},
 					},
@@ -101,14 +99,12 @@ func TestCanonicalArgOrder(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
-							{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
-							{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
+						{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
+						{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
 					},
 				},
 			},
@@ -121,14 +117,12 @@ func TestCanonicalArgOrder(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
-							{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
-							{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "arg_c", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_c"}},
+						{Key: "arg_a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_a"}},
+						{Key: "arg_b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value_b"}},
 					},
 				},
 			},
@@ -182,13 +176,11 @@ func TestStability(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
-							{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
-						},
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+						{Key: "timeout", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 30}},
 					},
 				},
 			},
@@ -242,9 +234,9 @@ func TestCanonicalCommandOrder(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{Decorator: "@task_a", Operator: "&&"},
-					{Decorator: "@task_b"},
+				Tree: &planfmt.AndNode{
+					Left:  &planfmt.CommandNode{Decorator: "@task_a"},
+					Right: &planfmt.CommandNode{Decorator: "@task_b"},
 				},
 			},
 		},
@@ -256,9 +248,9 @@ func TestCanonicalCommandOrder(t *testing.T) {
 		Steps: []planfmt.Step{
 			{
 				ID: 1,
-				Commands: []planfmt.Command{
-					{Decorator: "@task_b", Operator: "&&"},
-					{Decorator: "@task_a"},
+				Tree: &planfmt.AndNode{
+					Left:  &planfmt.CommandNode{Decorator: "@task_b"},
+					Right: &planfmt.CommandNode{Decorator: "@task_a"},
 				},
 			},
 		},

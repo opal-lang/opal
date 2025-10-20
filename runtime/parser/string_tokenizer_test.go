@@ -11,7 +11,7 @@ func init() {
 	dummyHandler := func(ctx types.Context, args types.Args) error {
 		return nil
 	}
-	types.Global().RegisterExecution("shell", dummyHandler)
+	types.Global().RegisterExecution("test_exec", dummyHandler)
 }
 
 func TestTokenizeString(t *testing.T) {
@@ -125,10 +125,10 @@ func TestTokenizeString(t *testing.T) {
 		},
 		{
 			name:      "execution decorator stays literal",
-			content:   "Running @shell.exec('ls')",
+			content:   "Running @test_exec.cmd('ls')",
 			quoteType: '"',
 			expected: []StringPart{
-				{Start: 0, End: 25, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // Entire string is literal
+				{Start: 0, End: 28, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // Entire string is literal
 			},
 		},
 	}

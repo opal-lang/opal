@@ -102,12 +102,10 @@ func generateEchoSteps(count int) []sdk.Step {
 	for i := 0; i < count; i++ {
 		steps[i] = sdk.Step{
 			ID: uint64(i + 1),
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo test",
-					},
+			Tree: &sdk.CommandNode{
+				Name: "shell",
+				Args: map[string]interface{}{
+					"command": "echo test",
 				},
 			},
 		}
@@ -119,34 +117,28 @@ func generateComplexSteps() []sdk.Step {
 	return []sdk.Step{
 		{
 			ID: 1,
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo 'Starting'",
-					},
+			Tree: &sdk.CommandNode{
+				Name: "shell",
+				Args: map[string]interface{}{
+					"command": "echo 'Starting'",
 				},
 			},
 		},
 		{
 			ID: 2,
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "sleep 0.01",
-					},
+			Tree: &sdk.CommandNode{
+				Name: "shell",
+				Args: map[string]interface{}{
+					"command": "sleep 0.01",
 				},
 			},
 		},
 		{
 			ID: 3,
-			Commands: []sdk.Command{
-				{
-					Name: "shell",
-					Args: map[string]interface{}{
-						"command": "echo 'Done'",
-					},
+			Tree: &sdk.CommandNode{
+				Name: "shell",
+				Args: map[string]interface{}{
+					"command": "echo 'Done'",
 				},
 			},
 		},

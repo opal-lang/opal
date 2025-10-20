@@ -152,6 +152,7 @@ func (r *Registry) IsValueDecorator(path string) bool {
 func (r *Registry) GetSchema(path string) (DecoratorSchema, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	info, exists := r.decorators[path]
 	return info.Schema, exists
 }

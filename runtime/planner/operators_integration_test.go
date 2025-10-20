@@ -69,6 +69,56 @@ func TestOperatorsEndToEnd(t *testing.T) {
 			target:   "test",
 			wantExit: 0,
 		},
+		// TODO: Pipe operator execution not implemented yet - tests commented out
+		// Uncomment when pipe execution is implemented
+		// {
+		// 	name:     "pipe basic",
+		// 	source:   `fun test = echo "hello world" | grep "hello"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "pipe no match",
+		// 	source:   `fun test = echo "test" | grep "nomatch"`,
+		// 	target:   "test",
+		// 	wantExit: 1,
+		// },
+		// {
+		// 	name:     "pipe chained (3 commands)",
+		// 	source:   `fun test = printf "line1\nline2\nline3\n" | grep "line" | wc -l`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "AND then pipe (precedence test)",
+		// 	source:   `fun test = echo "first" && echo "second" | grep "second"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "pipe then AND (precedence test)",
+		// 	source:   `fun test = echo "test" | grep "test" && echo "found"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "complex mix: pipe AND pipe OR",
+		// 	source:   `fun test = echo "a" | grep "a" && echo "b" | grep "b" || echo "fallback"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "pipe with AND",
+		// 	source:   `fun test = echo "test" | grep "test" && echo "found"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
+		// {
+		// 	name:     "pipe with OR",
+		// 	source:   `fun test = echo "test" | grep "nomatch" || echo "fallback"`,
+		// 	target:   "test",
+		// 	wantExit: 0,
+		// },
 	}
 
 	for _, tt := range tests {

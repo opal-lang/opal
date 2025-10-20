@@ -2,6 +2,70 @@
 
 **opal** - CLI generation tool that creates standalone binaries from declarative command definitions.
 
+## CRITICAL: Refactoring and Migration Rules (READ THIS FIRST)
+
+**When refactoring or migrating code structure (e.g., replacing Commands with Tree):**
+
+### MANDATORY PROCESS - NO EXCEPTIONS
+
+1. **VERIFY EQUIVALENCE FIRST** - Before touching ANY tests:
+   - Write NEW tests that prove the new structure produces IDENTICAL behavior to the old structure
+   - Run BOTH old and new implementations side-by-side to verify exact equivalence
+   - Document any behavioral differences explicitly
+   - Get ALL new tests passing BEFORE removing old code
+
+2. **FIX ROOT CAUSES, NOT SYMPTOMS**:
+   - If tests fail, find and fix the BUG in the implementation
+   - NEVER change test expectations to match broken behavior
+   - NEVER comment out failing tests to "get the build working"
+   - NEVER leave tests half-finished or broken
+
+3. **COMPLETE EACH PIECE FULLY**:
+   - Fix one module completely before moving to the next
+   - Ensure ALL tests pass for that module
+   - Verify functionality matches documentation
+   - No "TODO" or "FIXME" comments without a tracking issue
+
+4. **TEST SYSTEMATICALLY**:
+   - After each change: run tests for that module
+   - After each module: run full test suite
+   - Before committing: verify ALL tests pass (core, runtime, cli)
+   - No commits with failing tests unless explicitly discussed
+
+5. **PRESERVE BEHAVIOR EXACTLY**:
+   - If old code did X, new code must do X identically
+   - If output format was Y, new output must be Y exactly
+   - If error message was Z, new error must be Z exactly
+   - Any deviation requires explicit approval
+
+### Anti-Patterns That Cause Slop
+
+❌ **Changing test expectations instead of fixing bugs**
+- Example: Test expects "max=3", output is "max=", changing test to expect "max="
+- Correct: Fix the formatter to output "max=3"
+
+❌ **Leaving tests broken "to fix later"**
+- Example: Commenting out 15 tests because they don't compile
+- Correct: Rewrite each test properly until all pass
+
+❌ **Assuming equivalence without verification**
+- Example: "Tree should work like Commands" without testing
+- Correct: Write tests proving Tree produces identical behavior
+
+❌ **Partial migrations**
+- Example: Updating 3 of 5 test files, leaving 2 broken
+- Correct: Complete all test files before committing
+
+### When You Catch Yourself Doing Slop
+
+**STOP. Ask yourself:**
+1. Am I changing a test expectation instead of fixing a bug?
+2. Am I leaving something broken "to fix later"?
+3. Have I verified the new code behaves identically to the old code?
+4. Would this commit pass all tests?
+
+**If any answer is YES to #1-2 or NO to #3-4: STOP and fix it properly.**
+
 ## Build/Test Commands (CRITICAL)
 
 **ALWAYS use `nix develop` for all development commands. NEVER use `nix-shell` or install tools globally.**

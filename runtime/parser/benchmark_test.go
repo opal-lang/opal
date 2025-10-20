@@ -188,3 +188,29 @@ func generate10KLineFile() string {
 	}
 	return result
 }
+
+// BenchmarkSemanticValidation measures the overhead of post-parse semantic validation
+func BenchmarkSemanticValidation(b *testing.B) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"simple_pipe", `echo "test" | grep "test"`},
+		{"decorator_pipe", `@timeout(5s) { echo "test" } | grep "pattern"`},
+		{"complex_pipe", `echo "line1" | grep "line" | wc -l && echo "done"`},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			// Parse once outside the loop
+			tree := Parse([]byte(tt.input))
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tree.ValidateSemantics()
+				// Clear errors for next iteration
+				tree.Errors = tree.Errors[:0]
+			}
+		})
+	}
+}

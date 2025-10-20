@@ -31,29 +31,39 @@ func Format(plan *planfmt.Plan) string {
 	return b.String()
 }
 
-// FormatStep returns a single step as text.
-// Chains multiple commands with their operators.
+// FormatStep returns a single step as text by formatting its execution tree.
 func FormatStep(step *planfmt.Step) string {
-	var parts []string
-
-	for i := range step.Commands {
-		cmd := &step.Commands[i]
-		formatted := FormatCommand(cmd)
-
-		// Add operator if present (not last command)
-		if cmd.Operator != "" {
-			formatted += " " + cmd.Operator
-		}
-
-		parts = append(parts, formatted)
-	}
-
-	return strings.Join(parts, " ")
+	return formatExecutionNode(step.Tree)
 }
 
-// FormatCommand returns a single command as text.
-// Handles different decorator types and argument formatting.
-func FormatCommand(cmd *planfmt.Command) string {
+// formatExecutionNode formats an execution node to text
+func formatExecutionNode(node planfmt.ExecutionNode) string {
+	switch n := node.(type) {
+	case *planfmt.CommandNode:
+		return formatCommandNode(n)
+	case *planfmt.PipelineNode:
+		var parts []string
+		for _, cmd := range n.Commands {
+			parts = append(parts, formatCommandNode(&cmd))
+		}
+		return strings.Join(parts, " | ")
+	case *planfmt.AndNode:
+		return fmt.Sprintf("%s && %s", formatExecutionNode(n.Left), formatExecutionNode(n.Right))
+	case *planfmt.OrNode:
+		return fmt.Sprintf("%s || %s", formatExecutionNode(n.Left), formatExecutionNode(n.Right))
+	case *planfmt.SequenceNode:
+		var parts []string
+		for _, child := range n.Nodes {
+			parts = append(parts, formatExecutionNode(child))
+		}
+		return strings.Join(parts, " ; ")
+	default:
+		return fmt.Sprintf("(unknown: %T)", node)
+	}
+}
+
+// formatCommandNode formats a single command node
+func formatCommandNode(cmd *planfmt.CommandNode) string {
 	// Special case: @shell with single "command" arg - show command directly
 	if cmd.Decorator == "@shell" && len(cmd.Args) == 1 && cmd.Args[0].Key == "command" {
 		return fmt.Sprintf("@shell %s", cmd.Args[0].Val.Str)

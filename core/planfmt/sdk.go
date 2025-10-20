@@ -22,23 +22,50 @@ func ToSDKSteps(planSteps []Step) []sdk.Step {
 // ToSDKStep converts a single planfmt.Step to sdk.Step.
 func ToSDKStep(planStep Step) sdk.Step {
 	return sdk.Step{
-		ID:       planStep.ID,
-		Commands: ToSDKCommands(planStep.Commands),
+		ID:   planStep.ID,
+		Tree: toSDKTree(planStep.Tree),
 	}
 }
 
-// ToSDKCommands converts planfmt.Command slice to sdk.Command slice.
-func ToSDKCommands(planCmds []Command) []sdk.Command {
-	sdkCmds := make([]sdk.Command, len(planCmds))
-	for i, planCmd := range planCmds {
-		sdkCmds[i] = sdk.Command{
-			Name:     planCmd.Decorator,
-			Args:     ToSDKArgs(planCmd.Args),
-			Block:    ToSDKSteps(planCmd.Block), // Recursive
-			Operator: planCmd.Operator,
+// toSDKTree converts planfmt.ExecutionNode to sdk.TreeNode.
+// This recursively converts the entire tree structure.
+func toSDKTree(node ExecutionNode) sdk.TreeNode {
+	switch n := node.(type) {
+	case *CommandNode:
+		return &sdk.CommandNode{
+			Name:  n.Decorator,
+			Args:  ToSDKArgs(n.Args),
+			Block: ToSDKSteps(n.Block), // Recursive for nested steps
 		}
+	case *PipelineNode:
+		commands := make([]sdk.CommandNode, len(n.Commands))
+		for i, cmd := range n.Commands {
+			commands[i] = sdk.CommandNode{
+				Name:  cmd.Decorator,
+				Args:  ToSDKArgs(cmd.Args),
+				Block: ToSDKSteps(cmd.Block),
+			}
+		}
+		return &sdk.PipelineNode{Commands: commands}
+	case *AndNode:
+		return &sdk.AndNode{
+			Left:  toSDKTree(n.Left),
+			Right: toSDKTree(n.Right),
+		}
+	case *OrNode:
+		return &sdk.OrNode{
+			Left:  toSDKTree(n.Left),
+			Right: toSDKTree(n.Right),
+		}
+	case *SequenceNode:
+		nodes := make([]sdk.TreeNode, len(n.Nodes))
+		for i, child := range n.Nodes {
+			nodes[i] = toSDKTree(child)
+		}
+		return &sdk.SequenceNode{Nodes: nodes}
+	default:
+		panic("unknown ExecutionNode type")
 	}
-	return sdkCmds
 }
 
 // ToSDKArgs converts []planfmt.Arg to map[string]interface{}.

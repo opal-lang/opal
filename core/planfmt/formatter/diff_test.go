@@ -23,13 +23,13 @@ func TestDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
 				},
 			},
 			wantAdded:    0,
@@ -41,13 +41,13 @@ func TestDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}},
 				},
 			},
 			wantAdded:    0,
@@ -59,14 +59,14 @@ func TestDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
-					{ID: 2, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
+					{ID: 2, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}},
 				},
 			},
 			wantAdded:    1,
@@ -78,14 +78,14 @@ func TestDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
-					{ID: 2, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
+					{ID: 2, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "B"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "A"`}}}}},
 				},
 			},
 			wantAdded:    0,
@@ -142,13 +142,13 @@ func TestFormatDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Old"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Old"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "New"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "New"`}}}}},
 				},
 			},
 			want: `Modified steps:
@@ -167,7 +167,7 @@ func TestFormatDiff(t *testing.T) {
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "New"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "New"`}}}}},
 				},
 			},
 			want: `Added steps:
@@ -180,7 +180,7 @@ func TestFormatDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Old"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Old"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
@@ -197,13 +197,13 @@ func TestFormatDiff(t *testing.T) {
 			expected: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Same"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Same"`}}}}},
 				},
 			},
 			actual: &planfmt.Plan{
 				Target: "hello",
 				Steps: []planfmt.Step{
-					{ID: 1, Commands: []planfmt.Command{{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Same"`}}}}}},
+					{ID: 1, Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: `echo "Same"`}}}}},
 				},
 			},
 			want: `No differences found.

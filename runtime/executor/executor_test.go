@@ -10,21 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Helper to create a simple shell command tree
+func shellCmd(cmd string) *planfmt.CommandNode {
+	return &planfmt.CommandNode{
+		Decorator: "@shell",
+		Args: []planfmt.Arg{
+			{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: cmd}},
+		},
+	}
+}
+
 // TestExecuteSimpleShellCommand tests executing a single echo command
 func TestExecuteSimpleShellCommand(t *testing.T) {
 	plan := &planfmt.Plan{
 		Target: "hello",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'Hello, World!'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'Hello, World!'"),
 			},
 		},
 	}
@@ -43,26 +46,12 @@ func TestExecuteMultipleCommands(t *testing.T) {
 		Target: "multi",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'First'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'First'"),
 			},
 			{
-				ID: 2,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'Second'"}},
-						},
-					},
-				},
+				ID:   2,
+				Tree: shellCmd("echo 'Second'"),
 			},
 		},
 	}
@@ -80,15 +69,8 @@ func TestExecuteFailingCommand(t *testing.T) {
 		Target: "fail",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 42"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("exit 42"),
 			},
 		},
 	}
@@ -106,37 +88,16 @@ func TestExecuteStopOnFirstFailure(t *testing.T) {
 		Target: "failfast",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'First'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'First'"),
 			},
 			{
-				ID: 2,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}},
-						},
-					},
-				},
+				ID:   2,
+				Tree: shellCmd("exit 1"),
 			},
 			{
-				ID: 3,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'Should not run'"}},
-						},
-					},
-				},
+				ID:   3,
+				Tree: shellCmd("echo 'Should not run'"),
 			},
 		},
 	}
@@ -168,15 +129,8 @@ func TestExecuteTelemetryBasic(t *testing.T) {
 		Target: "telemetry",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'test'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'test'"),
 			},
 		},
 	}
@@ -196,15 +150,8 @@ func TestExecuteTelemetryTiming(t *testing.T) {
 		Target: "timing",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'test'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'test'"),
 			},
 		},
 	}
@@ -226,15 +173,8 @@ func TestExecuteTelemetryFailedStep(t *testing.T) {
 		Target: "fail",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("exit 1"),
 			},
 		},
 	}
@@ -253,15 +193,8 @@ func TestExecuteDebugPaths(t *testing.T) {
 		Target: "debug",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'test'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'test'"),
 			},
 		},
 	}
@@ -287,15 +220,8 @@ func TestExecuteDebugDetailed(t *testing.T) {
 		Target: "debug",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'test'"}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd("echo 'test'"),
 			},
 		},
 	}
@@ -327,15 +253,8 @@ func TestInvariantEmptyShellCommand(t *testing.T) {
 		Target: "empty",
 		Steps: []planfmt.Step{
 			{
-				ID: 1,
-				Commands: []planfmt.Command{
-					{
-						Decorator: "@shell",
-						Args: []planfmt.Arg{
-							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: ""}},
-						},
-					},
-				},
+				ID:   1,
+				Tree: shellCmd(""),
 			},
 		},
 	}
@@ -350,63 +269,37 @@ func TestInvariantEmptyShellCommand(t *testing.T) {
 func TestOperatorSemicolon(t *testing.T) {
 	tests := []struct {
 		name     string
-		commands []planfmt.Command
+		tree     planfmt.ExecutionNode
 		wantExit int
 	}{
 		{
 			name: "all succeed",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
-					Operator:  ";",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
-					Operator:  ";",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'c'"}}},
-					Operator:  "",
+			tree: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					shellCmd("echo 'a'"),
+					shellCmd("echo 'b'"),
+					shellCmd("echo 'c'"),
 				},
 			},
 			wantExit: 0,
 		},
 		{
 			name: "first fails, rest run",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
-					Operator:  ";",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'still runs'"}}},
-					Operator:  ";",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 0"}}},
-					Operator:  "",
+			tree: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					shellCmd("exit 1"),
+					shellCmd("echo 'still runs'"),
+					shellCmd("exit 0"),
 				},
 			},
 			wantExit: 0, // Last command succeeds
 		},
 		{
 			name: "last fails",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
-					Operator:  ";",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 42"}}},
-					Operator:  "",
+			tree: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					shellCmd("echo 'a'"),
+					shellCmd("exit 42"),
 				},
 			},
 			wantExit: 42, // Last command's exit code
@@ -419,8 +312,8 @@ func TestOperatorSemicolon(t *testing.T) {
 				Target: "test",
 				Steps: []planfmt.Step{
 					{
-						ID:       1,
-						Commands: tt.commands,
+						ID:   1,
+						Tree: tt.tree,
 					},
 				},
 			}
@@ -438,80 +331,44 @@ func TestOperatorSemicolon(t *testing.T) {
 func TestOperatorAND(t *testing.T) {
 	tests := []struct {
 		name     string
-		commands []planfmt.Command
+		tree     planfmt.ExecutionNode
 		wantExit int
 	}{
 		{
 			name: "both succeed",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
-					Operator:  "&&",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
-					Operator:  "",
-				},
+			tree: &planfmt.AndNode{
+				Left:  shellCmd("echo 'a'"),
+				Right: shellCmd("echo 'b'"),
 			},
 			wantExit: 0,
 		},
 		{
 			name: "first fails, second skipped",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
-					Operator:  "&&",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
-					Operator:  "",
-				},
+			tree: &planfmt.AndNode{
+				Left:  shellCmd("exit 1"),
+				Right: shellCmd("echo 'should not run'"),
 			},
 			wantExit: 1, // First command's exit code
 		},
 		{
 			name: "chain of ANDs all succeed",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
-					Operator:  "&&",
+			tree: &planfmt.AndNode{
+				Left: &planfmt.AndNode{
+					Left:  shellCmd("echo 'a'"),
+					Right: shellCmd("echo 'b'"),
 				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'b'"}}},
-					Operator:  "&&",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'c'"}}},
-					Operator:  "",
-				},
+				Right: shellCmd("echo 'c'"),
 			},
 			wantExit: 0,
 		},
 		{
 			name: "chain of ANDs, middle fails",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'a'"}}},
-					Operator:  "&&",
+			tree: &planfmt.AndNode{
+				Left: &planfmt.AndNode{
+					Left:  shellCmd("echo 'a'"),
+					Right: shellCmd("exit 42"),
 				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 42"}}},
-					Operator:  "&&",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
-					Operator:  "",
-				},
+				Right: shellCmd("echo 'should not run'"),
 			},
 			wantExit: 42, // Middle command's exit code
 		},
@@ -523,8 +380,8 @@ func TestOperatorAND(t *testing.T) {
 				Target: "test",
 				Steps: []planfmt.Step{
 					{
-						ID:       1,
-						Commands: tt.commands,
+						ID:   1,
+						Tree: tt.tree,
 					},
 				},
 			}
@@ -542,75 +399,41 @@ func TestOperatorAND(t *testing.T) {
 func TestOperatorOR(t *testing.T) {
 	tests := []struct {
 		name     string
-		commands []planfmt.Command
+		tree     planfmt.ExecutionNode
 		wantExit int
 	}{
 		{
 			name: "first succeeds, second skipped",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'success'"}}},
-					Operator:  "||",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'should not run'"}}},
-					Operator:  "",
-				},
+			tree: &planfmt.OrNode{
+				Left:  shellCmd("echo 'success'"),
+				Right: shellCmd("echo 'should not run'"),
 			},
 			wantExit: 0,
 		},
 		{
 			name: "first fails, second runs and succeeds",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
-					Operator:  "||",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback'"}}},
-					Operator:  "",
-				},
+			tree: &planfmt.OrNode{
+				Left:  shellCmd("exit 1"),
+				Right: shellCmd("echo 'fallback'"),
 			},
 			wantExit: 0, // Fallback succeeds
 		},
 		{
 			name: "first fails, second fails too",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 1"}}},
-					Operator:  "||",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "exit 2"}}},
-					Operator:  "",
-				},
+			tree: &planfmt.OrNode{
+				Left:  shellCmd("exit 1"),
+				Right: shellCmd("exit 2"),
 			},
 			wantExit: 2, // Second command's exit code
 		},
 		{
 			name: "chain of ORs, first succeeds",
-			commands: []planfmt.Command{
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'success'"}}},
-					Operator:  "||",
+			tree: &planfmt.OrNode{
+				Left: &planfmt.OrNode{
+					Left:  shellCmd("echo 'success'"),
+					Right: shellCmd("echo 'fallback1'"),
 				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback1'"}}},
-					Operator:  "||",
-				},
-				{
-					Decorator: "@shell",
-					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'fallback2'"}}},
-					Operator:  "",
-				},
+				Right: shellCmd("echo 'fallback2'"),
 			},
 			wantExit: 0, // First succeeds, rest skipped
 		},
@@ -622,8 +445,8 @@ func TestOperatorOR(t *testing.T) {
 				Target: "test",
 				Steps: []planfmt.Step{
 					{
-						ID:       1,
-						Commands: tt.commands,
+						ID:   1,
+						Tree: tt.tree,
 					},
 				},
 			}

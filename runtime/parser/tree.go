@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"github.com/aledsdavies/opal/core/types"
 	"github.com/aledsdavies/opal/runtime/lexer"
 )
 
@@ -113,4 +114,250 @@ type ParseError struct {
 	Suggestion string // Actionable fix: "Add ')' after the last parameter"
 	Example    string // Valid syntax: "fun greet(name) {}"
 	Note       string // Optional explanation for learning
+}
+
+// ValidateSemantics performs post-parse semantic validation
+// This includes checking pipe operator I/O compatibility and other semantic rules
+func (tree *ParseTree) ValidateSemantics() {
+	v := &semanticValidator{
+		tree:   tree,
+		tokens: tree.Tokens,
+		events: tree.Events,
+	}
+	v.validate()
+}
+
+type semanticValidator struct {
+	tree   *ParseTree
+	tokens []lexer.Token
+	events []Event
+	errors []ParseError
+}
+
+func (v *semanticValidator) validate() {
+	v.validatePipeOperators()
+	v.tree.Errors = append(v.tree.Errors, v.errors...)
+}
+
+func (v *semanticValidator) validatePipeOperators() {
+	// Walk through tokens to find pipe operators
+	// For each pipe, check what's on the left and right
+	for i := 0; i < len(v.tokens); i++ {
+		if v.tokens[i].Type != lexer.PIPE {
+			continue
+		}
+
+		// Found a pipe operator at position i
+		pipeToken := v.tokens[i]
+
+		// Look backward to find what produces output
+		leftDecorator := v.findDecoratorBefore(i)
+
+		// Look forward to find what consumes input
+		rightDecorator := v.findDecoratorAfter(i)
+
+		// Validate left side (must support stdout)
+		if leftDecorator != "" {
+			v.validateStdoutSupport(leftDecorator, pipeToken)
+		}
+
+		// Validate right side (must support stdin)
+		if rightDecorator != "" {
+			v.validateStdinSupport(rightDecorator, pipeToken)
+		}
+	}
+}
+
+func (v *semanticValidator) findDecoratorBefore(pipePos int) string {
+	// Walk backward from pipe position to find @ token
+	// If we see }, we need to find the decorator that owns that block
+	for i := pipePos - 1; i >= 0; i-- {
+		tok := v.tokens[i]
+
+		// Skip whitespace, newlines
+		if tok.Type == lexer.NEWLINE {
+			continue
+		}
+
+		// If we hit }, find the matching decorator
+		if tok.Type == lexer.RBRACE {
+			// Find matching { and then the decorator before it
+			return v.findDecoratorBeforeBlock(i)
+		}
+
+		// If we hit @, this is a decorator without a block
+		if tok.Type == lexer.AT {
+			// Next token should be the decorator name
+			if i+1 < len(v.tokens) && (v.tokens[i+1].Type == lexer.IDENTIFIER || v.tokens[i+1].Type == lexer.VAR) {
+				return v.extractDecoratorName(i + 1)
+			}
+		}
+
+		// If we hit something else, it's plain shell (no validation needed)
+		break
+	}
+	return ""
+}
+
+func (v *semanticValidator) findDecoratorBeforeBlock(rbracePos int) string {
+	// Find matching { by counting braces backward
+	braceDepth := 1
+	for i := rbracePos - 1; i >= 0; i-- {
+		switch v.tokens[i].Type {
+		case lexer.RBRACE:
+			braceDepth++
+		case lexer.LBRACE:
+			braceDepth--
+			if braceDepth == 0 {
+				// Found matching {, now look backward for @
+				return v.findDecoratorBeforeLBrace(i)
+			}
+		}
+	}
+	return ""
+}
+
+func (v *semanticValidator) findDecoratorBeforeLBrace(lbracePos int) string {
+	// Walk backward from { to find @
+	// Skip ) and parameter lists
+	for i := lbracePos - 1; i >= 0; i-- {
+		tok := v.tokens[i]
+
+		// Skip whitespace, newlines
+		if tok.Type == lexer.NEWLINE {
+			continue
+		}
+
+		// Skip ) - could be decorator parameters
+		if tok.Type == lexer.RPAREN {
+			// Skip the entire parameter list
+			i = v.skipParameterListBackward(i)
+			if i < 0 {
+				break
+			}
+			continue
+		}
+
+		// Skip identifiers and dots (decorator name)
+		if tok.Type == lexer.IDENTIFIER || tok.Type == lexer.DOT {
+			continue
+		}
+
+		// If we hit @, extract the decorator name
+		if tok.Type == lexer.AT {
+			// Next token should be the decorator name
+			if i+1 < len(v.tokens) && (v.tokens[i+1].Type == lexer.IDENTIFIER || v.tokens[i+1].Type == lexer.VAR) {
+				return v.extractDecoratorName(i + 1)
+			}
+		}
+
+		// Something else - stop
+		break
+	}
+	return ""
+}
+
+func (v *semanticValidator) skipParameterListBackward(rparenPos int) int {
+	// Skip backward from ) to matching (
+	parenDepth := 1
+	for i := rparenPos - 1; i >= 0; i-- {
+		switch v.tokens[i].Type {
+		case lexer.RPAREN:
+			parenDepth++
+		case lexer.LPAREN:
+			parenDepth--
+			if parenDepth == 0 {
+				return i - 1 // Return position before (
+			}
+		}
+	}
+	return -1 // No matching (
+}
+
+func (v *semanticValidator) findDecoratorAfter(pipePos int) string {
+	// Walk forward from pipe position to find @ token
+	// Skip whitespace
+	for i := pipePos + 1; i < len(v.tokens); i++ {
+		tok := v.tokens[i]
+
+		// Skip whitespace, newlines
+		if tok.Type == lexer.NEWLINE {
+			continue
+		}
+
+		// If we hit @, this is a decorator
+		if tok.Type == lexer.AT {
+			// Next token should be the decorator name
+			if i+1 < len(v.tokens) && (v.tokens[i+1].Type == lexer.IDENTIFIER || v.tokens[i+1].Type == lexer.VAR) {
+				return v.extractDecoratorName(i + 1)
+			}
+		}
+
+		// If we hit something else, it's plain shell (no validation needed)
+		break
+	}
+	return ""
+}
+
+func (v *semanticValidator) extractDecoratorName(startPos int) string {
+	// Build decorator name by following dot-separated identifiers
+	// e.g., "file.read" or "timeout"
+	name := string(v.tokens[startPos].Text)
+
+	// Check for dot-separated parts
+	i := startPos + 1
+	for i < len(v.tokens) && v.tokens[i].Type == lexer.DOT {
+		i++ // Skip dot
+		if i < len(v.tokens) && v.tokens[i].Type == lexer.IDENTIFIER {
+			name += "." + string(v.tokens[i].Text)
+			i++
+		} else {
+			break
+		}
+	}
+
+	return name
+}
+
+func (v *semanticValidator) validateStdoutSupport(decoratorName string, pipeToken lexer.Token) {
+	schema, exists := v.tree.getSchema(decoratorName)
+	if !exists {
+		return // Decorator not registered - parser already reported error
+	}
+
+	if schema.IO == nil || !schema.IO.SupportsStdout {
+		v.errors = append(v.errors, ParseError{
+			Position:   pipeToken.Position,
+			Message:    "@" + decoratorName + " does not produce stdout",
+			Context:    "pipe operator",
+			Got:        pipeToken.Type,
+			Suggestion: "Only shell commands and decorators with stdout support can be piped from",
+			Example:    "echo \"test\" | grep \"pattern\"",
+			Note:       "Only decorators that produce stdout can be piped from",
+		})
+	}
+}
+
+func (v *semanticValidator) validateStdinSupport(decoratorName string, pipeToken lexer.Token) {
+	schema, exists := v.tree.getSchema(decoratorName)
+	if !exists {
+		return // Decorator not registered - parser already reported error
+	}
+
+	if schema.IO == nil || !schema.IO.SupportsStdin {
+		v.errors = append(v.errors, ParseError{
+			Position:   pipeToken.Position,
+			Message:    "@" + decoratorName + " does not accept stdin",
+			Context:    "pipe operator",
+			Got:        pipeToken.Type,
+			Suggestion: "Only shell commands and decorators with stdin support can receive piped data",
+			Example:    "echo \"test\" | grep \"pattern\"",
+			Note:       "Only decorators that accept stdin can receive piped data",
+		})
+	}
+}
+
+// getSchema is a helper to look up decorator schemas
+func (tree *ParseTree) getSchema(decoratorName string) (schema types.DecoratorSchema, exists bool) {
+	return types.Global().GetSchema(decoratorName)
 }
