@@ -8,18 +8,21 @@ summary: "Experimental roadmap and potential extensions"
 
 **Experimental roadmap and potential extensions**
 
+> **Note:** This document contains rough ideas and brainstorms. For formal design documents with detailed specifications, see [Opal Enhancement Proposals (OEPs)](proposals/README.md).
+
 ## Category Tags
 
-| Tag | Meaning | Timeline | Risk |
-|-----|---------|----------|------|
-| 🧪 **Experimental** | Proof of concept stage | Research phase | High - may not work out |
-| ⚙️ **Feasible** | Could implement soon | Next 6-12 months | Low - clear path forward |
-| 🧭 **Long-term** | Strategic direction | 12+ months | Medium - needs validation |
+| Tag | Meaning | Timeline | Risk | OEP Status |
+|-----|---------|----------|------|-----------|
+| 🧪 **Experimental** | Proof of concept stage | Research phase | High - may not work out | Research |
+| ⚙️ **Feasible** | Could implement soon | Next 6-12 months | Low - clear path forward | Draft/Accepted |
+| 🧭 **Long-term** | Strategic direction | 12+ months | Medium - needs validation | Planned |
 
 **How to read this document:**
 - 🧪 Ideas are speculative - exploring if they're valuable
 - ⚙️ Ideas have clear implementation paths - just need prioritization
 - 🧭 Ideas are strategic bets - require significant design work
+- See [OEPs](proposals/README.md) for formal design documents
 
 ---
 
@@ -324,6 +327,31 @@ git clone repo
 - Event-based parser enables ahead-of-time compilation
 - Decorator registry allows selective embedding
 - Deterministic execution ensures compiled behavior matches interpreted
+
+---
+
+## Formal Design Documents (OEPs)
+
+For detailed design specifications, see [Opal Enhancement Proposals](proposals/README.md):
+
+**Language Evolution:**
+- [OEP-001: Runtime Variable Binding with `let`](proposals/001-runtime-let-binding.md) - Execution-time variable bindings
+- OEP-002: Transform Pipeline Operator `|>` - Deterministic transformations (planned)
+- OEP-003: Automatic Cleanup and Rollback - `defer` and `ensure`/`rollback` operators (planned)
+- OEP-004: Plan Verification - Audit trail and contract verification (planned)
+
+**Tooling Enhancements:**
+- OEP-005: Interactive REPL (planned)
+- OEP-006: LSP/IDE Integration (planned)
+- OEP-007: Standalone Binary Generation (planned)
+- OEP-008: Plan-First Execution Model (planned)
+
+**Ecosystem Extensions:**
+- OEP-009: Terraform/Pulumi Provider Bridge (planned)
+- OEP-010: Infrastructure as Code (IaC) (planned)
+
+**Long-Term Vision:**
+- OEP-011: System Shell (planned)
 
 ---
 
