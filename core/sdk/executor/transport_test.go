@@ -243,6 +243,60 @@ func TestLocalTransportClose(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestLocalTransportExec_EnvironmentOverride tests that decorator vars override parent env
+func TestLocalTransportExec_EnvironmentOverride(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	// Set a base environment variable
+	originalPath := os.Getenv("PATH")
+	os.Setenv("TEST_OVERRIDE_VAR", "original_value")
+	defer os.Unsetenv("TEST_OVERRIDE_VAR")
+
+	var stdout bytes.Buffer
+	opts := ExecOpts{
+		Stdout: &stdout,
+		Env: map[string]string{
+			"TEST_OVERRIDE_VAR": "overridden_value", // Should override parent
+			"TEST_NEW_VAR":      "new_value",        // Should be added
+		},
+	}
+
+	exitCode, err := transport.Exec(context.Background(), []string{"sh", "-c", "echo $TEST_OVERRIDE_VAR:$TEST_NEW_VAR:$PATH"}, opts)
+
+	require.NoError(t, err)
+	assert.Equal(t, ExitSuccess, exitCode)
+
+	output := stdout.String()
+	// Should see overridden value, not original
+	assert.Contains(t, output, "overridden_value")
+	assert.NotContains(t, output, "original_value")
+	// Should see new variable
+	assert.Contains(t, output, "new_value")
+	// Should still have PATH from parent environment
+	assert.Contains(t, output, originalPath)
+}
+
+// TestLocalTransportExec_EnvironmentIsolation tests that only decorator vars are in opts.Env
+func TestLocalTransportExec_EnvironmentIsolation(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	// Verify that when opts.Env is empty, command still has access to parent environment
+	var stdout bytes.Buffer
+	opts := ExecOpts{
+		Stdout: &stdout,
+		Env:    map[string]string{}, // Empty - should still inherit parent
+	}
+
+	exitCode, err := transport.Exec(context.Background(), []string{"sh", "-c", "echo $PATH"}, opts)
+
+	require.NoError(t, err)
+	assert.Equal(t, ExitSuccess, exitCode)
+	// Should still have PATH because opts.Env is empty (cmd.Env stays nil)
+	assert.NotEmpty(t, stdout.String())
+}
+
 // TestLocalTransportExec_StderrSeparate tests stdout and stderr are separate
 func TestLocalTransportExec_StderrSeparate(t *testing.T) {
 	transport := &LocalTransport{}

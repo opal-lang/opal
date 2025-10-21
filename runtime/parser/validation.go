@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"fmt"
+
 	"github.com/aledsdavies/opal/core/types"
 	"github.com/aledsdavies/opal/runtime/lexer"
 )
@@ -152,7 +154,11 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 								Mode:    ModeScript,
 								Message: "@" + decoratorName + " is root-only and cannot be used inside " + transportName,
 								Line:    tok.Position.Line,
-								Context: "use shell variables ($HOME, $USER, etc.) to access transport environment, or hoist: var X = @" + decoratorName + " at root then use @var.X",
+								Context: fmt.Sprintf(
+									"use shell variables ($HOME, $USER, etc.) to access remote environment, "+
+										"or hoist to root: var X = @%s at top-level, then use @var.X inside %s",
+									decoratorName, transportName,
+								),
 							}
 						}
 					}
