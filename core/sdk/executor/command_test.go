@@ -100,22 +100,6 @@ func TestSetDir(t *testing.T) {
 	assert.True(t, strings.HasPrefix(stdout.String(), "/tmp"))
 }
 
-// TestStartWait tests Start/Wait pattern
-func TestStartWait(t *testing.T) {
-	var stdout bytes.Buffer
-
-	cmd := Command("echo", "async")
-	cmd.SetStdout(&stdout)
-
-	err := cmd.Start()
-	require.NoError(t, err)
-
-	exitCode, err := cmd.Wait()
-	require.NoError(t, err)
-	assert.Equal(t, 0, exitCode)
-	assert.Equal(t, "async\n", stdout.String())
-}
-
 // TestCommandNotFound tests handling of missing commands
 func TestCommandNotFound(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -255,23 +239,4 @@ func TestCombinedOutput(t *testing.T) {
 	assert.Equal(t, 0, exitCode)
 	assert.Contains(t, string(output), "stdout")
 	assert.Contains(t, string(output), "stderr")
-}
-
-// TestStartWaitCancellation tests that Start+Wait normalizes timeout to 124
-func TestStartWaitCancellation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
-	var stdout bytes.Buffer
-
-	cmd := CommandContext(ctx, "sleep", "10")
-	cmd.SetStdout(&stdout)
-
-	err := cmd.Start()
-	require.NoError(t, err)
-
-	exitCode, _ := cmd.Wait()
-
-	// Should return 124 (same as Run() with timeout)
-	assert.Equal(t, 124, exitCode, "Start+Wait should normalize timeout to 124")
 }

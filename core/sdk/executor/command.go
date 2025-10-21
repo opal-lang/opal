@@ -3,20 +3,26 @@ package executor
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/aledsdavies/opal/core/invariant"
 )
 
 // Cmd represents a safe command execution wrapper
 // All output is automatically routed through the scrubber
+//
+// Internally uses Transport abstraction (LocalTransport by default).
+// Future: Can be extended to support remote execution via custom transports.
 type Cmd struct {
-	cmd    *exec.Cmd
-	stdout io.Writer
-	stderr io.Writer
+	transport Transport         // Transport for execution (LocalTransport by default)
+	ctx       context.Context   // Execution context
+	argv      []string          // Command and arguments
+	stdin     io.Reader         // Command stdin (may be nil)
+	stdout    io.Writer         // Command stdout (scrubbed)
+	stderr    io.Writer         // Command stderr (scrubbed)
+	env       map[string]string // Environment variables
+	dir       string            // Working directory
 }
 
 // CommandContext creates a new command with context
@@ -26,11 +32,41 @@ func CommandContext(ctx context.Context, name string, args ...string) *Cmd {
 	invariant.Precondition(name != "", "command name cannot be empty")
 	invariant.NotNil(ctx, "context")
 
-	cmd := exec.CommandContext(ctx, name, args...)
+	// Build argv
+	argv := make([]string, 0, len(args)+1)
+	argv = append(argv, name)
+	argv = append(argv, args...)
+
 	return &Cmd{
-		cmd:    cmd,
-		stdout: os.Stdout, // Locked down by CLI, routes through scrubber
-		stderr: os.Stderr, // Locked down by CLI, routes through scrubber
+		transport: &LocalTransport{}, // Default to local execution
+		ctx:       ctx,
+		argv:      argv,
+		stdout:    os.Stdout, // Locked down by CLI, routes through scrubber
+		stderr:    os.Stderr, // Locked down by CLI, routes through scrubber
+		env:       make(map[string]string),
+	}
+}
+
+// CommandWithTransport creates a new command with a custom transport
+// This is for future use by decorators like @ssh.connect, @docker.exec
+// NOT part of public API yet - internal use only
+func CommandWithTransport(ctx context.Context, transport Transport, name string, args ...string) *Cmd {
+	invariant.Precondition(name != "", "command name cannot be empty")
+	invariant.NotNil(ctx, "context")
+	invariant.NotNil(transport, "transport")
+
+	// Build argv
+	argv := make([]string, 0, len(args)+1)
+	argv = append(argv, name)
+	argv = append(argv, args...)
+
+	return &Cmd{
+		transport: transport,
+		ctx:       ctx,
+		argv:      argv,
+		stdout:    os.Stdout,
+		stderr:    os.Stderr,
+		env:       make(map[string]string),
 	}
 }
 
@@ -72,18 +108,15 @@ func (c *Cmd) SetStderr(w io.Writer) *Cmd {
 	return c
 }
 
-// SetEnv replaces the entire environment for the command
 // AppendEnv adds environment variables to the command
 // Preserves existing environment (including PATH) and adds new variables
 // This is the recommended way to set environment variables
 func (c *Cmd) AppendEnv(kv map[string]string) *Cmd {
 	invariant.NotNil(kv, "environment map")
-	env := os.Environ()
 	for k, v := range kv {
 		invariant.Precondition(k != "", "environment variable key cannot be empty")
-		env = append(env, k+"="+v)
+		c.env[k] = v
 	}
-	c.cmd.Env = env
 	return c
 }
 
@@ -91,14 +124,14 @@ func (c *Cmd) AppendEnv(kv map[string]string) *Cmd {
 // This allows feeding input to commands like cat, grep, etc.
 func (c *Cmd) SetStdin(r io.Reader) *Cmd {
 	invariant.NotNil(r, "stdin reader")
-	c.cmd.Stdin = r
+	c.stdin = r
 	return c
 }
 
 // SetDir sets the working directory for the command
 func (c *Cmd) SetDir(dir string) *Cmd {
 	invariant.Precondition(dir != "", "directory cannot be empty")
-	c.cmd.Dir = dir
+	c.dir = dir
 	return c
 }
 
@@ -106,71 +139,15 @@ func (c *Cmd) SetDir(dir string) *Cmd {
 // Returns exit code (0 = success, non-zero = failure)
 // Context cancellation returns exit code 124 (conventional timeout code)
 func (c *Cmd) Run() (int, error) {
-	// Wire up stdout/stderr
-	c.cmd.Stdout = c.stdout
-	c.cmd.Stderr = c.stderr
-
-	// Execute
-	if err := c.cmd.Run(); err != nil {
-		// Context cancellation/timeout
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return 124, nil // Conventional timeout exit code
-		}
-		// Process exited with non-zero code
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// Check if process was killed by signal (exit code -1)
-			// This happens when context is cancelled
-			if exitErr.ExitCode() == -1 {
-				return 124, nil // Normalize to timeout code
-			}
-			return exitErr.ExitCode(), nil
-		}
-		// Other errors (e.g., command not found) return 127
-		return 127, err
+	opts := ExecOpts{
+		Stdin:  c.stdin,
+		Stdout: c.stdout,
+		Stderr: c.stderr,
+		Env:    c.env,
+		Dir:    c.dir,
 	}
 
-	return 0, nil
-}
-
-// Start starts the command but does not wait for it to complete
-// Use Wait() to wait for completion
-func (c *Cmd) Start() error {
-	// Wire up stdout/stderr
-	c.cmd.Stdout = c.stdout
-	c.cmd.Stderr = c.stderr
-
-	return c.cmd.Start()
-}
-
-// Wait waits for the command to complete
-// Must be called after Start()
-// Context cancellation returns exit code 124 (same as Run())
-func (c *Cmd) Wait() (int, error) {
-	if err := c.cmd.Wait(); err != nil {
-		// Context cancellation/timeout
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return 124, nil // Conventional timeout exit code
-		}
-		// Process exited with non-zero code
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// Check if process was killed by signal (exit code -1)
-			// This happens when context is cancelled
-			if exitErr.ExitCode() == -1 {
-				return 124, nil // Normalize to timeout code
-			}
-			return exitErr.ExitCode(), nil
-		}
-		// Other errors (e.g., command not found) return 127
-		return 127, err
-	}
-	return 0, nil
-}
-
-// Process returns the underlying os.Process (for advanced use cases)
-func (c *Cmd) Process() *os.Process {
-	return c.cmd.Process
+	return c.transport.Exec(c.ctx, c.argv, opts)
 }
 
 // Output runs the command and returns its stdout output

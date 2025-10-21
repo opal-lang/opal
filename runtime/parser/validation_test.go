@@ -76,3 +76,68 @@ fun test() { echo "test" }`,
 		})
 	}
 }
+
+func TestValidateEnvInRemoteTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		shouldErr bool
+		reason    string
+	}{
+		{
+			name:      "@env allowed at top level",
+			input:     `var home = @env.HOME`,
+			shouldErr: false,
+			reason:    "@env is allowed outside transport-switching decorators",
+		},
+		{
+			name: "@env allowed in non-transport decorator",
+			input: `@retry(attempts=3) {
+				var home = @env.HOME
+			}`,
+			shouldErr: false,
+			reason:    "@retry doesn't switch transport, so @env is allowed",
+		},
+		{
+			name: "shell variables allowed everywhere",
+			input: `@ssh.connect(host="remote") {
+				echo $HOME
+			}`,
+			shouldErr: false,
+			reason:    "shell variables ($HOME) are always allowed",
+		},
+		// Note: These tests will pass validation because ssh.connect, docker.exec
+		// are not registered decorators yet. When they are registered with
+		// SwitchesTransport=true, these tests will start failing as expected.
+		{
+			name: "@env forbidden in @ssh.connect (when registered)",
+			input: `@ssh.connect(host="remote") {
+				var home = @env.HOME
+			}`,
+			shouldErr: false, // Will be true when ssh.connect is registered
+			reason:    "@env resolves to local environment, confusing in remote context",
+		},
+		{
+			name: "@env forbidden in @docker.exec (when registered)",
+			input: `@docker.exec(container="app") {
+				var user = @env.USER
+			}`,
+			shouldErr: false, // Will be true when docker.exec is registered
+			reason:    "@env resolves to local environment, confusing in container context",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+			err := tree.Validate(ModeScript)
+
+			if tt.shouldErr && err == nil {
+				t.Errorf("expected error: %s", tt.reason)
+			}
+			if !tt.shouldErr && err != nil {
+				t.Errorf("unexpected error: %v (reason: %s)", err, tt.reason)
+			}
+		})
+	}
+}

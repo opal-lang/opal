@@ -1,3 +1,89 @@
+// Package sdk provides the execution SDK for Opal decorators.
+//
+// # Transport Pattern for Remote Execution
+//
+// The Transport abstraction (in core/sdk/executor) enables remote execution
+// while preserving Opal's security model. Decorators like @ssh.connect,
+// @docker.exec, and @aws.ssm.connect use this pattern to redirect @shell
+// commands to remote systems.
+//
+// ## How It Works
+//
+// Transport is an implementation detail of decorators, NOT a first-class
+// ExecutionContext member. Decorators wrap ExecutionContext and intercept
+// @shell calls to redirect them through custom transports.
+//
+// ## Example: SSH Decorator Pattern
+//
+//	// @ssh.connect decorator wraps execution context
+//	func sshConnectHandler(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
+//	    host := ctx.ArgString("host")
+//	    user := ctx.ArgString("user")
+//	    key := ctx.ArgString("key")
+//
+//	    // Establish SSH connection
+//	    transport, err := executor.NewSSHTransport(host, user, key)
+//	    if err != nil {
+//	        return 127, err
+//	    }
+//	    defer transport.Close()
+//
+//	    // Wrap context to use SSH transport
+//	    sshCtx := &sshExecutionContext{
+//	        parent:    ctx,
+//	        transport: transport,
+//	    }
+//
+//	    // Execute block with SSH context
+//	    return sshCtx.ExecuteBlock(block)
+//	}
+//
+//	// sshExecutionContext wraps ExecutionContext to use SSH transport
+//	type sshExecutionContext struct {
+//	    parent    sdk.ExecutionContext
+//	    transport executor.Transport
+//	}
+//
+//	// ExecuteBlock intercepts @shell calls and redirects to SSH
+//	func (s *sshExecutionContext) ExecuteBlock(steps []sdk.Step) (int, error) {
+//	    for _, step := range steps {
+//	        // If step is @shell, use SSH transport
+//	        if isShellCommand(step) {
+//	            exitCode, err := s.executeShellViaSSH(step)
+//	            if exitCode != 0 || err != nil {
+//	                return exitCode, err
+//	            }
+//	        } else {
+//	            // Other decorators delegate to parent
+//	            exitCode, err := s.parent.ExecuteBlock([]sdk.Step{step})
+//	            if exitCode != 0 || err != nil {
+//	                return exitCode, err
+//	            }
+//	        }
+//	    }
+//	    return 0, nil
+//	}
+//
+//	// Delegate all other methods to parent
+//	func (s *sshExecutionContext) Context() context.Context { return s.parent.Context() }
+//	func (s *sshExecutionContext) ArgString(k string) string { return s.parent.ArgString(k) }
+//	// ... etc
+//
+// ## Security Guarantees
+//
+// - Transport receives io.Writer for stdout/stderr - scrubber sits above
+// - Decorators can't bypass scrubber by using transport directly
+// - All I/O flows through executor for automatic secret scrubbing
+// - Connection security (SSH keys, Docker sockets, AWS credentials) managed by transport
+//
+// ## Future Transports
+//
+// - SSHTransport: Execute commands on remote servers via SSH
+// - DockerTransport: Execute commands inside Docker containers
+// - SSMTransport: Execute commands on EC2 instances via AWS SSM
+// - KubernetesTransport: Execute commands in Kubernetes pods
+//
+// See core/sdk/executor/transport.go for the Transport interface.
 package sdk
 
 import (

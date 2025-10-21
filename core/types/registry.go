@@ -152,9 +152,36 @@ func (r *Registry) IsValueDecorator(path string) bool {
 func (r *Registry) GetSchema(path string) (DecoratorSchema, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	info, exists := r.decorators[path]
+	if !exists {
+		return DecoratorSchema{}, false
+	}
+	return info.Schema, true
+}
+
+// GetTransportScope retrieves the transport scope for a value decorator.
+// Returns ScopeAgnostic if the decorator doesn't implement ValueScopeProvider.
+func (r *Registry) GetTransportScope(path string) TransportScope {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
 	info, exists := r.decorators[path]
-	return info.Schema, exists
+	if !exists {
+		return ScopeAgnostic // Default for unknown decorators
+	}
+
+	// Only value decorators have transport scope
+	if info.Kind != DecoratorKindValue {
+		return ScopeAgnostic
+	}
+
+	// Check if handler implements ValueScopeProvider
+	if scopeProvider, ok := info.RawHandler.(ValueScopeProvider); ok {
+		return scopeProvider.TransportScope()
+	}
+
+	// Default to ScopeAgnostic (safe default - works anywhere)
+	return ScopeAgnostic
 }
 
 // GetInfo retrieves the full decorator info
@@ -167,6 +194,17 @@ func (r *Registry) GetInfo(path string) (DecoratorInfo, bool) {
 
 // RegisterValueWithSchema registers a value decorator with a schema
 func (r *Registry) RegisterValueWithSchema(schema DecoratorSchema, handler ValueHandler) error {
+	return r.registerValueWithSchemaAndInstance(schema, handler, handler)
+}
+
+// RegisterValueDecoratorWithSchema registers a value decorator instance with a schema.
+// The instance parameter allows the registry to check for optional interfaces like ValueScopeProvider.
+func (r *Registry) RegisterValueDecoratorWithSchema(schema DecoratorSchema, instance interface{}, handler ValueHandler) error {
+	return r.registerValueWithSchemaAndInstance(schema, handler, instance)
+}
+
+// registerValueWithSchemaAndInstance is the internal implementation
+func (r *Registry) registerValueWithSchemaAndInstance(schema DecoratorSchema, handler ValueHandler, instance interface{}) error {
 	// Validate schema
 	if err := ValidateSchema(schema); err != nil {
 		return fmt.Errorf("invalid schema for %s: %w", schema.Path, err)
@@ -184,6 +222,7 @@ func (r *Registry) RegisterValueWithSchema(schema DecoratorSchema, handler Value
 		Kind:         DecoratorKindValue,
 		Schema:       schema,
 		ValueHandler: handler,
+		RawHandler:   instance, // Store instance for interface checking
 	}
 	return nil
 }

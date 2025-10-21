@@ -945,6 +945,112 @@ services: @parallel {
 deploy: @cmd.build && @cmd.test && @cmd.apply
 ```
 
+### Value Decorators and Remote Execution
+
+**IMPORTANT**: Value decorators like `@env.HOME` resolve at **plan-time** using the **local** environment. They are NOT transport-aware.
+
+#### The Two-Environment Model
+
+| What | When | Syntax | Example |
+|------|------|--------|---------|
+| **Local environment** (plan-time) | Planning | `@env.HOME` | `var local_home = @env.HOME` |
+| **Transport environment** (execution-time) | Execution | `$HOME` | `echo $HOME` |
+
+#### ❌ Don't Do This
+
+```opal
+@ssh.connect(host="remote-server") {
+    var home = @env.HOME  # ERROR: Resolves to LOCAL home!
+    echo $home            # Prints local home on remote server
+}
+```
+
+**Why this fails**: `@env.HOME` resolves at plan-time using your local environment, so it captures `/home/localuser` even though the command runs on the remote server.
+
+#### ✅ Do This Instead
+
+**For transport-specific environment** (remote, container, etc.):
+```opal
+@ssh.connect(host="remote-server") {
+    echo $HOME  # Shell variable uses REMOTE environment
+    echo $USER  # Remote user
+    cd $HOME/app
+    ./deploy.sh
+}
+```
+
+**For plan-time values** (local environment):
+```opal
+var local_user = @env.USER  # Plan-time: local user
+var replicas = @env.REPLICAS  # Plan-time: "3"
+
+kubectl scale --replicas=@var.replicas deployment/app
+echo "Deployed by @var.local_user"
+```
+
+**Mixing both patterns**:
+```opal
+var local_user = @env.USER  # Plan-time: local user
+
+@ssh.connect(host="remote-server") {
+    # Local user (from plan time)
+    echo "Deployed by: @var.local_user"
+    
+    # Remote user (from shell expansion)
+    echo "Running as: $USER"
+    
+    # Output:
+    # Deployed by: alice
+    # Running as: deploy
+}
+```
+
+#### Why This Design?
+
+**Plan-time resolution** enables:
+1. **Contract verification**: Plan hash includes environment values
+2. **Deterministic plans**: Same environment → same plan
+3. **Fast planning**: No need to establish remote connections during planning
+
+**Execution-time resolution** enables:
+4. **Transport-specific environment**: Shell variables use the correct environment
+5. **Standard shell behavior**: `$HOME`, `$USER`, `$PATH` work as expected
+6. **No surprises**: What you see in the shell is what you get
+
+#### Validation
+
+Opal prevents confusing usage at plan-time:
+
+```opal
+@ssh.connect(host="remote") {
+    var home = @env.HOME  # ERROR at plan-time
+}
+```
+
+**Error message**:
+```
+ERROR: @env is root-only and cannot be used inside @ssh.connect
+use shell variables ($HOME, $USER, etc.) to access transport environment, 
+or hoist: var X = @env at root then use @var.X
+```
+
+This validation applies to all transport-switching decorators:
+- `@ssh.connect` - SSH remote execution
+- `@docker.exec` - Docker container execution  
+- `@aws.ssm.connect` - AWS SSM execution
+- `@kubernetes.exec` - Kubernetes pod execution
+
+#### Summary
+
+- **`@env.X`** = Plan-time resolution (local environment)
+- **`$X`** = Execution-time expansion (transport's environment)
+- **`@var.X`** = Plan-time variable (can be used anywhere)
+
+Use the right tool for the job:
+- Need local environment for planning? → `@env.X`
+- Need transport environment for execution? → `$X`
+- Need to pass plan-time value to remote? → `var x = @env.X` then use `@var.x`
+
 ## Plans: Three Execution Modes
 
 Opal provides three distinct planning and execution modes, each serving different operational needs.

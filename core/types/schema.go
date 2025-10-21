@@ -40,6 +40,35 @@ const (
 	KindExecution DecoratorKindString = "execution"
 )
 
+// TransportScope defines where a value decorator can resolve
+type TransportScope uint8
+
+const (
+	ScopeRootOnly    TransportScope = iota // @env, @file.read - local only, plan-time
+	ScopeAgnostic                          // @var, @random - anywhere, plan-seeded
+	ScopeRemoteAware                       // @proc.env(transport=...) - explicit remote (future)
+)
+
+// String returns the string representation of TransportScope
+func (s TransportScope) String() string {
+	switch s {
+	case ScopeRootOnly:
+		return "root-only"
+	case ScopeAgnostic:
+		return "agnostic"
+	case ScopeRemoteAware:
+		return "remote-aware"
+	default:
+		return "unknown"
+	}
+}
+
+// ValueScopeProvider is an optional interface that value decorators can implement
+// to declare their transport scope. If not implemented, defaults to ScopeAgnostic.
+type ValueScopeProvider interface {
+	TransportScope() TransportScope
+}
+
 // BlockRequirement specifies whether a decorator accepts/requires a block
 type BlockRequirement string
 
@@ -112,15 +141,16 @@ type IOCapability struct {
 
 // DecoratorSchema describes a decorator's interface
 type DecoratorSchema struct {
-	Path             string                 // "env", "aws.secret"
-	Kind             DecoratorKindString    // "value" or "execution"
-	Description      string                 // Human-readable description
-	PrimaryParameter string                 // Name of primary param ("property", "secretName"), empty if none
-	Parameters       map[string]ParamSchema // All parameters (including primary)
-	ParameterOrder   []string               // Order of parameter declaration (for positional mapping)
-	Returns          *ReturnSchema          // What the decorator returns (value decorators only)
-	BlockRequirement BlockRequirement       // Whether decorator accepts/requires a block
-	IO               *IOCapability          // I/O capabilities for pipe operator (nil = no I/O)
+	Path              string                 // "env", "aws.secret"
+	Kind              DecoratorKindString    // "value" or "execution"
+	Description       string                 // Human-readable description
+	PrimaryParameter  string                 // Name of primary param ("property", "secretName"), empty if none
+	Parameters        map[string]ParamSchema // All parameters (including primary)
+	ParameterOrder    []string               // Order of parameter declaration (for positional mapping)
+	Returns           *ReturnSchema          // What the decorator returns (value decorators only)
+	BlockRequirement  BlockRequirement       // Whether decorator accepts/requires a block
+	IO                *IOCapability          // I/O capabilities for pipe operator (nil = no I/O)
+	SwitchesTransport bool                   // Whether decorator switches execution transport (ssh.connect, docker.exec, etc.)
 }
 
 // ParamSchema describes a single parameter
@@ -225,6 +255,18 @@ func (b *SchemaBuilder) AcceptsBlock() *SchemaBuilder {
 // RequiresBlock marks that this decorator requires a block
 func (b *SchemaBuilder) RequiresBlock() *SchemaBuilder {
 	b.schema.BlockRequirement = BlockRequired
+	return b
+}
+
+// SwitchesTransport marks that this decorator switches execution transport context.
+// This is used for decorators like @ssh.connect, @docker.exec, @aws.ssm.connect
+// that change where commands execute (local → remote, local → container, etc.).
+//
+// When set, validation will prevent @env value decorators inside this decorator's block
+// because @env resolves at plan-time using local environment, which would be confusing
+// in a remote context.
+func (b *SchemaBuilder) SwitchesTransport() *SchemaBuilder {
+	b.schema.SwitchesTransport = true
 	return b
 }
 

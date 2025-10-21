@@ -258,6 +258,304 @@ This allows decorators to:
 - Execution context provides hooks for logging
 - Full traceability without special cases
 
+## Transport Abstraction: Remote Execution
+
+The Transport abstraction enables decorators to execute commands in different environments (local, SSH, Docker, AWS SSM) while preserving Opal's security model and execution semantics.
+
+### The Two-Environment Model
+
+Opal distinguishes between **plan-time** and **execution-time** environments:
+
+| Environment | When | Purpose | Syntax | Example |
+|-------------|------|---------|--------|---------|
+| **Plan-Time** | Planning | Resolve value decorators | `@env.HOME` | `var replicas = @env.REPLICAS` → `"3"` |
+| **Execution-Time** | Execution | Command environment | `$HOME` | `echo $HOME` → local: `/home/user`, remote: `/home/deploy` |
+
+**Key insight**: Value decorators (`@env.X`) resolve at plan-time using the **local** environment, even inside remote transport decorators. This is intentional - it enables plan-time contract verification.
+
+### TransportScope: Declaring Decorator Scope
+
+Value decorators declare where they can resolve using the `TransportScope` interface:
+
+```go
+// TransportScope defines where a value decorator can resolve
+type TransportScope uint8
+
+const (
+    ScopeRootOnly     TransportScope = iota  // @env, @file.read - local only, plan-time
+    ScopeAgnostic                            // @var, @random - anywhere, plan-seeded
+    ScopeRemoteAware                         // @proc.env(transport=...) - explicit remote (future)
+)
+
+// ValueScopeProvider is an optional interface that value decorators implement
+type ValueScopeProvider interface {
+    TransportScope() TransportScope
+}
+```
+
+**Example: @env decorator declares ScopeRootOnly**:
+
+```go
+type envDecorator struct{}
+
+func (e *envDecorator) Handle(ctx types.Context, args types.Args) (types.Value, error) {
+    // Read from local environment
+    envVar := (*args.Primary).(string)
+    value, exists := ctx.Env[envVar]
+    // ...
+    return value, nil
+}
+
+// Implements ValueScopeProvider
+func (e *envDecorator) TransportScope() types.TransportScope {
+    return types.ScopeRootOnly  // Can only resolve at root (plan-time, local)
+}
+
+// Register
+decorator := &envDecorator{}
+types.Global().RegisterValueDecoratorWithSchema(schema, decorator, decorator.Handle)
+```
+
+**Validation**:
+- Parser tracks `transportDepth` (increments when entering `@ssh.connect`, etc.)
+- For each value decorator, checks `scope := registry.GetTransportScope(decoratorName)`
+- If `scope == ScopeRootOnly && transportDepth > 0` → validation error
+- Default for decorators without interface: `ScopeAgnostic` (safe, works anywhere)
+
+**Benefits**:
+- ✅ Plugin-friendly: decorators self-declare via interface
+- ✅ No hard-coded decorator names in validator
+- ✅ Type-safe: compiler enforces interface
+- ✅ Optional: decorators without interface get sensible defaults
+
+### Transport Interface
+
+```go
+// Transport abstracts command execution for different environments
+type Transport interface {
+    // Exec executes a command and returns exit code
+    // All I/O flows through provided readers/writers (scrubber-compatible)
+    Exec(ctx context.Context, argv []string, opts ExecOpts) (exitCode int, err error)
+    
+    // Put transfers a file to the destination
+    Put(ctx context.Context, src io.Reader, dst string, mode fs.FileMode) error
+    
+    // Get retrieves a file from the source
+    Get(ctx context.Context, src string, dst io.Writer) error
+    
+    // Close cleans up transport resources
+    Close() error
+}
+
+type ExecOpts struct {
+    Stdin  io.Reader         // Command stdin
+    Stdout io.Writer         // Command stdout (scrubbed)
+    Stderr io.Writer         // Command stderr (scrubbed)
+    Env    map[string]string // Decorator-added environment variables
+    Dir    string            // Working directory
+}
+```
+
+### Transport Implementations
+
+**LocalTransport** (current):
+- Executes commands using `os/exec`
+- Base environment: `os.Environ()`
+- Merges decorator-added vars with base environment
+
+**SSHTransport** (future):
+- Executes commands on remote server via SSH
+- Base environment: Remote server's environment (automatic)
+- Decorator vars added via `session.Setenv()`
+
+**DockerTransport** (future):
+- Executes commands inside Docker container
+- Base environment: Container's environment
+- File transfer via `docker cp`
+
+**SSMTransport** (future):
+- Executes commands on EC2 instance via AWS SSM
+- Base environment: EC2 instance's environment
+- File transfer via S3 staging (SSM limitation)
+
+### How Decorators Use Transport
+
+**Pattern**: Decorators wrap ExecutionContext and intercept `@shell` calls to redirect through custom transport.
+
+```go
+// @ssh.connect decorator wraps execution context
+func sshConnectHandler(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
+    host := ctx.ArgString("host")
+    user := ctx.ArgString("user")
+    
+    // Establish SSH connection
+    transport, err := executor.NewSSHTransport(host, user)
+    if err != nil {
+        return 127, err
+    }
+    defer transport.Close()
+    
+    // Wrap context to use SSH transport
+    sshCtx := &sshExecutionContext{
+        parent:    ctx,
+        transport: transport,
+    }
+    
+    // Execute block with SSH context
+    return sshCtx.ExecuteBlock(block)
+}
+
+// sshExecutionContext wraps ExecutionContext to use SSH transport
+type sshExecutionContext struct {
+    parent    sdk.ExecutionContext
+    transport executor.Transport
+}
+
+// ExecuteBlock intercepts @shell calls and redirects to SSH
+func (s *sshExecutionContext) ExecuteBlock(steps []sdk.Step) (int, error) {
+    for _, step := range steps {
+        if isShellCommand(step) {
+            // Use SSH transport instead of local
+            exitCode, err := s.executeShellViaSSH(step)
+            if exitCode != 0 || err != nil {
+                return exitCode, err
+            }
+        } else {
+            // Other decorators delegate to parent
+            exitCode, err := s.parent.ExecuteBlock([]sdk.Step{step})
+            if exitCode != 0 || err != nil {
+                return exitCode, err
+            }
+        }
+    }
+    return 0, nil
+}
+```
+
+### Security Guarantees
+
+1. **I/O Scrubbing Preserved**: Transport receives `io.Writer` for stdout/stderr - scrubber sits above
+2. **No Bypass**: Decorators can't bypass scrubber by using transport directly
+3. **Connection Security**: SSH keys, Docker sockets, AWS credentials managed by transport
+4. **File Transfer Safety**: Put/Get respect file permissions and ownership
+
+### Environment Resolution Rules
+
+**Plan-Time Resolution** (`@env.X` value decorators):
+- Always resolves using **local** `os.Environ()`
+- Happens during plan generation (before any transport connection)
+- Used for contract verification and plan hashing
+- Example: `var replicas = @env.REPLICAS` → resolves to `"3"` at plan time
+
+**Execution-Time Resolution** (shell variables `$X`):
+- Resolved by shell using **transport's** environment
+- Happens during command execution
+- Local transport: uses local environment
+- SSH transport: uses remote server's environment
+- Example: `echo $HOME` → local: `/home/user`, remote: `/home/deploy`
+
+**Decorator-Added Variables** (`ctx.Environ()`):
+- Decorators can add environment variables via `ctx.WithEnviron()`
+- Merged with transport's base environment
+- Example: `@env(DB=prod) { ./deploy.sh }` → adds `DB=prod` to environment
+
+### Validation: @env in Remote Transports
+
+To prevent confusing behavior, Opal validates that `@env` value decorators are not used inside transport-switching decorators:
+
+```opal
+# ❌ Forbidden: @env resolves to local environment
+@ssh.connect(host="remote") {
+    var home = @env.HOME  # ERROR: resolves to local home!
+}
+
+# ✅ Correct: Use shell variables for transport environment
+@ssh.connect(host="remote") {
+    echo $HOME  # Uses remote environment
+}
+
+# ✅ Correct: Use @env for plan-time values
+var local_user = @env.USER  # Plan-time: local user
+
+@ssh.connect(host="remote") {
+    echo "Deployed by: @var.local_user"  # Local user (from plan)
+    echo "Running as: $USER"              # Remote user (from shell)
+}
+```
+
+**How validation works**:
+- Value decorators implement `ValueScopeProvider` interface to declare their scope
+- `@env` declares `ScopeRootOnly` (can only resolve at root, plan-time)
+- Parser tracks `transportDepth` and validates scope vs depth
+- Error message guides users to use shell variables or hoist values
+
+### Example Usage Patterns
+
+**Local execution** (current):
+```opal
+var replicas = @env.REPLICAS  # Plan-time: "3"
+kubectl scale --replicas=@var.replicas deployment/app
+```
+
+**SSH execution** (future):
+```opal
+@ssh.connect(host="prod-server", user="deploy") {
+    # Send deployment script
+    @file.put(src="./deploy.sh", dst="/tmp/deploy.sh", mode=0755)
+    
+    # Execute remotely
+    /tmp/deploy.sh
+    
+    # Shell variables use remote environment
+    echo "Remote home: $HOME"
+    echo "Remote user: $USER"
+}
+```
+
+**Docker execution** (future):
+```opal
+@docker.exec(container="app-prod") {
+    # Send config file
+    @file.put(src="./app.conf", dst="/etc/app/app.conf", mode=0644)
+    
+    # Execute inside container
+    npm install
+    npm run build
+}
+```
+
+**Parallel deployment** (future):
+```opal
+@parallel {
+    @ssh.connect(host="web-1") { ./deploy.sh }
+    @ssh.connect(host="web-2") { ./deploy.sh }
+    @ssh.connect(host="web-3") { ./deploy.sh }
+}
+```
+
+### Design Principles
+
+**1. Transport as Implementation Detail**
+- Transport is NOT a first-class ExecutionContext member
+- Decorators wrap context and use transport internally
+- Follows "decorators wrap context" pattern
+
+**2. Security First**
+- All I/O flows through scrubber
+- Transport cannot bypass security model
+- Connection credentials managed securely
+
+**3. Scalable**
+- No hard-coded decorator names
+- Value decorators self-declare scope via `ValueScopeProvider` interface
+- Execution decorators self-declare transport switching via schema flag (for now)
+- Plugin-friendly: decorators just implement interfaces
+
+**4. Clear Semantics**
+- Plan-time vs execution-time distinction is explicit
+- Validation prevents confusing usage patterns
+- Error messages guide users to correct approach
+
 ## Steps, Decorators, and Operators
 
 Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.
