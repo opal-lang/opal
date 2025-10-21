@@ -329,130 +329,907 @@ git clone repo
 
 ## Language Evolution
 
-### Runtime Values with `let` and `@out` (⚙️ Feasible)
+### Runtime Variable Binding with `let` (⚙️ Feasible)
 
-**Goal:** Pass runtime resource identifiers (VPC IDs, instance IPs, job refs) between execution steps without breaking plan-time determinism.
+**Status**: Designed but not yet implemented. This feature will enable limited runtime control flow for advanced use cases.
 
-**The Problem:**
+`let` enables **execution-time bindings** from decorator effects - capturing handles, IDs, or structured outputs during execution. Unlike `var` (which resolves at plan time), `let` binds values during execution and uses a separate namespace to prevent plan-time/runtime confusion.
+
 ```opal
-// VPC ID doesn't exist at plan-time
-@aws.vpc.create(cidr="10.0.0.0/16", name="prod-vpc")
+// Create infrastructure, capture handle
+let.instance_id = @aws.instance.deploy(
+    type="t3.micro",
+    region="us-west-2"
+).id
 
-// How do we pass the VPC ID to the next step?
-@aws.subnet.create(
-  vpc=???,  // Need the VPC ID from previous step
-  cidr="10.0.1.0/24"
-)
+// Use handle in subsequent operations (accessed via @let namespace)
+@aws.instance.ssh(instanceId=@let.instance_id) {
+    apt-get update
+    systemctl restart app
+}
+
+// Thread handles through decorators
+@aws.route53.update(instanceId=@let.instance_id)
 ```
 
-**The Solution: `let` for Runtime Values**
+#### `var` vs `let`
+
+| Aspect | `var` | `let` |
+|--------|-------|-------|
+| Resolution | Plan time (before execution) | Execution time (during run) |
+| Source | Literals, value decorators | Decorator effects (opaque handles) |
+| Determinism | Frozen in plan hash | Deterministic within a run |
+| Control flow | Can drive `if`/`for`/`when` | **Cannot** drive plan-time constructs |
+| Namespace | `@var.NAME` | `@let.NAME` |
+
+#### Scope and Safety Rules
+
+**Namespace separation**: Write bindings as `let.NAME = ...`, read them as `@let.NAME`. This keeps plan-time (`@var`) and execution-time (`@let`) variables visually distinct.
+
+**Block scoping**: Bindings are visible within the same block and inner blocks:
 
 ```opal
-// let binds execution results (runtime values)
-let vpc = @aws.vpc.create(cidr="10.0.0.0/16", name="prod-vpc")
-let subnet = @aws.subnet.create(vpc=@out.vpc.id, cidr="10.0.1.0/24")
-let instance = @aws.instance.create(subnet=@out.subnet.id, type="t3.medium")
+deploy: {
+    let.instance_id = @aws.instance.deploy().id
+    
+    // ✅ Visible in same block
+    @aws.instance.tag(instanceId=@let.instance_id, tags={"env": "prod"})
+    
+    // ✅ Visible in nested blocks
+    {
+        @aws.route53.update(instanceId=@let.instance_id)
+    }
+}
 
-// Access runtime values with @out
-echo "Instance IP: @out.instance.ip"
-@aws.instance.ssh(instance=@out.instance) {
-  apt-get update
+// ❌ Not visible here - out of scope
+check: curl https://api.example.com/health
+```
+
+**Parallel scope**: Each `@parallel` branch has an independent `@let` context. Bindings created in one branch are not visible in siblings:
+
+```opal
+@parallel {
+    // Branch 1
+    let.endpoint_a = @k8s.deploy(name="api").url
+    curl @let.endpoint_a  // ✅ Works
+    
+    // Branch 2
+    let.endpoint_b = @k8s.deploy(name="worker").url
+    curl @let.endpoint_b  // ✅ Works
+    curl @let.endpoint_a  // ❌ Error: not visible across branches
 }
 ```
 
-**Core Distinction:**
-- **`var`** = plan-time values (resolved during planning, concrete in plans)
-- **`let`** = runtime values (resolved during execution, placeholders in plans)
+**Read-after-bind enforcement**: Reading `@let.NAME` before it is bound raises `UnboundLetError` at runtime:
 
-**Syntax (conceptual):**
-```ebnf
-let_stmt  = "let" identifier "=" execution_decorator ;
-out_ref   = "@out." identifier ("." property)* ;
+```opal
+// ❌ Error: used before binding
+@aws.instance.ssh(instanceId=@let.instance_id) { ... }
+let.instance_id = @aws.instance.deploy().id
+
+// ✅ Correct: bind first, use after
+let.instance_id = @aws.instance.deploy().id
+@aws.instance.ssh(instanceId=@let.instance_id) { ... }
 ```
 
-**Critical Constraints:**
+**No plan-time usage**: `@let` bindings cannot drive plan-time control flow:
 
-1. **`let` only binds execution decorators:**
-   ```opal
-   let vpc = @aws.vpc.create(...)        # ✅ Execution decorator
-   let port = @env.PORT                  # ❌ Value decorator (use var)
-   let name = "prod"                     # ❌ Literal (use var)
-   ```
+```opal
+// ❌ Error: cannot use @let in plan-time constructs
+let.env = @aws.instance.deploy().tag("environment")
+if @let.env == "production" {  // Not allowed
+    kubectl apply -f k8s/prod/
+}
 
-2. **Block-scoped, cannot escape to parent:**
-   ```opal
-   {
-     let vpc = @aws.vpc.create(...)
-     echo "VPC: @out.vpc.id"             # ✅ Visible in same block
-   }
-   echo "VPC: @out.vpc.id"               # ❌ Not visible in parent
-   ```
-
-3. **Can be passed (copied) to child blocks:**
-   ```opal
-   let vpc = @aws.vpc.create(...)
-   {
-     // vpc is visible in child block
-     let subnet = @aws.subnet.create(vpc=@out.vpc.id, ...)
-   }
-   ```
-
-4. **Cannot be used in metaprogramming constructs:**
-   ```opal
-   let count = @aws.instance.count()
-   
-   for i in @out.count {                 # ❌ Cannot use in for loop
-     echo "Item @var.i"
-   }
-   
-   when @out.vpc.region {                # ❌ Cannot use in when
-     "us-east-1" -> { ... }
-   }
-   
-   if @out.instance.ready {              # ❌ Cannot use in if
-     echo "Ready"
-   }
-   ```
-
-5. **Shadowing works like `var`:**
-   ```opal
-   let web = @aws.instance.create(name="web-prod")
-   {
-     let web = @aws.instance.create(name="web-canary")
-     echo "@out.web.ip"                  # Refers to canary
-   }
-   echo "@out.web.ip"                    # Refers to prod
-   ```
-
-**Plan Representation:**
-
-Plans show placeholders for runtime values:
-
-```
-Plan (deterministic structure):
-  1. let vpc = @aws.vpc.create(cidr="10.0.0.0/16")
-     → <handle:vpc>
-  2. let subnet = @aws.subnet.create(vpc=<handle:vpc>.id, cidr="10.0.1.0/24")
-     → <handle:subnet>
-  3. echo "Subnet: <handle:subnet>.id"
+// ✅ Correct: use @var for plan-time decisions
+var ENV = @env.ENVIRONMENT
+if @var.ENV == "production" {
+    let.instance_id = @aws.instance.deploy().id
+}
 ```
 
-**Why This Works:**
+**Security**: Values render as `🔒 opal:h:ID` (handle placeholder) in plans and logs. Console/TUI output is always scrubbed; file sinks via `>`/`>>` are raw unless using `@to.display(...)`.
 
-1. **Preserves plan-time determinism** - Plans show structure, not concrete IDs
-2. **Clear mental model** - `var` = plan-time, `let` = runtime
-3. **Value decorators stay pure** - No execution-time resolution for `@var.NAME`
-4. **Solves real operational need** - Pass VPC IDs, instance IPs, job refs between steps
+```
+deploy:
+├─ let.instance_id = @aws.instance.deploy().id
+└─ @aws.instance.ssh(instanceId=🔒 opal:h:7Xm2Kp9) { ... }
+```
 
-**When to Use:**
-- Creating cloud resources (VPCs, instances, databases) and passing IDs
-- Capturing job IDs, signed URLs, ephemeral tokens
-- Any execution result needed in subsequent steps
+**Plan hash**: The plan hash includes `let` binding sites (as opaque handles), ensuring contract verification covers execution-time bindings.
 
-**When NOT to Use:**
-- Plan-time values (use `var` with value decorators)
-- Metaprogramming (use `var` for loop ranges, conditionals)
-- Configuration (use `var` for settings, flags, paths)
+#### Common Patterns
+
+**Capturing service endpoints:**
+```opal
+let.endpoint = @k8s.deploy(manifest="app.yaml").service_url
+@retry(attempts=5, delay=2s) {
+    @http.healthcheck(url=@let.endpoint)
+}
+```
+
+**Threading database connections:**
+```opal
+let.db_url = @aws.rds.create(name="prod-db").endpoint
+@db.migrate(connection=@let.db_url)
+@db.seed(connection=@let.db_url)
+```
+
+**Certificate fingerprints:**
+```opal
+let.cert_fingerprint = @tls.generate(cn="api.example.com").fingerprint
+@aws.acm.import(cert=@let.cert_fingerprint)
+```
+
+---
+
+### Transform Pipeline Operator `|>` (⚙️ Feasible)
+
+The `|>` operator enables **deterministic transformations** and **inline assertions** on command output. Unlike `|` (which pipes raw stdout/stderr to another command), `|>` pipes through Opal-native, pure, bounded transforms called **PipeOps**.
+
+#### PipeOp Characteristics
+
+PipeOps are Opal-native transforms with enforced traits:
+- **Pure**: No filesystem, network, clock, or environment access
+- **Bounded**: Declare `MaxExpansionFactor` for memory safety
+- **Deterministic**: Same input always produces same output
+- **Trait declarations**: Each PipeOp declares `Deterministic=true`, `Bounded=true`, `MaxExpansionFactor`, `ReadsStdin=true`, `WritesStdout=true`, `WritesStderr=false`
+
+#### Basic Transforms
+
+```opal
+// JSON extraction
+kubectl get pods -o json |> json.pick("$.items[].metadata.name")
+
+// Text filtering
+curl /health |> lines.grep("status.*ok")
+
+// Column extraction and limiting
+docker ps |> columns.pick(1) |> lines.head(5)
+
+// Line counting
+kubectl logs app |> lines.count()
+```
+
+**Common PipeOps:**
+- `json.pick(path)` - Extract JSON using JSONPath
+- `lines.grep(pattern)` - Filter lines matching RE2 pattern
+- `lines.head(n)` - Take first n lines
+- `lines.tail(n)` - Take last n lines
+- `lines.count()` - Count number of lines
+- `columns.pick(n)` - Extract column n (space-delimited)
+
+#### Inline Assertions
+
+Use assertion PipeOps that **pass input through on success** or **fail the step** on assertion failure. On failure, assertion PipeOps raise `AssertionFailed` (catchable by `try/catch` or short-circuited by `||`).
+
+```opal
+// HTTP health check
+@http.healthcheck(url=@var.endpoint, retries=10)
+    |> assert.re("Status 200")
+
+// Pod count validation
+kubectl get deployment/app -o json
+    |> json.pick("$.status.readyReplicas")
+    |> assert.num(">= 3")
+
+// Database integrity
+@db.query("SELECT COUNT(*) FROM users")
+    |> assert.num("> 0")
+
+// Backup verification
+@aws.s3.list(bucket="backups") 
+    |> lines.count()
+    |> assert.num(">= 7")
+```
+
+**Assertion PipeOps:**
+- `assert.re(pattern)` - Input must match RE2 pattern
+- `assert.num(expr)` - Numeric predicate (`==`, `>=`, `<=`, `!=`, `>`, `<`) on parsed number
+
+#### Chained Transformations
+
+```opal
+// Multi-stage validation
+kubectl logs app 
+    |> lines.grep("ERROR") 
+    |> lines.count()
+    |> assert.num("== 0")
+
+// Extract, validate, format
+curl /api/metrics -H "Accept: application/json"
+    |> json.pick("$.active_connections")
+    |> assert.num("> 0")
+```
+
+#### Execution Semantics
+
+**Success**: Transform passes, output flows forward
+```opal
+curl /api/users |> json.pick("$.count") |> assert.num("> 0")
+# If count > 0 → step succeeds, count value available downstream
+```
+
+**Failure**: Transform or assertion fails, step fails
+```opal
+curl /health |> assert.re("Status 200")
+# If pattern doesn't match → step fails, raises AssertionFailed
+# Execution stops (unless in @retry or try/catch)
+```
+
+#### Handling Assertion Failures
+
+Assertions are step failures - use Opal's execution-time control flow to handle them:
+
+**Pattern 1: Rollback with `||` operator**
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    kubectl rollout status deployment/app
+    
+    // Validate health, rollback on failure
+    curl /health |> assert.re("Status 200") || kubectl rollout undo deployment/app
+}
+```
+
+**Pattern 2: Try/catch for complex logic**
+```opal
+deploy: {
+    try {
+        kubectl apply -f k8s/
+        curl /health |> assert.re("Status 200")
+        kubectl get pods |> lines.grep("Running") |> lines.count() |> assert.num(">= 3")
+    } catch {
+        echo "Validation failed, rolling back"
+        kubectl rollout undo deployment/app
+    }
+}
+```
+
+**Pattern 3: Retry before rollback**
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    
+    @retry(attempts=5, delay=10s) {
+        curl /health |> assert.re("Status 200")
+    } || {
+        echo "Health check failed after retries, rolling back"
+        kubectl rollout undo deployment/app
+    }
+}
+```
+
+**Pattern 4: Automatic cleanup with `defer`** (see [Automatic Cleanup with defer](#automatic-cleanup-with-defer-️-feasible))
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { kubectl rollout undo deployment/app }
+    
+    // If assertion fails, defer automatically runs rollback
+    curl /health |> assert.re("Status 200")
+}
+```
+
+#### Plan Representation
+
+The plan shows transform pipelines with their operator graph:
+
+```
+deploy:
+├─ kubectl get pods -o json
+│  └─ |> json.pick("$.items[].metadata.name")
+│     └─ |> lines.count()
+│        └─ |> assert.num(">= 3")
+└─ echo "Pod validation passed"
+```
+
+#### Operator Composition
+
+`|>` composes with other Opal constructs:
+
+```opal
+// With execution decorators
+@retry(attempts=3) {
+    curl /api |> json.pick("$.status") |> assert.re("ready")
+}
+
+// With conditionals (plan-time)
+if @var.ENV == "production" {
+    kubectl get pods |> lines.count() |> assert.num(">= 3")
+}
+
+// With parallel execution
+@parallel {
+    curl /api/users |> assert.re("Status 200")
+    curl /api/posts |> assert.re("Status 200")
+}
+
+// With runtime bindings (future)
+let.endpoint = @k8s.deploy(manifest="app.yaml").service_url
+@http.get(url=@let.endpoint) |> assert.re("healthy")
+```
+
+#### Plan Validation
+
+The planner enforces safety properties:
+- **IO traits**: PipeOps cannot access filesystem, network, clock
+- **Expansion limits**: Cumulative `MaxExpansionFactor` prevents memory exhaustion
+- **Contract hash**: The operator graph (including assertion nodes) and arguments are part of the plan hash
+
+#### Future: Parallel Groups (Optional)
+
+Future versions may support bracket syntax for parallel transform branches:
+
+```opal
+// Array form - produces JSON array
+payload.json |> [
+    json.pick("$.users"),
+    json.pick("$.posts")
+]
+
+// Object form - produces JSON object
+config.json |> {
+    services: json.pick("$.services"),
+    limits: json.pick("$.limits")
+}
+```
+
+**Semantics:**
+- `[]` merges branches into JSON array
+- `{}` merges branches into JSON object
+- All branches execute; any failure fails the group
+- Cannot mix named and unnamed branches
+- Non-JSON branch outputs must adapt explicitly (e.g., `as.text()`, `as.base64()`)
+
+---
+
+### Automatic Cleanup with `defer` (⚙️ Feasible)
+
+`defer` registers cleanup actions that execute in **LIFO order** (last registered runs first) when a block fails. This provides Go-style automatic resource cleanup without explicit try/catch blocks.
+
+#### Basic Usage
+
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { kubectl rollout undo deployment/app }
+    
+    kubectl create configmap temp-config
+    defer { kubectl delete configmap temp-config }
+    
+    // If this fails, both defers run in reverse order:
+    // 1. Delete configmap (most recent)
+    // 2. Rollback deployment (first registered)
+    curl /health |> assert.re("Status 200")
+}
+```
+
+#### Execution Semantics
+
+**On success**: Defers don't run, block completes normally
+
+**On failure**: Defers execute in LIFO order, then error propagates
+
+```opal
+deploy: {
+    kubectl apply -f k8s/              // ✓ succeeds
+    defer { kubectl rollout undo }      // registered (position 1)
+    
+    kubectl create secret temp          // ✓ succeeds  
+    defer { kubectl delete secret temp } // registered (position 2)
+    
+    curl /health |> assert.re("ready") // ✗ fails
+    
+    // Automatic execution:
+    // 1. kubectl delete secret temp    (position 2 - LIFO)
+    // 2. kubectl rollout undo           (position 1 - LIFO)
+    // 3. Error propagates upward
+}
+```
+
+#### LIFO Ordering (Last-In-First-Out)
+
+Defers execute in reverse registration order, ensuring resources clean up in the opposite order they were created:
+
+```opal
+setup: {
+    echo "Creating resources"
+    
+    kubectl create namespace staging
+    defer { kubectl delete namespace staging }
+    
+    kubectl create configmap app-config -n staging
+    defer { kubectl delete configmap app-config -n staging }
+    
+    kubectl create secret db-creds -n staging
+    defer { kubectl delete secret db-creds -n staging }
+    
+    // On failure, defers execute in reverse:
+    // 1. kubectl delete secret db-creds -n staging
+    // 2. kubectl delete configmap app-config -n staging
+    // 3. kubectl delete namespace staging
+}
+```
+
+#### Scope Rules
+
+Defers are **block-scoped** - they run when the containing block fails:
+
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { echo "Outer cleanup" }
+    
+    {
+        kubectl create configmap temp
+        defer { echo "Inner cleanup" }
+        
+        curl /health |> assert.re("ready")  // Fails here
+        // Runs: "Inner cleanup" only (inner block scope)
+    }
+    
+    // Outer defer doesn't run - inner failure was contained
+}
+```
+
+#### Interaction with Try/Catch
+
+Defers run **before** the catch block executes:
+
+```opal
+deploy: {
+    try {
+        kubectl apply -f k8s/
+        defer { kubectl rollout undo deployment/app }
+        
+        kubectl create configmap temp
+        defer { kubectl delete configmap temp }
+        
+        curl /health |> assert.re("ready")  // Fails
+        
+        // Execution order:
+        // 1. Defers run in LIFO: delete configmap, then rollback
+        // 2. Error captured
+        // 3. Catch block executes
+        
+    } catch {
+        echo "Resources already cleaned up by defers"
+        @slack.notify(message="Deployment failed and rolled back")
+    }
+}
+```
+
+#### Interaction with Retry Decorator
+
+Defers in a retried block execute only on the final failed attempt (not between retries):
+
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { kubectl rollout undo deployment/app }
+    
+    @retry(attempts=3, delay=5s) {
+        curl /health |> assert.re("ready")
+        // Attempt 1 fails: retry (defer doesn't run)
+        // Attempt 2 fails: retry (defer doesn't run)
+        // Attempt 3 fails: defer runs, then error propagates
+    }
+}
+```
+
+This ensures cleanup only happens after all retry attempts are exhausted, not on transient failures.
+
+#### Interaction with Operators
+
+Defers work naturally with shell operators:
+
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { kubectl rollout undo deployment/app }
+    
+    // Defer runs only if validation fails
+    kubectl rollout status deployment/app && 
+    curl /health |> assert.re("ready") ||
+    echo "Validation failed (defer will have run)"
+}
+```
+
+The defer executes when the entire block fails, regardless of which specific step or operator caused the failure.
+
+#### Complete Example: Database Migration
+
+```opal
+migrate: {
+    echo "Starting database migration"
+    
+    // Create backup
+    let.backup_file = @db.backup(database=@var.DB_NAME)
+    defer { 
+        echo "Restoring from backup @let.backup_file"
+        @db.restore(file=@let.backup_file)
+    }
+    
+    // Apply first migration
+    @db.migrate(file="migrations/001-schema.sql")
+    defer { @db.rollback(version="001") }
+    
+    // Apply second migration
+    @db.migrate(file="migrations/002-data.sql")
+    defer { @db.rollback(version="002") }
+    
+    // Validate
+    @db.query("SELECT COUNT(*) FROM users") |> assert.num("> 0")
+    @db.query("SELECT COUNT(*) FROM posts") |> assert.num("> 0")
+    
+    echo "Migration completed successfully"
+    
+    // On failure, automatic LIFO cleanup:
+    // 1. Rollback migration 002
+    // 2. Rollback migration 001  
+    // 3. Restore full database backup
+}
+```
+
+#### Complete Example: Multi-Resource Deployment
+
+```opal
+deploy: {
+    echo "Deploying application stack"
+    
+    // Create namespace
+    kubectl create namespace @var.APP_NAME
+    defer { kubectl delete namespace @var.APP_NAME }
+    
+    // Deploy database
+    kubectl apply -f k8s/database.yaml -n @var.APP_NAME
+    defer { kubectl delete -f k8s/database.yaml -n @var.APP_NAME }
+    
+    // Wait for database
+    @retry(attempts=10, delay=5s) {
+        kubectl wait --for=condition=ready pod -l app=database -n @var.APP_NAME
+    }
+    
+    // Deploy application
+    kubectl apply -f k8s/app.yaml -n @var.APP_NAME
+    defer { kubectl delete -f k8s/app.yaml -n @var.APP_NAME }
+    
+    // Wait for rollout
+    kubectl rollout status deployment/app -n @var.APP_NAME
+    
+    // Health check with validation
+    let.service_url = @k8s.get_service_url(name="app", namespace=@var.APP_NAME)
+    @retry(attempts=5, delay=10s) {
+        @http.get(url=@let.service_url) |> assert.re("Status 200")
+    }
+    
+    echo "✓ Deployment successful and validated"
+    
+    // If any step fails:
+    // 1. Delete application deployment
+    // 2. Delete database deployment
+    // 3. Delete namespace
+    // All in reverse order of creation
+}
+```
+
+#### Why Defer vs Try/Catch
+
+**Before (verbose, manual ordering):**
+```opal
+deploy: {
+    try {
+        kubectl apply -f k8s/
+        kubectl create secret temp
+        kubectl create configmap config
+        curl /health |> assert.re("ready")
+    } catch {
+        // Must manually track and reverse order
+        kubectl delete configmap config
+        kubectl delete secret temp
+        kubectl rollout undo deployment/app
+    }
+}
+```
+
+**After (automatic, correct ordering):**
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer { kubectl rollout undo deployment/app }
+    
+    kubectl create secret temp
+    defer { kubectl delete secret temp }
+    
+    kubectl create configmap config
+    defer { kubectl delete configmap config }
+    
+    curl /health |> assert.re("ready")
+}
+```
+
+**Advantages of defer:**
+- **Couples setup with teardown** - cleanup registered immediately after resource creation
+- **Automatic LIFO ordering** - no manual tracking needed
+- **Scoped lifecycle** - defers run when their containing block fails
+- **Composable** - works with `@retry`, `try/catch`, operators, assertions
+- **Less error-prone** - can't forget cleanup or get ordering wrong
+
+#### Plan Representation
+
+```
+deploy:
+├─ kubectl apply -f k8s/
+├─ @defer { kubectl rollout undo deployment/app }
+├─ kubectl create configmap temp
+├─ @defer { kubectl delete configmap temp }
+└─ curl /health
+   └─ |> assert.re("Status 200")
+
+On failure: defers execute in reverse registration order
+```
+
+The plan shows defers as registered actions that form a cleanup stack. The plan hash includes registered `defer` actions, making cleanup part of the execution contract.
+
+#### Advanced Defer Patterns
+
+**Error-Aware Cleanup**
+
+Access the error that triggered cleanup using `defer.with_error`:
+
+```opal
+deploy: {
+    kubectl apply -f k8s/
+    defer.with_error { err =>
+        kubectl rollout undo deployment/app
+        @slack.notify(
+            channel="#alerts",
+            message="Rollback due to: @var.err.message"
+        )
+    }
+    
+    curl /health |> assert.re("Status 200")
+}
+```
+
+The `err` binding provides access to the error message and type, allowing context-aware cleanup actions.
+
+**Reliable Cleanup with Decorators**
+
+Use `@timeout` and `@retry` inside defer blocks to make cleanup more robust:
+
+```opal
+deploy: {
+    kubectl create namespace @var.APP_NAME
+    defer { 
+        @timeout(30s) {
+            kubectl delete namespace @var.APP_NAME 
+        }
+    }
+    
+    kubectl apply -f k8s/
+    defer {
+        @retry(attempts=3, delay=5s) {
+            kubectl delete -f k8s/
+        }
+    }
+}
+```
+
+This prevents cleanup from hanging indefinitely or failing due to transient errors.
+
+**Defer with Try/Catch/Finally**
+
+Defers run **before** the catch block, allowing catch to handle both the primary error and any cleanup issues:
+
+```opal
+deploy: {
+    try {
+        kubectl apply -f k8s/
+        defer { kubectl rollout undo deployment/app }
+        
+        kubectl create configmap temp
+        defer { kubectl delete configmap temp }
+        
+        curl /health |> assert.re("Status 200")
+        
+        // Success-only actions go in the try block
+        echo "✓ Deployment successful"
+        @datadog.event(title="deploy-success")
+        
+    } catch {
+        // Defers already ran before reaching here
+        echo "✗ Deploy failed and rolled back"
+        @pagerduty.alert(message="Deployment failed")
+        
+    } finally {
+        // Always runs regardless of outcome
+        kubectl delete configmap temp-deploy-config
+    }
+}
+```
+
+**Execution order:**
+- On failure: defers (LIFO) → catch → finally
+- On success: finally only
+
+**When Defers Fail**
+
+If a defer itself fails, Opal continues with remaining defers and aggregates errors:
+
+```opal
+deploy: {
+    try {
+        kubectl create namespace staging
+        defer { kubectl delete namespace staging }  // Might fail if not empty
+        
+        kubectl create configmap config -n staging
+        defer { kubectl delete configmap config -n staging }
+        
+        exit 1  // Trigger cleanup
+        
+    } catch {
+        // catch receives primary error plus any suppressed defer failures
+        echo "Deploy failed, check logs for any cleanup errors"
+    }
+}
+```
+
+The primary error (what triggered cleanup) is preserved, while defer failures are collected as suppressed errors in the execution report.
+
+**Parallel Branch Cleanup**
+
+Each `@parallel` branch has its own independent defer stack:
+
+```opal
+@parallel {
+    {
+        kubectl create configmap api-config
+        defer { kubectl delete configmap api-config }
+        kubectl apply -f k8s/api.yaml
+        curl /api/health |> assert.re("Status 200")
+    }
+    
+    {
+        kubectl create configmap worker-config
+        defer { kubectl delete configmap worker-config }
+        kubectl apply -f k8s/worker.yaml
+        kubectl logs -l app=worker |> assert.re("Started")
+    }
+}
+```
+
+If one branch fails, only its defers run. The other branch continues independently.
+
+**Complete Example: Database Migration with Checkpoints**
+
+```opal
+migrate: {
+    try {
+        echo "Starting migration"
+        
+        // Backup with automatic restore on failure
+        let.backup_file = @db.backup(database=@var.DB_NAME)
+        defer.with_error { err =>
+            echo "Migration failed: @var.err.message"
+            echo "Restoring from @let.backup_file"
+            @retry(attempts=2, delay=5s) {
+                @db.restore(file=@let.backup_file)
+            }
+        }
+        
+        // Apply migrations with individual rollback
+        @db.migrate(file="migrations/001-schema.sql")
+        defer { 
+            echo "Rolling back migration 001"
+            @db.rollback(version="001") 
+        }
+        
+        @db.migrate(file="migrations/002-data.sql")
+        defer { 
+            echo "Rolling back migration 002"
+            @db.rollback(version="002") 
+        }
+        
+        // Validate
+        @db.query("SELECT COUNT(*) FROM users") |> assert.num("> 0")
+        
+        echo "✓ Migration completed successfully"
+        
+    } catch {
+        // All rollbacks already executed via defers
+        echo "✗ Migration failed and rolled back"
+        @slack.notify(message="Migration failed, database restored")
+        
+    } finally {
+        // Cleanup temp files
+        rm -f /tmp/migration-*.sql
+    }
+}
+```
+
+**On failure, defers execute in LIFO order:**
+1. Rollback migration 002
+2. Rollback migration 001
+3. Restore full database backup (with retry)
+
+**Complete Example: Canary Deployment with Progressive Rollback**
+
+```opal
+canary_deploy: {
+    try {
+        echo "Starting canary deployment for @var.SERVICE"
+        
+        // Deploy canary
+        kubectl apply -f k8s/canary.yaml
+        defer {
+            @timeout(60s) {
+                kubectl delete -f k8s/canary.yaml
+            }
+        }
+        
+        // Wait for readiness
+        @retry(attempts=10, delay=5s) {
+            kubectl wait --for=condition=ready pod -l version=canary
+        }
+        
+        // Progressive traffic shift with validation at each stage
+        for percentage in [10, 25, 50, 100] {
+            echo "Shifting @var.percentage% traffic to canary"
+            kubectl patch virtualservice @var.SERVICE \
+                --patch='{"spec":{"http":[{"weight":@var.percentage}]}}'
+            
+            defer.with_error { err =>
+                echo "Rolling back to 0% traffic due to: @var.err.message"
+                kubectl patch virtualservice @var.SERVICE \
+                    --patch='{"spec":{"http":[{"weight":0}]}}'
+            }
+            
+            // Validate error rate at this traffic level
+            @retry(attempts=5, delay=30s) {
+                @http.post(
+                    url="http://prometheus:9090/api/v1/query",
+                    body='{"query":"rate(http_errors{version=\"canary\"}[5m])"}'
+                ) |> json.pick("$.data.result[0].value[1]") 
+                  |> assert.num("< 0.01")
+            }
+        }
+        
+        // Success - promote canary
+        echo "✓ Canary validated, promoting to stable"
+        kubectl delete -f k8s/stable.yaml
+        kubectl label deployment canary version=stable
+        @slack.notify(channel="#deploys", message="Canary promoted")
+        
+    } catch {
+        // Defers already ran (traffic rollback, canary deletion)
+        echo "✗ Canary failed validation"
+        @pagerduty.alert(message="Canary deployment failed")
+        
+    } finally {
+        kubectl delete configmap canary-temp-config
+    }
+}
+```
+
+**If validation fails at 50% traffic:**
+1. Rollback traffic from 50% to 0%
+2. Rollback traffic from 25% to 0% (previous defer)
+3. Rollback traffic from 10% to 0% (previous defer)
+4. Delete canary deployment
+5. Catch block runs with aggregated error
+
+#### Pattern Summary
+
+| Pattern | When to Use | Example |
+|---------|-------------|---------|
+| `defer { ... }` | Basic cleanup | `defer { kubectl delete ns temp }` |
+| `defer.with_error { err => ... }` | Context-aware cleanup | `defer.with_error { err => log(@var.err.message) }` |
+| `defer { @timeout(...) { ... } }` | Prevent hanging cleanup | `defer { @timeout(30s) { kubectl delete ... } }` |
+| `defer { @retry(...) { ... } }` | Robust cleanup | `defer { @retry(3) { aws s3 rm ... } }` |
+| `try { ... defer } catch { ... }` | Error handling | Handle primary error after cleanup |
+| `finally { ... }` | Always-run actions | Unconditional cleanup regardless of outcome |
 
 ---
 
