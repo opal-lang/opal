@@ -3,8 +3,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aledsdavies/opal/core/invariant"
@@ -219,18 +221,76 @@ func (e *executor) executeTree(node sdk.TreeNode) int {
 }
 
 // executePipeline executes a pipeline of commands with stdout→stdin streaming
+// Uses io.Pipe() for streaming (bash-compatible: concurrent execution, not buffered)
+// Returns exit code of last command (bash semantics)
 func (e *executor) executePipeline(pipeline *sdk.PipelineNode) int {
-	// TODO: Implement pipe operator with io.Pipe()
-	// For now, just execute commands sequentially (no piping)
-	var lastExit int
-	for _, cmd := range pipeline.Commands {
-		lastExit = e.executeCommand(&cmd)
+	numCommands := len(pipeline.Commands)
+	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
+
+	// Single command - no piping needed
+	if numCommands == 1 {
+		return e.executeCommand(&pipeline.Commands[0])
 	}
-	return lastExit
+
+	// Create pipes between commands
+	// For N commands, we need N-1 pipes
+	pipes := make([]*io.PipeReader, numCommands-1)
+	pipeWriters := make([]*io.PipeWriter, numCommands-1)
+	for i := 0; i < numCommands-1; i++ {
+		pipes[i], pipeWriters[i] = io.Pipe()
+	}
+
+	// Track exit codes for all commands (PIPESTATUS)
+	exitCodes := make([]int, numCommands)
+
+	// Execute all commands concurrently (bash behavior)
+	var wg sync.WaitGroup
+	wg.Add(numCommands)
+
+	for i := 0; i < numCommands; i++ {
+		cmdIndex := i
+		cmd := &pipeline.Commands[i]
+
+		go func() {
+			defer wg.Done()
+
+			// Determine stdin for this command
+			var stdin io.Reader
+			if cmdIndex > 0 {
+				stdin = pipes[cmdIndex-1]
+			}
+
+			// Determine stdout for this command
+			var stdout io.Writer
+			if cmdIndex < numCommands-1 {
+				stdout = pipeWriters[cmdIndex]
+				defer func() {
+					_ = pipeWriters[cmdIndex].Close() // Signal EOF to next command
+				}()
+			}
+
+			// Execute command with pipes
+			exitCodes[cmdIndex] = e.executeCommandWithPipes(cmd, stdin, stdout)
+		}()
+	}
+
+	// Wait for all commands to complete
+	wg.Wait()
+
+	// Return last command's exit code (bash semantics)
+	// TODO: Store PIPESTATUS in telemetry for debugging
+	return exitCodes[numCommands-1]
 }
 
 // executeCommand executes a single command node
 func (e *executor) executeCommand(cmd *sdk.CommandNode) int {
+	return e.executeCommandWithPipes(cmd, nil, nil)
+}
+
+// executeCommandWithPipes executes a command with optional piped stdin/stdout
+// stdin: piped input (nil if not piped)
+// stdout: piped output (nil if not piped)
+func (e *executor) executeCommandWithPipes(cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
@@ -245,8 +305,16 @@ func (e *executor) executeCommand(cmd *sdk.CommandNode) int {
 	sdkHandler, ok := handler.(func(sdk.ExecutionContext, []sdk.Step) (int, error))
 	invariant.Invariant(ok, "invalid handler type for %s", cmd.Name)
 
-	// Create execution context with SDK args directly
-	ctx := newExecutionContext(cmd.Args, e, context.Background())
+	// Create base execution context
+	baseCtx := newExecutionContext(cmd.Args, e, context.Background())
+
+	// Clone with pipes if needed
+	var ctx sdk.ExecutionContext
+	if stdin != nil || stdout != nil {
+		ctx = baseCtx.Clone(cmd.Args, stdin, stdout)
+	} else {
+		ctx = baseCtx
+	}
 
 	// Call handler with SDK block
 	exitCode, err := sdkHandler(ctx, cmd.Block)

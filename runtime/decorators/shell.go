@@ -53,6 +53,17 @@ func shellHandler(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
 	// TODO: Consider if we need full replacement instead
 	cmd.AppendEnv(ctx.Environ())
 
+	// Handle piped stdin (from pipe operator)
+	if stdin := ctx.Stdin(); stdin != nil {
+		cmd.SetStdin(stdin)
+	}
+
+	// Handle piped stdout (to pipe operator)
+	if stdoutPipe := ctx.StdoutPipe(); stdoutPipe != nil {
+		cmd.SetStdout(stdoutPipe)
+	}
+	// Note: stderr is never piped - always goes to terminal
+
 	// Execute and return exit code
 	return cmd.Run()
 }

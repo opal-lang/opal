@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -128,6 +129,26 @@ type ExecutionContext interface {
 	WithContext(ctx context.Context) ExecutionContext
 	WithEnviron(env map[string]string) ExecutionContext
 	WithWorkdir(dir string) ExecutionContext
+
+	// Pipe I/O for pipe operator support
+	// These are nil when not piped - decorator should use default behavior
+	//
+	// Stdin returns piped input (nil if not piped).
+	// When nil, decorator should use its default stdin behavior.
+	Stdin() io.Reader
+
+	// StdoutPipe returns piped output (nil if not piped).
+	// When nil, decorator should write to its default stdout (which goes through scrubber).
+	// When non-nil, decorator MUST write to this pipe.
+	StdoutPipe() io.Writer
+
+	// Clone creates a new context for a child command.
+	// Inherits: Go context, environment, workdir
+	// Replaces: args, stdin, stdoutPipe
+	//
+	// This is how executor creates contexts for each command in the tree.
+	// Stdin and stdoutPipe may be nil (not piped).
+	Clone(args map[string]interface{}, stdin io.Reader, stdoutPipe io.Writer) ExecutionContext
 }
 
 // ExecutionHandler is the function signature for execution decorators.

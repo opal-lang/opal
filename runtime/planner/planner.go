@@ -494,8 +494,8 @@ func (p *planner) planCommand() (Command, error) {
 	startPos := p.pos
 	p.pos++ // Move past OPEN ShellCommand
 
-	// Collect all tokens in the shell command
-	var commandTokens []string
+	// Collect all token indices in the shell command
+	var tokenIndices []uint32
 	depth := 1
 
 	for p.pos < len(p.events) && depth > 0 {
@@ -511,21 +511,25 @@ func (p *planner) planCommand() (Command, error) {
 				break
 			}
 		} else if evt.Kind == parser.EventToken {
-			tokenIdx := evt.Data
-			tokenText := string(p.tokens[tokenIdx].Text)
-			commandTokens = append(commandTokens, tokenText)
+			tokenIndices = append(tokenIndices, evt.Data)
 		}
 
 		p.pos++
 	}
 
-	// Build command string
+	// Build command string using HasSpaceBefore to preserve original spacing
 	command := ""
-	for i, tok := range commandTokens {
-		if i > 0 {
+	for i, tokenIdx := range tokenIndices {
+		token := p.tokens[tokenIdx]
+
+		// Add space if this token had space before it (except for first token)
+		if i > 0 && token.HasSpaceBefore {
 			command += " "
 		}
-		command += tok
+
+		// Get token text - handle operators with empty Text
+		tokenText := getTokenText(token)
+		command += tokenText
 	}
 
 	// POSTCONDITION: command must not be empty
@@ -578,4 +582,93 @@ func (p *planner) planCommand() (Command, error) {
 	invariant.Postcondition(p.pos > startPos, "position must advance in planCommand")
 
 	return cmd, nil
+}
+
+// getTokenText returns the string representation of a token.
+// For tokens with Text (identifiers, strings, numbers), returns the text.
+// For operator/punctuation tokens with empty Text, reconstructs from token type.
+func getTokenText(token lexer.Token) string {
+	if len(token.Text) > 0 {
+		return string(token.Text)
+	}
+
+	// Handle punctuation/operator tokens that have empty Text
+	switch token.Type {
+	case lexer.DECREMENT:
+		return "--"
+	case lexer.INCREMENT:
+		return "++"
+	case lexer.PLUS:
+		return "+"
+	case lexer.MINUS:
+		return "-"
+	case lexer.MULTIPLY:
+		return "*"
+	case lexer.DIVIDE:
+		return "/"
+	case lexer.MODULO:
+		return "%"
+	case lexer.EQUALS:
+		return "="
+	case lexer.EQ_EQ:
+		return "=="
+	case lexer.NOT_EQ:
+		return "!="
+	case lexer.LT:
+		return "<"
+	case lexer.LT_EQ:
+		return "<="
+	case lexer.GT:
+		return ">"
+	case lexer.GT_EQ:
+		return ">="
+	case lexer.AND_AND:
+		return "&&"
+	case lexer.OR_OR:
+		return "||"
+	case lexer.PIPE:
+		return "|"
+	case lexer.NOT:
+		return "!"
+	case lexer.COLON:
+		return ":"
+	case lexer.COMMA:
+		return ","
+	case lexer.SEMICOLON:
+		return ";"
+	case lexer.LPAREN:
+		return "("
+	case lexer.RPAREN:
+		return ")"
+	case lexer.LBRACE:
+		return "{"
+	case lexer.RBRACE:
+		return "}"
+	case lexer.LSQUARE:
+		return "["
+	case lexer.RSQUARE:
+		return "]"
+	case lexer.AT:
+		return "@"
+	case lexer.DOT:
+		return "."
+	case lexer.DOTDOTDOT:
+		return "..."
+	case lexer.ARROW:
+		return "->"
+	case lexer.APPEND:
+		return ">>"
+	case lexer.PLUS_ASSIGN:
+		return "+="
+	case lexer.MINUS_ASSIGN:
+		return "-="
+	case lexer.MULTIPLY_ASSIGN:
+		return "*="
+	case lexer.DIVIDE_ASSIGN:
+		return "/="
+	case lexer.MODULO_ASSIGN:
+		return "%="
+	default:
+		return ""
+	}
 }

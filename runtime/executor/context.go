@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +15,13 @@ import (
 // executionContext implements sdk.ExecutionContext
 // All fields are immutable - modifications create new contexts
 type executionContext struct {
-	executor *executor
-	args     map[string]interface{} // Decorator arguments (from sdk.Command)
-	ctx      context.Context
-	environ  map[string]string // Immutable snapshot
-	workdir  string            // Immutable snapshot
+	executor   *executor
+	args       map[string]interface{} // Decorator arguments (from sdk.Command)
+	ctx        context.Context
+	environ    map[string]string // Immutable snapshot
+	workdir    string            // Immutable snapshot
+	stdin      io.Reader         // Piped input (nil if not piped)
+	stdoutPipe io.Writer         // Piped output (nil if not piped)
 }
 
 // newExecutionContext creates a new execution context for a decorator
@@ -35,11 +38,13 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 	}
 
 	return &executionContext{
-		executor: exec,
-		args:     args,
-		ctx:      ctx,
-		environ:  captureEnviron(), // Immutable snapshot
-		workdir:  wd,               // Immutable snapshot
+		executor:   exec,
+		args:       args,
+		ctx:        ctx,
+		environ:    captureEnviron(), // Immutable snapshot
+		workdir:    wd,               // Immutable snapshot
+		stdin:      nil,              // Root context has no piped input
+		stdoutPipe: nil,              // Root context has no piped output
 	}
 }
 
@@ -129,11 +134,13 @@ func (e *executionContext) WithContext(ctx context.Context) sdk.ExecutionContext
 	invariant.NotNil(ctx, "context")
 
 	return &executionContext{
-		executor: e.executor,
-		args:     e.args,
-		ctx:      ctx,
-		environ:  e.environ, // Share immutable snapshot
-		workdir:  e.workdir, // Share immutable snapshot
+		executor:   e.executor,
+		args:       e.args,
+		ctx:        ctx,
+		environ:    e.environ,    // Share immutable snapshot
+		workdir:    e.workdir,    // Share immutable snapshot
+		stdin:      e.stdin,      // Preserve pipes
+		stdoutPipe: e.stdoutPipe, // Preserve pipes
 	}
 }
 
@@ -149,11 +156,13 @@ func (e *executionContext) WithEnviron(env map[string]string) sdk.ExecutionConte
 	}
 
 	return &executionContext{
-		executor: e.executor,
-		args:     e.args,
-		ctx:      e.ctx,
-		environ:  envCopy,
-		workdir:  e.workdir,
+		executor:   e.executor,
+		args:       e.args,
+		ctx:        e.ctx,
+		environ:    envCopy,
+		workdir:    e.workdir,
+		stdin:      e.stdin,      // Preserve pipes
+		stdoutPipe: e.stdoutPipe, // Preserve pipes
 	}
 }
 
@@ -191,11 +200,44 @@ func (e *executionContext) WithWorkdir(dir string) sdk.ExecutionContext {
 	resolved = filepath.Clean(resolved)
 
 	return &executionContext{
-		executor: e.executor,
-		args:     e.args,
-		ctx:      e.ctx,
-		environ:  e.environ,
-		workdir:  resolved,
+		executor:   e.executor,
+		args:       e.args,
+		ctx:        e.ctx,
+		environ:    e.environ,
+		workdir:    resolved,
+		stdin:      e.stdin,      // Preserve pipes
+		stdoutPipe: e.stdoutPipe, // Preserve pipes
+	}
+}
+
+// Stdin returns piped input (nil if not piped)
+func (e *executionContext) Stdin() io.Reader {
+	return e.stdin
+}
+
+// StdoutPipe returns piped output (nil if not piped)
+func (e *executionContext) StdoutPipe() io.Writer {
+	return e.stdoutPipe
+}
+
+// Clone creates a new context for a child command
+// Inherits: Go context, environment, workdir
+// Replaces: args, stdin, stdoutPipe
+func (e *executionContext) Clone(
+	args map[string]interface{},
+	stdin io.Reader,
+	stdoutPipe io.Writer,
+) sdk.ExecutionContext {
+	invariant.NotNil(args, "args")
+
+	return &executionContext{
+		executor:   e.executor,
+		args:       args,
+		ctx:        e.ctx,      // INHERIT parent context
+		environ:    e.environ,  // INHERIT environment
+		workdir:    e.workdir,  // INHERIT workdir
+		stdin:      stdin,      // NEW (may be nil)
+		stdoutPipe: stdoutPipe, // NEW (may be nil)
 	}
 }
 

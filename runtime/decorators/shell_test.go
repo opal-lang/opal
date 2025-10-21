@@ -1,6 +1,8 @@
 package decorators
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/aledsdavies/opal/core/sdk"
@@ -134,5 +136,87 @@ func TestShellDecorator_Registered(t *testing.T) {
 	// Verify handler is correct type
 	if handler == nil {
 		t.Error("handler should not be nil")
+	}
+}
+
+// TestShellDecorator_WithPipedStdin verifies @shell reads from piped stdin
+func TestShellDecorator_WithPipedStdin(t *testing.T) {
+	stdin := strings.NewReader("hello world")
+
+	ctx := sdktesting.NewTestContext().
+		WithArg("command", "grep hello")
+
+	// Clone with piped stdin
+	ctxWithPipe := ctx.Clone(ctx.Args(), stdin, nil)
+
+	exitCode, err := shellHandler(ctxWithPipe, nil)
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0 (grep finds 'hello'), got: %d", exitCode)
+	}
+}
+
+// TestShellDecorator_WithPipedStdout verifies @shell writes to piped stdout
+func TestShellDecorator_WithPipedStdout(t *testing.T) {
+	var stdout bytes.Buffer
+
+	ctx := sdktesting.NewTestContext().
+		WithArg("command", "echo test")
+
+	// Clone with piped stdout
+	ctxWithPipe := ctx.Clone(ctx.Args(), nil, &stdout)
+
+	exitCode, err := shellHandler(ctxWithPipe, nil)
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got: %d", exitCode)
+	}
+	if stdout.String() != "test\n" {
+		t.Errorf("expected stdout 'test\\n', got: %q", stdout.String())
+	}
+}
+
+// TestShellDecorator_WithBothPipes verifies @shell works with both stdin and stdout piped
+func TestShellDecorator_WithBothPipes(t *testing.T) {
+	stdin := strings.NewReader("hello world")
+	var stdout bytes.Buffer
+
+	ctx := sdktesting.NewTestContext().
+		WithArg("command", "grep hello")
+
+	// Clone with both pipes
+	ctxWithPipes := ctx.Clone(ctx.Args(), stdin, &stdout)
+
+	exitCode, err := shellHandler(ctxWithPipes, nil)
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got: %d", exitCode)
+	}
+	if stdout.String() != "hello world\n" {
+		t.Errorf("expected stdout 'hello world\\n', got: %q", stdout.String())
+	}
+}
+
+// TestShellDecorator_PipedStdinNoMatch verifies grep fails when no match
+func TestShellDecorator_PipedStdinNoMatch(t *testing.T) {
+	stdin := strings.NewReader("hello world")
+
+	ctx := sdktesting.NewTestContext().
+		WithArg("command", "grep nomatch")
+
+	ctxWithPipe := ctx.Clone(ctx.Args(), stdin, nil)
+
+	exitCode, err := shellHandler(ctxWithPipe, nil)
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1 (grep no match), got: %d", exitCode)
 	}
 }

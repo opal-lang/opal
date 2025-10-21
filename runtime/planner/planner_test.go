@@ -81,6 +81,101 @@ func TestSimpleShellCommand(t *testing.T) {
 	}
 }
 
+// TestShellCommandWithDashes tests that shell commands with dashes are reconstructed correctly
+func TestShellCommandWithDashes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "wc with -l flag",
+			input:    `wc -l`,
+			expected: `wc -l`,
+		},
+		{
+			name:     "echo with -n flag",
+			input:    `echo -n "hello"`,
+			expected: `echo -n "hello"`,
+		},
+		{
+			name:     "ls with -la flags",
+			input:    `ls -la`,
+			expected: `ls -la`,
+		},
+		{
+			name:     "kubectl with -f flag",
+			input:    `kubectl apply -f deployment.yaml`,
+			expected: `kubectl apply -f deployment.yaml`,
+		},
+		{
+			name:     "grep with -v flag",
+			input:    `grep -v "pattern"`,
+			expected: `grep -v "pattern"`,
+		},
+		{
+			name:     "double dash --",
+			input:    `echo -- "end of options"`,
+			expected: `echo -- "end of options"`,
+		},
+		{
+			name:     "long flag --file",
+			input:    `command --file config.yaml`,
+			expected: `command --file config.yaml`,
+		},
+		{
+			name:     "double dash with space",
+			input:    `git commit -- file.txt`,
+			expected: `git commit -- file.txt`,
+		},
+		{
+			name:     "mixed single and double dash",
+			input:    `curl -X POST --data "test"`,
+			expected: `curl -X POST --data "test"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse
+			tree := parser.Parse([]byte(tt.input))
+
+			if len(tree.Errors) > 0 {
+				t.Fatalf("Parse errors: %v", tree.Errors)
+			}
+
+			// Plan (script mode)
+			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+				Target: "",
+			})
+			if err != nil {
+				t.Fatalf("Plan failed: %v", err)
+			}
+
+			// Verify plan structure
+			if len(plan.Steps) != 1 {
+				t.Errorf("Expected 1 step, got %d", len(plan.Steps))
+			}
+
+			step := plan.Steps[0]
+			if step.Tree == nil {
+				t.Fatal("Expected tree, got nil")
+			}
+
+			// Tree should be a CommandNode with @shell decorator
+			if getDecorator(step.Tree) != "@shell" {
+				t.Errorf("Expected @shell decorator, got %q", getDecorator(step.Tree))
+			}
+
+			// Check command argument - this is the critical test
+			actualCmd := getCommandArg(step.Tree, "command")
+			if actualCmd != tt.expected {
+				t.Errorf("Command mismatch:\n  want: %q\n  got:  %q", tt.expected, actualCmd)
+			}
+		})
+	}
+}
+
 // TestMultipleShellCommands tests multiple newline-separated commands
 func TestMultipleShellCommands(t *testing.T) {
 	source := []byte(`echo "First"

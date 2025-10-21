@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -19,10 +20,12 @@ import (
 //	    WithWorkdir("/tmp")
 //	exitCode, err := shellHandler(ctx, []sdk.Step{})
 type TestExecutionContext struct {
-	args    map[string]interface{}
-	environ map[string]string
-	workdir string
-	ctx     context.Context
+	args       map[string]interface{}
+	environ    map[string]string
+	workdir    string
+	ctx        context.Context
+	stdin      io.Reader
+	stdoutPipe io.Writer
 
 	// ExecuteBlock callback - set this to control block execution behavior
 	// Default: executes steps sequentially, stops on first non-zero exit
@@ -250,6 +253,27 @@ func (t *TestExecutionContext) GetExecutedBlock(blockIndex int) ([]sdk.Step, err
 		return nil, fmt.Errorf("block index %d out of range (only %d blocks executed)", blockIndex, len(t.ExecutedBlocks))
 	}
 	return t.ExecutedBlocks[blockIndex], nil
+}
+
+// Stdin returns the piped stdin (nil if not piped)
+func (t *TestExecutionContext) Stdin() io.Reader {
+	return t.stdin
+}
+
+// StdoutPipe returns the piped stdout writer (nil if not piped)
+func (t *TestExecutionContext) StdoutPipe() io.Writer {
+	return t.stdoutPipe
+}
+
+// Clone creates a new context with different args and pipes
+// Inherits: Go context, environment, workdir
+// Replaces: args, stdin, stdoutPipe
+func (t *TestExecutionContext) Clone(args map[string]interface{}, stdin io.Reader, stdoutPipe io.Writer) sdk.ExecutionContext {
+	newTest := *t // Copy (inherits ctx, environ, workdir)
+	newTest.args = args
+	newTest.stdin = stdin
+	newTest.stdoutPipe = stdoutPipe
+	return &newTest
 }
 
 // Verify TestExecutionContext implements sdk.ExecutionContext at compile time
