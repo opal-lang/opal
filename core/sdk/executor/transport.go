@@ -18,8 +18,9 @@
 //
 // All transports use consistent POSIX-compatible exit codes:
 //   - 0: Success
-//   - 1-126: Command-specific failure
+//   - 1-125: Command-specific failure
 //   - 124: Timeout/cancellation
+//   - 126: Permission denied (command cannot execute)
 //   - 127: Command not found
 //
 // # Security
@@ -46,10 +47,11 @@ import (
 // These codes are used consistently across all Transport implementations
 // to ensure uniform error handling regardless of execution environment.
 const (
-	ExitSuccess       = 0   // Command completed successfully
-	ExitCommandFailed = 1   // Generic command failure
-	ExitTimeout       = 124 // Context cancelled/timeout (GNU timeout convention)
-	ExitNotFound      = 127 // Command not found
+	ExitSuccess          = 0   // Command completed successfully
+	ExitCommandFailed    = 1   // Generic command failure
+	ExitTimeout          = 124 // Context cancelled/timeout (GNU timeout convention)
+	ExitPermissionDenied = 126 // Command cannot execute (permission denied, not executable)
+	ExitNotFound         = 127 // Command not found
 )
 
 // Transport abstracts command execution and file transfer for different environments.
@@ -232,8 +234,25 @@ func (t *LocalTransport) Exec(ctx context.Context, argv []string, opts ExecOpts)
 			}
 			return exitErr.ExitCode(), nil
 		}
-		// Other errors (e.g., command not found)
-		return ExitNotFound, err
+		// Classify exec errors by type
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			if os.IsPermission(pathErr.Err) {
+				// Permission denied (file exists but not executable)
+				return ExitPermissionDenied, err
+			}
+			if os.IsNotExist(pathErr.Err) && pathErr.Op != "chdir" {
+				// Explicit path does not exist (but not a chdir error)
+				return ExitNotFound, err
+			}
+		}
+		var execErr *exec.Error
+		if errors.As(err, &execErr) {
+			// Command not found in PATH
+			return ExitNotFound, err
+		}
+		// Other errors (e.g., invalid working directory)
+		return ExitCommandFailed, err
 	}
 
 	return ExitSuccess, nil

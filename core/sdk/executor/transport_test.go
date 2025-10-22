@@ -127,6 +127,64 @@ func TestLocalTransportExec_CommandNotFound(t *testing.T) {
 	assert.Equal(t, 127, exitCode) // Convention: 127 for command not found
 }
 
+// TestLocalTransportExec_PermissionDenied tests executing a non-executable file
+func TestLocalTransportExec_PermissionDenied(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	// Create a temp file without execute permissions
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "script.sh")
+	err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho hello\n"), 0o644) // No execute bit
+	require.NoError(t, err)
+
+	var stdout, stderr bytes.Buffer
+	opts := ExecOpts{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	exitCode, err := transport.Exec(context.Background(), []string{scriptPath}, opts)
+
+	assert.Error(t, err)
+	assert.Equal(t, 126, exitCode) // Convention: 126 for permission denied
+}
+
+// TestLocalTransportExec_InvalidWorkdir tests command with non-existent working directory
+func TestLocalTransportExec_InvalidWorkdir(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	var stdout, stderr bytes.Buffer
+	opts := ExecOpts{
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Dir:    "/nonexistent/directory/path",
+	}
+
+	exitCode, err := transport.Exec(context.Background(), []string{"echo", "hello"}, opts)
+
+	assert.Error(t, err)
+	assert.Equal(t, 1, exitCode) // Convention: 1 for general command failure
+}
+
+// TestLocalTransportExec_ExplicitPathNotFound tests executing a non-existent explicit path
+func TestLocalTransportExec_ExplicitPathNotFound(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	var stdout, stderr bytes.Buffer
+	opts := ExecOpts{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	exitCode, err := transport.Exec(context.Background(), []string{"/tmp/missing/script"}, opts)
+
+	assert.Error(t, err)
+	assert.Equal(t, 127, exitCode) // Convention: 127 for command not found (explicit path)
+}
+
 // TestLocalTransportExec_ContextCancellation tests context cancellation
 func TestLocalTransportExec_ContextCancellation(t *testing.T) {
 	transport := &LocalTransport{}
