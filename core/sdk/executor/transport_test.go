@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -286,6 +287,81 @@ func TestLocalTransportGet_FileNotFound(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
+}
+
+// TestLocalTransportPut_ContextCancellation tests that Put respects context cancellation
+func TestLocalTransportPut_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	dst := filepath.Join(tmpDir, "output.txt")
+
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	// Create a slow reader that will be interrupted
+	slowReader := &slowReader{data: make([]byte, 10*1024*1024)} // 10MB
+
+	// Cancel context immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := transport.Put(ctx, slowReader, dst, 0o644)
+
+	// Should return context.Canceled error
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// TestLocalTransportGet_ContextCancellation tests that Get respects context cancellation
+func TestLocalTransportGet_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "large.txt")
+
+	// Create a large file
+	largeData := make([]byte, 10*1024*1024) // 10MB
+	require.NoError(t, os.WriteFile(src, largeData, 0o644))
+
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	// Create a slow writer that will be interrupted
+	slowWriter := &slowWriter{}
+
+	// Cancel context immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := transport.Get(ctx, src, slowWriter)
+
+	// Should return context.Canceled error
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// slowReader simulates a slow io.Reader for testing context cancellation
+type slowReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *slowReader) Read(p []byte) (n int, err error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	// Read slowly to allow context cancellation
+	n = copy(p, r.data[r.pos:r.pos+1])
+	r.pos += n
+	return n, nil
+}
+
+// slowWriter simulates a slow io.Writer for testing context cancellation
+type slowWriter struct {
+	written int
+}
+
+func (w *slowWriter) Write(p []byte) (n int, err error) {
+	// Write slowly to allow context cancellation
+	w.written += len(p)
+	return len(p), nil
 }
 
 // TestLocalTransportClose tests Close is safe to call

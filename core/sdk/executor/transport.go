@@ -258,6 +258,47 @@ func (t *LocalTransport) Exec(ctx context.Context, argv []string, opts ExecOpts)
 	return ExitSuccess, nil
 }
 
+// copyWithContext copies data from src to dst while respecting context cancellation.
+// Returns context.Canceled if context is cancelled during copy.
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024) // 32KB buffer
+	var written int64
+
+	for {
+		// Check context before each read
+		select {
+		case <-ctx.Done():
+			return written, ctx.Err()
+		default:
+		}
+
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = io.ErrShortWrite
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				return written, ew
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				return written, er
+			}
+			break
+		}
+	}
+	return written, nil
+}
+
 // Put copies a file to the local filesystem.
 // Creates parent directories if they don't exist.
 func (t *LocalTransport) Put(ctx context.Context, src io.Reader, dst string, mode fs.FileMode) error {
@@ -282,8 +323,8 @@ func (t *LocalTransport) Put(ctx context.Context, src io.Reader, dst string, mod
 		}
 	}()
 
-	// Copy content
-	if _, err := io.Copy(f, src); err != nil {
+	// Copy content with context awareness
+	if _, err := copyWithContext(ctx, f, src); err != nil {
 		return err
 	}
 
@@ -307,8 +348,8 @@ func (t *LocalTransport) Get(ctx context.Context, src string, dst io.Writer) err
 		}
 	}()
 
-	// Copy content
-	if _, err := io.Copy(dst, f); err != nil {
+	// Copy content with context awareness
+	if _, err := copyWithContext(ctx, dst, f); err != nil {
 		return err
 	}
 
