@@ -41,17 +41,17 @@ These OEPs propose new language constructs and semantics.
   - **Restrictions:** PipeOps must be pure, bounded, deterministic
 
 - **OEP-003: Automatic Cleanup and Rollback** (Draft)
-  - `defer` for LIFO cleanup on failure
-  - `ensure`/`rollback` operators for execution control
-  - Comparison of both approaches and tradeoffs
-  - **Status:** Design phase (core feature)
-  - **Restrictions:** Defers run only on failure, LIFO ordering
+   - `defer` for LIFO cleanup on failure
+   - `ensure`/`rollback` operators for execution control
+   - Comparison of both approaches and tradeoffs
+   - **Status:** Design phase (core feature)
+   - **Restrictions:** Defers run only on failure, LIFO ordering
 
-- **OEP-004: Plan Verification** (Draft)
-  - Audit trail and contract verification
-  - CI/CD workflow for plan review
-  - Differential analysis between plans
-  - **Status:** Design phase
+- **OEP-004: Plan Verification** (Implemented)
+   - Audit trail and contract verification
+   - CI/CD workflow for plan review
+   - Differential analysis between plans
+   - **Status:** Core feature (see SPECIFICATION.md)
 
 ### Tooling Enhancements (Developer Experience)
 
@@ -69,15 +69,27 @@ These OEPs propose tools and integrations to improve the developer experience.
   - **Status:** Design phase
 
 - **OEP-007: Standalone Binary Generation** (Draft)
-  - Compile Opal scripts into standalone CLI binaries
-  - Zero dependencies, air-gapped deployment
-  - Plan-first execution built-in
+   - Compile Opal scripts into standalone CLI binaries
+   - Zero dependencies, air-gapped deployment
+   - Plan-first execution built-in
+   - **Status:** Design phase
+
+- **OEP-008: Plan-First Execution Model** (Implemented)
+   - REPL modes for planning and execution
+   - Safe remote code execution
+   - Hash-based trust for plans
+   - **Status:** Core feature (see SPECIFICATION.md)
+
+- **OEP-014: Drift Review Command** (Draft)
+  - `opal review` reports contract vs reality drift without mutations
+  - Deterministic human-readable and JSON outputs for CI/governance
+  - CI-friendly exit codes and telemetry integration
   - **Status:** Design phase
 
-- **OEP-008: Plan-First Execution Model** (Draft)
-  - REPL modes for planning and execution
-  - Safe remote code execution
-  - Hash-based trust for plans
+- **OEP-015: Bidirectional Drift Reconciliation** (Draft)
+  - `opal apply` enforces code-defined desired state safely
+  - `opal bless` updates source to reflect intentional real-world changes
+  - Shared drift metadata, confirmations, and formatting guarantees
   - **Status:** Design phase
 
 ### Ecosystem Extensions (Reach & Integration)
@@ -213,7 +225,6 @@ Related OEPs and inspiration.
 
 ### Phase 3: Ecosystem Extensions (Q3 2025)
 - OEP-009: Terraform/Pulumi Provider Bridge
-- OEP-004: Plan Verification
 - OEP-012: Module Composition and Plugin System
 
 ### Phase 4: Observability & Long-Term (Q4 2025+)
