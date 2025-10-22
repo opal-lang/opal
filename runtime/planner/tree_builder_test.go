@@ -413,6 +413,158 @@ func TestBuildStepTree(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "BUG: semicolon with AND causes infinite loop",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+					},
+					Operator: "&&",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+					},
+					Operator: ";",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo c"}},
+					},
+					Operator: "",
+				},
+			},
+			want: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					&planfmt.AndNode{
+						Left: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+							},
+						},
+						Right: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+							},
+						},
+					},
+					&planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo c"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "BUG: semicolon with OR causes infinite loop",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+					},
+					Operator: "||",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+					},
+					Operator: ";",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo c"}},
+					},
+					Operator: "",
+				},
+			},
+			want: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					&planfmt.OrNode{
+						Left: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+							},
+						},
+						Right: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+							},
+						},
+					},
+					&planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo c"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "BUG: semicolon with pipe causes infinite loop",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+					},
+					Operator: "|",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
+					},
+					Operator: ";",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+					},
+					Operator: "",
+				},
+			},
+			want: &planfmt.SequenceNode{
+				Nodes: []planfmt.ExecutionNode{
+					&planfmt.PipelineNode{
+						Commands: []planfmt.CommandNode{
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
+								},
+							},
+							{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
+								},
+							},
+						},
+					},
+					&planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

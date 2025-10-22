@@ -65,7 +65,19 @@ func parseSemicolon(commands []Command) planfmt.ExecutionNode {
 
 	for i, cmd := range commands {
 		if cmd.Operator == ";" {
-			segments = append(segments, commands[start:i+1])
+			// Clone segment and clear operator on last command
+			// (prevents infinite recursion when segment contains other operators)
+			segment := make([]Command, i+1-start)
+			copy(segment, commands[start:i+1])
+
+			// CRITICAL: Clear the operator to prevent infinite recursion
+			// Without this, buildStepTree(segment) would see the same ; operator
+			// and call parseSemicolon again with identical input, looping forever
+			invariant.Postcondition(segment[len(segment)-1].Operator == ";", "last command must have ; operator before clearing")
+			segment[len(segment)-1].Operator = "" // Clear the ; operator
+			invariant.Postcondition(segment[len(segment)-1].Operator == "", "operator must be cleared to prevent infinite recursion")
+
+			segments = append(segments, segment)
 			start = i + 1
 		}
 	}
@@ -83,6 +95,10 @@ func parseSemicolon(commands []Command) planfmt.ExecutionNode {
 	// Build sequence node
 	var nodes []planfmt.ExecutionNode
 	for _, seg := range segments {
+		// Verify segment won't cause infinite recursion
+		// Each segment must either:
+		// 1. Have no ; operators (we cleared them above), OR
+		// 2. Be a different slice (remaining commands after last ;)
 		nodes = append(nodes, buildStepTree(seg))
 	}
 
