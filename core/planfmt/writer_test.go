@@ -255,3 +255,210 @@ func TestContractRoundtrip(t *testing.T) {
 		t.Errorf("Step ID mismatch: got %d, want %d", readPlan.Steps[0].ID, plan.Steps[0].ID)
 	}
 }
+
+// TestWriteTargetTooLong tests that target strings exceeding uint16 max are rejected
+func TestWriteTargetTooLong(t *testing.T) {
+	// Create a target string longer than uint16 max (65535 bytes)
+	longTarget := string(make([]byte, 65536))
+
+	plan := &planfmt.Plan{
+		Target: longTarget,
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for target exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "target length 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteTooManySteps tests that step counts exceeding uint16 max are rejected
+func TestWriteTooManySteps(t *testing.T) {
+	// Create more steps than uint16 max (65535)
+	steps := make([]planfmt.Step, 65536)
+	for i := range steps {
+		steps[i] = planfmt.Step{
+			ID:   uint64(i + 1),
+			Tree: &planfmt.CommandNode{Decorator: "test"},
+		}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps:  steps,
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for step count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "step count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteDecoratorNameTooLong tests that decorator names exceeding uint16 max are rejected
+func TestWriteDecoratorNameTooLong(t *testing.T) {
+	longDecorator := string(make([]byte, 65536))
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.CommandNode{Decorator: longDecorator},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for decorator name exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "decorator name length 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteTooManyArgs tests that argument counts exceeding uint16 max are rejected
+func TestWriteTooManyArgs(t *testing.T) {
+	// Create more args than uint16 max (65535)
+	args := make([]planfmt.Arg, 65536)
+	for i := range args {
+		args[i] = planfmt.Arg{
+			Key: "arg",
+			Val: planfmt.Value{Kind: planfmt.ValueString, Str: "value"},
+		}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "test",
+					Args:      args,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for argument count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "argument count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteTooManyBlockSteps tests that block step counts exceeding uint16 max are rejected
+func TestWriteTooManyBlockSteps(t *testing.T) {
+	// Create more block steps than uint16 max (65535)
+	blockSteps := make([]planfmt.Step, 65536)
+	for i := range blockSteps {
+		blockSteps[i] = planfmt.Step{
+			ID:   uint64(i + 1),
+			Tree: &planfmt.CommandNode{Decorator: "test"},
+		}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "test",
+					Block:     blockSteps,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for block step count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "block step count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteTooManyPipelineCommands tests that pipeline command counts exceeding uint16 max are rejected
+func TestWriteTooManyPipelineCommands(t *testing.T) {
+	// Create more pipeline commands than uint16 max (65535)
+	commands := make([]planfmt.CommandNode, 65536)
+	for i := range commands {
+		commands[i] = planfmt.CommandNode{Decorator: "test"}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.PipelineNode{Commands: commands},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for pipeline command count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "pipeline command count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestWriteTooManySequenceNodes tests that sequence node counts exceeding uint16 max are rejected
+func TestWriteTooManySequenceNodes(t *testing.T) {
+	// Create more sequence nodes than uint16 max (65535)
+	nodes := make([]planfmt.ExecutionNode, 65536)
+	for i := range nodes {
+		nodes[i] = &planfmt.CommandNode{Decorator: "test"}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.SequenceNode{Nodes: nodes},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for sequence node count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "sequence node count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
