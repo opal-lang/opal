@@ -1018,6 +1018,12 @@ func (l *Lexer) lexLessThan(start Position, hasSpaceBefore bool) Token {
 func (l *Lexer) lexGreaterThan(start Position, hasSpaceBefore bool) Token {
 	l.advanceChar() // consume '>'
 
+	// Check for '>>' (append/right shift)
+	if l.position < len(l.input) && l.currentChar() == '>' {
+		l.advanceChar() // consume second '>'
+		return Token{Type: APPEND, Text: nil, Position: start, HasSpaceBefore: hasSpaceBefore}
+	}
+
 	// Check for '>=' (greater than or equal)
 	if l.position < len(l.input) && l.currentChar() == '=' {
 		l.advanceChar() // consume '='

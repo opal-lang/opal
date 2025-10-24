@@ -15,7 +15,7 @@ func TestShellDecorator_SimpleCommand(t *testing.T) {
 	ctx := sdktesting.NewTestContext().
 		WithArg("command", "echo hello")
 
-	exitCode, err := shellHandler(ctx, []sdk.Step{})
+	exitCode, err := ShellDecorator{}.Execute(ctx, []sdk.Step{})
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestShellDecorator_FailingCommand(t *testing.T) {
 	ctx := sdktesting.NewTestContext().
 		WithArg("command", "exit 42")
 
-	exitCode, err := shellHandler(ctx, []sdk.Step{})
+	exitCode, err := ShellDecorator{}.Execute(ctx, []sdk.Step{})
 	// Exit code should be 42, no error
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
@@ -53,7 +53,7 @@ func TestShellDecorator_UsesContextWorkdir(t *testing.T) {
 		WithArg("command", "pwd").
 		WithWorkingDir(tmpDir)
 
-	exitCode, err := shellHandler(ctx, []sdk.Step{})
+	exitCode, err := ShellDecorator{}.Execute(ctx, []sdk.Step{})
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestShellDecorator_UsesContextEnviron(t *testing.T) {
 		WithArg("command", "echo $TEST_SHELL_VAR").
 		WithEnv("TEST_SHELL_VAR", "from_context")
 
-	exitCode, err := shellHandler(ctx, []sdk.Step{})
+	exitCode, err := ShellDecorator{}.Execute(ctx, []sdk.Step{})
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestShellDecorator_MissingCommandArg(t *testing.T) {
 	ctx := sdktesting.NewTestContext()
 	// No "command" arg
 
-	exitCode, err := shellHandler(ctx, []sdk.Step{})
+	exitCode, err := ShellDecorator{}.Execute(ctx, []sdk.Step{})
 
 	// Should return error
 	if err == nil {
@@ -109,7 +109,7 @@ func TestShellDecorator_RejectsBlock(t *testing.T) {
 		sdktesting.NewTestStep(1, sdktesting.NewTestCommand("shell", nil)),
 	}
 
-	exitCode, err := shellHandler(ctx, block)
+	exitCode, err := ShellDecorator{}.Execute(ctx, block)
 
 	// Should return error
 	if err == nil {
@@ -149,7 +149,7 @@ func TestShellDecorator_WithPipedStdin(t *testing.T) {
 	// Clone with piped stdin
 	ctxWithPipe := ctx.Clone(ctx.Args(), stdin, nil)
 
-	exitCode, err := shellHandler(ctxWithPipe, nil)
+	exitCode, err := ShellDecorator{}.Execute(ctxWithPipe, nil)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestShellDecorator_WithPipedStdout(t *testing.T) {
 	// Clone with piped stdout
 	ctxWithPipe := ctx.Clone(ctx.Args(), nil, &stdout)
 
-	exitCode, err := shellHandler(ctxWithPipe, nil)
+	exitCode, err := ShellDecorator{}.Execute(ctxWithPipe, nil)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestShellDecorator_WithBothPipes(t *testing.T) {
 	// Clone with both pipes
 	ctxWithPipes := ctx.Clone(ctx.Args(), stdin, &stdout)
 
-	exitCode, err := shellHandler(ctxWithPipes, nil)
+	exitCode, err := ShellDecorator{}.Execute(ctxWithPipes, nil)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestShellDecorator_PipedStdinNoMatch(t *testing.T) {
 
 	ctxWithPipe := ctx.Clone(ctx.Args(), stdin, nil)
 
-	exitCode, err := shellHandler(ctxWithPipe, nil)
+	exitCode, err := ShellDecorator{}.Execute(ctxWithPipe, nil)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}

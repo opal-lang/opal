@@ -63,14 +63,14 @@ func TestTreeRoundTrip(t *testing.T) {
 					{
 						ID: 1,
 						Tree: &planfmt.PipelineNode{
-							Commands: []planfmt.CommandNode{
-								{
+							Commands: []planfmt.ExecutionNode{
+								&planfmt.CommandNode{
 									Decorator: "@shell",
 									Args: []planfmt.Arg{
 										{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 									},
 								},
-								{
+								&planfmt.CommandNode{
 									Decorator: "@shell",
 									Args: []planfmt.Arg{
 										{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep test"}},
@@ -92,14 +92,14 @@ func TestTreeRoundTrip(t *testing.T) {
 						Tree: &planfmt.OrNode{
 							Left: &planfmt.AndNode{
 								Left: &planfmt.PipelineNode{
-									Commands: []planfmt.CommandNode{
-										{
+									Commands: []planfmt.ExecutionNode{
+										&planfmt.CommandNode{
 											Decorator: "@shell",
 											Args: []planfmt.Arg{
 												{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
 											},
 										},
-										{
+										&planfmt.CommandNode{
 											Decorator: "@shell",
 											Args: []planfmt.Arg{
 												{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
@@ -108,14 +108,14 @@ func TestTreeRoundTrip(t *testing.T) {
 									},
 								},
 								Right: &planfmt.PipelineNode{
-									Commands: []planfmt.CommandNode{
-										{
+									Commands: []planfmt.ExecutionNode{
+										&planfmt.CommandNode{
 											Decorator: "@shell",
 											Args: []planfmt.Arg{
 												{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
 											},
 										},
-										{
+										&planfmt.CommandNode{
 											Decorator: "@shell",
 											Args: []planfmt.Arg{
 												{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep b"}},

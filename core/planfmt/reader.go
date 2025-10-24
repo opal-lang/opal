@@ -251,18 +251,20 @@ func (rd *Reader) readExecutionNode(r io.Reader, depth int, maxDepth int) (Execu
 		if err := binary.Read(r, binary.LittleEndian, &cmdCount); err != nil {
 			return nil, fmt.Errorf("read pipeline command count: %w", err)
 		}
-		// Read commands
-		commands := make([]CommandNode, cmdCount)
+		// Read commands (can be CommandNode or RedirectNode)
+		commands := make([]ExecutionNode, cmdCount)
 		for i := 0; i < int(cmdCount); i++ {
 			node, err := rd.readExecutionNode(r, depth+1, maxDepth)
 			if err != nil {
 				return nil, fmt.Errorf("read pipeline command %d: %w", i, err)
 			}
-			cmdNode, ok := node.(*CommandNode)
-			if !ok {
-				return nil, fmt.Errorf("pipeline must contain CommandNodes, got %T", node)
+			// Validate that pipeline elements are CommandNode or RedirectNode
+			switch node.(type) {
+			case *CommandNode, *RedirectNode:
+				commands[i] = node
+			default:
+				return nil, fmt.Errorf("pipeline must contain CommandNode or RedirectNode, got %T", node)
 			}
-			commands[i] = *cmdNode
 		}
 		return &PipelineNode{Commands: commands}, nil
 

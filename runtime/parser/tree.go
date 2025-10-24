@@ -94,6 +94,10 @@ const (
 
 	// Assignment statements - added at end to preserve existing node numbers
 	NodeAssignment // Assignment: x += 5, total -= cost
+
+	// Output redirection - added at end to preserve existing node numbers
+	NodeRedirect       // Redirect operator: > or >>
+	NodeRedirectTarget // Redirect target (path, variable, or decorator)
 )
 
 // ParseError represents a parse error with rich context for user-friendly messages
@@ -136,6 +140,7 @@ type semanticValidator struct {
 
 func (v *semanticValidator) validate() {
 	v.validatePipeOperators()
+	v.validateRedirectOperators()
 	v.tree.Errors = append(v.tree.Errors, v.errors...)
 }
 
@@ -353,6 +358,76 @@ func (v *semanticValidator) validateStdinSupport(decoratorName string, pipeToken
 			Suggestion: "Only shell commands and decorators with stdin support can receive piped data",
 			Example:    "echo \"test\" | grep \"pattern\"",
 			Note:       "Only decorators that accept stdin can receive piped data",
+		})
+	}
+}
+
+func (v *semanticValidator) validateRedirectOperators() {
+	// Walk through tokens to find redirect operators (> and >>)
+	for i := 0; i < len(v.tokens); i++ {
+		if v.tokens[i].Type != lexer.GT && v.tokens[i].Type != lexer.APPEND {
+			continue
+		}
+
+		// Found a redirect operator at position i
+		redirectToken := v.tokens[i]
+
+		// Look forward to find the redirect target
+		targetDecorator := v.findDecoratorAfter(i)
+
+		// Validate target (must support redirect)
+		if targetDecorator != "" {
+			v.validateRedirectSupport(targetDecorator, redirectToken)
+		}
+	}
+}
+
+func (v *semanticValidator) validateRedirectSupport(decoratorName string, redirectToken lexer.Token) {
+	schema, exists := v.tree.getSchema(decoratorName)
+	if !exists {
+		return // Decorator not registered - parser already reported error
+	}
+
+	// Check if decorator supports redirect at all
+	if schema.Redirect == nil {
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support redirection",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Only decorators with redirect support can be used as redirect targets",
+			Example:    "echo \"test\" > output.txt",
+			Note:       "Use @shell(\"output.txt\") or decorators that support redirect",
+		})
+		return
+	}
+
+	// Check if decorator supports the specific mode (> or >>)
+	var mode types.RedirectMode
+	if redirectToken.Type == lexer.GT {
+		mode = types.RedirectOverwrite
+	} else {
+		mode = types.RedirectAppend
+	}
+
+	if !schema.Redirect.Support.SupportsMode(mode) {
+		var operatorStr, modeStr string
+		if redirectToken.Type == lexer.GT {
+			operatorStr = ">"
+			modeStr = "overwrite"
+		} else {
+			operatorStr = ">>"
+			modeStr = "append"
+		}
+
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support " + modeStr + " (" + operatorStr + ")",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Use a different redirect mode or a decorator that supports " + modeStr,
+			Example:    "echo \"test\" " + operatorStr + " output.txt",
+			Note:       "@" + decoratorName + " only supports " + schema.Redirect.Support.String(),
 		})
 	}
 }

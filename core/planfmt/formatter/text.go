@@ -43,8 +43,9 @@ func formatExecutionNode(node planfmt.ExecutionNode) string {
 		return formatCommandNode(n)
 	case *planfmt.PipelineNode:
 		var parts []string
-		for _, cmd := range n.Commands {
-			parts = append(parts, formatCommandNode(&cmd))
+		for _, elem := range n.Commands {
+			// Pipeline elements can be CommandNode or RedirectNode
+			parts = append(parts, formatExecutionNode(elem))
 		}
 		return strings.Join(parts, " | ")
 	case *planfmt.AndNode:

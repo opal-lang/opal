@@ -138,12 +138,12 @@ func TestToSDKStep_PipelineNode(t *testing.T) {
 	planStep := Step{
 		ID: 1,
 		Tree: &PipelineNode{
-			Commands: []CommandNode{
-				{
+			Commands: []ExecutionNode{
+				&CommandNode{
 					Decorator: "shell",
 					Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo hello"}}},
 				},
-				{
+				&CommandNode{
 					Decorator: "shell",
 					Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "grep hello"}}},
 				},
@@ -240,9 +240,9 @@ func TestToSDKSteps_ComplexTree(t *testing.T) {
 			Tree: &OrNode{
 				Left: &AndNode{
 					Left: &PipelineNode{
-						Commands: []CommandNode{
-							{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo a"}}}},
-							{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "grep a"}}}},
+						Commands: []ExecutionNode{
+							&CommandNode{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo a"}}}},
+							&CommandNode{Decorator: "shell", Args: []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "grep a"}}}},
 						},
 					},
 					Right: &CommandNode{

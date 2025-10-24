@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aledsdavies/opal/core/sdk"
+	"github.com/aledsdavies/opal/core/sdk/executor"
 )
 
 // TestExecutionContext is a realistic test implementation of sdk.ExecutionContext.
@@ -274,6 +275,14 @@ func (t *TestExecutionContext) Clone(args map[string]interface{}, stdin io.Reade
 	newTest.stdin = stdin
 	newTest.stdoutPipe = stdoutPipe
 	return &newTest
+}
+
+// Transport returns a test transport (LocalTransport for now).
+// Tests can override this if they need to test transport-specific behavior.
+func (t *TestExecutionContext) Transport() interface{} {
+	// Return LocalTransport for testing
+	// Tests that need custom transport behavior can wrap TestExecutionContext
+	return &executor.LocalTransport{}
 }
 
 // Verify TestExecutionContext implements sdk.ExecutionContext at compile time

@@ -139,14 +139,14 @@ func TestFormatTree_WithPipeline(t *testing.T) {
 			{
 				ID: 1,
 				Tree: &planfmt.PipelineNode{
-					Commands: []planfmt.CommandNode{
-						{
+					Commands: []planfmt.ExecutionNode{
+						&planfmt.CommandNode{
 							Decorator: "shell",
 							Args: []planfmt.Arg{
 								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
 							},
 						},
-						{
+						&planfmt.CommandNode{
 							Decorator: "shell",
 							Args: []planfmt.Arg{
 								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep hello"}},

@@ -279,7 +279,7 @@ func (wr *Writer) writeExecutionNode(buf *bytes.Buffer, node ExecutionNode) erro
 		}
 		// Write each command
 		for i := range n.Commands {
-			if err := wr.writeExecutionNode(buf, &n.Commands[i]); err != nil {
+			if err := wr.writeExecutionNode(buf, n.Commands[i]); err != nil {
 				return err
 			}
 		}

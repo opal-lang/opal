@@ -203,10 +203,15 @@ EOF
 **ALWAYS follow the coding guidelines documented in this file and the global OpenCode configuration.**
 
 ### Core Safety Principles
-- **Fail-Fast on Programming Errors**: Assert all invariants immediately with `panic()` - never silently continue
+- **Fail-Fast on Programming Errors**: Assert all invariants immediately - never silently continue
+- **Use `core/invariant` package**: ALWAYS use invariant functions instead of raw `panic()`
+  - `invariant.Precondition(cond, msg, args...)` - Check function inputs at entry
+  - `invariant.Postcondition(cond, msg, args...)` - Check function outputs before return
+  - `invariant.Invariant(cond, msg, args...)` - Check internal consistency (loops, state)
+  - `invariant.NotNil(value, name)` - Check pointer/interface arguments
+  - `invariant.InRange(value, min, max, name)` - Check numeric bounds
+  - Provides clear violation messages with call stack context
 - **Loop Invariants**: Every loop MUST track position and assert progress is made
-- **Preconditions**: Assert function inputs at entry
-- **Postconditions**: Assert function outputs before return
 - **Zero Performance Cost**: Assertions use simple checks (position comparison, nil checks)
 
 ### Error Taxonomy

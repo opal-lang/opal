@@ -116,8 +116,9 @@ func renderCommandNode(cmd *planfmt.CommandNode, useColor bool) string {
 // renderPipelineNode renders a pipeline (cmd1 | cmd2 | cmd3)
 func renderPipelineNode(pipe *planfmt.PipelineNode, useColor bool) string {
 	var parts []string
-	for _, cmd := range pipe.Commands {
-		parts = append(parts, renderCommandNode(&cmd, useColor))
+	for _, elem := range pipe.Commands {
+		// Pipeline elements can be CommandNode or RedirectNode
+		parts = append(parts, renderExecutionNode(elem, useColor))
 	}
 	return strings.Join(parts, " | ")
 }

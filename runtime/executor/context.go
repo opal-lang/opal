@@ -10,6 +10,7 @@ import (
 
 	"github.com/aledsdavies/opal/core/invariant"
 	"github.com/aledsdavies/opal/core/sdk"
+	sdkexec "github.com/aledsdavies/opal/core/sdk/executor"
 )
 
 // executionContext implements sdk.ExecutionContext
@@ -239,6 +240,15 @@ func (e *executionContext) Clone(
 		stdin:      stdin,      // NEW (may be nil)
 		stdoutPipe: stdoutPipe, // NEW (may be nil)
 	}
+}
+
+// Transport returns the transport for command execution and file operations.
+// For local execution, this returns a LocalTransport.
+// Decorators like @ssh.connect wrap ExecutionContext and return their own transport.
+func (e *executionContext) Transport() interface{} {
+	// Return LocalTransport for local execution
+	// Future: decorators like @ssh.connect will wrap context and return SSHTransport
+	return &sdkexec.LocalTransport{}
 }
 
 // captureEnviron captures current environment as immutable snapshot

@@ -101,12 +101,12 @@ func TestAndNode_Structure(t *testing.T) {
 // TestPipelineNode_Structure verifies PipelineNode structure
 func TestPipelineNode_Structure(t *testing.T) {
 	node := &sdk.PipelineNode{
-		Commands: []sdk.CommandNode{
-			{
+		Commands: []sdk.TreeNode{
+			&sdk.CommandNode{
 				Name: "shell",
 				Args: map[string]interface{}{"command": "echo hello"},
 			},
-			{
+			&sdk.CommandNode{
 				Name: "shell",
 				Args: map[string]interface{}{"command": "grep hello"},
 			},

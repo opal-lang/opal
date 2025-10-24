@@ -119,14 +119,14 @@ func TestBuildStepTree(t *testing.T) {
 				},
 			},
 			want: &planfmt.PipelineNode{
-				Commands: []planfmt.CommandNode{
-					{
+				Commands: []planfmt.ExecutionNode{
+					&planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 						},
 					},
-					{
+					&planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep test"}},
@@ -161,20 +161,20 @@ func TestBuildStepTree(t *testing.T) {
 				},
 			},
 			want: &planfmt.PipelineNode{
-				Commands: []planfmt.CommandNode{
-					{
+				Commands: []planfmt.ExecutionNode{
+					&planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
 						},
 					},
-					{
+					&planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep test"}},
 						},
 					},
-					{
+					&planfmt.CommandNode{
 						Decorator: "@shell",
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "wc -l"}},
@@ -210,14 +210,14 @@ func TestBuildStepTree(t *testing.T) {
 			},
 			want: &planfmt.AndNode{
 				Left: &planfmt.PipelineNode{
-					Commands: []planfmt.CommandNode{
-						{
+					Commands: []planfmt.ExecutionNode{
+						&planfmt.CommandNode{
 							Decorator: "@shell",
 							Args: []planfmt.Arg{
 								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
 							},
 						},
-						{
+						&planfmt.CommandNode{
 							Decorator: "@shell",
 							Args: []planfmt.Arg{
 								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
@@ -323,14 +323,14 @@ func TestBuildStepTree(t *testing.T) {
 			want: &planfmt.OrNode{
 				Left: &planfmt.AndNode{
 					Left: &planfmt.PipelineNode{
-						Commands: []planfmt.CommandNode{
-							{
+						Commands: []planfmt.ExecutionNode{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
 								},
 							},
-							{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
@@ -339,14 +339,14 @@ func TestBuildStepTree(t *testing.T) {
 						},
 					},
 					Right: &planfmt.PipelineNode{
-						Commands: []planfmt.CommandNode{
-							{
+						Commands: []planfmt.ExecutionNode{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
 								},
 							},
-							{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep b"}},
@@ -541,14 +541,14 @@ func TestBuildStepTree(t *testing.T) {
 			want: &planfmt.SequenceNode{
 				Nodes: []planfmt.ExecutionNode{
 					&planfmt.PipelineNode{
-						Commands: []planfmt.CommandNode{
-							{
+						Commands: []planfmt.ExecutionNode{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo a"}},
 								},
 							},
-							{
+							&planfmt.CommandNode{
 								Decorator: "@shell",
 								Args: []planfmt.Arg{
 									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep a"}},
@@ -561,6 +561,124 @@ func TestBuildStepTree(t *testing.T) {
 						Args: []planfmt.Arg{
 							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo b"}},
 						},
+					},
+				},
+			},
+		},
+		{
+			name: "redirect operator (overwrite)",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+					},
+					RedirectMode: ">",
+					RedirectTarget: &Command{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+			want: &planfmt.RedirectNode{
+				Source: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+					},
+				},
+				Target: planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+					},
+				},
+				Mode: planfmt.RedirectOverwrite,
+			},
+		},
+		{
+			name: "redirect operator (append)",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo world"}},
+					},
+					RedirectMode: ">>",
+					RedirectTarget: &Command{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+			want: &planfmt.RedirectNode{
+				Source: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo world"}},
+					},
+				},
+				Target: planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+					},
+				},
+				Mode: planfmt.RedirectAppend,
+			},
+		},
+		{
+			name: "redirect with pipe (bash: redirect applies to last command)",
+			commands: []Command{
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+					},
+					Operator: "|",
+				},
+				{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep test"}},
+					},
+					RedirectMode: ">",
+					RedirectTarget: &Command{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+			// In bash: echo test | grep test > output.txt
+			// Redirect applies to grep (last command in pipeline), not entire pipeline
+			want: &planfmt.PipelineNode{
+				Commands: []planfmt.ExecutionNode{
+					&planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+						},
+					},
+					&planfmt.RedirectNode{
+						Source: &planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "grep test"}},
+							},
+						},
+						Target: planfmt.CommandNode{
+							Decorator: "@shell",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+							},
+						},
+						Mode: planfmt.RedirectOverwrite,
 					},
 				},
 			},
@@ -579,6 +697,7 @@ func TestBuildStepTree(t *testing.T) {
 				cmpopts.IgnoreUnexported(planfmt.AndNode{}),
 				cmpopts.IgnoreUnexported(planfmt.OrNode{}),
 				cmpopts.IgnoreUnexported(planfmt.SequenceNode{}),
+				cmpopts.IgnoreUnexported(planfmt.RedirectNode{}),
 			}
 
 			if diff := cmp.Diff(tt.want, got, opts...); diff != "" {

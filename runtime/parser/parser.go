@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aledsdavies/opal/core/invariant"
 	"github.com/aledsdavies/opal/core/types"
 	"github.com/aledsdavies/opal/runtime/lexer"
 )
@@ -274,9 +275,7 @@ func (p *parser) file() {
 		}
 
 		// INVARIANT: Parser must make progress in each iteration
-		if p.pos == prevPos && !p.at(lexer.EOF) {
-			panic(fmt.Sprintf("parser stuck in file() at pos %d - no progress made", p.pos))
-		}
+		invariant.Invariant(p.pos > prevPos || p.at(lexer.EOF), "parser stuck in file() at pos %d - no progress made", p.pos)
 	}
 
 	p.finish(kind)
@@ -1251,9 +1250,7 @@ func (p *parser) shellCommand() {
 		p.shellArg()
 
 		// INVARIANT: must make progress
-		if p.pos == prevPos {
-			panic(fmt.Sprintf("parser stuck in shellCommand() at pos %d, token: %v", p.pos, p.current().Type))
-		}
+		invariant.Invariant(p.pos > prevPos, "parser stuck in shellCommand() at pos %d, token: %v", p.pos, p.current().Type)
 	}
 
 	p.finish(kind)
@@ -1264,12 +1261,59 @@ func (p *parser) shellCommand() {
 
 	// If we stopped at a shell operator, validate and consume it
 	if p.isShellOperator() {
-		p.token() // Consume operator (&&, ||, |)
+		// Check if it's a redirect operator
+		if p.at(lexer.GT) || p.at(lexer.APPEND) {
+			p.shellRedirect()
 
-		// Parse next command after operator
-		if !p.isStatementBoundary() && !p.at(lexer.EOF) {
-			p.shellCommand()
+			// CRITICAL FIX: After redirect, check for chaining operators (&&, ||, |, ;)
+			// This allows: echo a > out && echo b (both redirect AND chaining)
+			if p.isShellOperator() && !p.at(lexer.GT) && !p.at(lexer.APPEND) {
+				p.token() // Consume chaining operator (&&, ||, |, ;)
+
+				// Parse next command after operator
+				if !p.isStatementBoundary() && !p.at(lexer.EOF) {
+					p.shellCommand()
+				}
+			}
+		} else {
+			p.token() // Consume operator (&&, ||, |, ;)
+
+			// Parse next command after operator
+			if !p.isStatementBoundary() && !p.at(lexer.EOF) {
+				p.shellCommand()
+			}
 		}
+	}
+}
+
+// shellRedirect parses output redirection (> or >>)
+// PRECONDITION: Current token is GT or APPEND
+func (p *parser) shellRedirect() {
+	if p.config.debug >= DebugPaths {
+		p.recordDebugEvent("enter_shell_redirect", "parsing redirect")
+	}
+
+	kind := p.start(NodeRedirect)
+
+	// Consume redirect operator (> or >>)
+	p.token()
+
+	// Parse redirect target
+	targetKind := p.start(NodeRedirectTarget)
+
+	// Target can be:
+	// - A path: output.txt
+	// - A variable: @var.OUTPUT_FILE
+	// - A decorator: @file.temp() (future)
+	if !p.isStatementBoundary() && !p.isShellOperator() && !p.at(lexer.EOF) {
+		p.shellArg() // Parse target as shell argument
+	}
+
+	p.finish(targetKind)
+	p.finish(kind)
+
+	if p.config.debug >= DebugPaths {
+		p.recordDebugEvent("exit_shell_redirect", "redirect complete")
 	}
 }
 
@@ -1283,10 +1327,8 @@ func (p *parser) shellArg() {
 	}
 
 	// PRECONDITION CHECK: shellArg should never be called at operator/boundary
-	if p.isShellOperator() || p.isStatementBoundary() {
-		panic(fmt.Sprintf("BUG: shellArg() called at operator/boundary, pos: %d, token: %v",
-			p.pos, p.current().Type))
-	}
+	invariant.Precondition(!p.isShellOperator() && !p.isStatementBoundary(),
+		"shellArg() called at operator/boundary, pos: %d, token: %v", p.pos, p.current().Type)
 
 	kind := p.start(NodeShellArg)
 
@@ -1311,13 +1353,11 @@ func (p *parser) shellArg() {
 					p.pos, p.current().Type, p.current().HasSpaceBefore))
 			}
 
-			p.token() // Consume token as part of this argument
+			p.token() // Emit token event (planner will group based on HasSpaceBefore)
 
-			// INVARIANT: p.token() calls p.advance() which MUST increment p.pos
-			if p.pos <= prevPos {
-				panic(fmt.Sprintf("parser stuck in shellArg() at pos %d (was %d), token: %v - advance() failed to increment position",
-					p.pos, prevPos, p.current().Type))
-			}
+			// INVARIANT: p.token() MUST increment p.pos
+			invariant.Invariant(p.pos > prevPos, "parser stuck in shellArg() at pos %d (was %d), token: %v - token() failed to increment position",
+				p.pos, prevPos, p.current().Type)
 		}
 	}
 
@@ -1333,7 +1373,9 @@ func (p *parser) isShellOperator() bool {
 	return p.at(lexer.AND_AND) || // &&
 		p.at(lexer.OR_OR) || // ||
 		p.at(lexer.PIPE) || // |
-		p.at(lexer.SEMICOLON) // ;
+		p.at(lexer.SEMICOLON) || // ;
+		p.at(lexer.GT) || // >
+		p.at(lexer.APPEND) // >>
 }
 
 // isStatementBoundary checks if current token ends a statement

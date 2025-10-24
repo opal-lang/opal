@@ -174,7 +174,7 @@ func validateNode(node ExecutionNode, stepID uint64, seen map[uint64]bool) error
 
 	case *PipelineNode:
 		for i := range n.Commands {
-			if err := validateNode(&n.Commands[i], stepID, seen); err != nil {
+			if err := validateNode(n.Commands[i], stepID, seen); err != nil {
 				return err
 			}
 		}
@@ -230,7 +230,7 @@ func canonicalizeNode(node ExecutionNode) {
 
 	case *PipelineNode:
 		for i := range n.Commands {
-			canonicalizeNode(&n.Commands[i])
+			canonicalizeNode(n.Commands[i])
 		}
 
 	case *AndNode:

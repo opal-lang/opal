@@ -8,6 +8,11 @@ import (
 	"github.com/aledsdavies/opal/core/types"
 )
 
+// ShellDecorator implements the @shell decorator.
+// It implements both ExecutionHandler (for executing commands) and
+// SinkProvider (for redirect targets).
+type ShellDecorator struct{}
+
 func init() {
 	// Register the @shell decorator with schema
 	schema := types.NewSchema("shell", types.KindExecution).
@@ -17,19 +22,23 @@ func init() {
 		Required().
 		Done().
 		WithIO(types.AcceptsStdin, types.ProducesStdout). // No ScrubByDefault = bash-compatible
+		WithRedirect(types.RedirectBoth).                 // Supports both > and >>
 		Build()
 
-	if err := types.Global().RegisterSDKHandlerWithSchema(schema, shellHandler); err != nil {
+	// Register decorator instance (not just the Execute method)
+	// This allows SDK converter to check if instance implements SinkProvider
+	instance := ShellDecorator{}
+	if err := types.Global().RegisterSDKHandlerWithSchema(schema, instance); err != nil {
 		panic(fmt.Sprintf("failed to register @shell decorator: %v", err))
 	}
 }
 
-// shellHandler implements the @shell decorator using SDK types.
+// Execute implements the @shell decorator using SDK types.
 // This is a leaf decorator - it doesn't use the block parameter.
 //
 // CRITICAL: Uses context workdir and environ, NOT os globals.
 // This ensures isolation for @parallel, @ssh, @docker, etc.
-func shellHandler(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
+func (s ShellDecorator) Execute(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
 	// Leaf decorator - block should be empty
 	if len(block) > 0 {
 		return 127, fmt.Errorf("@shell does not accept a block")
@@ -66,4 +75,15 @@ func shellHandler(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
 
 	// Execute and return exit code
 	return cmd.Run()
+}
+
+// AsSink implements SinkProvider for redirect targets.
+// When @shell is used as redirect target (echo "data" > @shell("file.txt")),
+// this method is called to create the appropriate sink.
+func (s ShellDecorator) AsSink(ctx sdk.ExecutionContext) sdk.Sink {
+	path := ctx.ArgString("command")
+	return sdk.FsPathSink{
+		Path: path,
+		Perm: 0o600, // Tight by default (owner read/write only)
+	}
 }

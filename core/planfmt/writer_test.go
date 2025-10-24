@@ -406,9 +406,9 @@ func TestWriteTooManyBlockSteps(t *testing.T) {
 // TestWriteTooManyPipelineCommands tests that pipeline command counts exceeding uint16 max are rejected
 func TestWriteTooManyPipelineCommands(t *testing.T) {
 	// Create more pipeline commands than uint16 max (65535)
-	commands := make([]planfmt.CommandNode, 65536)
+	commands := make([]planfmt.ExecutionNode, 65536)
 	for i := range commands {
-		commands[i] = planfmt.CommandNode{Decorator: "test"}
+		commands[i] = &planfmt.CommandNode{Decorator: "test"}
 	}
 
 	plan := &planfmt.Plan{

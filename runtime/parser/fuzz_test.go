@@ -30,6 +30,47 @@ func addSeedCorpus(f *testing.F) {
 	f.Add([]byte("var x = 42"))
 	f.Add([]byte("fun deploy(env) { kubectl apply }"))
 
+	// Shell commands with dash arguments (test token emission)
+	f.Add([]byte("wc -l file.txt"))
+	f.Add([]byte("ls -la /tmp"))
+	f.Add([]byte("kubectl apply -f deployment.yaml"))
+	f.Add([]byte("curl -X POST --data @file.json https://api.example.com"))
+	f.Add([]byte("grep -v pattern file.txt"))
+	f.Add([]byte("tar -czf archive.tar.gz dir/"))
+	f.Add([]byte("docker run --rm -it ubuntu bash"))
+
+	// Redirect operators - valid
+	f.Add([]byte(`echo "hello" > output.txt`))
+	f.Add([]byte(`echo "world" >> output.txt`))
+	f.Add([]byte(`cat file.txt > backup.txt`))
+	f.Add([]byte(`ls -la > listing.txt`))
+	f.Add([]byte(`echo "data" > @var.OUTPUT_FILE`))
+	f.Add([]byte(`kubectl logs pod >> logs.txt`))
+	f.Add([]byte(`echo "test" > /dev/null`))
+
+	// Redirect with pipes
+	f.Add([]byte(`cat data.txt | grep "error" > errors.txt`))
+	f.Add([]byte(`echo "a" | wc -l >> count.txt`))
+
+	// Redirect with AND/OR
+	f.Add([]byte(`echo "a" > log.txt && echo "b"`))
+	f.Add([]byte(`echo "a" >> log.txt || echo "failed"`))
+	f.Add([]byte(`echo "a" > log.txt && echo "b" >> log.txt`))
+
+	// Redirect with semicolon
+	f.Add([]byte(`echo "a" > file1.txt ; echo "b" > file2.txt`))
+
+	// Complex precedence with redirect
+	f.Add([]byte(`echo "a" | grep "a" > file.txt && echo "b"`))
+	f.Add([]byte(`cmd1 | cmd2 > out.txt || echo "failed"`))
+
+	// Redirect - malformed (error recovery)
+	f.Add([]byte(`echo "hello" >`))        // Missing target
+	f.Add([]byte(`echo "hello" >>`))       // Missing target
+	f.Add([]byte(`> output.txt`))          // Missing command
+	f.Add([]byte(`>> output.txt`))         // Missing command
+	f.Add([]byte(`echo "a" > > file.txt`)) // Double redirect operator
+
 	// Control flow - valid if statements
 	f.Add([]byte("fun test { if true { } }"))
 	f.Add([]byte("fun test { if false { echo \"a\" } }"))
@@ -707,6 +748,8 @@ func FuzzParserWhitespaceInvariance(f *testing.F) {
 				return []byte("<")
 			case lexer.GT:
 				return []byte(">")
+			case lexer.APPEND:
+				return []byte(">>")
 			case lexer.NOT:
 				return []byte("!")
 			case lexer.EQUALS:

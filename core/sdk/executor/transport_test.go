@@ -487,3 +487,109 @@ func TestLocalTransportExec_EmptyEnv(t *testing.T) {
 	// PATH should be inherited from parent
 	assert.NotEmpty(t, stdout.String())
 }
+
+// TestLocalTransportOpenFileWriter_AtomicOverwrite tests atomic writes for overwrite mode
+func TestLocalTransportOpenFileWriter_AtomicOverwrite(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "output.txt")
+
+	// Create initial file with content
+	initialContent := "initial content\n"
+	err := os.WriteFile(targetPath, []byte(initialContent), 0o644)
+	require.NoError(t, err)
+
+	// Open file for overwrite
+	writer, err := transport.OpenFileWriter(context.Background(), targetPath, RedirectOverwrite, 0o644)
+	require.NoError(t, err)
+
+	// Write new content
+	newContent := "new content\n"
+	_, err = writer.Write([]byte(newContent))
+	require.NoError(t, err)
+
+	// Before Close(), the original file should still exist with old content
+	// (atomic write uses temp file)
+	data, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, initialContent, string(data), "Original file should be unchanged before Close()")
+
+	// Close should rename temp file to target (atomic)
+	err = writer.Close()
+	require.NoError(t, err)
+
+	// After Close(), file should have new content
+	data, err = os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, newContent, string(data), "File should have new content after Close()")
+
+	// Verify no temp files left behind
+	entries, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		assert.NotContains(t, entry.Name(), ".opal.tmp", "No temp files should remain")
+	}
+}
+
+// TestLocalTransportOpenFileWriter_Append tests append mode
+func TestLocalTransportOpenFileWriter_Append(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "output.txt")
+
+	// Create initial file with content
+	initialContent := "line 1\n"
+	err := os.WriteFile(targetPath, []byte(initialContent), 0o644)
+	require.NoError(t, err)
+
+	// Open file for append
+	writer, err := transport.OpenFileWriter(context.Background(), targetPath, RedirectAppend, 0o644)
+	require.NoError(t, err)
+
+	// Write additional content
+	appendContent := "line 2\n"
+	_, err = writer.Write([]byte(appendContent))
+	require.NoError(t, err)
+
+	err = writer.Close()
+	require.NoError(t, err)
+
+	// File should have both lines
+	data, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, initialContent+appendContent, string(data))
+}
+
+// TestLocalTransportOpenFileWriter_CreateNew tests creating new file
+func TestLocalTransportOpenFileWriter_CreateNew(t *testing.T) {
+	transport := &LocalTransport{}
+	defer transport.Close()
+
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "newfile.txt")
+
+	// Open non-existent file for overwrite
+	writer, err := transport.OpenFileWriter(context.Background(), targetPath, RedirectOverwrite, 0o644)
+	require.NoError(t, err)
+
+	content := "new file content\n"
+	_, err = writer.Write([]byte(content))
+	require.NoError(t, err)
+
+	err = writer.Close()
+	require.NoError(t, err)
+
+	// File should exist with content
+	data, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, content, string(data))
+
+	// Verify permissions
+	info, err := os.Stat(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm())
+}

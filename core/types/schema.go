@@ -115,6 +115,62 @@ type IOOpts struct {
 	DefaultScrubMode ScrubMode
 }
 
+// RedirectMode represents redirect operation mode
+type RedirectMode string
+
+const (
+	RedirectOverwrite RedirectMode = "overwrite" // > (truncate file)
+	RedirectAppend    RedirectMode = "append"    // >> (append to file)
+)
+
+// RedirectSupport describes what redirect operations a decorator supports
+type RedirectSupport int
+
+const (
+	RedirectOverwriteOnly RedirectSupport = iota // Supports > only
+	RedirectAppendOnly                           // Supports >> only (rare)
+	RedirectBoth                                 // Supports both > and >>
+)
+
+// String returns the string representation of RedirectSupport
+func (r RedirectSupport) String() string {
+	switch r {
+	case RedirectOverwriteOnly:
+		return "overwrite-only"
+	case RedirectAppendOnly:
+		return "append-only"
+	case RedirectBoth:
+		return "both"
+	default:
+		return "unknown"
+	}
+}
+
+// SupportsMode checks if this redirect support includes the given mode
+func (r RedirectSupport) SupportsMode(mode RedirectMode) bool {
+	switch mode {
+	case RedirectOverwrite:
+		return r == RedirectOverwriteOnly || r == RedirectBoth
+	case RedirectAppend:
+		return r == RedirectAppendOnly || r == RedirectBoth
+	default:
+		return false
+	}
+}
+
+// RedirectCapability describes what redirect operations a decorator supports.
+// Only decorators that can act as redirect targets need to declare this.
+// If nil, decorator cannot be used as redirect target.
+//
+// Examples:
+//   - @shell: RedirectBoth (opens files for > and >>)
+//   - @file.temp: RedirectOverwriteOnly (creates temp file, no append)
+//   - @aws.s3.object: RedirectBoth (S3 PUT and multipart append)
+//   - @http.post: RedirectOverwriteOnly (POST doesn't have append semantics)
+type RedirectCapability struct {
+	Support RedirectSupport // What redirect modes are supported
+}
+
 // IOCapability describes a decorator's I/O capabilities for pipe operator support.
 //
 // Decorators that don't interact with stdin/stdout should leave this nil.
@@ -150,6 +206,7 @@ type DecoratorSchema struct {
 	Returns           *ReturnSchema          // What the decorator returns (value decorators only)
 	BlockRequirement  BlockRequirement       // Whether decorator accepts/requires a block
 	IO                *IOCapability          // I/O capabilities for pipe operator (nil = no I/O)
+	Redirect          *RedirectCapability    // Redirect capabilities for > and >> operators (nil = no redirect support)
 	SwitchesTransport bool                   // Whether decorator switches execution transport (ssh.connect, docker.exec, etc.)
 }
 
@@ -404,6 +461,31 @@ func (b *SchemaBuilder) WithIOOpts(opts IOOpts) *SchemaBuilder {
 	// Add to parameter order
 	b.parameterOrder = append(b.parameterOrder, "scrub")
 
+	return b
+}
+
+// WithRedirect declares redirect capabilities for > and >> operators.
+//
+// Only call this for decorators that can act as redirect targets.
+// The decorator must implement logic to open a writer when used as redirect target.
+//
+// Examples:
+//
+//	// @shell: supports both > and >> (opens files for writing)
+//	WithRedirect(RedirectBoth)
+//
+//	// @file.temp: supports > only (creates temp file, no append)
+//	WithRedirect(RedirectOverwriteOnly)
+//
+//	// @aws.s3.object: supports both > and >> (PUT and multipart append)
+//	WithRedirect(RedirectBoth)
+//
+//	// @http.post: supports > only (POST doesn't have append semantics)
+//	WithRedirect(RedirectOverwriteOnly)
+func (b *SchemaBuilder) WithRedirect(support RedirectSupport) *SchemaBuilder {
+	b.schema.Redirect = &RedirectCapability{
+		Support: support,
+	}
 	return b
 }
 
