@@ -8,6 +8,7 @@
 package invariant
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -149,6 +150,35 @@ func Positive(value int, name string) {
 func ExpectNoError(err error, context string) {
 	if err != nil {
 		fail("POSTCONDITION", "%s must not fail: %v", context, err)
+	}
+}
+
+// ContextNotBackground panics if context is context.Background().
+// This catches bugs where parent context should be passed but Background() is used instead.
+//
+// Use this to enforce proper context propagation for cancellation and timeouts.
+// Only the root execution entry point (e.g., Execute()) should create a fresh context.
+// All other functions MUST receive parent context as parameter.
+//
+// Example:
+//
+//	func executeRedirect(redirect *sdk.RedirectNode, ctx context.Context) int {
+//	    invariant.ContextNotBackground(ctx, "executeRedirect")
+//	    // ... use ctx for cancellation ...
+//	}
+//
+// Why this matters:
+//   - Prevents goroutine leaks when parent is cancelled
+//   - Ensures timeouts propagate correctly
+//   - Enables proper resource cleanup on cancellation
+func ContextNotBackground(ctx context.Context, location string) {
+	if ctx == nil {
+		fail("PRECONDITION", "%s: context must not be nil", location)
+	}
+	// Import context package to compare
+	// context.Background() returns the same singleton instance every time
+	if ctx == context.Background() {
+		fail("PRECONDITION", "%s: context must not be Background() - parent context required for cancellation", location)
 	}
 }
 

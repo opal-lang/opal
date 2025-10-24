@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/aledsdavies/opal/core/planfmt"
@@ -118,6 +121,24 @@ func main() {
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+// newCancellableContext creates a context that cancels on SIGINT/SIGTERM
+// This allows Ctrl+C to propagate through the entire execution chain
+func newCancellableContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Listen for interrupt signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Cancel context when signal received
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	return ctx, cancel
 }
 
 func runCommand(cmd *cobra.Command, commandName string, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
@@ -293,7 +314,11 @@ func runCommand(cmd *cobra.Command, commandName string, file string, dryRun, res
 		telemetryLevel = executor.TelemetryTiming
 	}
 
-	result, err := executor.Execute(steps, executor.Config{
+	// Create cancellable context for Ctrl+C handling
+	ctx, cancel := newCancellableContext()
+	defer cancel()
+
+	result, err := executor.Execute(ctx, steps, executor.Config{
 		Debug:     execDebug,
 		Telemetry: telemetryLevel,
 	})
@@ -478,7 +503,11 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 	// Convert plan to SDK steps at the boundary
 	steps := planfmt.ToSDKSteps(freshPlan.Steps)
 
-	result, err := executor.Execute(steps, executor.Config{
+	// Create cancellable context for Ctrl+C handling
+	ctx, cancel := newCancellableContext()
+	defer cancel()
+
+	result, err := executor.Execute(ctx, steps, executor.Config{
 		Debug:     execDebug,
 		Telemetry: executor.TelemetryBasic,
 	})

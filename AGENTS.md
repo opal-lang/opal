@@ -144,13 +144,45 @@ cd runtime/executor && go test -bench=. -benchmem
    ```
 
 2. ✅ **Nix build succeeds** (MUST be done before format/lint since nix develop depends on it)
+   
+   **CRITICAL: Update vendorHash when Go dependencies change**
+   
+   When you modify Go module interfaces (like changing function signatures in `runtime/executor`), 
+   the Go module dependencies change and Nix's vendorHash becomes outdated.
+   
+   **Workflow to update vendorHash:**
    ```bash
+   # Step 1: Set vendorHash to fake value in .nix/package.nix
+   vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+   
+   # Step 2: Run nix build to get the correct hash
+   nix build 2>&1 | grep -E "(got:|specified:)"
+   # Output will show:
+   #   specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+   #      got:    sha256-MhpMwo7ayOwyyvjtu/BtPzpN/CZ6KZ/mKaQKeGPaPy0=
+   
+   # Step 3: Update vendorHash with the "got:" hash
+   vendorHash = "sha256-MhpMwo7ayOwyyvjtu/BtPzpN/CZ6KZ/mKaQKeGPaPy0=";
+   
+   # Step 4: Verify build succeeds
    nix build
-   # If hash mismatch:
-   # 1. Copy the "got:" hash from error message
-   # 2. Update vendorHash in .nix/package.nix (line 26)
-   # 3. Run `nix build` again to verify
    ```
+   
+   **When to update vendorHash:**
+   - ✅ Changed function signatures in any Go module
+   - ✅ Added/removed Go dependencies
+   - ✅ Updated Go module versions
+   - ❌ Only changed implementation (no interface changes)
+   - ❌ Only changed tests or comments
+   
+   **Common error if vendorHash is wrong:**
+   ```
+   # github.com/aledsdavies/opal/cli
+   ./main.go:321:46: too many arguments in call to executor.Execute
+      have (context.Context, []sdk.Step, Config)
+      want ([]sdk.Step, Config)
+   ```
+   This means Nix is using cached vendor dependencies with the old interface.
 
 3. ✅ **Code is formatted**
    ```bash
@@ -364,11 +396,57 @@ gh pr create --head feature-name --title "Title" --body "Description"
 - Small commits = easy to review, easy to revert, easy to recover
 - Rule: If you're working on 2+ distinct things, use separate `jj new` calls
 
+## JJ + Nix Integration (CRITICAL)
+
+**Understanding how JJ and Nix work together in co-located repos:**
+
+### How Nix Sees Your Changes
+
+Nix flakes use the **Git tree** to determine source, not the working directory:
+- Nix only sees **committed and tracked files** in Git
+- Changes in jj are automatically exported to Git (in co-located repos)
+- Nix caches source trees based on git tree hash
+
+### Common Issue: Nix Using Cached Source
+
+**Problem:** After committing changes in jj, `nix build` still fails with old code.
+
+**Root Cause:** Nix has cached the source tree and Go vendor dependencies.
+
+**Solution:**
+1. Verify your changes are in Git: `git log --oneline -3`
+2. Update vendorHash if Go dependencies changed (see Pre-PR Checklist step 2)
+3. Run `nix flake update` to refresh flake inputs
+4. Run `nix build` - it should pick up new changes
+
+**Verification:**
+```bash
+# Check that jj and git are in sync
+jj log --limit 3 --no-graph
+git log --oneline -3
+
+# Check what Nix sees
+nix flake metadata --json | grep -o '"revision":"[^"]*"'
+```
+
+### When Nix Build Fails After Committing
+
+If you see errors like:
+```
+./main.go:321:46: too many arguments in call to executor.Execute
+   have (context.Context, []sdk.Step, Config)
+   want ([]sdk.Step, Config)
+```
+
+This means Nix is using **cached vendor dependencies** with the old interface.
+
+**Fix:** Update vendorHash (see Pre-PR Checklist step 2)
+
 ## Pre-PR Checklist
 - **All commits have descriptions**: JJ won't push commits with "(no description set)" to Git
-- **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix`
-  - When Nix build fails with hash mismatch, copy the "got:" hash to replace the "expected:" hash
-  - This ensures the package builds correctly in Nix environments
+- **Nix package hash**: If Go dependencies changed, update `vendorHash` in `.nix/package.nix` (see detailed workflow in Pre-PR Checklist step 2 above)
+- **JJ + Git sync**: Verify `jj log` and `git log` show the same commits
+- **Flake lock**: Commit any `flake.lock` updates from `nix flake update`
 
 ## Project Specification Compliance
 

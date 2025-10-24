@@ -1,6 +1,7 @@
 package invariant_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -335,4 +336,55 @@ func TestExpectNoErrorFail(t *testing.T) {
 
 	err := fmt.Errorf("validation failed")
 	invariant.ExpectNoError(err, "plan validation")
+}
+
+// TestContextNotBackgroundPass verifies ContextNotBackground does not panic for valid contexts
+func TestContextNotBackgroundPass(t *testing.T) {
+	// Should not panic for contexts derived from Background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	invariant.ContextNotBackground(ctx, "test")
+
+	// Should not panic for contexts with timeout
+	ctxTimeout, cancelTimeout := context.WithTimeout(context.Background(), 0)
+	defer cancelTimeout()
+	invariant.ContextNotBackground(ctxTimeout, "test")
+}
+
+// TestContextNotBackgroundFailsOnBackground verifies ContextNotBackground panics for Background()
+func TestContextNotBackgroundFailsOnBackground(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for context.Background()")
+		}
+		msg := fmt.Sprintf("%v", r)
+		if !strings.Contains(msg, "PRECONDITION VIOLATION") {
+			t.Errorf("expected PRECONDITION VIOLATION, got: %s", msg)
+		}
+		if !strings.Contains(msg, "context must not be Background()") {
+			t.Errorf("expected Background() message, got: %s", msg)
+		}
+		if !strings.Contains(msg, "test location") {
+			t.Errorf("expected location in message, got: %s", msg)
+		}
+	}()
+
+	invariant.ContextNotBackground(context.Background(), "test location")
+}
+
+// TestContextNotBackgroundFailsOnNil verifies ContextNotBackground panics for nil context
+func TestContextNotBackgroundFailsOnNil(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil context")
+		}
+		msg := fmt.Sprintf("%v", r)
+		if !strings.Contains(msg, "context must not be nil") {
+			t.Errorf("expected nil message, got: %s", msg)
+		}
+	}()
+
+	invariant.ContextNotBackground(nil, "test location")
 }

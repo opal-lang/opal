@@ -54,7 +54,7 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 func (e *executionContext) ExecuteBlock(steps []sdk.Step) (int, error) {
 	// Execute steps using executor logic (now works with sdk.Step natively)
 	for _, step := range steps {
-		exitCode := e.executor.executeStep(step)
+		exitCode := e.executor.executeStep(e.ctx, step)
 		if exitCode != 0 {
 			return exitCode, nil
 		}

@@ -1,6 +1,7 @@
 package planner_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aledsdavies/opal/core/planfmt"
@@ -136,7 +137,7 @@ func TestOperatorsEndToEnd(t *testing.T) {
 
 			// Execute
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := executor.Execute(steps, executor.Config{})
+			result, err := executor.Execute(context.Background(), steps, executor.Config{})
 			require.NoError(t, err, "execute error")
 
 			// Verify

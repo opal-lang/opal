@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestExecuteSimpleShellCommand(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -58,7 +59,7 @@ func TestExecuteMultipleCommands(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun)
@@ -77,7 +78,7 @@ func TestExecuteFailingCommand(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err) // Execute returns result, not error
 	assert.Equal(t, 42, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -104,7 +105,7 @@ func TestExecuteStopOnFirstFailure(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun) // Only first two steps run
@@ -118,7 +119,7 @@ func TestExecuteEmptyPlan(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 0, result.StepsRun)
@@ -137,7 +138,7 @@ func TestExecuteTelemetryBasic(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{Telemetry: TelemetryBasic})
+	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryBasic})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	assert.Equal(t, 1, result.Telemetry.StepCount)
@@ -158,7 +159,7 @@ func TestExecuteTelemetryTiming(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{Telemetry: TelemetryTiming})
+	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryTiming})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.StepTimings)
@@ -181,7 +182,7 @@ func TestExecuteTelemetryFailedStep(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{Telemetry: TelemetryBasic})
+	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryBasic})
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.FailedStep)
@@ -201,7 +202,7 @@ func TestExecuteDebugPaths(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{Debug: DebugPaths})
+	result, err := Execute(context.Background(), steps, Config{Debug: DebugPaths})
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 	assert.Greater(t, len(result.DebugEvents), 0)
@@ -228,7 +229,7 @@ func TestExecuteDebugDetailed(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{Debug: DebugDetailed})
+	result, err := Execute(context.Background(), steps, Config{Debug: DebugDetailed})
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 
@@ -244,7 +245,7 @@ func TestExecuteDebugDetailed(t *testing.T) {
 // TestInvariantNilPlan tests that nil plan causes panic
 func TestInvariantNilPlan(t *testing.T) {
 	assert.Panics(t, func() {
-		_, _ = Execute(nil, Config{})
+		_, _ = Execute(context.Background(), nil, Config{})
 	})
 }
 
@@ -402,7 +403,7 @@ func TestExecutorBashParity(t *testing.T) {
 			}
 
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(steps, Config{})
+			result, err := Execute(context.Background(), steps, Config{})
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExitCode, result.ExitCode, "exit code mismatch")
 
@@ -445,7 +446,7 @@ func TestExecuteRedirectAppend(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -490,7 +491,7 @@ func TestExecuteRedirectWithPipeline(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -522,7 +523,7 @@ func TestExecuteRedirectWithAndOperator(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -554,7 +555,7 @@ func TestExecuteRedirectWithOrOperator(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -589,7 +590,7 @@ func TestExecuteRedirectWithSequence(t *testing.T) {
 	}
 
 	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(steps, Config{})
+	result, err := Execute(context.Background(), steps, Config{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -653,7 +654,7 @@ func TestOperatorSemicolon(t *testing.T) {
 			}
 
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(steps, Config{})
+			result, err := Execute(context.Background(), steps, Config{})
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)
@@ -721,7 +722,7 @@ func TestOperatorAND(t *testing.T) {
 			}
 
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(steps, Config{})
+			result, err := Execute(context.Background(), steps, Config{})
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)
@@ -786,7 +787,7 @@ func TestOperatorOR(t *testing.T) {
 			}
 
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(steps, Config{})
+			result, err := Execute(context.Background(), steps, Config{})
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)

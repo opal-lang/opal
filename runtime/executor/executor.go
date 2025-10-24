@@ -87,8 +87,10 @@ type executor struct {
 // Execute runs SDK steps and returns the result.
 // The executor only sees SDK types - it has no knowledge of planfmt.
 // Secret scrubbing is handled by the CLI (stdout/stderr already locked down).
-func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
+// Context is used for cancellation and timeout propagation.
+func Execute(ctx context.Context, steps []sdk.Step, config Config) (*ExecutionResult, error) {
 	// INPUT CONTRACT (preconditions)
+	invariant.NotNil(ctx, "ctx")
 	invariant.NotNil(steps, "steps")
 
 	e := &executor{
@@ -119,7 +121,7 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 			e.recordDebugEvent("step_start", step.ID, "executing tree")
 		}
 
-		exitCode := e.executeStep(step)
+		exitCode := e.executeStep(ctx, step)
 		e.stepsRun++
 
 		stepDuration := time.Since(stepStart)
@@ -174,48 +176,51 @@ func Execute(steps []sdk.Step, config Config) (*ExecutionResult, error) {
 }
 
 // executeStep executes a single step by executing its tree
-func (e *executor) executeStep(step sdk.Step) int {
+func (e *executor) executeStep(ctx context.Context, step sdk.Step) int {
 	// INPUT CONTRACT
+	invariant.NotNil(ctx, "ctx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
 
-	return e.executeTree(step.Tree)
+	return e.executeTree(ctx, step.Tree)
 }
 
 // executeTree executes a tree node and returns the exit code
-func (e *executor) executeTree(node sdk.TreeNode) int {
+func (e *executor) executeTree(ctx context.Context, node sdk.TreeNode) int {
+	invariant.NotNil(ctx, "ctx")
+
 	switch n := node.(type) {
 	case *sdk.CommandNode:
-		return e.executeCommand(n)
+		return e.executeCommand(ctx, n)
 
 	case *sdk.PipelineNode:
-		return e.executePipeline(n)
+		return e.executePipeline(ctx, n)
 
 	case *sdk.AndNode:
 		// Execute left, then right only if left succeeded
-		leftExit := e.executeTree(n.Left)
+		leftExit := e.executeTree(ctx, n.Left)
 		if leftExit != 0 {
 			return leftExit // Short-circuit on failure
 		}
-		return e.executeTree(n.Right)
+		return e.executeTree(ctx, n.Right)
 
 	case *sdk.OrNode:
 		// Execute left, then right only if left failed
-		leftExit := e.executeTree(n.Left)
+		leftExit := e.executeTree(ctx, n.Left)
 		if leftExit == 0 {
 			return leftExit // Short-circuit on success
 		}
-		return e.executeTree(n.Right)
+		return e.executeTree(ctx, n.Right)
 
 	case *sdk.SequenceNode:
 		// Execute all nodes, return last exit code
 		var lastExit int
 		for _, child := range n.Nodes {
-			lastExit = e.executeTree(child)
+			lastExit = e.executeTree(ctx, child)
 		}
 		return lastExit
 
 	case *sdk.RedirectNode:
-		return e.executeRedirect(n)
+		return e.executeRedirect(ctx, n)
 
 	default:
 		invariant.Invariant(false, "unknown TreeNode type: %T", node)
@@ -226,13 +231,14 @@ func (e *executor) executeTree(node sdk.TreeNode) int {
 // executePipeline executes a pipeline of commands with stdout→stdin streaming
 // Uses io.Pipe() for streaming (bash-compatible: concurrent execution, not buffered)
 // Returns exit code of last command (bash semantics)
-func (e *executor) executePipeline(pipeline *sdk.PipelineNode) int {
+func (e *executor) executePipeline(ctx context.Context, pipeline *sdk.PipelineNode) int {
+	invariant.NotNil(ctx, "ctx")
 	numCommands := len(pipeline.Commands)
 	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
 
 	// Single command - no piping needed
 	if numCommands == 1 {
-		return e.executeTreeNode(pipeline.Commands[0], nil, nil)
+		return e.executeTreeNode(ctx, pipeline.Commands[0], nil, nil)
 	}
 
 	// Create pipes between commands
@@ -273,7 +279,7 @@ func (e *executor) executePipeline(pipeline *sdk.PipelineNode) int {
 			}
 
 			// Execute tree node (CommandNode or RedirectNode) with pipes
-			exitCodes[cmdIndex] = e.executeTreeNode(node, stdin, stdout)
+			exitCodes[cmdIndex] = e.executeTreeNode(ctx, node, stdin, stdout)
 		}()
 	}
 
@@ -287,10 +293,12 @@ func (e *executor) executePipeline(pipeline *sdk.PipelineNode) int {
 
 // executeTreeNode executes a tree node (CommandNode or RedirectNode) with optional pipes
 // This is used by executePipeline to handle both commands and redirects in pipelines
-func (e *executor) executeTreeNode(node sdk.TreeNode, stdin io.Reader, stdout io.Writer) int {
+func (e *executor) executeTreeNode(ctx context.Context, node sdk.TreeNode, stdin io.Reader, stdout io.Writer) int {
+	invariant.NotNil(ctx, "ctx")
+
 	switch n := node.(type) {
 	case *sdk.CommandNode:
-		return e.executeCommandWithPipes(n, stdin, stdout)
+		return e.executeCommandWithPipes(ctx, n, stdin, stdout)
 	case *sdk.RedirectNode:
 		// For redirect in pipeline, we need to handle it specially
 		// The redirect's source gets the piped stdin, and its output goes to the sink
@@ -305,7 +313,7 @@ func (e *executor) executeTreeNode(node sdk.TreeNode, stdin io.Reader, stdout io
 			}
 		}
 		// Execute redirect with piped stdin
-		return e.executeRedirectWithStdin(n, stdin)
+		return e.executeRedirectWithStdin(ctx, n, stdin)
 	default:
 		invariant.Invariant(false, "invalid pipeline element type %T", node)
 		return 1
@@ -313,14 +321,17 @@ func (e *executor) executeTreeNode(node sdk.TreeNode, stdin io.Reader, stdout io
 }
 
 // executeCommand executes a single command node
-func (e *executor) executeCommand(cmd *sdk.CommandNode) int {
-	return e.executeCommandWithPipes(cmd, nil, nil)
+func (e *executor) executeCommand(ctx context.Context, cmd *sdk.CommandNode) int {
+	invariant.NotNil(ctx, "ctx")
+	return e.executeCommandWithPipes(ctx, cmd, nil, nil)
 }
 
 // executeCommandWithPipes executes a command with optional piped stdin/stdout
+// ctx: context for cancellation and timeout propagation
 // stdin: piped input (nil if not piped)
 // stdout: piped output (nil if not piped)
-func (e *executor) executeCommandWithPipes(cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
+func (e *executor) executeCommandWithPipes(ctx context.Context, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
+	invariant.NotNil(ctx, "ctx")
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
@@ -349,19 +360,19 @@ func (e *executor) executeCommandWithPipes(cmd *sdk.CommandNode, stdin io.Reader
 		}
 	}
 
-	// Create base execution context
-	baseCtx := newExecutionContext(cmd.Args, e, context.Background())
+	// Create base execution context with parent context for cancellation
+	baseCtx := newExecutionContext(cmd.Args, e, ctx)
 
 	// Clone with pipes if needed
-	var ctx sdk.ExecutionContext
+	var execCtx sdk.ExecutionContext
 	if stdin != nil || stdout != nil {
-		ctx = baseCtx.Clone(cmd.Args, stdin, stdout)
+		execCtx = baseCtx.Clone(cmd.Args, stdin, stdout)
 	} else {
-		ctx = baseCtx
+		execCtx = baseCtx
 	}
 
 	// Call handler with SDK block
-	exitCode, err := sdkHandler(ctx, cmd.Block)
+	exitCode, err := sdkHandler(execCtx, cmd.Block)
 	if err != nil {
 		// Log error but return exit code
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -373,40 +384,42 @@ func (e *executor) executeCommandWithPipes(cmd *sdk.CommandNode, stdin io.Reader
 // executeTreeWithStdout executes a tree node with stdout redirected to a custom writer.
 // This is used by redirect and pipe operators to wire stdout between commands.
 // Supports all tree node types: CommandNode, PipelineNode, AndNode, OrNode, SequenceNode.
-func (e *executor) executeTreeWithStdout(tree sdk.TreeNode, stdout io.Writer) int {
+func (e *executor) executeTreeWithStdout(ctx context.Context, tree sdk.TreeNode, stdout io.Writer) int {
+	invariant.NotNil(ctx, "ctx")
+
 	switch n := tree.(type) {
 	case *sdk.CommandNode:
 		// Simple command - redirect stdout directly
-		return e.executeCommandWithPipes(n, nil, stdout)
+		return e.executeCommandWithPipes(ctx, n, nil, stdout)
 
 	case *sdk.PipelineNode:
 		// Pipeline - redirect final command's stdout
-		return e.executePipelineWithStdout(n, stdout)
+		return e.executePipelineWithStdout(ctx, n, stdout)
 
 	case *sdk.AndNode:
 		// AND operator: execute left, then right only if left succeeded
 		// Both sides have stdout redirected (bash subshell semantics)
-		leftExit := e.executeTreeWithStdout(n.Left, stdout)
+		leftExit := e.executeTreeWithStdout(ctx, n.Left, stdout)
 		if leftExit != 0 {
 			return leftExit // Short-circuit on failure
 		}
-		return e.executeTreeWithStdout(n.Right, stdout)
+		return e.executeTreeWithStdout(ctx, n.Right, stdout)
 
 	case *sdk.OrNode:
 		// OR operator: execute left, then right only if left failed
 		// Both sides have stdout redirected (bash subshell semantics)
-		leftExit := e.executeTreeWithStdout(n.Left, stdout)
+		leftExit := e.executeTreeWithStdout(ctx, n.Left, stdout)
 		if leftExit == 0 {
 			return leftExit // Short-circuit on success
 		}
-		return e.executeTreeWithStdout(n.Right, stdout)
+		return e.executeTreeWithStdout(ctx, n.Right, stdout)
 
 	case *sdk.SequenceNode:
 		// Sequence operator: execute all nodes with stdout redirected
 		// All commands write to the same sink (bash subshell semantics)
 		var lastExit int
 		for _, node := range n.Nodes {
-			lastExit = e.executeTreeWithStdout(node, stdout)
+			lastExit = e.executeTreeWithStdout(ctx, node, stdout)
 		}
 		return lastExit
 
@@ -423,42 +436,44 @@ func (e *executor) executeTreeWithStdout(tree sdk.TreeNode, stdout io.Writer) in
 
 // executeTreeWithStdinStdout executes a tree node with both stdin and stdout redirected
 // This is used for redirects inside pipelines where the source needs piped stdin
-func (e *executor) executeTreeWithStdinStdout(tree sdk.TreeNode, stdin io.Reader, stdout io.Writer) int {
+func (e *executor) executeTreeWithStdinStdout(ctx context.Context, tree sdk.TreeNode, stdin io.Reader, stdout io.Writer) int {
+	invariant.NotNil(ctx, "ctx")
+
 	switch n := tree.(type) {
 	case *sdk.CommandNode:
 		// Simple command - redirect both stdin and stdout
-		return e.executeCommandWithPipes(n, stdin, stdout)
+		return e.executeCommandWithPipes(ctx, n, stdin, stdout)
 
 	case *sdk.PipelineNode:
 		// Pipeline - first command gets stdin, last command's stdout is redirected
 		// This is complex - for now, just execute with stdout redirect
 		// TODO: Handle stdin properly for pipelines
-		return e.executePipelineWithStdout(n, stdout)
+		return e.executePipelineWithStdout(ctx, n, stdout)
 
 	case *sdk.AndNode:
 		// AND operator: only right side gets stdin (bash semantics)
-		leftExit := e.executeTreeWithStdout(n.Left, stdout)
+		leftExit := e.executeTreeWithStdout(ctx, n.Left, stdout)
 		if leftExit != 0 {
 			return leftExit
 		}
-		return e.executeTreeWithStdinStdout(n.Right, stdin, stdout)
+		return e.executeTreeWithStdinStdout(ctx, n.Right, stdin, stdout)
 
 	case *sdk.OrNode:
 		// OR operator: only right side gets stdin (bash semantics)
-		leftExit := e.executeTreeWithStdout(n.Left, stdout)
+		leftExit := e.executeTreeWithStdout(ctx, n.Left, stdout)
 		if leftExit == 0 {
 			return leftExit
 		}
-		return e.executeTreeWithStdinStdout(n.Right, stdin, stdout)
+		return e.executeTreeWithStdinStdout(ctx, n.Right, stdin, stdout)
 
 	case *sdk.SequenceNode:
 		// Sequence: only last command gets stdin (bash semantics)
 		var lastExit int
 		for i, node := range n.Nodes {
 			if i == len(n.Nodes)-1 {
-				lastExit = e.executeTreeWithStdinStdout(node, stdin, stdout)
+				lastExit = e.executeTreeWithStdinStdout(ctx, node, stdin, stdout)
 			} else {
-				lastExit = e.executeTreeWithStdout(node, stdout)
+				lastExit = e.executeTreeWithStdout(ctx, node, stdout)
 			}
 		}
 		return lastExit
@@ -470,14 +485,15 @@ func (e *executor) executeTreeWithStdinStdout(tree sdk.TreeNode, stdin io.Reader
 }
 
 // executePipelineWithStdout executes a pipeline with the final command's stdout redirected.
-// This is similar to executePipeline but allows overriding the final stdout.
-func (e *executor) executePipelineWithStdout(pipeline *sdk.PipelineNode, finalStdout io.Writer) int {
+// This is used by redirect operators to capture pipeline output.
+func (e *executor) executePipelineWithStdout(ctx context.Context, pipeline *sdk.PipelineNode, finalStdout io.Writer) int {
+	invariant.NotNil(ctx, "ctx")
 	numCommands := len(pipeline.Commands)
 	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
 
 	// Single command - redirect stdout directly
 	if numCommands == 1 {
-		return e.executeTreeNode(pipeline.Commands[0], nil, finalStdout)
+		return e.executeTreeNode(ctx, pipeline.Commands[0], nil, finalStdout)
 	}
 
 	// Create pipes between commands (N-1 pipes for N commands)
@@ -498,7 +514,7 @@ func (e *executor) executePipelineWithStdout(pipeline *sdk.PipelineNode, finalSt
 	go func() {
 		defer wg.Done()
 		defer func() { _ = pipeWriters[0].Close() }()
-		exitCodes[0] = e.executeTreeNode(pipeline.Commands[0], nil, pipeWriters[0])
+		exitCodes[0] = e.executeTreeNode(ctx, pipeline.Commands[0], nil, pipeWriters[0])
 	}()
 
 	// Middle commands: stdin from pipe[i-1], stdout to pipe[i]
@@ -507,14 +523,14 @@ func (e *executor) executePipelineWithStdout(pipeline *sdk.PipelineNode, finalSt
 		go func() {
 			defer wg.Done()
 			defer func() { _ = pipeWriters[i].Close() }()
-			exitCodes[i] = e.executeTreeNode(pipeline.Commands[i], pipes[i-1], pipeWriters[i])
+			exitCodes[i] = e.executeTreeNode(ctx, pipeline.Commands[i], pipes[i-1], pipeWriters[i])
 		}()
 	}
 
 	// Last command: stdin from pipe[N-2], stdout to finalStdout
 	go func() {
 		defer wg.Done()
-		exitCodes[numCommands-1] = e.executeTreeNode(pipeline.Commands[numCommands-1], pipes[numCommands-2], finalStdout)
+		exitCodes[numCommands-1] = e.executeTreeNode(ctx, pipeline.Commands[numCommands-1], pipes[numCommands-2], finalStdout)
 	}()
 
 	// Wait for all commands to complete
@@ -526,13 +542,14 @@ func (e *executor) executePipelineWithStdout(pipeline *sdk.PipelineNode, finalSt
 
 // executeRedirect executes a redirect operation (> or >>)
 // Opens the sink and redirects source's stdout to it
-func (e *executor) executeRedirect(redirect *sdk.RedirectNode) int {
+func (e *executor) executeRedirect(ctx context.Context, redirect *sdk.RedirectNode) int {
+	invariant.NotNil(ctx, "ctx")
 	invariant.NotNil(redirect, "redirect node")
 	invariant.NotNil(redirect.Sink, "redirect sink")
 
 	// Create execution context for opening the sink
 	// This context provides the transport (local/SSH/Docker)
-	ctx := newExecutionContext(make(map[string]interface{}), e, context.Background())
+	execCtx := newExecutionContext(make(map[string]interface{}), e, ctx)
 
 	// Check sink capabilities before opening
 	caps := redirect.Sink.Caps()
@@ -548,7 +565,7 @@ func (e *executor) executeRedirect(redirect *sdk.RedirectNode) int {
 	}
 
 	// Open the sink for writing
-	writer, err := redirect.Sink.Open(ctx, redirect.Mode, nil)
+	writer, err := redirect.Sink.Open(execCtx, redirect.Mode, nil)
 	if err != nil {
 		kind, path := redirect.Sink.Identity()
 		fmt.Fprintf(os.Stderr, "Error: failed to open sink %s (%s): %v\n", kind, path, err)
@@ -563,17 +580,18 @@ func (e *executor) executeRedirect(redirect *sdk.RedirectNode) int {
 
 	// Execute source with stdout redirected to sink
 	// We need to temporarily override stdout for the source execution
-	return e.executeTreeWithStdout(redirect.Source, writer)
+	return e.executeTreeWithStdout(ctx, redirect.Source, writer)
 }
 
 // executeRedirectWithStdin executes a redirect with piped stdin (for use in pipelines)
 // This is like executeRedirect but also handles stdin from previous pipeline command
-func (e *executor) executeRedirectWithStdin(redirect *sdk.RedirectNode, stdin io.Reader) int {
+func (e *executor) executeRedirectWithStdin(ctx context.Context, redirect *sdk.RedirectNode, stdin io.Reader) int {
+	invariant.NotNil(ctx, "ctx")
 	invariant.NotNil(redirect, "redirect node")
 	invariant.NotNil(redirect.Sink, "redirect sink")
 
 	// Create execution context for opening the sink
-	ctx := newExecutionContext(make(map[string]interface{}), e, context.Background())
+	execCtx := newExecutionContext(make(map[string]interface{}), e, ctx)
 
 	// Check sink capabilities before opening
 	caps := redirect.Sink.Caps()
@@ -589,7 +607,7 @@ func (e *executor) executeRedirectWithStdin(redirect *sdk.RedirectNode, stdin io
 	}
 
 	// Open the sink for writing
-	writer, err := redirect.Sink.Open(ctx, redirect.Mode, nil)
+	writer, err := redirect.Sink.Open(execCtx, redirect.Mode, nil)
 	if err != nil {
 		kind, path := redirect.Sink.Identity()
 		fmt.Fprintf(os.Stderr, "Error: failed to open sink %s (%s): %v\n", kind, path, err)
@@ -603,7 +621,7 @@ func (e *executor) executeRedirectWithStdin(redirect *sdk.RedirectNode, stdin io
 	}()
 
 	// Execute source with stdin from pipe and stdout redirected to sink
-	return e.executeTreeWithStdinStdout(redirect.Source, stdin, writer)
+	return e.executeTreeWithStdinStdout(ctx, redirect.Source, stdin, writer)
 }
 
 // recordDebugEvent records a debug event (only if debug enabled)

@@ -1,6 +1,7 @@
 package executor_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aledsdavies/opal/core/sdk"
@@ -23,7 +24,7 @@ func BenchmarkExecutorCore(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := executor.Execute(steps, executor.Config{
+				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: executor.TelemetryOff, // Zero overhead
 				})
 				if err != nil {
@@ -54,7 +55,7 @@ func BenchmarkExecutorTelemetryModes(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := executor.Execute(steps, executor.Config{
+				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: mode,
 				})
 				if err != nil {
@@ -81,7 +82,7 @@ func BenchmarkExecutorScaling(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := executor.Execute(steps, executor.Config{
+				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: executor.TelemetryOff,
 				})
 				if err != nil {
