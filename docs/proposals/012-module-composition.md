@@ -4,7 +4,7 @@ title: Module Composition and Plugin System
 status: Draft
 type: Integration
 created: 2025-01-21
-updated: 2025-01-21
+updated: 2025-01-27
 ---
 
 # OEP-012: Module Composition and Plugin System
@@ -147,7 +147,23 @@ Opal (the host) remains in control:
 
 ### Plugin Interface (DIM Manifest)
 
-Plugins declare their interface via a DIM (Decorator Interface Manifest) file:
+Plugins declare their interface via a DIM (Decorator Interface Manifest) file.
+
+#### Type System
+
+DIM manifests use **JSONSchema** for type definitions, providing precise validation and documentation:
+
+**Primitive types:**
+- `string`, `integer`, `number`, `boolean`
+- `duration` (Opal extension: "1s", "5m", "2h")
+- `enum` (via JSONSchema enum keyword)
+
+**Complex types:**
+- `object` - Structured data with JSONSchema properties
+- `array` - Lists with item type validation
+- `oneOf`, `anyOf`, `allOf` - Union and intersection types
+
+**Example manifest:**
 
 ```yaml
 apiVersion: opal.dev/dim/v1
@@ -157,24 +173,105 @@ decorators:
     kind: exec
     determinism: deterministic
     params:
-      name:            { type: String }
-      ami:             { type: String }
-      type:            { type: String }
-      region:          { type: String }
-      count:           { type: Int, default: 1, min: 1 }
-      idempotenceKey:  { type: Array, items: {type:String}, optional: true }
-      transport:       { type: Enum, values: ["ssh","ssm"], default: "ssm" }
-      ssh_user:        { type: String, optional: true }
-      ssh_key_ref:     { type: String, secret: true, optional: true }
-      ready_probe:     { type: Object, optional: true,
-                         props: { port:{type:Int,optional:true},
-                                 cmd:{type:String,optional:true},
-                                 timeout:{type:Duration,default:"5m"} } }
-      max_concurrency: { type: Int, default: 5, min: 1 }
-      tolerate:        { type: Int, default: 0, min: 0 }
+      name:            { type: string }
+      ami:             { type: string }
+      type:            { type: string }
+      region:          { type: string }
+      count:           { type: integer, default: 1, minimum: 1 }
+      idempotenceKey:  { type: array, items: {type: string}, optional: true }
+      transport:       { type: string, enum: ["ssh", "ssm"], default: "ssm" }
+      ssh_user:        { type: string, optional: true }
+      ssh_key_ref:     { type: string, secret: true, optional: true }
+      ready_probe:
+        type: object
+        optional: true
+        properties:
+          port: { type: integer, optional: true }
+          cmd: { type: string, optional: true }
+          timeout: { type: duration, default: "5m" }
+      max_concurrency: { type: integer, default: 5, minimum: 1 }
+      tolerate:        { type: integer, default: 0, minimum: 0 }
     block: optional   # block allowed; if present → remote context
     capabilities: ["net","clock"]
 ```
+
+### Role Auto-Inference from DIM Manifest
+
+**Design Principle**: Plugin authors specify capabilities, not roles. Opal runtime automatically infers decorator roles from the manifest.
+
+#### Inference Rules
+
+| Manifest Feature | Inferred Role | Example |
+|------------------|---------------|---------|
+| `returns: { type: ... }` | `RoleProvider` | Value decorators that produce data |
+| `block: required/optional` | `RoleWrapper` | Execution decorators that wrap blocks |
+| `block: required` + `switches_transport: true` | `RoleBoundary` | Transport decorators (SSH, Docker) |
+| `io.redirect_in: true` or `io.redirect_out: true` | `RoleEndpoint` | I/O endpoints (files, S3, HTTP) |
+| `kind: meta` | `RoleAnnotate` | Metadata decorators (@trace, @measure) |
+
+#### Multi-Role Decorators
+
+Decorators can have multiple roles by declaring multiple capabilities:
+
+```yaml
+decorators:
+  - name: aws.s3.object
+    # Plugin author specifies capabilities
+    params:
+      bucket: { type: String }
+      key: { type: String }
+    returns:
+      type: object
+      properties:
+        size: { type: integer, description: "Object size in bytes" }
+        etag: { type: string, description: "Object ETag" }
+        url: { type: string, format: uri, description: "S3 URL" }
+        lastModified: { type: string, format: date-time }
+      required: [size, etag, url]
+    io:
+      redirect_out: true           # ← Infers RoleEndpoint
+    
+    # Opal runtime auto-infers:
+    # Roles: [RoleProvider, RoleEndpoint]
+```
+
+**Usage as Value (RoleProvider):**
+```opal
+var obj = @aws.s3.object(bucket="artifacts", key="build.tar.gz")
+echo "Size: @var.obj.size bytes"
+echo "ETag: @var.obj.etag"
+```
+
+**Usage as Endpoint (RoleEndpoint):**
+```opal
+tar czf - dist/ > @aws.s3.object(bucket="artifacts", key="build.tar.gz")
+```
+
+#### Minimal Manifests
+
+The `kind` field is **optional** and used only for internal organization. Roles are always inferred from capabilities:
+
+```yaml
+# Minimal manifest - kind is optional
+decorators:
+  - name: retry
+    params:
+      attempts: { type: Int, default: 3, min: 1, max: 10 }
+      delay: { type: Duration, default: "1s" }
+      strategy: { type: Enum, values: ["constant", "exponential", "linear"], default: "exponential" }
+    block: required                # ← Infers RoleWrapper
+    
+    # No need to specify:
+    # - kind: exec (inferred from block)
+    # - roles: [wrapper] (inferred from block)
+```
+
+#### Benefits
+
+1. **Less boilerplate** - Authors specify what decorators do, not how they're classified
+2. **Type-safe** - Roles always match declared capabilities
+3. **Consistent** - Same inference logic for native Go and plugin decorators
+4. **Clear semantics** - Manifest features directly map to user-visible behavior
 
 ### Plugin Execution ABIs
 

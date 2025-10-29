@@ -576,3 +576,4 @@ local.*
 
 /target
 vendor/
+.ssh-test/

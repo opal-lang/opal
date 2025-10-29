@@ -165,47 +165,20 @@ jobs:
           nix develop --command gofumpt --version || echo "gofumpt not required in shell"
 
   # =============================================================================
-  # PHASE 2: Core Foundation (Needs linting to pass)
+  # PHASE 2: Module Testing (All run in parallel after lint)
   # =============================================================================
 
-  test-core:
-    name: Test Core Module
+  test:
+    name: Test (${{ matrix.module }})
     runs-on: ubuntu-latest
     needs: [lint]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run core module tests
-        run: |
-          echo "Running core module tests..."
-          cd core
-          go test -v -race -coverprofile=../coverage-core.out -covermode=atomic ./...
-
-      - name: Upload core coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-core
-          path: coverage-core.out
-
-  # =============================================================================
-  # PHASE 3: Module Testing (All run in parallel after core)
-  # =============================================================================
-
-  test-runtime:
-    name: Test Runtime Module
-    runs-on: ubuntu-latest
-    needs: [test-core]
     timeout-minutes: 15
     permissions:
       contents: read
       actions: read
+    strategy:
+      matrix:
+        module: [core, runtime, cli]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -216,7 +189,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Snapshot fuzz corpus
+      - name: Snapshot fuzz corpus (runtime only)
+        if: matrix.module == 'runtime'
         run: |
           set -euo pipefail
           echo "==> Fuzz corpus snapshot"
@@ -230,54 +204,27 @@ jobs:
           echo "corpus_bytes=$CORPUS_BYTES" >> $GITHUB_OUTPUT
         id: corpus_snapshot
 
-      - name: Run runtime tests + corpus replay
+      - name: Run module tests
         run: |
           set -euo pipefail
-          echo "Running runtime tests with race detector..."
-          cd runtime
-          # Test all available runtime packages (execution package was removed in clean slate)
-          # Corpus replay happens automatically via go test (no -fuzz flag)
-          go test -v -race -coverprofile=../coverage-runtime.out -covermode=atomic ./...
+          echo "Running ${{ matrix.module }} module tests..."
+          cd ${{ matrix.module }}
+          go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./...
           
-          echo ""
-          echo "==> Corpus replay complete"
-          echo "All fuzz corpus files validated (count: ${{ steps.corpus_snapshot.outputs.corpus_count }})"
+          if [ "${{ matrix.module }}" = "runtime" ]; then
+            echo ""
+            echo "==> Corpus replay complete"
+            echo "All fuzz corpus files validated (count: ${{ steps.corpus_snapshot.outputs.corpus_count }})"
+          fi
 
-      - name: Upload runtime coverage
+      - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-runtime
-          path: coverage-runtime.out
-
-
-
-  test-cli:
-    name: Test CLI Module
-    runs-on: ubuntu-latest
-    needs: [test-core]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run CLI module tests
-        run: |
-          echo "Running CLI module tests..."
-          cd cli
-          go test -v -race -coverprofile=../coverage-cli.out -covermode=atomic ./...
-
-      - name: Upload CLI coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-cli
-          path: coverage-cli.out
+          name: coverage-${{ matrix.module }}
+          path: coverage-${{ matrix.module }}.out
 
       - name: Test CLI build and basic functionality
+        if: matrix.module == 'cli'
         run: |
           echo "Testing CLI build and interpreter mode..."
           cd cli
@@ -289,13 +236,13 @@ jobs:
           ./opal --dry-run -f test.opl test
 
   # =============================================================================
-  # PHASE 4: Aggregation (After all tests)
+  # PHASE 3: Aggregation (After all tests)
   # =============================================================================
 
   aggregate-coverage:
     name: Aggregate Coverage
     runs-on: ubuntu-latest
-    needs: [test-core, test-runtime, test-cli]
+    needs: [test]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -339,7 +286,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [format-check, lint, build, nix-development, test-core, test-runtime, test-cli, aggregate-coverage]
+    needs: [format-check, lint, build, nix-development, test, aggregate-coverage]
     if: always()
     steps:
       - name: Check job statuses
@@ -352,9 +299,7 @@ jobs:
             "${{ needs.lint.result }}:Lint"
             "${{ needs.build.result }}:Build"
             "${{ needs.nix-development.result }}:Nix Development"
-            "${{ needs.test-core.result }}:Test Core"
-            "${{ needs.test-runtime.result }}:Test Runtime"
-            "${{ needs.test-cli.result }}:Test CLI"
+            "${{ needs.test.result }}:Test Modules"
             "${{ needs.aggregate-coverage.result }}:Coverage Report"
           )
 

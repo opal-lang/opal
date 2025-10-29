@@ -1,6 +1,6 @@
 package parser
 
-import "github.com/aledsdavies/opal/core/types"
+import "github.com/aledsdavies/opal/core/decorator"
 
 // StringPart represents a part of an interpolated string using byte offsets (zero allocation)
 type StringPart struct {
@@ -74,7 +74,20 @@ func TokenizeString(content []byte, quoteType byte) []StringPart {
 
 		// Check if it's a registered value decorator (need to convert to string for registry lookup)
 		decoratorName := string(content[decoratorStart:decoratorEnd])
-		if !types.Global().IsValueDecorator(decoratorName) {
+
+		// Use new decorator registry to check if this is a value decorator
+		isValueDecorator := false
+		if entry, ok := decorator.Global().Lookup(decoratorName); ok {
+			// Check if decorator has RoleProvider (value decorator)
+			for _, role := range entry.Roles {
+				if role == decorator.RoleProvider {
+					isValueDecorator = true
+					break
+				}
+			}
+		}
+
+		if !isValueDecorator {
 			// Not a value decorator (either unregistered or execution decorator)
 			// Treat as literal including any .property that follows
 			// Skip over .property if present (even though it's not a decorator)

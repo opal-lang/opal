@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/invariant"
 	"github.com/aledsdavies/opal/core/types"
 	"github.com/aledsdavies/opal/runtime/lexer"
@@ -1564,8 +1565,8 @@ func (p *parser) decorator() {
 	decoratorName := string(p.current().Text)
 	tempPos := p.pos
 
-	// Try the first identifier
-	if types.Global().IsRegistered(decoratorName) {
+	// Try the first identifier (check both registries)
+	if types.Global().IsRegistered(decoratorName) || decorator.Global().IsRegistered(decoratorName) {
 		// Found it - use this name
 		p.pos = tempPos
 	} else {
@@ -1578,7 +1579,7 @@ func (p *parser) decorator() {
 				if p.at(lexer.IDENTIFIER) {
 					// Try adding this part to the name
 					testName := decoratorName + "." + string(p.current().Text)
-					if types.Global().IsRegistered(testName) {
+					if types.Global().IsRegistered(testName) || decorator.Global().IsRegistered(testName) {
 						// Found it!
 						decoratorName = testName
 						foundRegistered = true
@@ -1606,7 +1607,20 @@ func (p *parser) decorator() {
 	}
 
 	// Get the schema for validation
-	schema, hasSchema := types.Global().GetSchema(decoratorName)
+	// Try new registry first, fall back to old registry for backward compatibility
+	var schema types.DecoratorSchema
+	var hasSchema bool
+
+	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
+	if hasNewEntry {
+		// Extract schema from new registry
+		desc := entry.Impl.Descriptor()
+		schema = desc.Schema
+		hasSchema = true
+	} else {
+		// Fall back to old registry
+		schema, hasSchema = types.Global().GetSchema(decoratorName)
+	}
 
 	// It's a registered decorator, parse it
 	// Reset position to @ and start the node
@@ -1665,8 +1679,45 @@ func (p *parser) decorator() {
 		p.validateRequiredParameters(decoratorName, schema, providedParams)
 	}
 
-	// Parse optional block (based on schema BlockRequirement)
-	if hasSchema {
+	// Parse optional block (use new registry's Block capability)
+	if hasNewEntry {
+		desc := entry.Impl.Descriptor()
+		blockReq := desc.Capabilities.Block
+
+		// Default to BlockForbidden if not specified (safe default for value decorators)
+		if blockReq == "" {
+			blockReq = decorator.BlockForbidden
+		}
+
+		switch blockReq {
+		case decorator.BlockRequired:
+			// Block is required
+			if !p.at(lexer.LBRACE) {
+				p.errorWithDetails(
+					fmt.Sprintf("@%s requires a block", decoratorName),
+					"decorator block",
+					fmt.Sprintf("Add a block: @%s(...) { ... }", decoratorName),
+				)
+			} else {
+				p.block()
+			}
+		case decorator.BlockOptional:
+			// Block is optional
+			if p.at(lexer.LBRACE) {
+				p.block()
+			}
+		case decorator.BlockForbidden:
+			// Block is not allowed
+			if p.at(lexer.LBRACE) {
+				p.errorWithDetails(
+					fmt.Sprintf("@%s cannot have a block", decoratorName),
+					"decorator block",
+					fmt.Sprintf("@%s is a value decorator and does not accept blocks", decoratorName),
+				)
+			}
+		}
+	} else if hasSchema {
+		// Fall back to old schema-based validation for decorators not in new registry
 		switch schema.BlockRequirement {
 		case types.BlockRequired:
 			// Block is required

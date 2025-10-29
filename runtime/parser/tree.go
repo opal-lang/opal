@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/types"
 	"github.com/aledsdavies/opal/runtime/lexer"
 )
@@ -434,5 +435,13 @@ func (v *semanticValidator) validateRedirectSupport(decoratorName string, redire
 
 // getSchema is a helper to look up decorator schemas
 func (tree *ParseTree) getSchema(decoratorName string) (schema types.DecoratorSchema, exists bool) {
+	// Try new registry first
+	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
+	if hasNewEntry {
+		desc := entry.Impl.Descriptor()
+		return desc.Schema, true
+	}
+
+	// Fall back to old registry for backward compatibility
 	return types.Global().GetSchema(decoratorName)
 }

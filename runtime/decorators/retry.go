@@ -1,35 +1,49 @@
 package decorators
 
 import (
+	"fmt"
+
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/types"
 )
 
-func init() {
-	schema := types.NewSchema("retry", types.KindExecution).
-		Description("Retry failed operations with exponential backoff").
-		Param("times", types.TypeInt).
-		Description("Number of retry attempts").
-		Default(3).
-		Done().
-		Param("delay", types.TypeDuration).
-		Description("Initial delay between retries").
-		Default("1s").
-		Examples("1s", "5s", "30s").
-		Done().
-		Param("backoff", types.TypeString).
-		Description("Backoff strategy").
-		Default("exponential").
-		Examples("exponential", "linear", "constant").
-		Done().
-		WithBlock(types.BlockOptional).
+// RetryDecorator implements the @retry execution decorator.
+// Retries failed operations with configurable backoff strategy.
+type RetryDecorator struct{}
+
+// Descriptor returns the decorator metadata.
+func (d *RetryDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("retry").
+		Summary("Retry failed operations with exponential backoff").
+		Roles(decorator.RoleWrapper).
+		Param("times", types.TypeInt, "Number of retry attempts", "3", "5", "10").
+		Param("delay", types.TypeDuration, "Initial delay between retries", "1s", "5s", "30s").
+		Param("backoff", types.TypeString, "Backoff strategy", "exponential", "linear", "constant").
+		Block(decorator.BlockOptional).
 		Build()
+}
 
-	handler := func(ctx types.Context, args types.Args) error {
-		// Implementation would go here
-		return nil
-	}
+// Wrap implements the Exec interface.
+func (d *RetryDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return &retryNode{next: next, params: params}
+}
 
-	if err := types.Global().RegisterExecutionWithSchema(schema, handler); err != nil {
-		panic(err)
+// retryNode wraps an execution node with retry logic.
+type retryNode struct {
+	next   decorator.ExecNode
+	params map[string]any
+}
+
+// Execute implements the ExecNode interface.
+// Stub implementation: just executes once for now.
+func (n *retryNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+	// TODO: Implement actual retry logic with backoff
+	return n.next.Execute(ctx)
+}
+
+// Register @retry decorator with the global registry
+func init() {
+	if err := decorator.Register("retry", &RetryDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @retry decorator: %v", err))
 	}
 }

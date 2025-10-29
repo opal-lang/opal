@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // ParamType represents the type of a parameter
 type ParamType string
@@ -212,18 +215,92 @@ type DecoratorSchema struct {
 
 // ParamSchema describes a single parameter
 type ParamSchema struct {
-	Name        string      // Parameter name
-	Type        ParamType   // Type of the parameter
-	Description string      // Human-readable description
-	Required    bool        // Whether parameter is required
-	Default     interface{} // Default value if not provided
-	Examples    []string    // Example values
+	Name        string    // Parameter name
+	Type        ParamType // Type of the parameter
+	Description string    // Human-readable description
+	Required    bool      // Whether parameter is required
+	Default     any       // Default value if not provided
+	Examples    []string  // Example values
 
-	// Validation (future use)
-	Minimum *int     // For int types
-	Maximum *int     // For int types
-	Enum    []string // Allowed values
-	Pattern string   // Regex pattern for string validation
+	// Validation constraints
+	Minimum *float64 // For numeric types (int, float)
+	Maximum *float64 // For numeric types (int, float)
+	Enum    []any    // Allowed values (any type)
+	Pattern *string  // Regex pattern for string validation
+}
+
+// ValidateEnum checks if value matches enum constraint
+func (p *ParamSchema) ValidateEnum(value any) error {
+	// No enum constraint = always valid
+	if len(p.Enum) == 0 {
+		return nil
+	}
+
+	// Check if value is in enum
+	for _, allowed := range p.Enum {
+		if value == allowed {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("parameter %q: value %v must be one of %v", p.Name, value, p.Enum)
+}
+
+// ValidateRange checks if numeric value is within min/max bounds
+func (p *ParamSchema) ValidateRange(value any) error {
+	// Convert value to float64 for comparison
+	var numValue float64
+	switch v := value.(type) {
+	case int:
+		numValue = float64(v)
+	case int64:
+		numValue = float64(v)
+	case float64:
+		numValue = v
+	case float32:
+		numValue = float64(v)
+	default:
+		// Not a numeric type, skip range validation
+		return nil
+	}
+
+	// Check minimum
+	if p.Minimum != nil && numValue < *p.Minimum {
+		return fmt.Errorf("parameter %q: value %v must be >= %v", p.Name, numValue, *p.Minimum)
+	}
+
+	// Check maximum
+	if p.Maximum != nil && numValue > *p.Maximum {
+		return fmt.Errorf("parameter %q: value %v must be <= %v", p.Name, numValue, *p.Maximum)
+	}
+
+	return nil
+}
+
+// ValidatePattern checks if string value matches regex pattern
+func (p *ParamSchema) ValidatePattern(value any) error {
+	// No pattern constraint = always valid
+	if p.Pattern == nil {
+		return nil
+	}
+
+	// Only validate strings
+	strValue, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	// Compile and match pattern
+	matched, err := regexp.MatchString(*p.Pattern, strValue)
+	if err != nil {
+		return fmt.Errorf("parameter %q: invalid pattern %q: %w", p.Name, *p.Pattern, err)
+	}
+
+	if !matched {
+		return fmt.Errorf("parameter %q: value %q must match pattern %q", p.Name, strValue, *p.Pattern)
+	}
+
+	return nil
 }
 
 // ReturnSchema describes what a value decorator returns
@@ -264,6 +341,7 @@ func (b *SchemaBuilder) Description(desc string) *SchemaBuilder {
 }
 
 // PrimaryParam defines the primary parameter (enables dot syntax)
+// Primary parameter is always first in parameter order, regardless of when it's declared.
 func (b *SchemaBuilder) PrimaryParam(name string, typ ParamType, description string) *SchemaBuilder {
 	b.schema.PrimaryParameter = name
 	b.schema.Parameters[name] = ParamSchema{
@@ -272,8 +350,8 @@ func (b *SchemaBuilder) PrimaryParam(name string, typ ParamType, description str
 		Description: description,
 		Required:    true, // Primary params are always required
 	}
-	// Track parameter order
-	b.parameterOrder = append(b.parameterOrder, name)
+	// Primary param is always first - prepend to parameter order
+	b.parameterOrder = append([]string{name}, b.parameterOrder...)
 	return b
 }
 
@@ -406,7 +484,7 @@ func (b *SchemaBuilder) WithIO(flags ...IOFlag) *SchemaBuilder {
 		Description: "Scrub secrets from stdin/stdout",
 		Required:    false,
 		Default:     string(defaultScrubMode),
-		Enum:        []string{string(ScrubNone), string(ScrubStdin), string(ScrubStdout), string(ScrubBoth)},
+		Enum:        []any{string(ScrubNone), string(ScrubStdin), string(ScrubStdout), string(ScrubBoth)},
 	}
 	// Add to parameter order
 	b.parameterOrder = append(b.parameterOrder, "scrub")
@@ -456,7 +534,7 @@ func (b *SchemaBuilder) WithIOOpts(opts IOOpts) *SchemaBuilder {
 		Description: "Scrub secrets from stdin/stdout",
 		Required:    false,
 		Default:     string(defaultScrubMode),
-		Enum:        []string{string(ScrubNone), string(ScrubStdin), string(ScrubStdout), string(ScrubBoth)},
+		Enum:        []any{string(ScrubNone), string(ScrubStdin), string(ScrubStdout), string(ScrubBoth)},
 	}
 	// Add to parameter order
 	b.parameterOrder = append(b.parameterOrder, "scrub")
@@ -530,6 +608,30 @@ func (pb *ParamBuilder) Default(val interface{}) *ParamBuilder {
 // Examples adds example values
 func (pb *ParamBuilder) Examples(examples ...string) *ParamBuilder {
 	pb.param.Examples = examples
+	return pb
+}
+
+// Minimum sets minimum value constraint (for numeric types)
+func (pb *ParamBuilder) Minimum(min *float64) *ParamBuilder {
+	pb.param.Minimum = min
+	return pb
+}
+
+// Maximum sets maximum value constraint (for numeric types)
+func (pb *ParamBuilder) Maximum(max *float64) *ParamBuilder {
+	pb.param.Maximum = max
+	return pb
+}
+
+// Enum sets allowed values constraint
+func (pb *ParamBuilder) Enum(values []any) *ParamBuilder {
+	pb.param.Enum = values
+	return pb
+}
+
+// Pattern sets regex pattern constraint (for string types)
+func (pb *ParamBuilder) Pattern(pattern *string) *ParamBuilder {
+	pb.param.Pattern = pattern
 	return pb
 }
 

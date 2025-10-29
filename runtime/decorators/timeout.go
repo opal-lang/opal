@@ -1,26 +1,47 @@
 package decorators
 
 import (
+	"fmt"
+
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/types"
 )
 
-func init() {
-	schema := types.NewSchema("timeout", types.KindExecution).
-		Description("Execute block with timeout constraint").
-		Param("duration", types.TypeDuration).
-		Description("Maximum execution time").
-		Required().
-		Examples("30s", "5m", "1h").
-		Done().
-		RequiresBlock().
+// TimeoutDecorator implements the @timeout execution decorator.
+// Executes block with a timeout constraint.
+type TimeoutDecorator struct{}
+
+// Descriptor returns the decorator metadata.
+func (d *TimeoutDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("timeout").
+		Summary("Execute block with timeout constraint").
+		Roles(decorator.RoleWrapper).
+		Param("duration", types.TypeDuration, "Maximum execution time", "30s", "5m", "1h").
+		Block(decorator.BlockRequired).
 		Build()
+}
 
-	handler := func(ctx types.Context, args types.Args) error {
-		// Implementation would go here
-		return nil
-	}
+// Wrap implements the Exec interface.
+func (d *TimeoutDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return &timeoutNode{next: next, params: params}
+}
 
-	if err := types.Global().RegisterExecutionWithSchema(schema, handler); err != nil {
-		panic(err)
+// timeoutNode wraps an execution node with timeout logic.
+type timeoutNode struct {
+	next   decorator.ExecNode
+	params map[string]any
+}
+
+// Execute implements the ExecNode interface.
+// Stub implementation: just executes without timeout for now.
+func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+	// TODO: Implement actual timeout logic with context cancellation
+	return n.next.Execute(ctx)
+}
+
+// Register @timeout decorator with the global registry
+func init() {
+	if err := decorator.Register("timeout", &TimeoutDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @timeout decorator: %v", err))
 	}
 }

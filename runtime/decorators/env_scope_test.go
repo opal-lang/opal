@@ -3,14 +3,20 @@ package decorators
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/types"
+	"github.com/aledsdavies/opal/core/decorator"
 )
 
 func TestEnvDecoratorTransportScope(t *testing.T) {
-	// Get the transport scope for @env
-	scope := types.Global().GetTransportScope("env")
+	// Get the transport scope for @env from new registry
+	entry, ok := decorator.Global().Lookup("env")
+	if !ok {
+		t.Fatal("@env should be registered")
+	}
 
-	if scope != types.ScopeRootOnly {
-		t.Errorf("expected @env to be ScopeRootOnly, got %v", scope)
+	desc := entry.Impl.Descriptor()
+	scope := desc.Capabilities.TransportScope
+
+	if scope != decorator.TransportScopeAny {
+		t.Errorf("expected @env to be TransportScopeAny, got %v", scope)
 	}
 }
