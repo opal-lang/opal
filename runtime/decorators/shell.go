@@ -1,89 +1,168 @@
 package decorators
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
 
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/core/sdk/executor"
 	"github.com/aledsdavies/opal/core/types"
 )
 
-// ShellDecorator implements the @shell decorator.
-// It implements both ExecutionHandler (for executing commands) and
-// SinkProvider (for redirect targets).
-type ShellDecorator struct{}
+// ShellDecorator implements the @shell decorator using the new decorator architecture.
+// It executes shell commands via Session.Run() with bash -c wrapper.
+// It also implements Endpoint for file I/O operations.
+type ShellDecorator struct {
+	params map[string]any // Parameters for endpoint mode
+}
 
-func init() {
-	// Register the @shell decorator with schema
-	schema := types.NewSchema("shell", types.KindExecution).
-		Description("Execute shell commands").
-		Param("command", types.TypeString).
-		Description("Shell command to execute").
-		Required().
-		Done().
-		WithIO(types.AcceptsStdin, types.ProducesStdout). // No ScrubByDefault = bash-compatible
-		WithRedirect(types.RedirectBoth).                 // Supports both > and >>
+// Descriptor returns the decorator metadata.
+func (d *ShellDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("shell").
+		Summary("Execute shell commands or file I/O").
+		Param("command", types.TypeString, "Shell command or file path", "echo hello", "npm run build", "/path/to/file.txt").
+		Block(decorator.BlockForbidden).                      // Leaf decorator - no blocks
+		TransportScope(decorator.TransportScopeAny).          // Works in any session
+		Roles(decorator.RoleWrapper, decorator.RoleEndpoint). // Executes work AND provides I/O
 		Build()
+}
 
-	// Register decorator instance (not just the Execute method)
-	// This allows SDK converter to check if instance implements SinkProvider
-	instance := ShellDecorator{}
-	if err := types.Global().RegisterSDKHandlerWithSchema(schema, instance); err != nil {
+// Wrap implements the Exec interface.
+// @shell is a leaf decorator - it ignores the 'next' parameter and executes directly.
+func (d *ShellDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return &shellNode{params: params}
+}
+
+// shellNode wraps shell command execution.
+type shellNode struct {
+	params map[string]any
+}
+
+// Execute implements the ExecNode interface.
+// Executes the shell command via Session.Run() with bash -c wrapper.
+func (n *shellNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+	// Extract command from params
+	command, ok := n.params["command"].(string)
+	if !ok || command == "" {
+		return decorator.Result{ExitCode: 127}, fmt.Errorf("@shell requires command parameter")
+	}
+
+	// Use parent context for cancellation and deadlines
+	// If no context provided, use background
+	execCtx := ctx.Context
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+
+	// Execute command through session with bash -c wrapper
+	argv := []string{"bash", "-c", command}
+
+	// Configure I/O from ExecContext
+	opts := decorator.RunOpts{
+		Stdin:  ctx.Stdin,  // Piped input (nil if not piped)
+		Stdout: ctx.Stdout, // Piped output (nil if not piped)
+		Stderr: ctx.Stderr, // NEW: Forward stderr
+	}
+
+	result, err := ctx.Session.Run(execCtx, argv, opts)
+
+	return result, err
+}
+
+// Open implements the Endpoint interface for file I/O.
+// When used as redirect target, @shell("file.txt") opens the file for reading or writing.
+func (d *ShellDecorator) Open(ctx decorator.ExecContext, mode decorator.IOType) (io.ReadWriteCloser, error) {
+	// Extract file path from params
+	filePath, ok := d.params["command"].(string)
+	if !ok || filePath == "" {
+		return nil, fmt.Errorf("@shell endpoint requires command parameter (file path)")
+	}
+
+	// Open file based on mode
+	switch mode {
+	case decorator.IORead:
+		// Open for reading
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file for reading: %w", err)
+		}
+		return file, nil
+
+	case decorator.IOWrite:
+		// Open for writing (create or truncate)
+		file, err := os.Create(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file for writing: %w", err)
+		}
+		return file, nil
+
+	case decorator.IODuplex:
+		// Open for read/write
+		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file for duplex: %w", err)
+		}
+		return file, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported I/O mode: %s", mode)
+	}
+}
+
+// shellSDKAdapter adapts ShellDecorator to old SDK interfaces (SinkProvider)
+// This is a temporary bridge during migration to support redirect targets.
+type shellSDKAdapter struct{}
+
+// AsSink implements sdk.SinkProvider for redirect targets
+func (a *shellSDKAdapter) AsSink(ctx sdk.ExecutionContext) sdk.Sink {
+	// Extract file path from args
+	filePath, ok := ctx.Args()["command"].(string)
+	if !ok || filePath == "" {
+		panic("@shell sink requires command parameter (file path)")
+	}
+
+	return &shellFileSink{path: filePath}
+}
+
+// shellFileSink implements sdk.Sink for file I/O
+type shellFileSink struct {
+	path string
+}
+
+func (s *shellFileSink) Caps() sdk.SinkCaps {
+	return sdk.SinkCaps{
+		Overwrite:      true,
+		Append:         true,
+		Atomic:         false,
+		ConcurrentSafe: false,
+	}
+}
+
+func (s *shellFileSink) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
+	switch mode {
+	case sdk.RedirectOverwrite:
+		return os.Create(s.path)
+	case sdk.RedirectAppend:
+		return os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	default:
+		return nil, fmt.Errorf("unsupported redirect mode: %v", mode)
+	}
+}
+
+func (s *shellFileSink) Identity() (string, string) {
+	return "fs.file", s.path
+}
+
+// Register @shell decorator with both registries (dual registration during migration)
+func init() {
+	// Register with new decorator registry
+	if err := decorator.Register("shell", &ShellDecorator{}); err != nil {
 		panic(fmt.Sprintf("failed to register @shell decorator: %v", err))
 	}
-}
 
-// Execute implements the @shell decorator using SDK types.
-// This is a leaf decorator - it doesn't use the block parameter.
-//
-// CRITICAL: Uses context workdir and environ, NOT os globals.
-// This ensures isolation for @parallel, @ssh, @docker, etc.
-func (s ShellDecorator) Execute(ctx sdk.ExecutionContext, block []sdk.Step) (int, error) {
-	// Leaf decorator - block should be empty
-	if len(block) > 0 {
-		return 127, fmt.Errorf("@shell does not accept a block")
-	}
-
-	// Get command string from context args
-	cmdStr := ctx.ArgString("command")
-	if cmdStr == "" {
-		return 127, fmt.Errorf("@shell requires command argument")
-	}
-
-	// Create command using SDK (automatically routes through scrubber)
-	cmd := executor.BashContext(ctx.Context(), cmdStr)
-
-	// CRITICAL: Use context state, not os state
-	// This ensures isolation for @parallel, @ssh, @docker, etc.
-	cmd.SetDir(ctx.Workdir())
-
-	// For environment, we need to convert map to slice
-	// Use AppendEnv for now (adds to existing env)
-	// TODO: Consider if we need full replacement instead
-	cmd.AppendEnv(ctx.Environ())
-
-	// Handle piped stdin (from pipe operator)
-	if stdin := ctx.Stdin(); stdin != nil {
-		cmd.SetStdin(stdin)
-	}
-
-	// Handle piped stdout (to pipe operator)
-	if stdoutPipe := ctx.StdoutPipe(); stdoutPipe != nil {
-		cmd.SetStdout(stdoutPipe)
-	}
-	// Note: stderr is never piped - always goes to terminal
-
-	// Execute and return exit code
-	return cmd.Run()
-}
-
-// AsSink implements SinkProvider for redirect targets.
-// When @shell is used as redirect target (echo "data" > @shell("file.txt")),
-// this method is called to create the appropriate sink.
-func (s ShellDecorator) AsSink(ctx sdk.ExecutionContext) sdk.Sink {
-	path := ctx.ArgString("command")
-	return sdk.FsPathSink{
-		Path: path,
-		Perm: 0o600, // Tight by default (owner read/write only)
-	}
+	// Also register with old SDK registry for backward compatibility (redirect targets)
+	// This allows @shell("file.txt") to work as redirect target during migration
+	types.Global().RegisterSDKHandler("shell", types.DecoratorKindExecution, &shellSDKAdapter{})
 }

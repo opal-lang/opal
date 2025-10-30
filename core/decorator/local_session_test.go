@@ -1,13 +1,16 @@
 package decorator
 
-import "context"
-
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLocalSessionRun verifies command execution
@@ -36,7 +39,7 @@ func TestLocalSessionRunWithStdin(t *testing.T) {
 
 	// Run cat command with stdin
 	result, err := session.Run(context.Background(), []string{"cat"}, RunOpts{
-		Stdin: []byte("test input"),
+		Stdin: bytes.NewReader([]byte("test input")), // Wrap in bytes.NewReader
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -318,4 +321,109 @@ func ExampleLocalSession_Put() {
 	// Read file back
 	content, _ := session.Get(context.Background(), "/tmp/test.txt")
 	_ = content
+}
+
+// TestLocalSessionStreamsStdin verifies that stdin streams data (not buffered)
+func TestLocalSessionStreamsStdin(t *testing.T) {
+	session := NewLocalSession()
+
+	// Create pipe for streaming
+	pr, pw := io.Pipe()
+
+	var stdout bytes.Buffer
+	opts := RunOpts{
+		Stdin:  pr,
+		Stdout: &stdout,
+	}
+
+	// Write data in goroutine (simulates streaming)
+	go func() {
+		pw.Write([]byte("line1\n"))
+		time.Sleep(10 * time.Millisecond)
+		pw.Write([]byte("line2\n"))
+		pw.Close()
+	}()
+
+	// Run cat (reads stdin, writes to stdout)
+	result, err := session.Run(context.Background(), []string{"cat"}, opts)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode: got %d, want 0", result.ExitCode)
+	}
+	if stdout.String() != "line1\nline2\n" {
+		t.Errorf("Stdout: got %q, want %q", stdout.String(), "line1\nline2\n")
+	}
+}
+
+// TestLocalSessionForwardsStderr verifies stderr forwarding
+func TestLocalSessionForwardsStderr(t *testing.T) {
+	session := NewLocalSession()
+
+	var stdout, stderr bytes.Buffer
+	opts := RunOpts{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	// Run command that writes to stderr
+	result, err := session.Run(context.Background(),
+		[]string{"sh", "-c", "echo out; echo err >&2"}, opts)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode: got %d, want 0", result.ExitCode)
+	}
+	if stdout.String() != "out\n" {
+		t.Errorf("Stdout: got %q, want %q", stdout.String(), "out\n")
+	}
+	if stderr.String() != "err\n" {
+		t.Errorf("Stderr: got %q, want %q", stderr.String(), "err\n")
+	}
+}
+
+// TestLocalSessionKillsProcessGroupOnCancel verifies process group cancellation
+func TestLocalSessionKillsProcessGroupOnCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Process groups not supported on Windows")
+	}
+
+	session := NewLocalSession()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var stdout bytes.Buffer
+	opts := RunOpts{
+		Stdout: &stdout,
+	}
+
+	// Start long-running command
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	result, err := session.Run(ctx, []string{"sleep", "10"}, opts)
+	duration := time.Since(start)
+
+	// Should error due to context cancellation
+	if err == nil {
+		t.Error("Expected error due to context cancellation")
+	}
+
+	// Should return ExitCanceled (-1)
+	if result.ExitCode != ExitCanceled {
+		t.Errorf("ExitCode: got %d, want %d (ExitCanceled)", result.ExitCode, ExitCanceled)
+	}
+
+	// Should complete quickly (not wait for full 10 seconds)
+	if duration > 1*time.Second {
+		t.Errorf("Duration: got %v, want < 1s (process should be killed quickly)", duration)
+	}
+
+	// Note: Verifying no zombie processes is platform-specific and hard to test reliably
+	// The Setpgid=true ensures the entire process group is killed
 }

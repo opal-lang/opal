@@ -42,7 +42,7 @@ type Session interface {
 
 // RunOpts configures command execution.
 type RunOpts struct {
-	Stdin  []byte
+	Stdin  io.Reader // Changed from []byte to io.Reader to enable streaming
 	Stdout io.Writer // Optional: if nil, captured in Result.Stdout
 	Stderr io.Writer // Optional: if nil, captured in Result.Stderr
 	Dir    string    // Optional: working directory for this execution only

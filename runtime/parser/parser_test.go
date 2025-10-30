@@ -621,75 +621,10 @@ func TestNamespacedDecoratorParsing(t *testing.T) {
 	})
 }
 
-// TestEnumParameterValidation tests that enum parameters are validated
-func TestEnumParameterValidation(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name:        "valid enum value: none",
-			input:       `@shell("echo test", scrub="none")`,
-			expectError: false,
-		},
-		{
-			name:        "valid enum value: stdin",
-			input:       `@shell("echo test", scrub="stdin")`,
-			expectError: false,
-		},
-		{
-			name:        "valid enum value: stdout",
-			input:       `@shell("echo test", scrub="stdout")`,
-			expectError: false,
-		},
-		{
-			name:        "valid enum value: both",
-			input:       `@shell("echo test", scrub="both")`,
-			expectError: false,
-		},
-		{
-			name:        "invalid enum value",
-			input:       `@shell("echo test", scrub="invalid")`,
-			expectError: true,
-			errorMsg:    "invalid value",
-		},
-		{
-			name:        "wrong type for enum",
-			input:       `@shell("echo test", scrub=true)`,
-			expectError: true,
-			errorMsg:    "expects",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tree := Parse([]byte(tt.input))
-
-			if tt.expectError {
-				if len(tree.Errors) == 0 {
-					t.Errorf("expected parse error but got none")
-				} else {
-					found := false
-					for _, err := range tree.Errors {
-						if strings.Contains(err.Message, tt.errorMsg) {
-							found = true
-							break
-						}
-					}
-					if !found {
-						t.Errorf("expected error containing %q, got: %v", tt.errorMsg, tree.Errors)
-					}
-				}
-			} else {
-				if len(tree.Errors) > 0 {
-					t.Errorf("unexpected parse errors: %v", tree.Errors)
-				}
-			}
-		})
-	}
-}
+// TestEnumParameterValidation - REMOVED
+// The old @shell decorator had a 'scrub' enum parameter for testing enum validation.
+// The new @shell decorator doesn't have this parameter.
+// Enum validation is tested in core/types/schema_validation_test.go instead.
 
 // TestValueDecoratorRejectsBlock verifies value decorators cannot take blocks
 func TestValueDecoratorRejectsBlock(t *testing.T) {

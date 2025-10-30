@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/aledsdavies/opal/core/invariant"
 )
@@ -47,9 +49,18 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 	// Set environment (merge session env)
 	cmd.Env = mapToEnv(s.env)
 
+	// CRITICAL: Set process group for proper cancellation
+	// On Unix: Setpgid=true creates new process group
+	// We manually kill the entire group on cancellation below
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+		}
+	}
+
 	// Wire up I/O
 	if opts.Stdin != nil {
-		cmd.Stdin = bytes.NewReader(opts.Stdin)
+		cmd.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -64,28 +75,47 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 		cmd.Stderr = &stderr
 	}
 
-	// Execute
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		// Check if context was canceled
-		if ctx.Err() != nil {
-			return Result{ExitCode: -1}, ctx.Err()
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1 // Generic failure (e.g., command not found)
-		}
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return Result{ExitCode: 1}, err
 	}
 
-	return Result{
-		ExitCode: exitCode,
-		Stdout:   stdout.Bytes(),
-		Stderr:   stderr.Bytes(),
-	}, nil
+	// Monitor context cancellation and kill process group if needed
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context canceled - kill entire process group
+		if runtime.GOOS != "windows" && cmd.Process != nil {
+			// Send SIGKILL to process group (negative PID)
+			// This kills the parent and all children in the group
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		// Wait for process to actually exit
+		<-done
+		return Result{ExitCode: -1}, ctx.Err()
+
+	case err := <-done:
+		// Command completed normally
+		exitCode := 0
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1 // Generic failure (e.g., command not found)
+			}
+		}
+
+		return Result{
+			ExitCode: exitCode,
+			Stdout:   stdout.Bytes(),
+			Stderr:   stderr.Bytes(),
+		}, nil
+	}
 }
 
 // Put writes data to a file on the local filesystem.

@@ -2,7 +2,7 @@ package decorator
 
 import (
 	"context"
-	"time"
+	"io"
 )
 
 // Exec is the interface for decorators that wrap execution.
@@ -20,14 +20,25 @@ type ExecNode interface {
 
 // ExecContext provides the execution context for command execution.
 type ExecContext struct {
+	// Context is the parent context for cancellation and deadlines
+	// Decorators should pass this to Session.Run() and other operations
+	Context context.Context
+
 	// Session is the ambient execution context (env, cwd, transport)
 	Session Session
 
-	// Deadline is the absolute time when execution must complete
-	Deadline time.Time
+	// Stdin provides input data for piped commands (nil if not piped)
+	// Used for pipe operators: cmd1 | cmd2
+	// Changed from []byte to io.Reader to enable streaming
+	Stdin io.Reader
 
-	// Cancel cancels the execution
-	Cancel context.CancelFunc
+	// Stdout captures output for piped commands (nil if not piped)
+	// Used for pipe operators: cmd1 | cmd2
+	Stdout io.Writer
+
+	// Stderr captures error output (nil defaults to os.Stderr)
+	// Stderr NEVER pipes in POSIX - always goes to terminal
+	Stderr io.Writer
 
 	// Trace is the telemetry span for observability
 	// Opal runtime creates parent span automatically

@@ -106,7 +106,7 @@ func (s *SSHSession) Run(ctx context.Context, argv []string, opts RunOpts) (Resu
 
 	// Wire up I/O
 	if opts.Stdin != nil {
-		session.Stdin = bytes.NewReader(opts.Stdin)
+		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -299,7 +299,7 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 
 	// Wire up I/O
 	if opts.Stdin != nil {
-		session.Stdin = bytes.NewReader(opts.Stdin)
+		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
 	}
 
 	var stdout, stderr bytes.Buffer

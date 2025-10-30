@@ -53,8 +53,9 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 // Works with sdk.Step natively - no conversion needed
 func (e *executionContext) ExecuteBlock(steps []sdk.Step) (int, error) {
 	// Execute steps using executor logic (now works with sdk.Step natively)
+	// Pass the full ExecutionContext (e) so nested decorators inherit environ/workdir
 	for _, step := range steps {
-		exitCode := e.executor.executeStep(e.ctx, step)
+		exitCode := e.executor.executeStep(e, step)
 		if exitCode != 0 {
 			return exitCode, nil
 		}

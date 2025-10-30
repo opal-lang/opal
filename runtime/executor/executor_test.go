@@ -794,3 +794,54 @@ func TestOperatorOR(t *testing.T) {
 		})
 	}
 }
+
+// TestPipelineStreamingBehavior tests that pipelines stream data without buffering.
+// Reproduces issue: yes | head -n1 should complete quickly, not hang.
+// The bug is in executeNewDecorator() which calls io.ReadAll(stdin) before execution,
+// causing the downstream command to wait for upstream to finish.
+func TestPipelineStreamingBehavior(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "streaming-test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.PipelineNode{
+					Commands: []planfmt.ExecutionNode{
+						// Unbounded producer (simulates "yes")
+						shellCmd("for i in {1..1000000}; do echo y; done"),
+						// Consumer that only reads 1 line
+						shellCmd("head -n1"),
+					},
+				},
+			},
+		},
+	}
+
+	steps := planfmt.ToSDKSteps(plan.Steps)
+
+	// Set a timeout to detect hang
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	result, err := Execute(ctx, steps, Config{})
+	duration := time.Since(start)
+
+	// Should complete quickly with streaming (<500ms)
+	// Will timeout (2s) if stdin is buffered
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", result.ExitCode)
+	}
+
+	// With streaming: completes in <500ms
+	// Without streaming: hangs for 2s then times out
+	if duration > 1*time.Second {
+		t.Errorf("Pipeline took %v - stdin is being buffered instead of streamed", duration)
+	}
+
+	t.Logf("Pipeline completed in %v (streaming working)", duration)
+}
