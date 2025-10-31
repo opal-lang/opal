@@ -64,6 +64,12 @@ deploy: {
 }
 ```
 
+**5. Secret scrubbing before file output:**
+```opal
+// Scrub secrets from kubectl output before writing to file
+kubectl get secret db-password -o json |> scrub() > backup.json
+```
+
 ## Proposal
 
 ### Syntax
@@ -95,6 +101,7 @@ PipeOps are Opal-native transforms with enforced traits:
 - `lines.tail(n)` - Take last n lines (MaxExpansionFactor=0.0)
 - `lines.count()` - Count number of lines (MaxExpansionFactor=0.0)
 - `columns.pick(n)` - Extract column n (space-delimited) (MaxExpansionFactor=1.0)
+- `scrub()` - Replace secrets with DisplayIDs before output (MaxExpansionFactor=1.0)
 
 **Assertion PipeOps:**
 - `assert.re(pattern)` - Input must match RE2 pattern (MaxExpansionFactor=1.0)
