@@ -16,6 +16,7 @@ const (
 	TypeDuration ParamType = "duration"
 	TypeObject   ParamType = "object"
 	TypeArray    ParamType = "array"
+	TypeEnum     ParamType = "enum"
 
 	// Custom types for handles and references
 	TypeAuthHandle   ParamType = "AuthHandle"
@@ -227,6 +228,61 @@ type ParamSchema struct {
 	Maximum *float64 // For numeric types (int, float)
 	Enum    []any    // Allowed values (any type)
 	Pattern *string  // Regex pattern for string validation
+
+	// Type-specific schemas (only one should be set based on Type)
+	EnumSchema   *EnumSchema   // For TypeEnum
+	ObjectSchema *ObjectSchema // For TypeObject
+	ArraySchema  *ArraySchema  // For TypeArray
+
+	// String constraints
+	MinLength *int // Minimum string/array length
+	MaxLength *int // Maximum string/array length
+}
+
+// EnumSchema defines an enumeration type with allowed values
+type EnumSchema struct {
+	// Values is the list of allowed enum values (as strings)
+	Values []string
+
+	// Default is the default value if not provided (must be in Values)
+	Default *string
+
+	// DeprecatedValues maps deprecated values to their replacement
+	// Example: {"old_value": "new_value"}
+	// Parser will emit warnings for deprecated values
+	DeprecatedValues map[string]string
+}
+
+// ObjectSchema defines a structured object type with named fields
+type ObjectSchema struct {
+	// Fields maps field names to their schemas
+	Fields map[string]ParamSchema
+
+	// Required lists field names that must be present
+	Required []string
+
+	// AdditionalProperties controls whether extra fields are allowed
+	// Default: false (closed objects - catch typos)
+	AdditionalProperties bool
+}
+
+// ArraySchema defines an array type with element constraints
+type ArraySchema struct {
+	// ElementType is the type of array elements
+	ElementType ParamType
+
+	// ElementSchema provides detailed schema for complex element types
+	// (objects, nested arrays, enums)
+	ElementSchema *ParamSchema
+
+	// MinLength is the minimum number of elements (nil = no minimum)
+	MinLength *int
+
+	// MaxLength is the maximum number of elements (nil = no maximum)
+	MaxLength *int
+
+	// UniqueItems requires all elements to be unique
+	UniqueItems bool
 }
 
 // ValidateEnum checks if value matches enum constraint
@@ -691,7 +747,7 @@ func ValidateSchema(schema DecoratorSchema) error {
 func isValidParamType(typ ParamType) bool {
 	switch typ {
 	case TypeString, TypeInt, TypeFloat, TypeBool, TypeDuration,
-		TypeObject, TypeArray, TypeAuthHandle, TypeSecretHandle, TypeScrubMode:
+		TypeObject, TypeArray, TypeEnum, TypeAuthHandle, TypeSecretHandle, TypeScrubMode:
 		return true
 	default:
 		return false

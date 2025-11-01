@@ -619,3 +619,332 @@ func TestIOCapabilityWithOpts(t *testing.T) {
 		})
 	}
 }
+
+// TestEnumSchema tests EnumSchema type
+func TestEnumSchema(t *testing.T) {
+	defaultVal := "option1"
+	enumSchema := &EnumSchema{
+		Values:  []string{"option1", "option2", "option3"},
+		Default: &defaultVal,
+		DeprecatedValues: map[string]string{
+			"old_option": "option1",
+		},
+	}
+
+	// Verify values
+	if len(enumSchema.Values) != 3 {
+		t.Errorf("expected 3 values, got %d", len(enumSchema.Values))
+	}
+	if enumSchema.Values[0] != "option1" {
+		t.Errorf("expected first value 'option1', got %q", enumSchema.Values[0])
+	}
+
+	// Verify default
+	if enumSchema.Default == nil {
+		t.Fatal("expected default to be set")
+	}
+	if *enumSchema.Default != "option1" {
+		t.Errorf("expected default 'option1', got %q", *enumSchema.Default)
+	}
+
+	// Verify deprecated values
+	if len(enumSchema.DeprecatedValues) != 1 {
+		t.Errorf("expected 1 deprecated value, got %d", len(enumSchema.DeprecatedValues))
+	}
+	if enumSchema.DeprecatedValues["old_option"] != "option1" {
+		t.Errorf("expected deprecated 'old_option' -> 'option1', got %q", enumSchema.DeprecatedValues["old_option"])
+	}
+}
+
+// TestObjectSchema tests ObjectSchema type
+func TestObjectSchema(t *testing.T) {
+	objectSchema := &ObjectSchema{
+		Fields: map[string]ParamSchema{
+			"name": {
+				Name:        "name",
+				Type:        TypeString,
+				Description: "User name",
+				Required:    true,
+			},
+			"age": {
+				Name:        "age",
+				Type:        TypeInt,
+				Description: "User age",
+				Required:    false,
+			},
+		},
+		Required:             []string{"name"},
+		AdditionalProperties: false,
+	}
+
+	// Verify fields
+	if len(objectSchema.Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(objectSchema.Fields))
+	}
+
+	// Verify name field
+	nameField, exists := objectSchema.Fields["name"]
+	if !exists {
+		t.Fatal("expected 'name' field to exist")
+	}
+	if nameField.Type != TypeString {
+		t.Errorf("expected name type 'string', got %q", nameField.Type)
+	}
+	if !nameField.Required {
+		t.Error("expected name field to be required")
+	}
+
+	// Verify age field
+	ageField, exists := objectSchema.Fields["age"]
+	if !exists {
+		t.Fatal("expected 'age' field to exist")
+	}
+	if ageField.Type != TypeInt {
+		t.Errorf("expected age type 'integer', got %q", ageField.Type)
+	}
+	if ageField.Required {
+		t.Error("expected age field to be optional")
+	}
+
+	// Verify required list
+	if len(objectSchema.Required) != 1 {
+		t.Errorf("expected 1 required field, got %d", len(objectSchema.Required))
+	}
+	if objectSchema.Required[0] != "name" {
+		t.Errorf("expected required field 'name', got %q", objectSchema.Required[0])
+	}
+
+	// Verify closed object (no additional properties)
+	if objectSchema.AdditionalProperties {
+		t.Error("expected AdditionalProperties to be false (closed object)")
+	}
+}
+
+// TestArraySchema tests ArraySchema type
+func TestArraySchema(t *testing.T) {
+	minLen := 1
+	maxLen := 10
+	arraySchema := &ArraySchema{
+		ElementType: TypeString,
+		MinLength:   &minLen,
+		MaxLength:   &maxLen,
+		UniqueItems: true,
+	}
+
+	// Verify element type
+	if arraySchema.ElementType != TypeString {
+		t.Errorf("expected element type 'string', got %q", arraySchema.ElementType)
+	}
+
+	// Verify min length
+	if arraySchema.MinLength == nil {
+		t.Fatal("expected MinLength to be set")
+	}
+	if *arraySchema.MinLength != 1 {
+		t.Errorf("expected MinLength 1, got %d", *arraySchema.MinLength)
+	}
+
+	// Verify max length
+	if arraySchema.MaxLength == nil {
+		t.Fatal("expected MaxLength to be set")
+	}
+	if *arraySchema.MaxLength != 10 {
+		t.Errorf("expected MaxLength 10, got %d", *arraySchema.MaxLength)
+	}
+
+	// Verify unique items
+	if !arraySchema.UniqueItems {
+		t.Error("expected UniqueItems to be true")
+	}
+}
+
+// TestArraySchemaWithComplexElements tests ArraySchema with object elements
+func TestArraySchemaWithComplexElements(t *testing.T) {
+	arraySchema := &ArraySchema{
+		ElementType: TypeObject,
+		ElementSchema: &ParamSchema{
+			Name: "item",
+			Type: TypeObject,
+			ObjectSchema: &ObjectSchema{
+				Fields: map[string]ParamSchema{
+					"id": {
+						Name:     "id",
+						Type:     TypeString,
+						Required: true,
+					},
+					"value": {
+						Name:     "value",
+						Type:     TypeInt,
+						Required: false,
+					},
+				},
+				Required:             []string{"id"},
+				AdditionalProperties: false,
+			},
+		},
+		UniqueItems: false,
+	}
+
+	// Verify element type
+	if arraySchema.ElementType != TypeObject {
+		t.Errorf("expected element type 'object', got %q", arraySchema.ElementType)
+	}
+
+	// Verify element schema
+	if arraySchema.ElementSchema == nil {
+		t.Fatal("expected ElementSchema to be set")
+	}
+	if arraySchema.ElementSchema.Type != TypeObject {
+		t.Errorf("expected element schema type 'object', got %q", arraySchema.ElementSchema.Type)
+	}
+
+	// Verify object schema
+	if arraySchema.ElementSchema.ObjectSchema == nil {
+		t.Fatal("expected ObjectSchema to be set")
+	}
+	if len(arraySchema.ElementSchema.ObjectSchema.Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(arraySchema.ElementSchema.ObjectSchema.Fields))
+	}
+}
+
+// TestParamSchemaWithEnumSchema tests ParamSchema with EnumSchema
+func TestParamSchemaWithEnumSchema(t *testing.T) {
+	defaultVal := "read"
+	param := ParamSchema{
+		Name:        "mode",
+		Type:        TypeEnum,
+		Description: "Operation mode",
+		Required:    false,
+		EnumSchema: &EnumSchema{
+			Values:  []string{"read", "write", "append"},
+			Default: &defaultVal,
+		},
+	}
+
+	// Verify basic fields
+	if param.Type != TypeEnum {
+		t.Errorf("expected type 'enum', got %q", param.Type)
+	}
+
+	// Verify enum schema
+	if param.EnumSchema == nil {
+		t.Fatal("expected EnumSchema to be set")
+	}
+	if len(param.EnumSchema.Values) != 3 {
+		t.Errorf("expected 3 enum values, got %d", len(param.EnumSchema.Values))
+	}
+	if *param.EnumSchema.Default != "read" {
+		t.Errorf("expected default 'read', got %q", *param.EnumSchema.Default)
+	}
+}
+
+// TestParamSchemaWithObjectSchema tests ParamSchema with ObjectSchema
+func TestParamSchemaWithObjectSchema(t *testing.T) {
+	param := ParamSchema{
+		Name:        "config",
+		Type:        TypeObject,
+		Description: "Configuration object",
+		Required:    true,
+		ObjectSchema: &ObjectSchema{
+			Fields: map[string]ParamSchema{
+				"host": {
+					Name:     "host",
+					Type:     TypeString,
+					Required: true,
+				},
+				"port": {
+					Name:     "port",
+					Type:     TypeInt,
+					Required: false,
+					Default:  8080,
+				},
+			},
+			Required:             []string{"host"},
+			AdditionalProperties: false,
+		},
+	}
+
+	// Verify basic fields
+	if param.Type != TypeObject {
+		t.Errorf("expected type 'object', got %q", param.Type)
+	}
+
+	// Verify object schema
+	if param.ObjectSchema == nil {
+		t.Fatal("expected ObjectSchema to be set")
+	}
+	if len(param.ObjectSchema.Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(param.ObjectSchema.Fields))
+	}
+
+	// Verify closed object
+	if param.ObjectSchema.AdditionalProperties {
+		t.Error("expected closed object (AdditionalProperties=false)")
+	}
+}
+
+// TestParamSchemaWithArraySchema tests ParamSchema with ArraySchema
+func TestParamSchemaWithArraySchema(t *testing.T) {
+	minLen := 1
+	param := ParamSchema{
+		Name:        "tags",
+		Type:        TypeArray,
+		Description: "List of tags",
+		Required:    false,
+		ArraySchema: &ArraySchema{
+			ElementType: TypeString,
+			MinLength:   &minLen,
+			UniqueItems: true,
+		},
+	}
+
+	// Verify basic fields
+	if param.Type != TypeArray {
+		t.Errorf("expected type 'array', got %q", param.Type)
+	}
+
+	// Verify array schema
+	if param.ArraySchema == nil {
+		t.Fatal("expected ArraySchema to be set")
+	}
+	if param.ArraySchema.ElementType != TypeString {
+		t.Errorf("expected element type 'string', got %q", param.ArraySchema.ElementType)
+	}
+	if !param.ArraySchema.UniqueItems {
+		t.Error("expected UniqueItems to be true")
+	}
+}
+
+// TestTypeEnumConstant tests that TypeEnum is a valid ParamType
+func TestTypeEnumConstant(t *testing.T) {
+	if !isValidParamType(TypeEnum) {
+		t.Error("TypeEnum should be a valid ParamType")
+	}
+}
+
+// TestStringConstraints tests MinLength and MaxLength on ParamSchema
+func TestStringConstraints(t *testing.T) {
+	minLen := 3
+	maxLen := 50
+	param := ParamSchema{
+		Name:      "username",
+		Type:      TypeString,
+		MinLength: &minLen,
+		MaxLength: &maxLen,
+	}
+
+	// Verify constraints
+	if param.MinLength == nil {
+		t.Fatal("expected MinLength to be set")
+	}
+	if *param.MinLength != 3 {
+		t.Errorf("expected MinLength 3, got %d", *param.MinLength)
+	}
+
+	if param.MaxLength == nil {
+		t.Fatal("expected MaxLength to be set")
+	}
+	if *param.MaxLength != 50 {
+		t.Errorf("expected MaxLength 50, got %d", *param.MaxLength)
+	}
+}
