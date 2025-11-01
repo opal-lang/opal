@@ -92,6 +92,19 @@ These OEPs propose tools and integrations to improve the developer experience.
   - Shared drift metadata, confirmations, and formatting guarantees
   - **Status:** Design phase
 
+- **OEP-016: Output Redirection** (Draft)
+  - Stream redirection operators (`>`, `>>`, `2>`, `&>`)
+  - Pipeline composition with type safety
+  - File and decorator endpoints
+  - **Status:** Design phase
+
+- **OEP-017: Shell Command Type Definitions** (Draft)
+  - Type-safe shell commands with stream types
+  - Type packs for platform portability (GNU vs BSD)
+  - Capability enforcement and taint tracking
+  - Shell script linting for non-Opal files (`opal lint`)
+  - **Status:** Design phase
+
 ### Ecosystem Extensions (Reach & Integration)
 
 These OEPs propose integrations with external systems and providers.

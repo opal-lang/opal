@@ -149,51 +149,207 @@ Opal (the host) remains in control:
 
 Plugins declare their interface via a DIM (Decorator Interface Manifest) file.
 
-#### Type System
+#### Manifest Format
 
-DIM manifests use **JSONSchema** for type definitions, providing precise validation and documentation:
+DIM manifests use **JSON Schema Draft 2020-12** as the foundation, ensuring compatibility with standard tooling and validators. Opal-specific extensions use the `x-opal-*` prefix.
 
-**Primitive types:**
-- `string`, `integer`, `number`, `boolean`
-- `duration` (Opal extension: "1s", "5m", "2h")
-- `enum` (via JSONSchema enum keyword)
+**Why JSON Schema?**
+- ✅ Industry standard (OpenAPI, Kubernetes, Terraform)
+- ✅ Extensive tooling (validators, generators, IDE support)
+- ✅ Interoperability (can import existing schemas)
+- ✅ Future-proof (active development, backward compatible)
 
-**Complex types:**
-- `object` - Structured data with JSONSchema properties
-- `array` - Lists with item type validation
-- `oneOf`, `anyOf`, `allOf` - Union and intersection types
-
-**Example manifest:**
+**Manifest structure:**
 
 ```yaml
-apiVersion: opal.dev/dim/v1
-plugin: { name: "aws.ec2", version: "1.0.0", min_core: "0.4.0" }
-decorators:
+# DIM manifest (JSON Schema based)
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://plugins.opal.dev/aws/ec2/v1.0.0
+
+# Opal-specific metadata
+x-opal-plugin:
+  name: aws.ec2
+  version: 1.0.0
+  min_core: 0.4.0
+
+# Decorator definitions
+x-opal-decorators:
   - name: aws.instance.deploy
-    kind: exec
-    determinism: deterministic
+    $id: https://plugins.opal.dev/aws/ec2/v1.0.0/instance-deploy
+    summary: Deploy EC2 instance with optional remote execution
+    
+    # Parameter schema (JSON Schema)
     params:
-      name:            { type: string }
-      ami:             { type: string }
-      type:            { type: string }
-      region:          { type: string }
-      count:           { type: integer, default: 1, minimum: 1 }
-      idempotenceKey:  { type: array, items: {type: string}, optional: true }
-      transport:       { type: string, enum: ["ssh", "ssm"], default: "ssm" }
-      ssh_user:        { type: string, optional: true }
-      ssh_key_ref:     { type: string, secret: true, optional: true }
-      ready_probe:
-        type: object
-        optional: true
-        properties:
-          port: { type: integer, optional: true }
-          cmd: { type: string, optional: true }
-          timeout: { type: duration, default: "5m" }
-      max_concurrency: { type: integer, default: 5, minimum: 1 }
-      tolerate:        { type: integer, default: 0, minimum: 0 }
-    block: optional   # block allowed; if present → remote context
-    capabilities: ["net","clock"]
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+          description: Instance name
+        ami:
+          type: string
+          description: AMI ID
+        instance_type:
+          type: string
+          description: Instance type
+        region:
+          type: string
+          description: AWS region
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 1
+        transport:
+          # Enum with Opal extension for deprecation
+          enum: ["ssh", "ssm"]
+          default: "ssm"
+          x-opal-deprecated-values:
+            telnet: "Use ssh or ssm instead"
+        ready_probe:
+          type: object
+          properties:
+            port:
+              type: integer
+              minimum: 1
+              maximum: 65535
+            cmd:
+              type: string
+            timeout:
+              type: string
+              x-opal-duration: true  # Opal duration type
+              default: "5m"
+          required: [timeout]
+          additionalProperties: false  # Closed by default
+      required: [name, ami, instance_type, region]
+      additionalProperties: false
+    
+    # Return schema (versioned, hashed)
+    returns:
+      $id: https://plugins.opal.dev/aws/ec2/v1.0.0/instance-deploy/returns
+      version: 1.0.0
+      type: object
+      properties:
+        instance_id:
+          type: string
+          description: EC2 instance ID
+        public_ip:
+          type: string
+          format: ipv4
+        state:
+          enum: ["pending", "running", "stopped"]
+      required: [instance_id, state]
+      additionalProperties: false
+    
+    # Block support
+    x-opal-block: optional  # optional, required, or forbidden
+    
+    # Capabilities (for role inference)
+    x-opal-capabilities: [net, clock]
 ```
+
+#### Type System
+
+DIM manifests support a **narrowed JSON Schema subset** optimized for type-safety and determinism:
+
+**Primitive types:**
+- `string` - With optional `pattern`, `minLength`, `maxLength`
+- `integer` - With optional `minimum`, `maximum` (no implicit coercion)
+- `number` - With optional `minimum`, `maximum`
+- `boolean` - True/false values
+- `enum` - Enumerated values with compile-time validation
+- `duration` - Opal extension (`x-opal-duration: true`) for "1s", "5m", "2h"
+
+**Complex types:**
+- `object` - Structured data with `properties`, `required`, `additionalProperties: false` (default)
+- `array` - Typed arrays with `items` (homogeneous only, no tuples)
+
+**Typed formats** (nominal types via `format` keyword):
+- `uri`, `hostname`, `ipv4`, `ipv6`, `cidr`
+- `semver` (Opal extension: `x-opal-format: semver`)
+
+**Discriminated unions** (Opal extension):
+```yaml
+# Tagged union via x-opal-union
+x-opal-union:
+  discriminator: type
+  cases:
+    ssh:
+      type: object
+      properties:
+        type: { const: "ssh" }
+        user: { type: string }
+        key: { type: string }
+      required: [type, user, key]
+    ssm:
+      type: object
+      properties:
+        type: { const: "ssm" }
+        profile: { type: string }
+      required: [type]
+```
+
+**Determinism guarantees:**
+- ❌ No implicit coercion (`"3"` stays string, never becomes `3`)
+- ❌ No `oneOf`, `anyOf`, `allOf` (use discriminated unions instead)
+- ❌ No tuple schemas (arrays must be homogeneous)
+- ✅ Closed objects by default (`additionalProperties: false`)
+- ✅ Duration normalization (`90m` → `1h30m` canonical form)
+- ✅ Null forbidden by default (explicit opt-in: `type: ["integer", "null"]`)
+
+#### Manifest Loading and Availability
+
+**Plugin manifests must be available at all phases:**
+
+**1. Compile-time (Parse):**
+- Parser validates decorator parameters against manifest schemas
+- Type errors reported immediately (no runtime surprises)
+- Manifests loaded from `opal.lock` (deterministic, versioned)
+
+**2. Plan-time:**
+- Planner includes manifest metadata in plan
+- Return schemas tracked with `$id` and content hash
+- Capability checks enforced (block policies, transport requirements)
+
+**3. Execution-time:**
+- Executor validates return values against manifest schemas
+- Semver compatibility checks (major version must match)
+- Content hash verification (detect schema changes without version bump)
+
+**Manifest resolution:**
+
+```
+1. opal.mod declares plugin dependencies
+   hashicorp/aws = "5.0.0"
+
+2. opal install resolves and locks
+   → Downloads plugin binary + DIM manifest
+   → Writes opal.lock with checksums
+   → Caches in ~/.opal/plugins/
+
+3. Parser loads manifests from lock file
+   → Validates all decorator usage at parse-time
+   → No runtime type errors
+
+4. Planner embeds manifest metadata in plan
+   → Plan includes decorator schemas ($id + hash)
+   → Contract verification detects schema changes
+
+5. Executor validates against embedded schemas
+   → Return values checked at runtime
+   → Semver compatibility enforced
+```
+
+**Manifest caching:**
+- Manifests cached by content hash (immutable)
+- Validator instances memoized (performance)
+- No remote fetches during execution (security)
+
+**Schema evolution:**
+- Plans track decorator schema `$id` + version + hash
+- Executor refuses mismatched major versions (breaking changes)
+- Minor version increases allowed (additive changes)
+- Hash mismatch for same version → error (schema changed without version bump)
 
 ### Role Auto-Inference from DIM Manifest
 
@@ -203,33 +359,54 @@ decorators:
 
 | Manifest Feature | Inferred Role | Example |
 |------------------|---------------|---------|
-| `returns: { type: ... }` | `RoleProvider` | Value decorators that produce data |
-| `block: required/optional` | `RoleWrapper` | Execution decorators that wrap blocks |
-| `block: required` + `switches_transport: true` | `RoleBoundary` | Transport decorators (SSH, Docker) |
-| `io.redirect_in: true` or `io.redirect_out: true` | `RoleEndpoint` | I/O endpoints (files, S3, HTTP) |
-| `kind: meta` | `RoleAnnotate` | Metadata decorators (@trace, @measure) |
+| `returns: { ... }` | `RoleProvider` | Value decorators that produce data |
+| `x-opal-block: required/optional` | `RoleWrapper` | Execution decorators that wrap blocks |
+| `x-opal-block: required` + `x-opal-transport: true` | `RoleBoundary` | Transport decorators (SSH, Docker) |
+| `x-opal-io: { redirect_in: true }` or `redirect_out: true` | `RoleEndpoint` | I/O endpoints (files, S3, HTTP) |
+
+**Note**: `RoleWrapper` may be renamed to `RoleExecutor` for clarity (execution decorators that wrap work).
 
 #### Multi-Role Decorators
 
 Decorators can have multiple roles by declaring multiple capabilities:
 
 ```yaml
-decorators:
+x-opal-decorators:
   - name: aws.s3.object
-    # Plugin author specifies capabilities
+    $id: https://plugins.opal.dev/aws/s3/v1.0.0/object
+    
+    # Parameters
     params:
-      bucket: { type: String }
-      key: { type: String }
-    returns:
       type: object
       properties:
-        size: { type: integer, description: "Object size in bytes" }
-        etag: { type: string, description: "Object ETag" }
-        url: { type: string, format: uri, description: "S3 URL" }
-        lastModified: { type: string, format: date-time }
+        bucket: { type: string }
+        key: { type: string }
+      required: [bucket, key]
+    
+    # Returns (infers RoleProvider)
+    returns:
+      $id: https://plugins.opal.dev/aws/s3/v1.0.0/object/returns
+      version: 1.0.0
+      type: object
+      properties:
+        size:
+          type: integer
+          description: Object size in bytes
+        etag:
+          type: string
+          description: Object ETag
+        url:
+          type: string
+          format: uri
+          description: S3 URL
+        lastModified:
+          type: string
+          format: date-time
       required: [size, etag, url]
-    io:
-      redirect_out: true           # ← Infers RoleEndpoint
+    
+    # I/O capabilities (infers RoleEndpoint)
+    x-opal-io:
+      redirect_out: true
     
     # Opal runtime auto-infers:
     # Roles: [RoleProvider, RoleEndpoint]
@@ -249,21 +426,34 @@ tar czf - dist/ > @aws.s3.object(bucket="artifacts", key="build.tar.gz")
 
 #### Minimal Manifests
 
-The `kind` field is **optional** and used only for internal organization. Roles are always inferred from capabilities:
+Roles are always inferred from capabilities - no need to specify explicitly:
 
 ```yaml
-# Minimal manifest - kind is optional
-decorators:
+x-opal-decorators:
   - name: retry
-    params:
-      attempts: { type: Int, default: 3, min: 1, max: 10 }
-      delay: { type: Duration, default: "1s" }
-      strategy: { type: Enum, values: ["constant", "exponential", "linear"], default: "exponential" }
-    block: required                # ← Infers RoleWrapper
+    $id: https://plugins.opal.dev/core/retry/v1.0.0
     
-    # No need to specify:
-    # - kind: exec (inferred from block)
-    # - roles: [wrapper] (inferred from block)
+    params:
+      type: object
+      properties:
+        attempts:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+        delay:
+          type: string
+          x-opal-duration: true
+          default: "1s"
+        strategy:
+          enum: ["constant", "exponential", "linear"]
+          default: "exponential"
+      additionalProperties: false
+    
+    x-opal-block: required  # ← Infers RoleWrapper (or RoleExecutor)
+    
+    # Opal runtime auto-infers:
+    # Roles: [RoleWrapper]
 ```
 
 #### Benefits
@@ -272,6 +462,7 @@ decorators:
 2. **Type-safe** - Roles always match declared capabilities
 3. **Consistent** - Same inference logic for native Go and plugin decorators
 4. **Clear semantics** - Manifest features directly map to user-visible behavior
+5. **JSON Schema compatible** - All Opal extensions use `x-opal-*` prefix
 
 ### Plugin Execution ABIs
 

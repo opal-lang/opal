@@ -69,7 +69,12 @@ summary: "Navigation guide for contributors, users, and operators"
 
 **Experimental ideas and long-term direction:**
 
-- **[FUTURE_IDEAS.md](FUTURE_IDEAS.md)** - Potential extensions and experiments
+- **[proposals/](proposals/)** - Opal Enhancement Proposals (OEPs)
+  - Formal design documents for future features
+  - Language evolution, tooling, ecosystem extensions
+  - See [proposals/README.md](proposals/README.md) for full list
+
+- **[FUTURE_IDEAS.md](FUTURE_IDEAS.md)** - Brainstorm and rough ideas
   - 🧪 Experimental: Plan-first execution, REPL
   - ⚙️ Feasible: LSP/IDE integration
   - 🧭 Long-term: IaC (ops-focused, ephemeral-friendly), system shell
@@ -85,7 +90,8 @@ summary: "Navigation guide for contributors, users, and operators"
 | Build a decorator | [DECORATOR_GUIDE.md](DECORATOR_GUIDE.md) |
 | Add tests | [TESTING_STRATEGY.md](TESTING_STRATEGY.md) |
 | Debug production runs | [OBSERVABILITY.md](OBSERVABILITY.md) |
-| Explore future ideas | [FUTURE_IDEAS.md](FUTURE_IDEAS.md) |
+| Review future proposals | [proposals/](proposals/) |
+| Explore rough ideas | [FUTURE_IDEAS.md](FUTURE_IDEAS.md) |
 
 ## Documentation Philosophy
 
