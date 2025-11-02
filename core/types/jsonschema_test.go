@@ -216,19 +216,20 @@ func TestToJSONSchema_Array(t *testing.T) {
 // TestToJSONSchema_Format tests format handling (standard vs Opal-specific)
 func TestToJSONSchema_Format(t *testing.T) {
 	tests := []struct {
-		name          string
-		format        Format
-		expectedField string
-		expectedValue string
+		name             string
+		format           Format
+		expectFormat     bool // Should have "format" field
+		expectOpalFormat bool // Should have "x-opal-format" field
+		expectedValue    string
 	}{
-		{"standard URI", FormatURI, "format", "uri"},
-		{"standard hostname", FormatHostname, "format", "hostname"},
-		{"standard IPv4", FormatIPv4, "format", "ipv4"},
-		{"standard IPv6", FormatIPv6, "format", "ipv6"},
-		{"standard email", FormatEmail, "format", "email"},
-		{"opal CIDR", FormatCIDR, "x-opal-format", "cidr"},
-		{"opal semver", FormatSemver, "x-opal-format", "semver"},
-		{"opal duration", FormatDuration, "x-opal-format", "duration"},
+		{"standard URI", FormatURI, true, false, "uri"},
+		{"standard hostname", FormatHostname, true, false, "hostname"},
+		{"standard IPv4", FormatIPv4, true, false, "ipv4"},
+		{"standard IPv6", FormatIPv6, true, false, "ipv6"},
+		{"standard email", FormatEmail, true, false, "email"},
+		{"opal CIDR", FormatCIDR, true, true, "cidr"},
+		{"opal semver", FormatSemver, true, true, "semver"},
+		{"opal duration", FormatDuration, true, true, "duration"},
 	}
 
 	for _, tt := range tests {
@@ -244,18 +245,26 @@ func TestToJSONSchema_Format(t *testing.T) {
 				t.Fatalf("ToJSONSchema() error: %v", err)
 			}
 
-			// Verify correct field is used
-			if schema[tt.expectedField] != tt.expectedValue {
-				t.Errorf("expected %s=%q, got %v", tt.expectedField, tt.expectedValue, schema[tt.expectedField])
+			// Check "format" field
+			if tt.expectFormat {
+				if schema["format"] != tt.expectedValue {
+					t.Errorf("expected format=%q, got %v", tt.expectedValue, schema["format"])
+				}
+			} else {
+				if _, exists := schema["format"]; exists {
+					t.Errorf("expected format to not be set, but it was")
+				}
 			}
 
-			// Verify other field is not set
-			otherField := "format"
-			if tt.expectedField == "format" {
-				otherField = "x-opal-format"
-			}
-			if _, exists := schema[otherField]; exists {
-				t.Errorf("expected %s to not be set, but it was", otherField)
+			// Check "x-opal-format" field
+			if tt.expectOpalFormat {
+				if schema["x-opal-format"] != tt.expectedValue {
+					t.Errorf("expected x-opal-format=%q, got %v", tt.expectedValue, schema["x-opal-format"])
+				}
+			} else {
+				if _, exists := schema["x-opal-format"]; exists {
+					t.Errorf("expected x-opal-format to not be set, but it was")
+				}
 			}
 		})
 	}
@@ -276,7 +285,10 @@ func TestToJSONSchema_Duration_AutoFormat(t *testing.T) {
 			t.Fatalf("ToJSONSchema() error: %v", err)
 		}
 
-		// Should automatically have x-opal-format: duration
+		// Should automatically have both format and x-opal-format: duration
+		if schema["format"] != "duration" {
+			t.Errorf("expected format='duration', got %v", schema["format"])
+		}
 		if schema["x-opal-format"] != "duration" {
 			t.Errorf("expected x-opal-format='duration', got %v", schema["x-opal-format"])
 		}
@@ -302,7 +314,10 @@ func TestToJSONSchema_Duration_AutoFormat(t *testing.T) {
 			t.Fatalf("ToJSONSchema() error: %v", err)
 		}
 
-		// Should have x-opal-format: duration
+		// Should have both format and x-opal-format: duration
+		if schema["format"] != "duration" {
+			t.Errorf("expected format='duration', got %v", schema["format"])
+		}
 		if schema["x-opal-format"] != "duration" {
 			t.Errorf("expected x-opal-format='duration', got %v", schema["x-opal-format"])
 		}

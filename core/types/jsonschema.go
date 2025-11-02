@@ -58,12 +58,13 @@ func (p *ParamSchema) ToJSONSchema() (JSONSchema, error) {
 	}
 
 	if format != nil {
+		// Always use standard "format" field for validation
+		// (custom validators are registered with the JSON Schema compiler)
+		schema["format"] = string(*format)
+
+		// Also add x-opal-format for Opal-specific formats (documentation/metadata)
 		if IsOpalFormat(*format) {
-			// Opal-specific formats use x-opal-format extension
 			schema["x-opal-format"] = string(*format)
-		} else {
-			// Standard JSON Schema format
-			schema["format"] = string(*format)
 		}
 	}
 
