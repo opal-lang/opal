@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/types"
 )
 
 // TimeoutDecorator implements the @timeout execution decorator.
@@ -16,7 +15,10 @@ func (d *TimeoutDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("timeout").
 		Summary("Execute block with timeout constraint").
 		Roles(decorator.RoleWrapper).
-		Param("duration", types.TypeDuration, "Maximum execution time", "30s", "5m", "1h").
+		ParamDuration("duration", "Maximum execution time").
+		Required().
+		Examples("30s", "5m", "1h").
+		Done().
 		Block(decorator.BlockRequired).
 		Build()
 }

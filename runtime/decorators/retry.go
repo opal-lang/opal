@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/types"
 )
 
 // RetryDecorator implements the @retry execution decorator.
@@ -16,9 +15,20 @@ func (d *RetryDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("retry").
 		Summary("Retry failed operations with exponential backoff").
 		Roles(decorator.RoleWrapper).
-		Param("times", types.TypeInt, "Number of retry attempts", "3", "5", "10").
-		Param("delay", types.TypeDuration, "Initial delay between retries", "1s", "5s", "30s").
-		Param("backoff", types.TypeString, "Backoff strategy", "exponential", "linear", "constant").
+		ParamInt("times", "Number of retry attempts").
+		Min(1).
+		Max(100).
+		Default(3).
+		Examples("3", "5", "10").
+		Done().
+		ParamDuration("delay", "Initial delay between retries").
+		Default("1s").
+		Examples("1s", "5s", "30s").
+		Done().
+		ParamEnum("backoff", "Backoff strategy").
+		Values("exponential", "linear", "constant").
+		Default("exponential").
+		Done().
 		Block(decorator.BlockOptional).
 		Build()
 }

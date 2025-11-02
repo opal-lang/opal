@@ -17,7 +17,9 @@ func (d *VarDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("var").
 		Summary("Access plan-time variables").
 		Roles(decorator.RoleProvider).
-		PrimaryParam("name", types.TypeString, "Variable name to retrieve", "deployEnv", "version", "region").
+		PrimaryParamString("name", "Variable name to retrieve").
+		Examples("deployEnv", "version", "region").
+		Done().
 		Returns(types.TypeString, "Value of the variable").
 		TransportScope(decorator.TransportScopeAny).
 		Pure().

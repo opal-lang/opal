@@ -17,8 +17,12 @@ func (d *EnvDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("env").
 		Summary("Access environment variables from the current session").
 		Roles(decorator.RoleProvider).
-		PrimaryParam("property", types.TypeString, "Environment variable name", "HOME", "PATH", "USER").
-		Param("default", types.TypeString, "Default value if environment variable is not set", "", "/home/user", "us-east-1").
+		PrimaryParamString("property", "Environment variable name").
+		Examples("HOME", "PATH", "USER").
+		Done().
+		ParamString("default", "Default value if environment variable is not set").
+		Examples("", "/home/user", "us-east-1").
+		Done().
 		Returns(types.TypeString, "Value of the environment variable").
 		TransportScope(decorator.TransportScopeAny).
 		Idempotent().

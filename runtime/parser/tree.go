@@ -12,6 +12,7 @@ type ParseTree struct {
 	Tokens      []lexer.Token   // Tokens from lexer
 	Events      []Event         // Parse events
 	Errors      []ParseError    // Parse errors
+	Warnings    []ParseWarning  // Parse warnings (non-fatal issues)
 	Telemetry   *ParseTelemetry // Performance metrics (nil if disabled)
 	DebugEvents []DebugEvent    // Debug events (nil if disabled)
 }
@@ -119,6 +120,19 @@ type ParseError struct {
 	Suggestion string // Actionable fix: "Add ')' after the last parameter"
 	Example    string // Valid syntax: "fun greet(name) {}"
 	Note       string // Optional explanation for learning
+}
+
+// ParseWarning represents a non-fatal parse warning with helpful context
+type ParseWarning struct {
+	// Location
+	Filename string         // Source filename (empty for stdin/string)
+	Position lexer.Position // Line, column, offset
+
+	// Warning info
+	Message    string // Clear, specific: "deprecated enum value 'verbose'"
+	Context    string // What we were parsing: "decorator parameter"
+	Suggestion string // Actionable fix: "Use 'debug' instead"
+	Note       string // Optional explanation
 }
 
 // ValidateSemantics performs post-parse semantic validation

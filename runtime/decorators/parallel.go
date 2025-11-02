@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/types"
 )
 
 // ParallelDecorator implements the @parallel execution decorator.
@@ -16,7 +15,11 @@ func (d *ParallelDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("parallel").
 		Summary("Execute tasks in parallel").
 		Roles(decorator.RoleWrapper).
-		Param("maxConcurrency", types.TypeInt, "Maximum concurrent tasks (0=unlimited)", "0", "5", "10").
+		ParamInt("maxConcurrency", "Maximum concurrent tasks (0=unlimited)").
+		Min(0).
+		Default(0).
+		Examples("0", "5", "10").
+		Done().
 		Block(decorator.BlockRequired).
 		Build()
 }

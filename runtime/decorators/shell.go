@@ -22,7 +22,10 @@ type ShellDecorator struct {
 func (d *ShellDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("shell").
 		Summary("Execute shell commands or file I/O").
-		Param("command", types.TypeString, "Shell command or file path", "echo hello", "npm run build", "/path/to/file.txt").
+		ParamString("command", "Shell command or file path").
+		Required().
+		Examples("echo hello", "npm run build", "/path/to/file.txt").
+		Done().
 		Block(decorator.BlockForbidden).                      // Leaf decorator - no blocks
 		TransportScope(decorator.TransportScopeAny).          // Works in any session
 		Roles(decorator.RoleWrapper, decorator.RoleEndpoint). // Executes work AND provides I/O

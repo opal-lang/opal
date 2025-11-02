@@ -201,17 +201,18 @@ type IOCapability struct {
 
 // DecoratorSchema describes a decorator's interface
 type DecoratorSchema struct {
-	Path              string                 // "env", "aws.secret"
-	Kind              DecoratorKindString    // "value" or "execution"
-	Description       string                 // Human-readable description
-	PrimaryParameter  string                 // Name of primary param ("property", "secretName"), empty if none
-	Parameters        map[string]ParamSchema // All parameters (including primary)
-	ParameterOrder    []string               // Order of parameter declaration (for positional mapping)
-	Returns           *ReturnSchema          // What the decorator returns (value decorators only)
-	BlockRequirement  BlockRequirement       // Whether decorator accepts/requires a block
-	IO                *IOCapability          // I/O capabilities for pipe operator (nil = no I/O)
-	Redirect          *RedirectCapability    // Redirect capabilities for > and >> operators (nil = no redirect support)
-	SwitchesTransport bool                   // Whether decorator switches execution transport (ssh.connect, docker.exec, etc.)
+	Path                 string                 // "env", "aws.secret"
+	Kind                 DecoratorKindString    // "value" or "execution"
+	Description          string                 // Human-readable description
+	PrimaryParameter     string                 // Name of primary param ("property", "secretName"), empty if none
+	Parameters           map[string]ParamSchema // All parameters (including primary)
+	ParameterOrder       []string               // Order of parameter declaration (for positional mapping)
+	DeprecatedParameters map[string]string      // Maps old parameter names to new names (e.g., "maxConcurrency" -> "max_workers")
+	Returns              *ReturnSchema          // What the decorator returns (value decorators only)
+	BlockRequirement     BlockRequirement       // Whether decorator accepts/requires a block
+	IO                   *IOCapability          // I/O capabilities for pipe operator (nil = no I/O)
+	Redirect             *RedirectCapability    // Redirect capabilities for > and >> operators (nil = no redirect support)
+	SwitchesTransport    bool                   // Whether decorator switches execution transport (ssh.connect, docker.exec, etc.)
 }
 
 // ParamSchema describes a single parameter
