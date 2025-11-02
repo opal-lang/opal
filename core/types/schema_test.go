@@ -948,3 +948,53 @@ func TestStringConstraints(t *testing.T) {
 		t.Errorf("expected MaxLength 50, got %d", *param.MaxLength)
 	}
 }
+
+// TestParamSchemaWithFormat tests ParamSchema with Format field
+func TestParamSchemaWithFormat(t *testing.T) {
+	uriFormat := FormatURI
+	param := ParamSchema{
+		Name:        "endpoint",
+		Type:        TypeString,
+		Description: "API endpoint URL",
+		Required:    true,
+		Format:      &uriFormat,
+	}
+
+	// Verify basic fields
+	if param.Type != TypeString {
+		t.Errorf("expected type 'string', got %q", param.Type)
+	}
+
+	// Verify format
+	if param.Format == nil {
+		t.Fatal("expected Format to be set")
+	}
+	if *param.Format != FormatURI {
+		t.Errorf("expected format 'uri', got %q", *param.Format)
+	}
+}
+
+// TestParamBuilderFormat tests Format() method on ParamBuilder
+func TestParamBuilderFormat(t *testing.T) {
+	schema := NewSchema("test", KindValue).
+		Param("url", TypeString).
+		Description("URL parameter").
+		Format(FormatURI).
+		Required().
+		Done().
+		Build()
+
+	// Verify parameter exists
+	param, exists := schema.Parameters["url"]
+	if !exists {
+		t.Fatal("parameter 'url' not found")
+	}
+
+	// Verify format is set
+	if param.Format == nil {
+		t.Fatal("expected Format to be set")
+	}
+	if *param.Format != FormatURI {
+		t.Errorf("expected format 'uri', got %q", *param.Format)
+	}
+}

@@ -228,6 +228,7 @@ type ParamSchema struct {
 	Maximum *float64 // For numeric types (int, float)
 	Enum    []any    // Allowed values (any type)
 	Pattern *string  // Regex pattern for string validation
+	Format  *Format  // Typed format (uri, hostname, cidr, semver, duration, etc.)
 
 	// Type-specific schemas (only one should be set based on Type)
 	EnumSchema   *EnumSchema   // For TypeEnum
@@ -688,6 +689,12 @@ func (pb *ParamBuilder) Enum(values []any) *ParamBuilder {
 // Pattern sets regex pattern constraint (for string types)
 func (pb *ParamBuilder) Pattern(pattern *string) *ParamBuilder {
 	pb.param.Pattern = pattern
+	return pb
+}
+
+// Format sets typed format constraint (for string types)
+func (pb *ParamBuilder) Format(format Format) *ParamBuilder {
+	pb.param.Format = &format
 	return pb
 }
 
