@@ -54,12 +54,16 @@ The **primary property** is a shorthand for the most important parameter. Decora
 
 **Schema definition:**
 ```go
-// Decorator with primary parameter
-.PrimaryParam("property", "string", "Environment variable name")
+// Decorator with primary parameter (MUST be string)
+.PrimaryParamString("property", "Environment variable name")
 
 // Decorator without primary parameter
-// (just omit PrimaryParam() call)
+// (just omit PrimaryParamString() call)
 ```
+
+**IMPORTANT:** Primary parameters MUST be strings. They are used in dot syntax
+(`@env.HOME`, `@var.count`) where the value after the dot is an identifier.
+Non-string primary parameters don't make semantic sense in this context.
 
 ### 2. Named Parameters (Optional)
 

@@ -689,6 +689,10 @@ func (b *DescriptorBuilder) ParamArray(name, description string) *ArrayParamBuil
 
 // PrimaryParamString creates a string primary parameter builder.
 // Primary parameters are always required and appear first in parameter order.
+//
+// IMPORTANT: Primary parameters MUST be strings. They are used in dot syntax
+// (@env.HOME, @var.count) where the value after the dot is an identifier.
+// Non-string primary parameters don't make semantic sense in this context.
 func (b *DescriptorBuilder) PrimaryParamString(name, description string) *ParamBuilder {
 	// Check for duplicate primary parameter
 	if b.desc.Schema.PrimaryParameter != "" {
@@ -702,26 +706,6 @@ func (b *DescriptorBuilder) PrimaryParamString(name, description string) *ParamB
 		schema: types.ParamSchema{
 			Name:        name,
 			Type:        types.TypeString,
-			Description: description,
-			Required:    true, // Primary parameters are always required
-		},
-	}
-}
-
-// PrimaryParamInt creates an integer primary parameter builder.
-func (b *DescriptorBuilder) PrimaryParamInt(name, description string) *ParamBuilder {
-	// Check for duplicate primary parameter
-	if b.desc.Schema.PrimaryParameter != "" {
-		panic(fmt.Sprintf("primary parameter already set to %q, cannot set to %q", b.desc.Schema.PrimaryParameter, name))
-	}
-
-	b.desc.Schema.PrimaryParameter = name
-
-	return &ParamBuilder{
-		parent: b,
-		schema: types.ParamSchema{
-			Name:        name,
-			Type:        types.TypeInt,
 			Description: description,
 			Required:    true, // Primary parameters are always required
 		},

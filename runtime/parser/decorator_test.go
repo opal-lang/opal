@@ -1,12 +1,63 @@
 package parser
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/aledsdavies/opal/core/decorator"
+	"github.com/aledsdavies/opal/core/types"
 	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
 	"github.com/google/go-cmp/cmp"
 )
+
+// Test decorator implementations for parser tests
+
+// ConfigDecorator is a test decorator that accepts object parameters
+type ConfigDecorator struct{}
+
+func (d *ConfigDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("config").
+		Summary("Test configuration decorator").
+		Roles(decorator.RoleProvider).
+		PrimaryParamString("name", "Configuration name").
+		Done().
+		ParamObject("settings", "Configuration settings").
+		Done().
+		Returns(types.TypeString, "Configuration value").
+		Build()
+}
+
+func (d *ConfigDecorator) Resolve(ctx decorator.ValueEvalContext, call decorator.ValueCall) (any, error) {
+	return "test", nil
+}
+
+// DeployDecorator is a test decorator that accepts array parameters
+type DeployDecorator struct{}
+
+func (d *DeployDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("deploy").
+		Summary("Test deployment decorator").
+		Roles(decorator.RoleWrapper).
+		PrimaryParamString("target", "Deployment target").
+		Done().
+		ParamArray("hosts", "List of hosts").
+		ElementType(types.TypeString).
+		Done().
+		Build()
+}
+
+func (d *DeployDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next // Pass through for test
+}
+
+func init() {
+	// Register test decorators for parser tests
+	if err := decorator.Register("config", &ConfigDecorator{}); err != nil {
+		panic(err)
+	}
+	if err := decorator.Register("deploy", &DeployDecorator{}); err != nil {
+		panic(err)
+	}
+}
 
 // TestDecoratorDetection tests that parser recognizes registered decorators
 func TestDecoratorDetection(t *testing.T) {
@@ -364,7 +415,7 @@ func TestDecoratorRequiredParameters(t *testing.T) {
 			input:          `@env`,
 			wantError:      true,
 			wantMessage:    "missing required parameter 'property'",
-			wantContext:    "decorator parameters",
+			wantContext:    "decorator parameter",
 			wantSuggestion: "Use dot syntax like @env.HOME or provide property=\"HOME\"",
 		},
 		{
@@ -372,7 +423,7 @@ func TestDecoratorRequiredParameters(t *testing.T) {
 			input:          `@env()`,
 			wantError:      true,
 			wantMessage:    "missing required parameter 'property'",
-			wantContext:    "decorator parameters",
+			wantContext:    "decorator parameter",
 			wantSuggestion: "Use dot syntax like @env.HOME or provide property=\"HOME\"",
 		},
 	}
@@ -1086,10 +1137,16 @@ func TestDecoratorPositionalParameters(t *testing.T) {
 // TestPositionalParameters tests positional parameter support
 func TestPositionalParameters(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantError bool
-		errorMsg  string
+		name           string
+		input          string
+		wantError      bool
+		wantMessage    string
+		wantContext    string
+		wantSuggestion string
+		wantCode       ErrorCode
+		wantPath       string
+		wantExpected   string
+		wantGot        string
 	}{
 		// === Basic Positional ===
 		{
@@ -1139,36 +1196,54 @@ func TestPositionalParameters(t *testing.T) {
 
 		// === Edge Cases ===
 		{
-			name:      "too many positional arguments",
-			input:     `@retry(3, 2s, "linear", "extra") { echo "test" }`,
-			wantError: true,
-			errorMsg:  "too many positional arguments",
+			name:        "too many positional arguments",
+			input:       `@retry(3, 2s, "linear", "extra") { echo "test" }`,
+			wantError:   true,
+			wantMessage: "too many positional arguments",
 		},
 		{
-			name:      "duplicate parameter - positional and named",
-			input:     `@retry(3, times=5) { echo "test" }`,
-			wantError: true,
-			errorMsg:  "duplicate parameter",
+			name:        "duplicate parameter - positional and named",
+			input:       `@retry(3, times=5) { echo "test" }`,
+			wantError:   true,
+			wantMessage: "duplicate parameter 'times'",
 		},
 		{
-			name:      "named then positional fills next slot",
-			input:     `@retry(times=3, 5) { echo "test" }`,
-			wantError: true,
-			errorMsg:  "expects duration, got integer", // 5 goes to position 1 (delay), not position 0
+			name:           "named then positional fills next slot",
+			input:          `@retry(times=3, 5) { echo "test" }`,
+			wantError:      true,
+			wantMessage:    "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
+			wantContext:    "decorator parameter",
+			wantSuggestion: "Use a duration value like \"5m\"",
+			wantCode:       ErrorCodeSchemaTypeMismatch,
+			wantPath:       "delay",
+			wantExpected:   "duration (e.g., \"5m\", \"1h\")",
+			wantGot:        "integer",
 		},
 
 		// === Type Validation ===
 		{
-			name:      "wrong type - string where int expected",
-			input:     `@retry("not-a-number", 2s) { echo "test" }`,
-			wantError: true,
-			errorMsg:  "expects integer, got string",
+			name:           "wrong type - string where int expected",
+			input:          `@retry("not-a-number", 2s) { echo "test" }`,
+			wantError:      true,
+			wantMessage:    "parameter 'times' expects integer between 1 and 100, got string",
+			wantContext:    "decorator parameter",
+			wantSuggestion: "Use an integer value like 50",
+			wantCode:       ErrorCodeSchemaTypeMismatch,
+			wantPath:       "times",
+			wantExpected:   "integer between 1 and 100",
+			wantGot:        "string",
 		},
 		{
-			name:      "wrong type - int where duration expected",
-			input:     `@retry(3, 123) { echo "test" }`,
-			wantError: true,
-			errorMsg:  "expects duration, got integer",
+			name:           "wrong type - int where duration expected",
+			input:          `@retry(3, 123) { echo "test" }`,
+			wantError:      true,
+			wantMessage:    "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
+			wantContext:    "decorator parameter",
+			wantSuggestion: "Use a duration value like \"5m\"",
+			wantCode:       ErrorCodeSchemaTypeMismatch,
+			wantPath:       "delay",
+			wantExpected:   "duration (e.g., \"5m\", \"1h\")",
+			wantGot:        "integer",
 		},
 	}
 
@@ -1178,18 +1253,38 @@ func TestPositionalParameters(t *testing.T) {
 
 			if tt.wantError {
 				if len(tree.Errors) == 0 {
-					t.Fatalf("Expected error containing %q but got none", tt.errorMsg)
+					t.Fatal("Expected error but got none")
 				}
-				// Check error message contains expected text
-				found := false
-				for _, err := range tree.Errors {
-					if tt.errorMsg != "" && containsIgnoreCase(err.Message, tt.errorMsg) {
-						found = true
-						break
-					}
+
+				err := tree.Errors[0]
+
+				// Test complete error structure (not lazy partial tests)
+				if tt.wantMessage != "" && err.Message != tt.wantMessage {
+					t.Errorf("Message mismatch:\ngot:  %q\nwant: %q", err.Message, tt.wantMessage)
 				}
-				if !found && tt.errorMsg != "" {
-					t.Errorf("Expected error containing %q, got: %v", tt.errorMsg, tree.Errors)
+
+				if tt.wantContext != "" && err.Context != tt.wantContext {
+					t.Errorf("Context mismatch:\ngot:  %q\nwant: %q", err.Context, tt.wantContext)
+				}
+
+				if tt.wantSuggestion != "" && err.Suggestion != tt.wantSuggestion {
+					t.Errorf("Suggestion mismatch:\ngot:  %q\nwant: %q", err.Suggestion, tt.wantSuggestion)
+				}
+
+				if tt.wantCode != "" && err.Code != tt.wantCode {
+					t.Errorf("Code mismatch:\ngot:  %q\nwant: %q", err.Code, tt.wantCode)
+				}
+
+				if tt.wantPath != "" && err.Path != tt.wantPath {
+					t.Errorf("Path mismatch:\ngot:  %q\nwant: %q", err.Path, tt.wantPath)
+				}
+
+				if tt.wantExpected != "" && err.ExpectedType != tt.wantExpected {
+					t.Errorf("ExpectedType mismatch:\ngot:  %q\nwant: %q", err.ExpectedType, tt.wantExpected)
+				}
+
+				if tt.wantGot != "" && err.GotValue != tt.wantGot {
+					t.Errorf("GotValue mismatch:\ngot:  %q\nwant: %q", err.GotValue, tt.wantGot)
 				}
 			} else {
 				if len(tree.Errors) > 0 {
@@ -1257,7 +1352,96 @@ func TestPositionalParametersNesting(t *testing.T) {
 	}
 }
 
-// Helper function for case-insensitive substring check
-func containsIgnoreCase(s, substr string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+// TestDecoratorObjectParameter tests parsing object literals as parameter values
+func TestDecoratorObjectParameter(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "simple object",
+			input: `@config.myconfig(settings={timeout: "5m"})`,
+		},
+		{
+			name:  "object with multiple fields",
+			input: `@config.myconfig(settings={timeout: "5m", retries: 3})`,
+		},
+		{
+			name:  "empty object",
+			input: `@config.myconfig(settings={})`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+
+			if len(tree.Errors) > 0 {
+				t.Errorf("unexpected parse errors:")
+				for _, err := range tree.Errors {
+					t.Logf("  %s", err.Message)
+				}
+			}
+
+			// Verify we have a decorator node
+			hasDecorator := false
+			for _, evt := range tree.Events {
+				if evt.Kind == EventOpen && NodeKind(evt.Data) == NodeDecorator {
+					hasDecorator = true
+					break
+				}
+			}
+
+			if !hasDecorator {
+				t.Error("expected decorator node")
+			}
+		})
+	}
+}
+
+// TestDecoratorArrayParameter tests parsing array literals as parameter values
+func TestDecoratorArrayParameter(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "simple array",
+			input: `@deploy.production(hosts=["web1", "web2"])`,
+		},
+		{
+			name:  "array of integers",
+			input: `@deploy.staging(hosts=[8080, 8081])`,
+		},
+		{
+			name:  "empty array",
+			input: `@deploy.test(hosts=[])`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+
+			if len(tree.Errors) > 0 {
+				t.Errorf("unexpected parse errors:")
+				for _, err := range tree.Errors {
+					t.Logf("  %s", err.Message)
+				}
+			}
+
+			// Verify we have a decorator node
+			hasDecorator := false
+			for _, evt := range tree.Events {
+				if evt.Kind == EventOpen && NodeKind(evt.Data) == NodeDecorator {
+					hasDecorator = true
+					break
+				}
+			}
+
+			if !hasDecorator {
+				t.Error("expected decorator node")
+			}
+		})
+	}
 }

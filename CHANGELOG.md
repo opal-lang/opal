@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2025-11-03
+- Added object and array literal support with compile-time validation
+- Added schema validation for decorator parameters (int range, enum, object, array)
+- Added structured error codes for programmatic error handling (enables future tooling)
+
 ### 2025-11-01
 - Added OEP-017: Shell Command Type Definitions (type-safe shell commands, type packs, stream types)
 - Updated OEP-012: Module Composition with JSON Schema Draft 2020-12 and `x-opal-*` extensions

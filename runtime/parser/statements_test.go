@@ -273,3 +273,71 @@ func TestAssignmentOperators(t *testing.T) {
 		})
 	}
 }
+
+// TestObjectLiteralInVarDecl tests parsing object literals in variable declarations
+func TestObjectLiteralInVarDecl(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "simple object",
+			input: `var config = {timeout: "5m"}`,
+		},
+		{
+			name:  "object with multiple fields",
+			input: `var config = {timeout: "5m", retries: 3}`,
+		},
+		{
+			name:  "empty object",
+			input: `var config = {}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := ParseString(tt.input)
+
+			if len(tree.Errors) > 0 {
+				t.Errorf("unexpected parse errors:")
+				for _, err := range tree.Errors {
+					t.Logf("  %s", err.Message)
+				}
+			}
+		})
+	}
+}
+
+// TestArrayLiteralInVarDecl tests parsing array literals in variable declarations
+func TestArrayLiteralInVarDecl(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "simple array",
+			input: `var hosts = ["web1", "web2"]`,
+		},
+		{
+			name:  "array of integers",
+			input: `var ports = [8080, 8081]`,
+		},
+		{
+			name:  "empty array",
+			input: `var items = []`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := ParseString(tt.input)
+
+			if len(tree.Errors) > 0 {
+				t.Errorf("unexpected parse errors:")
+				for _, err := range tree.Errors {
+					t.Logf("  %s", err.Message)
+				}
+			}
+		})
+	}
+}

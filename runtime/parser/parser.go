@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aledsdavies/opal/core/decorator"
@@ -1524,6 +1525,14 @@ func (p *parser) primary() {
 		p.token()
 		p.finish(kind)
 
+	case p.at(lexer.LSQUARE):
+		// Array literal: [expr, expr, ...]
+		p.arrayLiteral()
+
+	case p.at(lexer.LBRACE):
+		// Object literal: {key: value, ...}
+		p.objectLiteral()
+
 	default:
 		// Unexpected token - report error and create error node
 		p.errorUnexpected("expression")
@@ -1532,6 +1541,88 @@ func (p *parser) primary() {
 			p.advance()
 		}
 	}
+}
+
+// arrayLiteral parses an array literal: [expr, expr, ...]
+func (p *parser) arrayLiteral() {
+	kind := p.start(NodeArrayLiteral)
+	p.expect(lexer.LSQUARE, "array literal") // Consume '['
+
+	// Parse elements
+	for !p.at(lexer.RSQUARE) && !p.at(lexer.EOF) {
+		// Parse element expression
+		p.expression()
+
+		// Check for comma or end of array
+		if p.at(lexer.COMMA) {
+			p.token() // Consume comma
+			// Allow trailing comma before ]
+			if p.at(lexer.RSQUARE) {
+				break
+			}
+		} else if !p.at(lexer.RSQUARE) {
+			// Expected comma or ]
+			p.errorWithDetails("expected ',' or ']' in array literal", "array literal", "")
+			break
+		}
+	}
+
+	p.expect(lexer.RSQUARE, "array literal") // Consume ']'
+	p.finish(kind)
+}
+
+// objectLiteral parses an object literal: {key: value, ...}
+func (p *parser) objectLiteral() {
+	kind := p.start(NodeObjectLiteral)
+	p.expect(lexer.LBRACE, "object literal") // Consume '{'
+
+	// Parse fields
+	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		// Parse field: key: value
+		p.objectField()
+
+		// Check for comma or end of object
+		if p.at(lexer.COMMA) {
+			p.token() // Consume comma
+			// Allow trailing comma before }
+			if p.at(lexer.RBRACE) {
+				break
+			}
+		} else if !p.at(lexer.RBRACE) {
+			// Expected comma or }
+			p.errorWithDetails("expected ',' or '}' in object literal", "object literal", "")
+			break
+		}
+	}
+
+	p.expect(lexer.RBRACE, "object literal") // Consume '}'
+	p.finish(kind)
+}
+
+// objectField parses a single object field: key: value
+func (p *parser) objectField() {
+	kind := p.start(NodeObjectField)
+
+	// Parse key (must be identifier)
+	if !p.at(lexer.IDENTIFIER) {
+		p.errorExpected(lexer.IDENTIFIER, "object field")
+		p.finish(kind)
+		return
+	}
+	p.token() // Consume identifier
+
+	// Expect colon
+	if !p.at(lexer.COLON) {
+		p.errorExpected(lexer.COLON, "object field")
+		p.finish(kind)
+		return
+	}
+	p.token() // Consume ':'
+
+	// Parse value expression
+	p.expression()
+
+	p.finish(kind)
 }
 
 // decorator parses @identifier.property
@@ -1893,14 +1984,28 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 			}
 		}
 
-		// Parse and validate parameter value type
+		// Parse and validate parameter value
 		valueToken := p.current()
-		if p.at(lexer.STRING) || p.at(lexer.INTEGER) || p.at(lexer.FLOAT) ||
+
+		// Check if this is a simple literal or a complex expression (object/array)
+		if p.at(lexer.LBRACE) || p.at(lexer.LSQUARE) {
+			// Complex expression (object or array literal)
+			// Track event position before parsing
+			eventStartPos := len(p.events)
+			p.expression()
+
+			// Validate complex literal if parameter exists in schema
+			if paramExists {
+				p.validateComplexLiteral(paramName, paramSchema, eventStartPos)
+			}
+		} else if p.at(lexer.STRING) || p.at(lexer.INTEGER) || p.at(lexer.FLOAT) ||
 			p.at(lexer.BOOLEAN) || p.at(lexer.DURATION) || p.at(lexer.IDENTIFIER) {
 
 			// Validate type if parameter exists in schema
 			if paramExists {
 				p.validateParameterType(paramName, paramSchema, valueToken)
+				// Validate constraints (min/max, pattern, format) for literal values
+				p.validateParameterConstraints(paramName, paramSchema, valueToken)
 			}
 
 			p.token() // Consume value
@@ -1980,9 +2085,10 @@ func (p *parser) validateParameterType(paramName string, paramSchema types.Param
 		if !validValue && deprecatedValues != nil {
 			if replacement, isDeprecated := deprecatedValues[value]; isDeprecated {
 				// Accept deprecated value but emit a warning
-				p.warningWithDetails(
+				p.warningSchema(
+					ErrorCodeSchemaEnumDeprecated,
+					paramName,
 					fmt.Sprintf("parameter '%s' uses deprecated value %q", paramName, value),
-					"decorator parameter",
 					fmt.Sprintf("Use %q instead", replacement),
 				)
 				validValue = true // Accept it, just warn
@@ -1990,20 +2096,34 @@ func (p *parser) validateParameterType(paramName string, paramSchema types.Param
 		}
 
 		if !validValue {
-			p.errorWithDetails(
+			// Format enum values for display
+			enumStrs := make([]string, len(enumValues))
+			for i, v := range enumValues {
+				enumStrs[i] = fmt.Sprintf("%q", v)
+			}
+			p.errorSchema(
+				ErrorCodeSchemaEnumInvalid,
+				paramName,
 				fmt.Sprintf("parameter '%s' has invalid value %q", paramName, value),
-				"decorator parameter",
-				fmt.Sprintf("Allowed values: %v", enumValues),
+				fmt.Sprintf("Use one of: %s", strings.Join(enumStrs, ", ")),
+				fmt.Sprintf("one of %v", enumValues),
+				fmt.Sprintf("%q", value),
 			)
 		}
 		return // Enum validation complete
 	}
 
 	if actualType != expectedType {
-		p.errorWithDetails(
-			fmt.Sprintf("parameter '%s' expects %s, got %s", paramName, expectedType, actualType),
-			"decorator parameter",
-			fmt.Sprintf("Use a %s value like %s", expectedType, p.exampleForType(expectedType)),
+		// Build detailed expected type description
+		expectedDesc := p.expectedTypeFromSchema(paramSchema)
+
+		p.errorSchema(
+			ErrorCodeSchemaTypeMismatch,
+			paramName,
+			fmt.Sprintf("parameter '%s' expects %s, got %s", paramName, expectedDesc, actualType),
+			p.generateConcreteSuggestion(paramName, paramSchema, ""),
+			expectedDesc,
+			string(actualType),
 		)
 	}
 }
@@ -2029,20 +2149,536 @@ func (p *parser) tokenToParamType(tokType lexer.TokenType) types.ParamType {
 	}
 }
 
-// exampleForType returns an example value for a given type
-func (p *parser) exampleForType(typ types.ParamType) string {
-	switch typ {
-	case types.TypeString:
-		return "\"value\""
-	case types.TypeInt:
-		return "42"
-	case types.TypeFloat:
-		return "3.14"
-	case types.TypeBool:
-		return "true"
-	default:
-		return "value"
+// validateParameterConstraints validates parameter constraints (min/max, pattern, format)
+// for literal values. Skips validation for variables and expressions.
+func (p *parser) validateParameterConstraints(paramName string, paramSchema types.ParamSchema, valueToken lexer.Token) {
+	// Only validate literal values (skip variables, expressions)
+	if valueToken.Type == lexer.IDENTIFIER || valueToken.Type == lexer.AT {
+		return // Skip validation for variables/expressions
 	}
+
+	// Extract literal value from token
+	value, ok := p.extractLiteralValue(valueToken)
+	if !ok {
+		return // Not a literal, skip validation
+	}
+
+	// Use core/types validator for constraint validation
+	validator := types.NewValidator(types.DefaultValidationConfig())
+
+	if err := validator.ValidateParams(&paramSchema, value); err != nil {
+		// Convert validation error to parser error with rich context
+		code := p.errorCodeFromValidationError(err, paramSchema)
+		p.errorSchema(
+			code,
+			paramName,
+			fmt.Sprintf("invalid value for parameter '%s'", paramName),
+			p.suggestionFromSchema(paramSchema, err),
+			p.expectedTypeFromSchema(paramSchema),
+			fmt.Sprintf("%v", value),
+		)
+	}
+}
+
+// validateComplexLiteral validates object and array literals against schema
+func (p *parser) validateComplexLiteral(paramName string, paramSchema types.ParamSchema, eventStartPos int) {
+	// Extract value from events
+	value, ok := p.extractComplexValue(eventStartPos)
+	if !ok {
+		// Not a literal (contains variables/expressions), skip validation
+		return
+	}
+
+	// Validate using core/types validator
+	validator := types.NewValidator(&types.ValidationConfig{
+		MaxSchemaSize:  1024 * 1024, // 1MB
+		MaxSchemaDepth: 10,
+		AllowRemoteRef: false,
+		EnableCache:    true,
+		MaxCacheSize:   100,
+	})
+
+	// Validate the value against the schema
+	if err := validator.ValidateParams(&paramSchema, value); err != nil {
+		code := p.errorCodeFromValidationError(err, paramSchema)
+		p.errorSchema(
+			code,
+			paramName,
+			fmt.Sprintf("invalid value for parameter '%s'", paramName),
+			p.suggestionFromSchema(paramSchema, err),
+			p.expectedTypeFromSchema(paramSchema),
+			fmt.Sprintf("%v", value),
+		)
+	}
+}
+
+// extractComplexValue extracts a Go value from object/array literal events
+// Returns (value, true) for pure literals, (nil, false) if it contains variables/expressions
+func (p *parser) extractComplexValue(eventStartPos int) (any, bool) {
+	if eventStartPos >= len(p.events) {
+		return nil, false
+	}
+
+	// Start from the first event after eventStartPos
+	evt := p.events[eventStartPos]
+	if evt.Kind != EventOpen {
+		return nil, false
+	}
+
+	nodeKind := NodeKind(evt.Data)
+	switch nodeKind {
+	case NodeObjectLiteral:
+		return p.extractObjectLiteral(eventStartPos)
+	case NodeArrayLiteral:
+		return p.extractArrayLiteral(eventStartPos)
+	default:
+		return nil, false
+	}
+}
+
+// extractObjectLiteral extracts a map[string]any from object literal events
+func (p *parser) extractObjectLiteral(startPos int) (any, bool) {
+	result := make(map[string]any)
+	pos := startPos + 1 // Skip NodeObjectLiteral open event
+	depth := 1
+
+	for pos < len(p.events) && depth > 0 {
+		evt := p.events[pos]
+
+		if evt.Kind == EventOpen {
+			nodeKind := NodeKind(evt.Data)
+
+			if nodeKind == NodeObjectField {
+				// Extract field name and value
+				fieldName, fieldValue, fieldOk, newPos := p.extractObjectField(pos)
+				if !fieldOk {
+					return nil, false // Contains non-literal
+				}
+				result[fieldName] = fieldValue
+				pos = newPos
+				continue
+			} else if nodeKind == NodeObjectLiteral {
+				depth++
+			}
+		} else if evt.Kind == EventClose {
+			nodeKind := NodeKind(evt.Data)
+			if nodeKind == NodeObjectLiteral {
+				depth--
+				if depth == 0 {
+					return result, true
+				}
+			}
+		}
+
+		pos++
+	}
+
+	return result, true
+}
+
+// extractObjectField extracts a single object field (name and value)
+// Returns (name, value, ok, nextPos)
+func (p *parser) extractObjectField(startPos int) (string, any, bool, int) {
+	pos := startPos + 1 // Skip NodeObjectField open event
+
+	// Next should be the field name token
+	if pos >= len(p.events) {
+		return "", nil, false, pos
+	}
+
+	nameEvt := p.events[pos]
+	if nameEvt.Kind != EventToken {
+		return "", nil, false, pos
+	}
+
+	nameToken := p.tokens[nameEvt.Data]
+	fieldName := string(nameToken.Text)
+	pos++
+
+	// Skip colon token
+	if pos < len(p.events) && p.events[pos].Kind == EventToken {
+		pos++
+	}
+
+	// Extract value
+	if pos >= len(p.events) {
+		return "", nil, false, pos
+	}
+
+	valueEvt := p.events[pos]
+	var fieldValue any
+	var ok bool
+
+	switch valueEvt.Kind {
+	case EventToken:
+		// Simple literal value
+		valueToken := p.tokens[valueEvt.Data]
+		fieldValue, ok = p.extractLiteralValue(valueToken)
+		if !ok {
+			return "", nil, false, pos
+		}
+		pos++
+	case EventOpen:
+		// Nested object or array
+		nodeKind := NodeKind(valueEvt.Data)
+		switch nodeKind {
+		case NodeObjectLiteral:
+			fieldValue, ok = p.extractObjectLiteral(pos)
+		case NodeArrayLiteral:
+			fieldValue, ok = p.extractArrayLiteral(pos)
+		default:
+			return "", nil, false, pos
+		}
+
+		if !ok {
+			return "", nil, false, pos
+		}
+
+		// Skip to close event
+		depth := 1
+		pos++
+		for pos < len(p.events) && depth > 0 {
+			evt := p.events[pos]
+			switch evt.Kind {
+			case EventOpen:
+				depth++
+			case EventClose:
+				depth--
+			}
+			pos++
+		}
+	}
+
+	// Skip to NodeObjectField close event
+	for pos < len(p.events) {
+		evt := p.events[pos]
+		if evt.Kind == EventClose && NodeKind(evt.Data) == NodeObjectField {
+			pos++
+			break
+		}
+		pos++
+	}
+
+	return fieldName, fieldValue, true, pos
+}
+
+// extractArrayLiteral extracts a []any from array literal events
+func (p *parser) extractArrayLiteral(startPos int) (any, bool) {
+	result := make([]any, 0)
+	pos := startPos + 1 // Skip NodeArrayLiteral open event
+	depth := 1
+
+	for pos < len(p.events) && depth > 0 {
+		evt := p.events[pos]
+
+		if evt.Kind == EventOpen {
+			nodeKind := NodeKind(evt.Data)
+
+			if nodeKind == NodeArrayLiteral {
+				depth++
+			} else if nodeKind == NodeObjectLiteral {
+				// Nested object
+				objValue, ok := p.extractObjectLiteral(pos)
+				if !ok {
+					return nil, false
+				}
+				result = append(result, objValue)
+
+				// Skip to close event
+				nestedDepth := 1
+				pos++
+				for pos < len(p.events) && nestedDepth > 0 {
+					e := p.events[pos]
+					switch e.Kind {
+					case EventOpen:
+						nestedDepth++
+					case EventClose:
+						nestedDepth--
+					}
+					pos++
+				}
+				continue
+			}
+		} else if evt.Kind == EventClose {
+			nodeKind := NodeKind(evt.Data)
+			if nodeKind == NodeArrayLiteral {
+				depth--
+				if depth == 0 {
+					return result, true
+				}
+			}
+		} else if evt.Kind == EventToken && depth == 1 {
+			// Element token (not inside nested structure)
+			token := p.tokens[evt.Data]
+			value, ok := p.extractLiteralValue(token)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, value)
+		}
+
+		pos++
+	}
+
+	return result, true
+}
+
+// extractLiteralValue extracts a Go value from a literal token
+// Returns (value, true) for literals, (nil, false) for non-literals
+func (p *parser) extractLiteralValue(tok lexer.Token) (any, bool) {
+	switch tok.Type {
+	case lexer.STRING:
+		// Remove quotes from string literal
+		value := string(tok.Text)
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = value[1 : len(value)-1]
+		}
+		return value, true
+	case lexer.INTEGER:
+		// Parse integer
+		var val int64
+		_, _ = fmt.Sscanf(string(tok.Text), "%d", &val)
+		return int(val), true
+	case lexer.FLOAT:
+		// Parse float
+		var val float64
+		_, _ = fmt.Sscanf(string(tok.Text), "%f", &val)
+		return val, true
+	case lexer.BOOLEAN:
+		// Parse boolean
+		value := string(tok.Text)
+		return value == "true", true
+	case lexer.DURATION:
+		// Duration is validated as a string by the validator
+		return string(tok.Text), true
+	default:
+		return nil, false
+	}
+}
+
+// suggestionFromSchema generates a helpful suggestion based on schema constraints
+func (p *parser) suggestionFromSchema(schema types.ParamSchema, err error) string {
+	switch schema.Type {
+	case types.TypeInt:
+		if schema.Minimum != nil && schema.Maximum != nil {
+			return fmt.Sprintf("Use an integer between %v and %v", *schema.Minimum, *schema.Maximum)
+		} else if schema.Minimum != nil {
+			return fmt.Sprintf("Use an integer >= %v", *schema.Minimum)
+		} else if schema.Maximum != nil {
+			return fmt.Sprintf("Use an integer <= %v", *schema.Maximum)
+		}
+		return "Use a valid integer"
+	case types.TypeFloat:
+		if schema.Minimum != nil && schema.Maximum != nil {
+			return fmt.Sprintf("Use a number between %v and %v", *schema.Minimum, *schema.Maximum)
+		}
+		return "Use a valid number"
+	case types.TypeString:
+		if schema.Pattern != nil {
+			return fmt.Sprintf("Use a string matching pattern: %s", *schema.Pattern)
+		}
+		if schema.Format != nil {
+			return fmt.Sprintf("Use a valid %s", *schema.Format)
+		}
+		return "Use a valid string"
+	case types.TypeDuration:
+		return "Use a duration like \"5m\", \"1h\", or \"30s\""
+	case types.TypeEnum:
+		if schema.EnumSchema != nil && len(schema.EnumSchema.Values) > 0 {
+			return fmt.Sprintf("Use one of: %v", schema.EnumSchema.Values)
+		}
+		return "Use a valid enum value"
+	default:
+		return err.Error()
+	}
+}
+
+// errorCodeFromValidationError determines the appropriate error code from a validation error
+func (p *parser) errorCodeFromValidationError(err error, schema types.ParamSchema) ErrorCode {
+	errMsg := err.Error()
+
+	// Check error message patterns to determine error code
+	if strings.Contains(errMsg, "minimum") || strings.Contains(errMsg, "maximum") {
+		return ErrorCodeSchemaRangeViolation
+	}
+	if strings.Contains(errMsg, "pattern") {
+		return ErrorCodeSchemaPatternMismatch
+	}
+	if strings.Contains(errMsg, "format") {
+		return ErrorCodeSchemaFormatInvalid
+	}
+	if strings.Contains(errMsg, "minLength") || strings.Contains(errMsg, "maxLength") {
+		return ErrorCodeSchemaLengthViolation
+	}
+	if strings.Contains(errMsg, "additionalProperties") {
+		return ErrorCodeSchemaAdditionalProp
+	}
+	if strings.Contains(errMsg, "type") {
+		if schema.Type == types.TypeObject {
+			return ErrorCodeSchemaObjectFieldType
+		}
+		if schema.Type == types.TypeArray {
+			return ErrorCodeSchemaArrayElementType
+		}
+		return ErrorCodeSchemaTypeMismatch
+	}
+
+	// Default to range violation for numeric constraints
+	if schema.Type == types.TypeInt || schema.Type == types.TypeFloat {
+		return ErrorCodeSchemaRangeViolation
+	}
+
+	return ErrorCodeSchemaTypeMismatch
+}
+
+// expectedTypeFromSchema generates a human-readable expected type description
+func (p *parser) expectedTypeFromSchema(schema types.ParamSchema) string {
+	switch schema.Type {
+	case types.TypeInt:
+		if schema.Minimum != nil && schema.Maximum != nil {
+			return fmt.Sprintf("integer between %v and %v", *schema.Minimum, *schema.Maximum)
+		} else if schema.Minimum != nil {
+			return fmt.Sprintf("integer >= %v", *schema.Minimum)
+		} else if schema.Maximum != nil {
+			return fmt.Sprintf("integer <= %v", *schema.Maximum)
+		}
+		return "integer"
+	case types.TypeFloat:
+		if schema.Minimum != nil && schema.Maximum != nil {
+			return fmt.Sprintf("number between %v and %v", *schema.Minimum, *schema.Maximum)
+		}
+		return "number"
+	case types.TypeString:
+		if schema.Pattern != nil {
+			return fmt.Sprintf("string matching /%s/", *schema.Pattern)
+		}
+		if schema.Format != nil {
+			return fmt.Sprintf("%s format", *schema.Format)
+		}
+		if schema.MinLength != nil && schema.MaxLength != nil {
+			return fmt.Sprintf("string (length %d-%d)", *schema.MinLength, *schema.MaxLength)
+		}
+		return "string"
+	case types.TypeBool:
+		return "boolean"
+	case types.TypeDuration:
+		return "duration (e.g., \"5m\", \"1h\")"
+	case types.TypeEnum:
+		if schema.EnumSchema != nil && len(schema.EnumSchema.Values) > 0 {
+			return fmt.Sprintf("one of %v", schema.EnumSchema.Values)
+		}
+		return "enum value"
+	case types.TypeObject:
+		return "object"
+	case types.TypeArray:
+		return "array"
+	default:
+		return string(schema.Type)
+	}
+}
+
+// generateConcreteSuggestion generates a realistic example based on schema constraints
+func (p *parser) generateConcreteSuggestion(paramName string, schema types.ParamSchema, decoratorName string) string {
+	var exampleValue string
+
+	switch schema.Type {
+	case types.TypeInt:
+		// Use midpoint of range if available, not arbitrary "42"
+		if schema.Minimum != nil && schema.Maximum != nil {
+			midpoint := (*schema.Minimum + *schema.Maximum) / 2
+			exampleValue = fmt.Sprintf("%d", int(midpoint))
+		} else if schema.Minimum != nil {
+			// Use minimum + 1 for a realistic example
+			exampleValue = fmt.Sprintf("%d", int(*schema.Minimum)+1)
+		} else if schema.Maximum != nil {
+			// Use maximum - 1 for a realistic example
+			exampleValue = fmt.Sprintf("%d", int(*schema.Maximum)-1)
+		} else {
+			exampleValue = "1"
+		}
+
+	case types.TypeFloat:
+		if schema.Minimum != nil && schema.Maximum != nil {
+			midpoint := (*schema.Minimum + *schema.Maximum) / 2
+			exampleValue = fmt.Sprintf("%.1f", midpoint)
+		} else {
+			exampleValue = "1.0"
+		}
+
+	case types.TypeString:
+		if schema.Format != nil {
+			// Use format-specific examples
+			switch *schema.Format {
+			case "uri":
+				exampleValue = "\"https://example.com\""
+			case "hostname":
+				exampleValue = "\"example.com\""
+			case "ipv4":
+				exampleValue = "\"192.0.2.1\""
+			case "cidr":
+				exampleValue = "\"10.0.0.0/8\""
+			case "semver":
+				exampleValue = "\"1.0.0\""
+			case "duration":
+				exampleValue = "\"5m\""
+			default:
+				exampleValue = "\"value\""
+			}
+		} else if len(schema.Examples) > 0 && schema.Examples[0] != "" {
+			// Use first non-empty example
+			exampleValue = fmt.Sprintf("%q", schema.Examples[0])
+		} else {
+			exampleValue = "\"value\""
+		}
+
+	case types.TypeBool:
+		exampleValue = "true"
+
+	case types.TypeDuration:
+		exampleValue = "\"5m\""
+
+	case types.TypeEnum:
+		// Use first valid enum value
+		if schema.EnumSchema != nil && len(schema.EnumSchema.Values) > 0 {
+			exampleValue = fmt.Sprintf("%q", schema.EnumSchema.Values[0])
+		} else {
+			exampleValue = "\"value\""
+		}
+
+	case types.TypeObject:
+		exampleValue = "{...}"
+
+	case types.TypeArray:
+		exampleValue = "[...]"
+
+	default:
+		exampleValue = "value"
+	}
+
+	// Format suggestion based on context
+	if decoratorName != "" {
+		// Full decorator syntax for complete examples
+		return fmt.Sprintf("Use @%s(%s=%s) { ... }", decoratorName, paramName, exampleValue)
+	}
+
+	// Simple format for type mismatch errors (matches existing test expectations)
+	typeDesc := string(schema.Type)
+	if schema.Type == types.TypeEnum && schema.EnumSchema != nil && len(schema.EnumSchema.Values) > 0 {
+		return fmt.Sprintf("Use one of: %s", strings.Join(func() []string {
+			quoted := make([]string, len(schema.EnumSchema.Values))
+			for i, v := range schema.EnumSchema.Values {
+				quoted[i] = fmt.Sprintf("%q", v)
+			}
+			return quoted
+		}(), ", "))
+	}
+
+	// Use correct article (a/an) based on type
+	article := "a"
+	if typeDesc == "integer" || typeDesc == "array" || typeDesc == "object" {
+		article = "an"
+	}
+	return fmt.Sprintf("Use %s %s value like %s", article, typeDesc, exampleValue)
 }
 
 // validateRequiredParameters checks that all required parameters were provided
@@ -2059,10 +2695,13 @@ func (p *parser) validateRequiredParameters(decoratorName string, schema types.D
 				suggestion = fmt.Sprintf("Use dot syntax like @%s.%s or provide %s=\"%s\"", decoratorName, exampleValue, paramName, exampleValue)
 			}
 
-			p.errorWithDetails(
+			p.errorSchema(
+				ErrorCodeSchemaRequiredMissing,
+				paramName,
 				fmt.Sprintf("missing required parameter '%s'", paramName),
-				"decorator parameters",
 				suggestion,
+				p.expectedTypeFromSchema(paramSchema),
+				"(not provided)",
 			)
 		}
 	}
@@ -2118,6 +2757,33 @@ func (p *parser) warningWithDetails(message, context, suggestion string) {
 		Message:    message,
 		Context:    context,
 		Suggestion: suggestion,
+	})
+}
+
+// errorSchema adds a schema validation error with structured error code
+func (p *parser) errorSchema(code ErrorCode, paramName string, message, suggestion string, expectedType, gotValue string) {
+	tok := p.current()
+	p.errors = append(p.errors, ParseError{
+		Position:     tok.Position,
+		Message:      message,
+		Context:      "decorator parameter",
+		Suggestion:   suggestion,
+		Code:         code,
+		Path:         paramName,
+		ExpectedType: expectedType,
+		GotValue:     gotValue,
+	})
+}
+
+// warningSchema adds a schema validation warning with structured error code
+func (p *parser) warningSchema(code ErrorCode, paramName string, message, suggestion string) {
+	tok := p.current()
+	p.warnings = append(p.warnings, ParseWarning{
+		Position:   tok.Position,
+		Message:    message,
+		Context:    "decorator parameter",
+		Suggestion: suggestion,
+		Note:       fmt.Sprintf("Code: %s, Parameter: %s", code, paramName),
 	})
 }
 

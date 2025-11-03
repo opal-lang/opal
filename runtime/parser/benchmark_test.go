@@ -214,3 +214,33 @@ func BenchmarkSemanticValidation(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkSchemaValidation benchmarks schema validation performance
+func BenchmarkSchemaValidation(b *testing.B) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"literal_int", `@retry(max_attempts=3) { echo "test" }`},
+		{"literal_string", `@log(level="info") { echo "test" }`},
+		{"literal_duration", `@timeout(duration="5m") { echo "test" }`},
+		{"literal_bool", `@config(enabled=true) { echo "test" }`},
+		{"variable", `@retry(max_attempts=@var.count) { echo "test" }`},
+		{"no_params", `@parallel { echo "test" }`},
+		{"multiple_params", `@retry(max_attempts=3, delay="1s") { echo "test" }`},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			// Parse once outside the loop
+			tree := Parse([]byte(tt.input))
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tree.ValidateSemantics()
+				// Clear errors for next iteration
+				tree.Errors = tree.Errors[:0]
+			}
+		})
+	}
+}
