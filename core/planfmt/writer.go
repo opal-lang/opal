@@ -67,8 +67,8 @@ type Writer struct {
 // This means you can set CreatedAt timestamps, compiler versions, etc. without
 // invalidating contracts.
 func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
-	// Canonicalize plan for deterministic encoding (sorts args, preserves command order)
-	p.canonicalize()
+	// Sort args for deterministic encoding (preserves command order)
+	p.sortArgs()
 
 	// Use buffer-then-write pattern: build header and body first, then write preamble with correct lengths
 	var headerBuf, bodyBuf bytes.Buffer

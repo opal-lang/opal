@@ -9,23 +9,30 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// NewPlanIDFactory creates an IDFactory for deterministic DisplayIDs in resolved plans
-// Uses HKDF to derive a plan-specific key from the plan digest
+// NewPlanIDFactory creates an IDFactory for deterministic DisplayIDs in resolved plans.
+// Uses canonical plan hash (structure only, no DisplayIDs) to break circular dependency.
+// DisplayIDs need plan_hash, but plan_hash can't include DisplayIDs that don't exist yet.
 //
 // This ensures:
-// - Same plan → same DisplayIDs (contract verification works)
+// - Same plan structure → same DisplayIDs (contract verification works)
 // - Different plans → different DisplayIDs (unlinkability)
 func NewPlanIDFactory(plan *Plan) (secret.IDFactory, error) {
-	// Get plan digest
-	digest, err := plan.Digest()
+	// Get canonical plan hash (structure only, NO DisplayIDs)
+	// This breaks the circular dependency: DisplayIDs need plan_hash, but plan_hash can't include DisplayIDs
+	canonical, err := plan.Canonicalize()
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute plan digest: %w", err)
+		return nil, fmt.Errorf("failed to canonicalize plan: %w", err)
 	}
 
-	// Derive plan_key using HKDF from plan digest
+	planHash, err := canonical.Hash()
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute canonical hash: %w", err)
+	}
+
+	// Derive plan_key using HKDF from canonical hash
 	// This makes DisplayIDs deterministic within a plan but unlinkable across plans
 	info := []byte("opal/displayid/plan/v1")
-	kdf := hkdf.New(sha3.New256, []byte(digest), nil, info)
+	kdf := hkdf.New(sha3.New256, planHash[:], nil, info)
 
 	planKey := make([]byte, 32)
 	if _, err := kdf.Read(planKey); err != nil {

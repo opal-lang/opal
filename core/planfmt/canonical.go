@@ -1,0 +1,316 @@
+package planfmt
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"sort"
+
+	"github.com/fxamacker/cbor/v2"
+)
+
+// CanonicalPlan is the intermediate form for deterministic hashing.
+// It uses placeholders instead of DisplayIDs to break the circular dependency
+// between DisplayID generation and plan hash computation.
+//
+// Includes Target to ensure different commands (deploy vs destroy) produce
+// different hashes, maintaining unlinkability across semantically different plans.
+//
+// Two-pass canonicalization:
+//  1. Build canonical form with placeholders
+//  2. Compute plan hash from canonical form
+//  3. Generate DisplayIDs using plan_hash
+//  4. Substitute DisplayIDs into plan
+type CanonicalPlan struct {
+	Version uint8             // Canonical format version (for forward compatibility)
+	Target  string            // Command/function being executed (ensures deploy != destroy)
+	Steps   []CanonicalStep   // Steps in canonical form
+	Secrets []CanonicalSecret // Secrets in canonical form
+}
+
+// CanonicalStep represents a step in canonical form
+type CanonicalStep struct {
+	ID   uint64
+	Tree CanonicalNode
+}
+
+// CanonicalSecret represents a secret in canonical form.
+// DisplayID is intentionally omitted - canonical hash is structure-only.
+// Including DisplayID would create circular dependency: DisplayIDs need plan_hash,
+// but plan_hash can't depend on DisplayIDs that don't exist yet.
+type CanonicalSecret struct {
+	Key string // Secret key only, never the DisplayID
+}
+
+// CanonicalNode is a union type for execution tree nodes in canonical form
+type CanonicalNode struct {
+	Type string // "command", "pipeline", "and", "or", "sequence", "redirect"
+
+	// CommandNode fields
+	Decorator string
+	Args      []CanonicalArg
+	Block     []CanonicalStep
+
+	// PipelineNode fields
+	Commands []CanonicalNode
+
+	// AndNode/OrNode fields
+	Left  *CanonicalNode
+	Right *CanonicalNode
+
+	// SequenceNode fields
+	Nodes []CanonicalNode
+
+	// RedirectNode fields
+	Source *CanonicalNode
+	Target *CanonicalNode
+	Mode   int
+}
+
+// CanonicalArg represents an argument in canonical form
+type CanonicalArg struct {
+	Key  string
+	Kind uint8
+	Str  string
+	Int  int64
+	Bool bool
+	Ref  uint32
+}
+
+// Canonicalize converts a Plan into canonical form for deterministic hashing.
+// Sorts args before canonicalization to ensure same structure produces same hash.
+// Includes Target to ensure different commands produce different hashes.
+func (p *Plan) Canonicalize() (*CanonicalPlan, error) {
+	// Sort args first to ensure deterministic ordering
+	// Args may come from Go maps with non-deterministic iteration order
+	p.sortArgs()
+
+	cp := &CanonicalPlan{
+		Version: 1,        // Canonical format version
+		Target:  p.Target, // Include target to distinguish deploy vs destroy
+		Steps:   make([]CanonicalStep, len(p.Steps)),
+		Secrets: make([]CanonicalSecret, len(p.Secrets)),
+	}
+
+	// Canonicalize steps
+	for i := range p.Steps {
+		cs, err := canonicalizeStep(&p.Steps[i])
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i, err)
+		}
+		cp.Steps[i] = cs
+	}
+
+	// Canonicalize secrets (sorted by key for determinism)
+	// Only Key is copied because canonical hash must be structure-only.
+	// DisplayIDs are generated using this hash, so they cannot be included here.
+	secrets := make([]CanonicalSecret, len(p.Secrets))
+	for i := range p.Secrets {
+		secrets[i] = CanonicalSecret{
+			Key: p.Secrets[i].Key,
+		}
+	}
+	sort.Slice(secrets, func(i, j int) bool {
+		return secrets[i].Key < secrets[j].Key
+	})
+	cp.Secrets = secrets
+
+	return cp, nil
+}
+
+// canonicalizeStep converts a Step into canonical form
+func canonicalizeStep(s *Step) (CanonicalStep, error) {
+	cs := CanonicalStep{
+		ID: s.ID,
+	}
+
+	if s.Tree != nil {
+		node, err := toCanonicalNode(s.Tree)
+		if err != nil {
+			return cs, err
+		}
+		cs.Tree = node
+	}
+
+	return cs, nil
+}
+
+// toCanonicalNode converts an ExecutionNode into canonical form
+func toCanonicalNode(node ExecutionNode) (CanonicalNode, error) {
+	switch n := node.(type) {
+	case *CommandNode:
+		return canonicalizeCommandNode(n)
+	case *PipelineNode:
+		return canonicalizePipelineNode(n)
+	case *AndNode:
+		return canonicalizeAndNode(n)
+	case *OrNode:
+		return canonicalizeOrNode(n)
+	case *SequenceNode:
+		return canonicalizeSequenceNode(n)
+	case *RedirectNode:
+		return canonicalizeRedirectNode(n)
+	default:
+		return CanonicalNode{}, fmt.Errorf("unknown node type: %T", node)
+	}
+}
+
+// canonicalizeCommandNode converts a CommandNode into canonical form
+func canonicalizeCommandNode(n *CommandNode) (CanonicalNode, error) {
+	cn := CanonicalNode{
+		Type:      "command",
+		Decorator: n.Decorator,
+		Args:      make([]CanonicalArg, len(n.Args)),
+		Block:     make([]CanonicalStep, len(n.Block)),
+	}
+
+	// Canonicalize args (already sorted by Key in Plan.sortArgs())
+	for i := range n.Args {
+		cn.Args[i] = CanonicalArg{
+			Key:  n.Args[i].Key,
+			Kind: uint8(n.Args[i].Val.Kind),
+			Str:  n.Args[i].Val.Str,
+			Int:  n.Args[i].Val.Int,
+			Bool: n.Args[i].Val.Bool,
+			Ref:  n.Args[i].Val.Ref,
+		}
+	}
+
+	// Canonicalize block steps
+	for i := range n.Block {
+		cs, err := canonicalizeStep(&n.Block[i])
+		if err != nil {
+			return cn, fmt.Errorf("block step %d: %w", i, err)
+		}
+		cn.Block[i] = cs
+	}
+
+	return cn, nil
+}
+
+// canonicalizePipelineNode converts a PipelineNode into canonical form
+func canonicalizePipelineNode(n *PipelineNode) (CanonicalNode, error) {
+	cn := CanonicalNode{
+		Type:     "pipeline",
+		Commands: make([]CanonicalNode, len(n.Commands)),
+	}
+
+	for i := range n.Commands {
+		cmd, err := toCanonicalNode(n.Commands[i])
+		if err != nil {
+			return cn, fmt.Errorf("command %d: %w", i, err)
+		}
+		cn.Commands[i] = cmd
+	}
+
+	return cn, nil
+}
+
+// canonicalizeAndNode converts an AndNode into canonical form
+func canonicalizeAndNode(n *AndNode) (CanonicalNode, error) {
+	left, err := toCanonicalNode(n.Left)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("left: %w", err)
+	}
+
+	right, err := toCanonicalNode(n.Right)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("right: %w", err)
+	}
+
+	return CanonicalNode{
+		Type:  "and",
+		Left:  &left,
+		Right: &right,
+	}, nil
+}
+
+// canonicalizeOrNode converts an OrNode into canonical form
+func canonicalizeOrNode(n *OrNode) (CanonicalNode, error) {
+	left, err := toCanonicalNode(n.Left)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("left: %w", err)
+	}
+
+	right, err := toCanonicalNode(n.Right)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("right: %w", err)
+	}
+
+	return CanonicalNode{
+		Type:  "or",
+		Left:  &left,
+		Right: &right,
+	}, nil
+}
+
+// canonicalizeSequenceNode converts a SequenceNode into canonical form
+func canonicalizeSequenceNode(n *SequenceNode) (CanonicalNode, error) {
+	cn := CanonicalNode{
+		Type:  "sequence",
+		Nodes: make([]CanonicalNode, len(n.Nodes)),
+	}
+
+	for i := range n.Nodes {
+		node, err := toCanonicalNode(n.Nodes[i])
+		if err != nil {
+			return cn, fmt.Errorf("node %d: %w", i, err)
+		}
+		cn.Nodes[i] = node
+	}
+
+	return cn, nil
+}
+
+// canonicalizeRedirectNode converts a RedirectNode into canonical form
+func canonicalizeRedirectNode(n *RedirectNode) (CanonicalNode, error) {
+	source, err := toCanonicalNode(n.Source)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("source: %w", err)
+	}
+
+	target, err := canonicalizeCommandNode(&n.Target)
+	if err != nil {
+		return CanonicalNode{}, fmt.Errorf("target: %w", err)
+	}
+
+	return CanonicalNode{
+		Type:   "redirect",
+		Source: &source,
+		Target: &target,
+		Mode:   int(n.Mode),
+	}, nil
+}
+
+// MarshalBinary produces deterministic CBOR encoding of the canonical plan.
+// This ensures byte-for-byte stability across multiple runs.
+func (cp *CanonicalPlan) MarshalBinary() ([]byte, error) {
+	// Create CBOR encoder with deterministic options
+	encMode, err := cbor.CanonicalEncOptions().EncMode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CBOR encoder: %w", err)
+	}
+
+	// Create a type alias to avoid infinite recursion
+	// (CBOR would call MarshalBinary recursively otherwise)
+	type canonicalPlanAlias CanonicalPlan
+	alias := (*canonicalPlanAlias)(cp)
+
+	// Encode to CBOR
+	data, err := encMode.Marshal(alias)
+	if err != nil {
+		return nil, fmt.Errorf("CBOR encoding failed: %w", err)
+	}
+
+	return data, nil
+}
+
+// Hash computes the SHA-256 hash of the canonical plan.
+// This is used for plan_hash generation in DisplayIDs.
+func (cp *CanonicalPlan) Hash() ([32]byte, error) {
+	data, err := cp.MarshalBinary()
+	if err != nil {
+		return [32]byte{}, err
+	}
+
+	return sha256.Sum256(data), nil
+}

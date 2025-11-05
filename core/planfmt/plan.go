@@ -126,15 +126,12 @@ func (p *Plan) Validate() error {
 	return nil
 }
 
-// canonicalize ensures the plan is in canonical form for deterministic encoding.
-// This sorts args by key within each command and recursively canonicalizes blocks.
-// Must be called before writing to ensure deterministic output.
-//
-// Note: Command order is preserved (operator semantics depend on order).
-// String comparison is bytewise (Go's native < operator).
-func (p *Plan) canonicalize() {
+// sortArgs sorts decorator arguments by key for deterministic binary encoding.
+// Args must be sorted before serialization to ensure byte-for-byte stability.
+// Command order is preserved (operator semantics depend on order).
+func (p *Plan) sortArgs() {
 	for i := range p.Steps {
-		p.Steps[i].canonicalize()
+		p.Steps[i].sortArgs()
 	}
 }
 
@@ -206,15 +203,15 @@ func validateNode(node ExecutionNode, stepID uint64, seen map[uint64]bool) error
 	return nil
 }
 
-// canonicalize sorts args in the execution tree
-func (s *Step) canonicalize() {
+// sortArgs sorts args in the execution tree
+func (s *Step) sortArgs() {
 	if s.Tree != nil {
-		canonicalizeNode(s.Tree)
+		sortArgsInNode(s.Tree)
 	}
 }
 
-// canonicalizeNode recursively sorts args in all tree nodes
-func canonicalizeNode(node ExecutionNode) {
+// sortArgsInNode recursively sorts args in all tree nodes
+func sortArgsInNode(node ExecutionNode) {
 	switch n := node.(type) {
 	case *CommandNode:
 		// Sort args by key for deterministic encoding
@@ -223,43 +220,41 @@ func canonicalizeNode(node ExecutionNode) {
 				return n.Args[i].Key < n.Args[j].Key
 			})
 		}
-		// Recursively canonicalize block steps
+		// Recurse into block steps
 		for i := range n.Block {
-			n.Block[i].canonicalize()
+			n.Block[i].sortArgs()
 		}
 
 	case *PipelineNode:
 		for i := range n.Commands {
-			canonicalizeNode(n.Commands[i])
+			sortArgsInNode(n.Commands[i])
 		}
 
 	case *AndNode:
-		canonicalizeNode(n.Left)
-		canonicalizeNode(n.Right)
+		sortArgsInNode(n.Left)
+		sortArgsInNode(n.Right)
 
 	case *OrNode:
-		canonicalizeNode(n.Left)
-		canonicalizeNode(n.Right)
+		sortArgsInNode(n.Left)
+		sortArgsInNode(n.Right)
 
 	case *SequenceNode:
 		for i := range n.Nodes {
-			canonicalizeNode(n.Nodes[i])
+			sortArgsInNode(n.Nodes[i])
 		}
 	}
 }
 
-// Digest computes an unkeyed BLAKE2b-256 hash of the canonical plan bytes
-// Used for: integrity checks, cache keys, deduplication
-// This is about plan structure, NOT secret values
+// Digest computes BLAKE2b-256 hash of the complete serialized plan.
+// Includes DisplayIDs (used for contract verification after DisplayIDs are generated).
+// For structure-only hashing before DisplayIDs exist, use Canonicalize().Hash() instead.
 // Returns hex-encoded hash: "blake2b:a3f8b2c1d4e5f6a7..."
 func (p *Plan) Digest() (string, error) {
-	// Serialize plan to canonical bytes
 	var buf bytes.Buffer
 	hash, err := Write(&buf, p)
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize plan for digest: %w", err)
 	}
 
-	// Return hex-encoded hash with algorithm prefix
 	return fmt.Sprintf("blake2b:%x", hash), nil
 }
