@@ -341,3 +341,125 @@ func TestArrayLiteralInVarDecl(t *testing.T) {
 		})
 	}
 }
+
+// TestVarDeclBlock tests parsing var block declarations: var ( ... )
+func TestVarDeclBlock(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		events []Event
+	}{
+		{
+			name: "two vars with newline separator",
+			input: `var (
+	apiUrl = "https://api.example.com"
+	replicas = 3
+)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
+				{Kind: EventToken, Data: 0}, // var
+				{Kind: EventToken, Data: 1}, // (
+				{Kind: EventToken, Data: 2}, // newline (after ()
+				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 3}, // apiUrl
+				{Kind: EventToken, Data: 4}, // =
+				{Kind: EventOpen, Data: uint32(NodeLiteral)},
+				{Kind: EventToken, Data: 5}, // "https://api.example.com"
+				{Kind: EventClose, Data: uint32(NodeLiteral)},
+				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 6}, // newline
+				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 7}, // replicas
+				{Kind: EventToken, Data: 8}, // =
+				{Kind: EventOpen, Data: uint32(NodeLiteral)},
+				{Kind: EventToken, Data: 9}, // 3
+				{Kind: EventClose, Data: uint32(NodeLiteral)},
+				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 10}, // newline
+				{Kind: EventToken, Data: 11}, // )
+				{Kind: EventStepExit, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name:  "two vars with semicolon separator",
+			input: `var (apiUrl = "https://api.example.com"; replicas = 3)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
+				{Kind: EventToken, Data: 0}, // var
+				{Kind: EventToken, Data: 1}, // (
+				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 2}, // apiUrl
+				{Kind: EventToken, Data: 3}, // =
+				{Kind: EventOpen, Data: uint32(NodeLiteral)},
+				{Kind: EventToken, Data: 4}, // "https://api.example.com"
+				{Kind: EventClose, Data: uint32(NodeLiteral)},
+				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 5}, // ;
+				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 6}, // replicas
+				{Kind: EventToken, Data: 7}, // =
+				{Kind: EventOpen, Data: uint32(NodeLiteral)},
+				{Kind: EventToken, Data: 8}, // 3
+				{Kind: EventClose, Data: uint32(NodeLiteral)},
+				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 9}, // )
+				{Kind: EventStepExit, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name:  "single var in block",
+			input: `var (name = "alice")`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
+				{Kind: EventToken, Data: 0}, // var
+				{Kind: EventToken, Data: 1}, // (
+				{Kind: EventOpen, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 2}, // name
+				{Kind: EventToken, Data: 3}, // =
+				{Kind: EventOpen, Data: uint32(NodeLiteral)},
+				{Kind: EventToken, Data: 4}, // "alice"
+				{Kind: EventClose, Data: uint32(NodeLiteral)},
+				{Kind: EventClose, Data: uint32(NodeVarDecl)},
+				{Kind: EventToken, Data: 5}, // )
+				{Kind: EventStepExit, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := ParseString(tt.input)
+
+			if len(tree.Errors) > 0 {
+				t.Errorf("unexpected parse errors:")
+				for _, err := range tree.Errors {
+					t.Logf("  %s", err.Message)
+				}
+				return
+			}
+
+			// Verify event structure
+			if len(tree.Events) != len(tt.events) {
+				t.Errorf("event count mismatch: got %d, want %d", len(tree.Events), len(tt.events))
+				t.Logf("Got events:")
+				for i, evt := range tree.Events {
+					t.Logf("  %d: %v", i, evt)
+				}
+				return
+			}
+
+			for i, want := range tt.events {
+				got := tree.Events[i]
+				if got.Kind != want.Kind || got.Data != want.Data {
+					t.Errorf("event %d mismatch:\ngot:  %v\nwant: %v", i, got, want)
+				}
+			}
+		})
+	}
+}

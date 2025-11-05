@@ -1391,12 +1391,30 @@ func (p *parser) isStatementBoundary() bool {
 		p.at(lexer.ELSE) // Stop at else (for when arms and if/else)
 }
 
-// varDecl parses a variable declaration: var IDENTIFIER = expression
+// varDecl parses a variable declaration:
+//   - Simple form: var IDENTIFIER = expression
+//   - Block form: var ( IDENTIFIER = expression; ... )
 func (p *parser) varDecl() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("enter_var_decl", "parsing variable declaration")
 	}
 
+	// Check for block form: var ( ... )
+	// Peek ahead: if next token after VAR is LPAREN, it's a block
+	if p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Type == lexer.LPAREN {
+		p.varDeclBlock()
+	} else {
+		// Simple form: var name = value
+		p.varDeclSingle()
+	}
+
+	if p.config.debug > DebugOff {
+		p.recordDebugEvent("exit_var_decl", "variable declaration complete")
+	}
+}
+
+// varDeclSingle parses a single variable declaration: var IDENTIFIER = expression
+func (p *parser) varDeclSingle() {
 	kind := p.start(NodeVarDecl)
 
 	// Consume 'var' keyword
@@ -1418,10 +1436,63 @@ func (p *parser) varDecl() {
 	p.expression()
 
 	p.finish(kind)
+}
 
-	if p.config.debug > DebugOff {
-		p.recordDebugEvent("exit_var_decl", "variable declaration complete")
+// varDeclBlock parses a block of variable declarations: var ( IDENTIFIER = expression; ... )
+func (p *parser) varDeclBlock() {
+	// Consume 'var' keyword
+	p.token()
+
+	// Consume '('
+	p.token()
+
+	// Skip any leading newlines
+	for p.at(lexer.NEWLINE) {
+		p.token()
 	}
+
+	// Parse variable declarations until ')'
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		// Each declaration is wrapped in NodeVarDecl (but without 'var' keyword)
+		p.varDeclSingleWithoutVar()
+
+		// Consume optional newline or semicolon separators (can be multiple)
+		for p.at(lexer.NEWLINE) || p.at(lexer.SEMICOLON) {
+			p.token()
+		}
+
+		// Break if we hit closing paren
+		if p.at(lexer.RPAREN) {
+			break
+		}
+	}
+
+	// Expect closing ')'
+	if !p.expect(lexer.RPAREN, "variable declaration block") {
+		return
+	}
+}
+
+// varDeclSingleWithoutVar parses a single variable declaration without the 'var' keyword: IDENTIFIER = expression
+func (p *parser) varDeclSingleWithoutVar() {
+	kind := p.start(NodeVarDecl)
+
+	// Expect identifier
+	if !p.expect(lexer.IDENTIFIER, "variable declaration") {
+		p.finish(kind)
+		return
+	}
+
+	// Expect '='
+	if !p.expect(lexer.EQUALS, "variable declaration") {
+		p.finish(kind)
+		return
+	}
+
+	// Parse expression
+	p.expression()
+
+	p.finish(kind)
 }
 
 // assignmentStmt parses an assignment statement: IDENTIFIER OP= expression

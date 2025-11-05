@@ -41,6 +41,9 @@ type keyedIDFactory struct {
 // NewIDFactory creates a new IDFactory with the given mode and key
 //
 // For ModePlan: key should be derived from PSE seed (deterministic)
+//   - PSE is used for decorators needing deterministic randomness (@random.password, @crypto.generate_key)
+//   - NOT used for @var/@env which have actual values
+//
 // For ModeRun: key should be a fresh random nonce (random-looking)
 func NewIDFactory(mode DisplayIDMode, key []byte) IDFactory {
 	if len(key) != 32 {

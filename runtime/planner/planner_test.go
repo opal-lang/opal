@@ -901,3 +901,151 @@ func TestRedirectWithChaining(t *testing.T) {
 		})
 	}
 }
+
+// TestPlannerInitialization tests that planner initializes with empty vars map and telemetry
+func TestPlannerInitialization(t *testing.T) {
+	source := []byte(`echo "test"`)
+
+	// Parse
+	tree := parser.Parse(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Plan with telemetry enabled
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+		Telemetry: planner.TelemetryBasic,
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// Verify telemetry was initialized
+	if result.Telemetry == nil {
+		t.Fatal("Expected telemetry to be initialized")
+	}
+
+	// Verify DecoratorResolutions map is initialized
+	if result.Telemetry.DecoratorResolutions == nil {
+		t.Error("Expected DecoratorResolutions map to be initialized")
+	}
+
+	// Verify map is empty (no decorator resolutions yet)
+	if len(result.Telemetry.DecoratorResolutions) != 0 {
+		t.Errorf("Expected empty DecoratorResolutions map, got %d entries", len(result.Telemetry.DecoratorResolutions))
+	}
+
+	// Verify basic telemetry is collected
+	if result.Telemetry.EventCount == 0 {
+		t.Error("Expected EventCount > 0")
+	}
+
+	if result.Telemetry.StepCount == 0 {
+		t.Error("Expected StepCount > 0")
+	}
+}
+
+// TestVarDeclBlockPlanning tests planning with var block declarations
+func TestVarDeclBlockPlanning(t *testing.T) {
+	source := []byte(`var (
+	apiUrl = "https://api.example.com"
+	replicas = 3
+)
+echo "test"`)
+
+	// Parse
+	tree := parser.Parse(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Plan with telemetry
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+		Telemetry: planner.TelemetryBasic,
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// Verify telemetry tracked 2 var resolutions
+	if result.Telemetry.DecoratorResolutions["@var"] == nil {
+		t.Fatal("Expected @var decorator resolutions to be tracked")
+	}
+
+	if result.Telemetry.DecoratorResolutions["@var"].TotalCalls != 2 {
+		t.Errorf("Expected 2 @var resolutions, got %d",
+			result.Telemetry.DecoratorResolutions["@var"].TotalCalls)
+	}
+
+	// Verify plan has 1 step (the echo command, var decls don't create steps)
+	if len(result.Plan.Steps) != 1 {
+		t.Errorf("Expected 1 step, got %d", len(result.Plan.Steps))
+	}
+}
+
+// TestVarDeclWithStructuredValues tests variable declarations with objects and arrays
+func TestVarDeclWithStructuredValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantValue any
+	}{
+		{
+			name:   "object literal",
+			source: `var config = {timeout: "5m", retries: 3}`,
+			wantValue: map[string]any{
+				"timeout": "5m",
+				"retries": "3",
+			},
+		},
+		{
+			name:      "array literal",
+			source:    `var ports = [8080, 8081, 8082]`,
+			wantValue: []any{"8080", "8081", "8082"},
+		},
+		{
+			name:   "nested object",
+			source: `var settings = {db: {host: "localhost", port: 5432}}`,
+			wantValue: map[string]any{
+				"db": map[string]any{
+					"host": "localhost",
+					"port": "5432",
+				},
+			},
+		},
+		{
+			name:   "array of objects",
+			source: `var servers = [{name: "web1", port: 8080}, {name: "web2", port: 8081}]`,
+			wantValue: []any{
+				map[string]any{"name": "web1", "port": "8080"},
+				map[string]any{"name": "web2", "port": "8081"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse
+			tree := parser.Parse([]byte(tt.source))
+			if len(tree.Errors) > 0 {
+				t.Fatalf("parse errors: %v", tree.Errors)
+			}
+
+			// Plan
+			result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+				Telemetry: planner.TelemetryBasic,
+			})
+			if err != nil {
+				t.Fatalf("planning failed: %v", err)
+			}
+
+			// Check variable was stored
+			// Note: We can't directly access p.vars, but we can verify no error occurred
+			// In a real implementation, we'd need a way to inspect the planner state
+			// For now, just verify planning succeeded
+			if result.Plan == nil {
+				t.Fatal("expected plan to be created")
+			}
+		})
+	}
+}

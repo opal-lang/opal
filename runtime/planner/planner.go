@@ -84,6 +84,18 @@ type PlanResult struct {
 type PlanTelemetry struct {
 	EventCount int // Number of events processed
 	StepCount  int // Number of steps created
+
+	// Decorator resolution metrics (keyed by decorator name: "@var", "@env", "@aws.secret", etc.)
+	DecoratorResolutions map[string]*DecoratorResolutionMetrics
+}
+
+// DecoratorResolutionMetrics tracks resolution statistics for a specific decorator type
+type DecoratorResolutionMetrics struct {
+	TotalCalls   int           // Total number of resolution calls
+	BatchCalls   int           // Number of batch resolution calls (0 if no batching)
+	BatchSizes   []int         // Size of each batch (empty if no batching)
+	TotalTime    time.Duration // Total time spent resolving (if timing enabled)
+	SkippedCalls int           // Calls skipped due to lazy evaluation
 }
 
 // DebugEvent holds debug tracing information (development only)
@@ -137,7 +149,9 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 
 	// Initialize telemetry if enabled
 	if config.Telemetry >= TelemetryBasic {
-		telemetry = &PlanTelemetry{}
+		telemetry = &PlanTelemetry{
+			DecoratorResolutions: make(map[string]*DecoratorResolutionMetrics),
+		}
 	}
 
 	// Initialize debug events if enabled
@@ -151,6 +165,7 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		config:      config,
 		pos:         0,
 		stepID:      1,
+		vars:        make(map[string]any),
 		telemetry:   telemetry,
 		debugEvents: debugEvents,
 	}
@@ -184,6 +199,9 @@ type planner struct {
 	pos    int    // Current position in event stream
 	stepID uint64 // Next step ID to assign
 
+	// Variable resolution
+	vars map[string]any // Plan-time variable store
+
 	// Observability
 	telemetry   *PlanTelemetry
 	debugEvents []DebugEvent
@@ -200,6 +218,25 @@ func (p *planner) recordDebugEvent(event, context string) {
 		EventPos:  p.pos,
 		Context:   context,
 	})
+}
+
+// recordDecoratorResolution records a single decorator resolution
+func (p *planner) recordDecoratorResolution(decoratorName string) {
+	if p.telemetry == nil {
+		return
+	}
+	metrics := p.getOrCreateMetrics(decoratorName)
+	metrics.TotalCalls++
+}
+
+// getOrCreateMetrics gets or creates metrics for a decorator
+func (p *planner) getOrCreateMetrics(decoratorName string) *DecoratorResolutionMetrics {
+	if p.telemetry.DecoratorResolutions[decoratorName] == nil {
+		p.telemetry.DecoratorResolutions[decoratorName] = &DecoratorResolutionMetrics{
+			BatchSizes: []int{},
+		}
+	}
+	return p.telemetry.DecoratorResolutions[decoratorName]
 }
 
 // plan is the main planning entry point
@@ -331,7 +368,10 @@ func (p *planner) planFunctionBody() ([]planfmt.Step, error) {
 			if err != nil {
 				return nil, err
 			}
-			steps = append(steps, step)
+			// Skip steps with only var declarations (ID=0 is sentinel)
+			if step.ID != 0 {
+				steps = append(steps, step)
+			}
 			// planStep already advanced p.pos past EventStepExit, so continue
 			continue
 		} else if evt.Kind == parser.EventOpen {
@@ -389,7 +429,10 @@ func (p *planner) planSource() ([]planfmt.Step, error) {
 			if err != nil {
 				return nil, err
 			}
-			steps = append(steps, step)
+			// Skip steps with only var declarations (ID=0 is sentinel)
+			if step.ID != 0 {
+				steps = append(steps, step)
+			}
 			// planStep already advanced p.pos past EventStepExit, so continue
 			continue
 		}
@@ -442,7 +485,7 @@ func (p *planner) planStep() (planfmt.Step, error) {
 
 	var commands []Command
 
-	// Collect all shell commands until EventStepExit
+	// Collect all shell commands and var declarations until EventStepExit
 	for p.pos < len(p.events) {
 		evt := p.events[p.pos]
 
@@ -450,6 +493,16 @@ func (p *planner) planStep() (planfmt.Step, error) {
 			// End of step
 			p.pos++ // Move past EventStepExit
 			break
+		}
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeVarDecl {
+			// Found a variable declaration
+			err := p.planVarDecl()
+			if err != nil {
+				return planfmt.Step{}, err
+			}
+			// planVarDecl already advanced p.pos, continue
+			continue
 		}
 
 		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeShellCommand {
@@ -467,12 +520,12 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	}
 
 	if len(commands) == 0 {
-		return planfmt.Step{}, &PlanError{
-			Message:     "step has no commands",
-			Context:     "planning step",
-			EventPos:    p.pos,
-			TotalEvents: len(p.events),
+		// Step has only var declarations (no commands)
+		// Return empty step with ID=0 as sentinel (caller should skip adding to plan)
+		if p.config.Debug >= DebugDetailed {
+			p.recordDebugEvent("step_skipped", "step has only var declarations")
 		}
+		return planfmt.Step{ID: 0}, nil
 	}
 
 	step := planfmt.Step{
@@ -485,6 +538,69 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	}
 
 	return step, nil
+}
+
+// planVarDecl processes a variable declaration and stores the value
+// Event structure:
+//   - Simple form: OPEN VarDecl, TOKEN(var), TOKEN(name), TOKEN(=), OPEN Literal, TOKEN(value), CLOSE Literal, CLOSE VarDecl
+//   - Block form: TOKEN(var), TOKEN((), [OPEN VarDecl, TOKEN(name), TOKEN(=), ...], TOKEN())
+func (p *planner) planVarDecl() error {
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("enter_planVarDecl", fmt.Sprintf("pos=%d", p.pos))
+	}
+
+	startPos := p.pos
+	p.pos++ // Move past OPEN VarDecl
+
+	// PRECONDITION: Must have at least 2 tokens (name, =) + literal
+	invariant.Invariant(p.pos+2 < len(p.events), "planVarDecl: insufficient events at pos %d", startPos)
+
+	// Check if next token is 'var' keyword (simple form) or identifier (block form)
+	if p.events[p.pos].Kind == parser.EventToken {
+		tokenIdx := p.events[p.pos].Data
+		tokenText := string(p.tokens[tokenIdx].Text)
+
+		// If it's 'var', skip it (simple form)
+		if tokenText == "var" {
+			p.pos++
+		}
+		// Otherwise it's the variable name (block form), don't skip
+	}
+
+	// Get variable name
+	if p.events[p.pos].Kind != parser.EventToken {
+		return &PlanError{
+			Message:     "expected variable name",
+			Context:     "parsing variable declaration",
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+		}
+	}
+	nameTokenIdx := p.events[p.pos].Data
+	varName := string(p.tokens[nameTokenIdx].Text)
+	p.pos++
+
+	// Skip TOKEN(=)
+	p.pos++
+
+	// Parse the value expression (supports literals, objects, arrays)
+	value, err := p.parseVarValue(varName)
+	if err != nil {
+		return err
+	}
+
+	// Store variable
+	p.vars[varName] = value
+
+	// Record telemetry
+	p.recordDecoratorResolution("@var")
+
+	// Record debug event
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("var_declared", fmt.Sprintf("name=%s value=%v", varName, value))
+	}
+
+	return nil
 }
 
 // planCommand plans a single command within a step (shell command + optional operator)
@@ -781,4 +897,220 @@ func getTokenText(token lexer.Token) string {
 	default:
 		return ""
 	}
+}
+
+// parseVarValue parses a variable value expression (literal, object, or array)
+func (p *planner) parseVarValue(varName string) (any, error) {
+	if p.pos >= len(p.events) {
+		return nil, &PlanError{
+			Message:     "unexpected end of input",
+			Context:     fmt.Sprintf("parsing variable '%s' value", varName),
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	evt := p.events[p.pos]
+	if evt.Kind != parser.EventOpen {
+		return nil, &PlanError{
+			Message:     "expected expression",
+			Context:     fmt.Sprintf("parsing variable '%s' value", varName),
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	nodeKind := parser.NodeKind(evt.Data)
+
+	switch nodeKind {
+	case parser.NodeLiteral:
+		return p.parseLiteralValue(varName)
+	case parser.NodeObjectLiteral:
+		return p.parseObjectLiteral(varName)
+	case parser.NodeArrayLiteral:
+		return p.parseArrayLiteral(varName)
+	default:
+		return nil, &PlanError{
+			Message:     fmt.Sprintf("unsupported expression type for variable value: %v", nodeKind),
+			Context:     fmt.Sprintf("parsing variable '%s'", varName),
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+			Suggestion:  "Use a literal, object {}, or array []",
+			Example:     `var config = {timeout: "5m", retries: 3}`,
+		}
+	}
+}
+
+// parseLiteralValue parses a simple literal value
+func (p *planner) parseLiteralValue(varName string) (any, error) {
+	p.pos++ // Move past OPEN Literal
+
+	// Get literal value
+	if p.pos >= len(p.events) || p.events[p.pos].Kind != parser.EventToken {
+		return nil, &PlanError{
+			Message:     "expected literal value",
+			Context:     fmt.Sprintf("parsing variable '%s'", varName),
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	valueTokenIdx := p.events[p.pos].Data
+	valueToken := p.tokens[valueTokenIdx]
+
+	// Parse literal value based on token type
+	var value any
+	switch valueToken.Type {
+	case lexer.STRING:
+		// Remove quotes from string literal
+		value = strings.Trim(string(valueToken.Text), `"'`)
+	case lexer.INTEGER, lexer.FLOAT, lexer.SCIENTIFIC:
+		// Store as string for now (proper number parsing can be added later)
+		value = string(valueToken.Text)
+	case lexer.BOOLEAN:
+		// Boolean literal
+		value = string(valueToken.Text)
+	case lexer.IDENTIFIER:
+		// Handle identifiers (could be true/false if not recognized as BOOLEAN)
+		text := string(valueToken.Text)
+		if text == "true" || text == "false" {
+			value = text
+		} else {
+			value = text
+		}
+	default:
+		value = string(valueToken.Text)
+	}
+
+	p.pos++ // Move past TOKEN(value)
+
+	// Skip CLOSE Literal
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+		p.pos++
+	}
+
+	// Skip CLOSE VarDecl
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+		p.pos++
+	}
+
+	return value, nil
+}
+
+// parseObjectLiteral parses an object literal {key: value, ...}
+func (p *planner) parseObjectLiteral(varName string) (any, error) {
+	p.pos++ // Move past OPEN ObjectLiteral
+
+	obj := make(map[string]any)
+	depth := 1
+
+	for p.pos < len(p.events) && depth > 0 {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventOpen {
+			nodeKind := parser.NodeKind(evt.Data)
+			if nodeKind == parser.NodeObjectField {
+				// Parse field: key: value
+				p.pos++ // Move past OPEN ObjectField
+
+				// Get key (should be TOKEN)
+				if p.pos >= len(p.events) || p.events[p.pos].Kind != parser.EventToken {
+					return nil, &PlanError{
+						Message:     "expected object field key",
+						Context:     fmt.Sprintf("parsing variable '%s' object", varName),
+						EventPos:    p.pos,
+						TotalEvents: len(p.events),
+					}
+				}
+				keyTokenIdx := p.events[p.pos].Data
+				key := string(p.tokens[keyTokenIdx].Text)
+				p.pos++ // Move past key token
+
+				// Skip colon token
+				if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+					p.pos++
+				}
+
+				// Parse value (recursive - could be literal, object, or array)
+				fieldValue, err := p.parseVarValue(fmt.Sprintf("%s.%s", varName, key))
+				if err != nil {
+					return nil, err
+				}
+
+				obj[key] = fieldValue
+
+				// Skip CLOSE ObjectField
+				if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+					p.pos++
+				}
+			} else {
+				depth++
+				p.pos++
+			}
+		} else if evt.Kind == parser.EventClose {
+			depth--
+			if depth == 0 {
+				p.pos++ // Move past CLOSE ObjectLiteral
+				break
+			}
+			p.pos++
+		} else {
+			p.pos++
+		}
+	}
+
+	// Skip CLOSE VarDecl
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+		p.pos++
+	}
+
+	return obj, nil
+}
+
+// parseArrayLiteral parses an array literal [expr, expr, ...]
+func (p *planner) parseArrayLiteral(varName string) (any, error) {
+	p.pos++ // Move past OPEN ArrayLiteral
+
+	arr := make([]any, 0)
+	depth := 1
+	elementIndex := 0
+
+	for p.pos < len(p.events) && depth > 0 {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventOpen {
+			nodeKind := parser.NodeKind(evt.Data)
+
+			// Check if this is an element expression
+			if nodeKind == parser.NodeLiteral || nodeKind == parser.NodeObjectLiteral || nodeKind == parser.NodeArrayLiteral {
+				// Parse element (recursive)
+				elementValue, err := p.parseVarValue(fmt.Sprintf("%s[%d]", varName, elementIndex))
+				if err != nil {
+					return nil, err
+				}
+				arr = append(arr, elementValue)
+				elementIndex++
+			} else {
+				depth++
+				p.pos++
+			}
+		} else if evt.Kind == parser.EventClose {
+			depth--
+			if depth == 0 {
+				p.pos++ // Move past CLOSE ArrayLiteral
+				break
+			}
+			p.pos++
+		} else {
+			// Skip commas and other tokens
+			p.pos++
+		}
+	}
+
+	// Skip CLOSE VarDecl
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+		p.pos++
+	}
+
+	return arr, nil
 }

@@ -2650,6 +2650,8 @@ For operations requiring randomness or cryptography, opal will use seeded determ
 
 ### Plan Seed Envelope (PSE)
 
+**Purpose**: PSE provides deterministic randomness for value decorators that need random generation (e.g., `@random.password()`, `@crypto.generate_key()`). It is NOT used for `@var` or `@env` which resolve to actual user-provided or environment values.
+
 **Seed generation**: High-entropy seed generated at `--resolve` time, never stored raw in plans.
 
 **Sealed envelope**: Plans contain only encrypted seed envelopes with fields:

@@ -1379,7 +1379,7 @@ kubectl get secret db-password -o json |> scrub() > backup.json
 
 **Non-determinism guardrail**: Value decorators must be referentially transparent during `--resolve`. Non-deterministic value decorators cause contract verification failures.
 
-**Seeded determinism**: Operations requiring randomness or cryptography (like `@random.password()` or `@crypto.generate_key()`) use Plan Seed Envelopes (PSE) to be deterministic within resolved plans while maintaining security.
+**Seeded determinism**: Operations requiring randomness or cryptography (like `@random.password()` or `@crypto.generate_key()`) use Plan Seed Envelopes (PSE) to be deterministic within resolved plans while maintaining security. **Note**: PSE is NOT used for `@var` or `@env` which have actual values - PSE is specifically for decorators that need deterministic randomness.
 
 **Always planned**: Even direct script execution generates internal plans first, ensuring consistent behavior.
 
@@ -1443,6 +1443,8 @@ Consider separating dynamic value acquisition from deterministic execution.
 ```
 
 ### Plan Seed Envelopes (PSE)
+
+**Purpose**: PSE provides deterministic randomness for decorators like `@random.password()` and `@crypto.generate_key()`. It is NOT used for `@var` or `@env` which resolve to actual values.
 
 For operations requiring randomness, resolved plans contain a Plan Seed Envelope - a minimal, immutable piece of state that enables deterministic random generation:
 
