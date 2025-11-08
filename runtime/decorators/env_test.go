@@ -65,15 +65,16 @@ func TestEnvDecoratorResolveFromLocalSession(t *testing.T) {
 		Params:  map[string]any{},
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
 	// Should return the actual USER value
 	expectedUser := os.Getenv("USER")
-	if value != expectedUser {
-		t.Errorf("Value: got %v, want %q", value, expectedUser)
+	if result.Value != expectedUser {
+		t.Errorf("Value: got %v, want %q", result.Value, expectedUser)
 	}
 }
 
@@ -98,13 +99,14 @@ func TestEnvDecoratorResolveFromSessionWithEnv(t *testing.T) {
 		Primary: &envVar,
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if value != "test_value" {
-		t.Errorf("Value: got %v, want %q", value, "test_value")
+	if result.Value != "test_value" {
+		t.Errorf("Value: got %v, want %q", result.Value, "test_value")
 	}
 }
 
@@ -124,14 +126,22 @@ func TestEnvDecoratorResolveNotFound(t *testing.T) {
 		Primary: &envVar,
 	}
 
-	_, err := d.Resolve(ctx, call)
-	if err == nil {
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error == nil {
 		t.Fatal("Expected error for missing env var")
 	}
 
 	expectedMsg := `environment variable "NONEXISTENT_VAR_12345" not found`
-	if err.Error() != expectedMsg {
-		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
+	if results[0].Error.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
 }
 
@@ -154,13 +164,14 @@ func TestEnvDecoratorResolveWithDefault(t *testing.T) {
 		},
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if value != "fallback_value" {
-		t.Errorf("Value: got %v, want %q", value, "fallback_value")
+	if result.Value != "fallback_value" {
+		t.Errorf("Value: got %v, want %q", result.Value, "fallback_value")
 	}
 }
 
@@ -179,14 +190,22 @@ func TestEnvDecoratorResolveNoPrimary(t *testing.T) {
 		Primary: nil, // No env var name
 	}
 
-	_, err := d.Resolve(ctx, call)
-	if err == nil {
-		t.Fatal("Expected error when no env var name provided")
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error == nil {
+		t.Fatal("Expected error when no primary parameter")
 	}
 
 	expectedMsg := "@env requires an environment variable name"
-	if err.Error() != expectedMsg {
-		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
+	if results[0].Error.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
 }
 
@@ -212,15 +231,16 @@ func TestEnvDecoratorTransportAware(t *testing.T) {
 		Primary: &envVar,
 	}
 
-	localValue, err := d.Resolve(localCtx, call)
-	if err != nil {
-		t.Fatalf("Local resolve failed: %v", err)
+	localResult := resolveSingle(t, d, localCtx, call)
+
+	if localResult.Error != nil {
+		t.Fatalf("Result error: %v", localResult.Error)
 	}
 
 	// Should match os.Getenv
 	expectedHome := os.Getenv("HOME")
-	if localValue != expectedHome {
-		t.Errorf("Local HOME: got %v, want %q", localValue, expectedHome)
+	if localResult.Value != expectedHome {
+		t.Errorf("Local HOME: got %v, want %q", localResult.Value, expectedHome)
 	}
 
 	// @env reads from Session.Env(), so it's transport-aware
@@ -256,20 +276,20 @@ func TestEnvDecoratorSessionEnvIsolation(t *testing.T) {
 	}
 
 	// Resolve in session1
-	value1, err := d.Resolve(ctx1, call)
-	if err != nil {
-		t.Fatalf("Session1 resolve failed: %v", err)
+	result1 := resolveSingle(t, d, ctx1, call)
+	if result1.Error != nil {
+		t.Fatalf("Result error: %v", result1.Error)
 	}
-	if value1 != "value1" {
-		t.Errorf("Session1 value: got %v, want %q", value1, "value1")
+	if result1.Value != "value1" {
+		t.Errorf("Session1 value: got %v, want %q", result1.Value, "value1")
 	}
 
 	// Resolve in session2
-	value2, err := d.Resolve(ctx2, call)
-	if err != nil {
-		t.Fatalf("Session2 resolve failed: %v", err)
+	result2 := resolveSingle(t, d, ctx2, call)
+	if result2.Error != nil {
+		t.Fatalf("Result error: %v", result2.Error)
 	}
-	if value2 != "value2" {
-		t.Errorf("Session2 value: got %v, want %q", value2, "value2")
+	if result2.Value != "value2" {
+		t.Errorf("Session2 value: got %v, want %q", result2.Value, "value2")
 	}
 }

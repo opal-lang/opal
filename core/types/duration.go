@@ -193,7 +193,7 @@ func parseDurationToNanos(s string) (int64, error) {
 			if num > MaxDuration/10 {
 				return 0, fmt.Errorf("invalid duration %q: number too large (overflow)", s)
 			}
-			num = num * 10
+			num *= 10
 
 			// Check if adding digit would overflow
 			if num > MaxDuration-digit {

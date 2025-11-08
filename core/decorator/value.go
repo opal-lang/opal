@@ -3,9 +3,31 @@ package decorator
 // Value is the interface for decorators that produce values.
 // Value decorators are pure functions that resolve at plan-time.
 // Examples: @var, @env, @aws.secret
+//
+// Resolve handles one or more calls in a single operation.
+// Single call: Resolve(ctx, call)
+// Batch: Resolve(ctx, call1, call2, call3)
+//
+// Decorators optimize internally:
+// - @env batches into one process call
+// - @aws.secret batches into one API call
+// - @var just loops (no external calls)
 type Value interface {
 	Decorator
-	Resolve(ctx ValueEvalContext, call ValueCall) (any, error)
+	Resolve(ctx ValueEvalContext, calls ...ValueCall) ([]ResolveResult, error)
+}
+
+// ResolveResult represents the outcome of resolving a single call.
+type ResolveResult struct {
+	// Value is the raw resolved value (will be wrapped in DisplayID by planner)
+	Value any
+
+	// Origin is the decorator path for this value (e.g., "@env.API_KEY", "var.count")
+	// Used for audit trails and DisplayID generation
+	Origin string
+
+	// Error is the per-call error (nil if successful)
+	Error error
 }
 
 // ValueEvalContext provides the execution context for value resolution.

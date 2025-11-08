@@ -141,7 +141,7 @@ func newCancellableContext() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-func runCommand(cmd *cobra.Command, commandName string, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
+func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	// commandName is empty string for script mode, function name for command mode
 
 	// Get input reader based on file options

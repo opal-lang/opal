@@ -359,12 +359,11 @@ func (v *semanticValidator) extractDecoratorName(startPos int) string {
 	i := startPos + 1
 	for i < len(v.tokens) && v.tokens[i].Type == lexer.DOT {
 		i++ // Skip dot
-		if i < len(v.tokens) && v.tokens[i].Type == lexer.IDENTIFIER {
-			name += "." + string(v.tokens[i].Text)
-			i++
-		} else {
+		if i >= len(v.tokens) || v.tokens[i].Type != lexer.IDENTIFIER {
 			break
 		}
+		name += "." + string(v.tokens[i].Text)
+		i++
 	}
 
 	return name

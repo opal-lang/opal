@@ -670,14 +670,14 @@ func (pb *ParamBuilder) Examples(examples ...string) *ParamBuilder {
 }
 
 // Minimum sets minimum value constraint (for numeric types)
-func (pb *ParamBuilder) Minimum(min *float64) *ParamBuilder {
-	pb.param.Minimum = min
+func (pb *ParamBuilder) Minimum(minVal *float64) *ParamBuilder {
+	pb.param.Minimum = minVal
 	return pb
 }
 
 // Maximum sets maximum value constraint (for numeric types)
-func (pb *ParamBuilder) Maximum(max *float64) *ParamBuilder {
-	pb.param.Maximum = max
+func (pb *ParamBuilder) Maximum(maxVal *float64) *ParamBuilder {
+	pb.param.Maximum = maxVal
 	return pb
 }
 

@@ -30,30 +30,58 @@ func (d *EnvDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-// Resolve implements the Value interface.
-func (d *EnvDecorator) Resolve(ctx decorator.ValueEvalContext, call decorator.ValueCall) (any, error) {
+// Resolve implements the Value interface with batch support.
+// @env batches all env var lookups into a single Session.Env() call.
+func (d *EnvDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
 	invariant.NotNil(ctx.Session, "ctx.Session")
 
-	// Get environment variable name from primary parameter
-	if call.Primary == nil {
-		return nil, fmt.Errorf("@env requires an environment variable name")
-	}
-
-	envVar := *call.Primary
-
-	// Read from session environment (transport-aware)
+	// Batch optimization: Get environment once for all calls
 	env := ctx.Session.Env()
-	value, exists := env[envVar]
 
-	if !exists {
-		// Check for default parameter
-		if defaultVal, hasDefault := call.Params["default"]; hasDefault {
-			return defaultVal, nil
+	results := make([]decorator.ResolveResult, len(calls))
+
+	for i, call := range calls {
+		// Get environment variable name from primary parameter
+		if call.Primary == nil {
+			results[i] = decorator.ResolveResult{
+				Value:  nil,
+				Origin: "@env.<unknown>",
+				Error:  fmt.Errorf("@env requires an environment variable name"),
+			}
+			continue
 		}
-		return nil, fmt.Errorf("environment variable %q not found", envVar)
+
+		envVar := *call.Primary
+
+		// Look up in batched environment
+		value, exists := env[envVar]
+
+		if !exists {
+			// Check for default parameter
+			if defaultVal, hasDefault := call.Params["default"]; hasDefault {
+				results[i] = decorator.ResolveResult{
+					Value:  defaultVal,
+					Origin: fmt.Sprintf("@env.%s", envVar),
+					Error:  nil,
+				}
+				continue
+			}
+			results[i] = decorator.ResolveResult{
+				Value:  nil,
+				Origin: fmt.Sprintf("@env.%s", envVar),
+				Error:  fmt.Errorf("environment variable %q not found", envVar),
+			}
+			continue
+		}
+
+		results[i] = decorator.ResolveResult{
+			Value:  value,
+			Origin: fmt.Sprintf("@env.%s", envVar),
+			Error:  nil,
+		}
 	}
 
-	return value, nil
+	return results, nil
 }
 
 // Register @env decorator with the global registry

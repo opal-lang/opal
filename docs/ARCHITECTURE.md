@@ -1133,6 +1133,214 @@ if runtime.GOOS != "windows" && cmd.Process != nil {
 - Critical for pipelines (kills all commands in pipeline)
 - Example: `yes | head -n1` - both processes killed on cancel
 
+## Variable Scoping via Scope Graph
+
+### The Problem: Cross-Session Variable Leakage
+
+Variables resolved in one session could leak to another session, exposing sensitive values:
+
+```opal
+var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in local session
+
+@ssh(host="untrusted-server") {
+    curl -H "Auth: @var.LOCAL_TOKEN" ...  # ❌ Sends local token to remote!
+}
+```
+
+**Security violation:** Local credentials sent to remote server.
+
+### The Solution: Hierarchical Scope Graph
+
+**Variables are lexically scoped to their session context.**
+
+```
+Scope Graph (Tree):
+
+Root (local session)
+├─ vars: { HOME: "/home/alice", TOKEN: "ghp_local123" }
+├─ sessionID: "local"
+│
+├─ Child: @ssh(host="server1")
+│  ├─ vars: { REMOTE_HOME: "/home/bob" }
+│  ├─ sessionID: "ssh:server1"
+│  ├─ parent: → Root
+│  │
+│  └─ Child: @docker(container="app")
+│     ├─ vars: { CONTAINER_ID: "abc123" }
+│     ├─ sessionID: "docker:abc123"
+│     └─ parent: → ssh:server1
+│
+└─ Child: @ssh(host="server2")
+   ├─ vars: { REMOTE_HOME: "/home/charlie" }
+   ├─ sessionID: "ssh:server2"
+   └─ parent: → Root
+```
+
+### Variable Resolution Algorithm
+
+**Lookup via parent traversal:**
+
+```
+Resolve @var.HOME in docker scope:
+1. Check current scope (docker) → not found
+2. Check parent scope (ssh:server1) → not found  
+3. Check parent scope (local) → found: "/home/alice"
+4. Return value
+```
+
+**Automatic isolation between siblings:**
+
+```
+Resolve @var.REMOTE_HOME in ssh:server2:
+1. Check current scope → found: "/home/charlie"
+
+Resolve @var.REMOTE_HOME in ssh:server1:
+1. Check current scope → found: "/home/bob"
+
+# Different values! Each session has its own scope.
+# No session checking needed - variables are simply not in scope.
+```
+
+### Implementation
+
+```go
+// ScopeGraph manages hierarchical variable scoping across sessions.
+type ScopeGraph struct {
+    root    *Scope
+    current *Scope  // Current scope during planning/execution
+}
+
+// Scope represents a variable scope tied to a session context.
+type Scope struct {
+    id        string            // Unique scope ID
+    sessionID string            // Session identifier from Session.ID()
+    vars      map[string]VarEntry
+    parent    *Scope            // Parent scope (nil for root)
+    children  []*Scope          // Child scopes
+    depth     int               // Distance from root
+    path      []string          // Path from root (for debugging)
+}
+
+// Key operations:
+func NewScopeGraph(rootSessionID string) *ScopeGraph
+func (g *ScopeGraph) EnterScope(sessionID string)  // Create child scope
+func (g *ScopeGraph) ExitScope() error              // Return to parent
+func (g *ScopeGraph) Store(varName, origin string, value any)
+func (g *ScopeGraph) Resolve(varName string) (any, *Scope, error)
+```
+
+### Transport Boundaries: Sealed Scopes
+
+**Transport boundaries create sealed scopes** that block implicit variable access.
+
+**What creates transport boundaries?**
+- `@ssh(...)` - Remote execution over SSH
+- `@docker(...)` - Container execution
+- Any decorator that changes execution transport
+
+**Control flow decorators do NOT create boundaries:**
+- `@retry(...)` - Retry logic
+- `@parallel(...)` - Parallel execution
+- `@timeout(...)` - Timeout control
+
+### Example: Sealed Boundaries Require Explicit Passing
+
+```opal
+var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Stored in root scope
+
+@ssh(host="server1") {
+    # ❌ CANNOT access parent - this scope is SEALED
+    # echo "Token: @var.LOCAL_TOKEN"  # Error: Transport boundary violation
+
+    # ✅ Must pass explicitly via decorator parameters
+    var REMOTE_TOKEN = @env.GITHUB_TOKEN  # Resolved in SSH session
+    echo "Remote token: @var.REMOTE_TOKEN"  # ✅ Works (current scope)
+}
+
+# To pass variables across boundaries, use decorator parameters:
+@ssh(host="server2", env={TOKEN: @var.LOCAL_TOKEN}) {
+    # TOKEN is passed as environment variable
+    echo "Token: $TOKEN"  # ✅ Works (passed via env parameter)
+
+    # But still cannot access via @var
+    # echo "@var.LOCAL_TOKEN"  # ❌ Error: Transport boundary violation
+}
+
+@ssh(host="server3") {
+    # ❌ CANNOT access sibling scopes
+    echo "@var.REMOTE_TOKEN"  # ❌ Error: variable not found
+}
+```
+
+**Security properties:**
+1. **Sibling isolation**: Variables from `server1` cannot leak to `server3`
+2. **Boundary sealing**: Parent variables require explicit passing via parameters
+3. **Explicit intent**: Each variable crossing must be declared in decorator parameters
+
+### Benefits
+
+**1. Automatic Isolation**
+- No manual session checking needed
+- Variables isolated by structure
+- Secure by default
+
+**2. Natural Semantics**
+- Control flow maintains scope chain (like closures)
+- Transport boundaries enforce explicit passing (like function parameters)
+- Sibling scope isolation is automatic
+
+**3. Efficient**
+- O(depth) lookup, typical depth 2-3 levels
+- No session compatibility checks
+- Simple traversal algorithm
+
+**4. Debuggable**
+```go
+func (g *ScopeGraph) DebugPrint() {
+    // Visualize entire scope tree
+}
+
+// Output:
+// root (session=local)
+//   HOME = "/home/alice" (from @env.HOME)
+//   ssh:server1 (session=ssh:server1)
+//     REMOTE_HOME = "/home/bob" (from @env.HOME)
+//   ssh:server2 (session=ssh:server2)
+//     REMOTE_HOME = "/home/charlie" (from @env.HOME)
+```
+
+**5. Extensible**
+- Variable shadowing
+- Decorator parameters for explicit passing
+- Scope introspection
+- Immutable scopes
+
+### Planner Integration
+
+```go
+// When entering @ssh block:
+func (p *planner) planSSHBlock() error {
+    sshSession, err := decorator.NewSSHSession(params)
+    if err != nil {
+        return err
+    }
+    
+    // Enter new scope
+    p.scopes.EnterScope(sshSession.ID())
+    oldSession := p.session
+    p.session = sshSession
+    
+    // Plan block contents (in new scope)
+    err = p.planBlock()
+    
+    // Exit scope
+    p.scopes.ExitScope()
+    p.session = oldSession
+    
+    return err
+}
+```
+
 ## Two-Layer Architecture
 
 ```

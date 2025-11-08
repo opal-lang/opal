@@ -47,7 +47,7 @@ func FormatTree(w io.Writer, plan *planfmt.Plan, useColor bool) {
 }
 
 // renderTreeStep renders a single step with tree characters
-func renderTreeStep(w io.Writer, step planfmt.Step, isLast bool, useColor bool) {
+func renderTreeStep(w io.Writer, step planfmt.Step, isLast, useColor bool) {
 	// Choose tree character
 	var prefix string
 	if isLast {

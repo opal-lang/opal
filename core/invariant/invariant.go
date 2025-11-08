@@ -115,10 +115,10 @@ func isNilValue(value interface{}) bool {
 //	    invariant.InRange(index, 0, len(items)-1, "index")
 //	    return items[index]
 //	}
-func InRange(value, min, max int, name string) {
-	if value < min || value > max {
+func InRange(value, minVal, maxVal int, name string) {
+	if value < minVal || value > maxVal {
 		fail("PRECONDITION", "%s must be in range [%d, %d], got %d",
-			name, min, max, value)
+			name, minVal, maxVal, value)
 	}
 }
 
@@ -147,9 +147,9 @@ func Positive(value int, name string) {
 //	    err := plan.Validate()
 //	    invariant.ExpectNoError(err, "plan validation")
 //	}
-func ExpectNoError(err error, context string) {
+func ExpectNoError(err error, msg string) {
 	if err != nil {
-		fail("POSTCONDITION", "%s must not fail: %v", context, err)
+		fail("POSTCONDITION", "%s must not fail: %v", msg, err)
 	}
 }
 

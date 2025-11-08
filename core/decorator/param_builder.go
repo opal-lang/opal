@@ -74,14 +74,14 @@ func (pb *ParamBuilder) Format(format types.Format) *ParamBuilder {
 }
 
 // Min sets the minimum value constraint (for numeric types).
-func (pb *ParamBuilder) Min(min float64) *ParamBuilder {
-	pb.schema.Minimum = &min
+func (pb *ParamBuilder) Min(minVal float64) *ParamBuilder {
+	pb.schema.Minimum = &minVal
 	return pb
 }
 
 // Max sets the maximum value constraint (for numeric types).
-func (pb *ParamBuilder) Max(max float64) *ParamBuilder {
-	pb.schema.Maximum = &max
+func (pb *ParamBuilder) Max(maxVal float64) *ParamBuilder {
+	pb.schema.Maximum = &maxVal
 	return pb
 }
 

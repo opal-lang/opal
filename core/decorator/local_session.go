@@ -216,6 +216,17 @@ func (s *LocalSession) Cwd() string {
 	return s.cwd
 }
 
+// ID returns the session identifier for local sessions.
+// Always returns "local" since all local sessions share the same environment.
+func (s *LocalSession) ID() string {
+	return "local"
+}
+
+// TransportScope returns the transport scope for local sessions.
+func (s *LocalSession) TransportScope() TransportScope {
+	return TransportScopeLocal
+}
+
 // Close is a no-op for LocalSession (no resources to clean up).
 func (s *LocalSession) Close() error {
 	return nil

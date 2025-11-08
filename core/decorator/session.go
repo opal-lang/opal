@@ -36,6 +36,15 @@ type Session interface {
 	// Cwd returns the current working directory
 	Cwd() string
 
+	// ID returns a unique identifier for this session
+	// Format: "local", "ssh:hostname", "docker:container-id", "k8s:pod-name"
+	// Used for session-scoped variable tracking and cross-session leakage prevention
+	ID() string
+
+	// TransportScope returns the transport scope of this session
+	// Used to enforce decorator transport-scope guards
+	TransportScope() TransportScope
+
 	// Close cleans up the session
 	Close() error
 }

@@ -396,14 +396,13 @@ func (l *Lexer) lexToken() Token {
 				Text:     nil, // Self-identifying token
 				Position: start,
 			}
-		} else {
-			// Skip consecutive newlines
-			for l.position < len(l.input) && l.input[l.position] == '\n' {
-				l.advanceChar()
-			}
-			// After skipping newlines, recurse to continue lexing
-			return l.lexToken()
 		}
+		// Skip consecutive newlines
+		for l.position < len(l.input) && l.input[l.position] == '\n' {
+			l.advanceChar()
+		}
+		// After skipping newlines, recurse to continue lexing
+		return l.lexToken()
 	}
 
 	// Reset newline flag for non-newline tokens

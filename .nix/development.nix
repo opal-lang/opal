@@ -5,20 +5,34 @@ pkgs.mkShell {
   name = "opal-dev";
 
   buildInputs = with pkgs; [
-    # Development tools
-    go
+    # Go toolchain (locked version)
+    go_1_25
     gopls
+    
+    # Linting & formatting
     golangci-lint
-    git
-    zsh
-    nixpkgs-fmt
     gofumpt
+    # gci  # Disabled: broken in nixpkgs with Go 1.25 (tokeninternal incompatibility)
+    
+    # Testing
+    gotestsum  # Better test output
+    
+    # Build tools
+    git
+    jq  # JSON processing for fuzz workflows
+    
+    # Nix tooling
+    nixpkgs-fmt
+    
+    # Project-specific
     openssh  # For SSH session testing
-  ] ++ (if self != null then [
-    self.packages.${system}.opal # Include the opal binary itself
-  ] else []);
+    zsh
+  ];
 
   shellHook = ''
+    # Lock Go toolchain to prevent implicit downloads
+    export GOTOOLCHAIN=local
+    
     # Setup SSH for testing
     export SSH_TEST_DIR="$PWD/.ssh-test"
     mkdir -p "$SSH_TEST_DIR"
@@ -46,7 +60,6 @@ pkgs.mkShell {
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
       echo "Available tools:"
-      echo "  opal       - The Opal CLI (operations planning language)"
       echo "  go         - Go compiler and tools"
       echo "  gofumpt    - Go formatter"
       echo "  golangci-lint - Go linter"
@@ -67,11 +80,7 @@ pkgs.mkShell {
       echo "  golangci-lint run              - Run linter"
       echo "  go test -v ./...               - Run all tests (SSH if enabled)"
       echo "  go test -v -short ./...        - Run tests (skip SSH)"
-      echo "  cd cli && go build -o opal .   - Build CLI"
-      echo ""
-      echo "Opal usage:"
-      echo "  opal deploy --dry-run          - Show execution plan"
-      echo "  opal deploy                    - Execute operation"
+      echo "  cd cli && go build -o opal .   - Build CLI binary"
       echo ""
     fi
   '';

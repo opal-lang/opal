@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aledsdavies/opal/core/decorator"
 	"github.com/aledsdavies/opal/core/invariant"
 	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/aledsdavies/opal/core/sdk/secret"
@@ -165,7 +166,8 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		config:      config,
 		pos:         0,
 		stepID:      1,
-		vars:        make(map[string]any),
+		scopes:      NewScopeGraph("local"),      // Hierarchical variable scoping
+		session:     decorator.NewLocalSession(), // Session for decorator resolution
 		telemetry:   telemetry,
 		debugEvents: debugEvents,
 	}
@@ -199,8 +201,9 @@ type planner struct {
 	pos    int    // Current position in event stream
 	stepID uint64 // Next step ID to assign
 
-	// Variable resolution
-	vars map[string]any // Plan-time variable store
+	// Variable scoping with transport boundary guards
+	scopes  *ScopeGraph       // Hierarchical variable scoping
+	session decorator.Session // Session for decorator resolution (LocalSession by default)
 
 	// Observability
 	telemetry   *PlanTelemetry
@@ -583,14 +586,21 @@ func (p *planner) planVarDecl() error {
 	// Skip TOKEN(=)
 	p.pos++
 
-	// Parse the value expression (supports literals, objects, arrays)
+	// Parse the value expression (supports literals, objects, arrays, decorators)
 	value, err := p.parseVarValue(varName)
 	if err != nil {
 		return err
 	}
 
-	// Store variable
-	p.vars[varName] = value
+	// Determine origin and classification
+	// For now, literals are session-agnostic
+	// Decorators will be handled in Week 2
+	origin := "literal"
+	class := VarClassData
+	taint := VarTaintAgnostic
+
+	// Store variable in current scope
+	p.scopes.Store(varName, origin, value, class, taint)
 
 	// Record telemetry
 	p.recordDecoratorResolution("@var")
@@ -929,6 +939,8 @@ func (p *planner) parseVarValue(varName string) (any, error) {
 		return p.parseObjectLiteral(varName)
 	case parser.NodeArrayLiteral:
 		return p.parseArrayLiteral(varName)
+	case parser.NodeDecorator:
+		return p.parseDecoratorValue(varName)
 	default:
 		return nil, &PlanError{
 			Message:     fmt.Sprintf("unsupported expression type for variable value: %v", nodeKind),
@@ -972,12 +984,7 @@ func (p *planner) parseLiteralValue(varName string) (any, error) {
 		value = string(valueToken.Text)
 	case lexer.IDENTIFIER:
 		// Handle identifiers (could be true/false if not recognized as BOOLEAN)
-		text := string(valueToken.Text)
-		if text == "true" || text == "false" {
-			value = text
-		} else {
-			value = text
-		}
+		value = string(valueToken.Text)
 	default:
 		value = string(valueToken.Text)
 	}
@@ -1113,4 +1120,171 @@ func (p *planner) parseArrayLiteral(varName string) (any, error) {
 	}
 
 	return arr, nil
+}
+
+// parseDecoratorValue resolves a decorator and returns its value.
+// This is used for variable declarations like: var HOME = @env.HOME
+func (p *planner) parseDecoratorValue(varName string) (any, error) {
+	startPos := p.pos
+	p.pos++ // Move past OPEN Decorator
+
+	// Extract decorator name and property from tokens
+	// Expected structure: TOKEN(@), TOKEN(decorator), TOKEN(.), TOKEN(property)
+	var decoratorParts []string
+	var primary *string
+
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventClose {
+			// End of decorator
+			break
+		}
+
+		if evt.Kind != parser.EventToken {
+			p.pos++
+			continue
+		}
+
+		tokIdx := evt.Data
+		if int(tokIdx) >= len(p.tokens) {
+			return nil, &PlanError{
+				Message:     "invalid token index in decorator",
+				Context:     fmt.Sprintf("parsing variable '%s'", varName),
+				EventPos:    p.pos,
+				TotalEvents: len(p.events),
+			}
+		}
+
+		tok := p.tokens[tokIdx]
+
+		switch tok.Type {
+		case lexer.AT:
+			// Skip @ symbol
+			p.pos++
+		case lexer.IDENTIFIER:
+			// Collect all identifiers separated by dots
+			// The last identifier becomes the primary parameter if there's more than one segment
+			// Examples:
+			//   @env → path="env", primary=nil
+			//   @env.HOME → path="env", primary="HOME"
+			//   @aws.ssm.param → path="aws.ssm", primary="param"
+			decoratorParts = append(decoratorParts, string(tok.Text))
+			p.pos++
+		case lexer.DOT:
+			// Separator between decorator and property
+			p.pos++
+		case lexer.LPAREN:
+			// Decorator has parameters - not yet supported
+			return nil, &PlanError{
+				Message: fmt.Sprintf("decorator @%s has parameters, which are not yet supported in variable declarations",
+					strings.Join(decoratorParts, ".")),
+				Context:     fmt.Sprintf("parsing variable '%s'", varName),
+				EventPos:    p.pos,
+				TotalEvents: len(p.events),
+			}
+		default:
+			// Unknown token - should not happen in well-formed decorator
+			return nil, &PlanError{
+				Message:     fmt.Sprintf("unexpected token %s in decorator", tok.Type),
+				Context:     fmt.Sprintf("parsing variable '%s'", varName),
+				EventPos:    p.pos,
+				TotalEvents: len(p.events),
+			}
+		}
+	}
+
+	// Consume EventClose
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventClose {
+		p.pos++
+	}
+
+	if len(decoratorParts) == 0 {
+		return nil, &PlanError{
+			Message:     "empty decorator name",
+			Context:     fmt.Sprintf("parsing variable '%s'", varName),
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	// Find the decorator by trying progressively shorter paths (most specific first).
+	// Like URL routing: try longest match first, then progressively shorter.
+	//
+	// For @aws.s3.bucket.object.tag, try:
+	//   1. "aws.s3.bucket.object.tag" (most specific, no primary)
+	//   2. "aws.s3.bucket.object" with primary="tag"
+	//   3. "aws.s3.bucket" with primary="object" (ERROR: 2 remaining segments)
+	//   4. "aws.s3" with primary="bucket" (ERROR: 3 remaining segments)
+	//   5. "aws" with primary="s3" (ERROR: 4 remaining segments)
+	//
+	// For @env.HOME, try:
+	//   1. "env.HOME" (full path, no primary)
+	//   2. "env" with primary="HOME" ✓
+	//
+	// Only ONE segment after the decorator path is allowed as primary parameter.
+	var decoratorName string
+	for splitPoint := len(decoratorParts); splitPoint > 0; splitPoint-- {
+		candidatePath := strings.Join(decoratorParts[:splitPoint], ".")
+		_, found := decorator.Global().Lookup(candidatePath)
+		if found {
+			remainingSegments := len(decoratorParts) - splitPoint
+			if remainingSegments > 1 {
+				// Too many segments after decorator name
+				return nil, &PlanError{
+					Message: fmt.Sprintf("decorator @%s: found registered decorator %q but %d segments remain (%s); only 1 primary parameter allowed",
+						strings.Join(decoratorParts, "."), candidatePath, remainingSegments,
+						strings.Join(decoratorParts[splitPoint:], ".")),
+					Context:     fmt.Sprintf("parsing variable '%s'", varName),
+					EventPos:    startPos,
+					TotalEvents: len(p.events),
+				}
+			}
+			decoratorName = candidatePath
+			if remainingSegments == 1 {
+				// Exactly one segment remains - use as primary parameter
+				lastPart := decoratorParts[splitPoint]
+				primary = &lastPart
+			}
+			break
+		}
+	}
+
+	if decoratorName == "" {
+		return nil, &PlanError{
+			Message:     fmt.Sprintf("decorator @%s not found in registry", strings.Join(decoratorParts, ".")),
+			Context:     fmt.Sprintf("parsing variable '%s'", varName),
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	// Build ValueCall for decorator resolution
+	call := decorator.ValueCall{
+		Path:    decoratorName,
+		Primary: primary,
+		Params:  make(map[string]any),
+	}
+
+	// Create evaluation context
+	ctx := decorator.ValueEvalContext{
+		Session: p.session,
+		Vars:    p.scopes.AsMap(),
+	}
+
+	// Get transport scope from current session to enforce transport-scope guards
+	currentScope := p.session.TransportScope()
+
+	// Resolve decorator using global registry
+	result, err := decorator.ResolveValue(ctx, call, currentScope)
+	if err != nil {
+		return nil, &PlanError{
+			Message:     fmt.Sprintf("failed to resolve @%s: %v", decoratorName, err),
+			Context:     fmt.Sprintf("parsing variable '%s'", varName),
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	return result.Value, nil
 }

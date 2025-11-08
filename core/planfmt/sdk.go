@@ -120,7 +120,7 @@ func ToSDKArgs(planArgs []Arg) map[string]interface{} {
 func commandNodeToSink(target *CommandNode, registry *types.Registry) sdk.Sink {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := target.Decorator
-	if len(decoratorName) > 0 && decoratorName[0] == '@' {
+	if decoratorName != "" && decoratorName[0] == '@' {
 		decoratorName = decoratorName[1:]
 	}
 

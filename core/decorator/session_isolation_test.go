@@ -1,8 +1,7 @@
 package decorator
 
-import "context"
-
 import (
+	"context"
 	"strings"
 	"testing"
 )

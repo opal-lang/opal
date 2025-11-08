@@ -55,7 +55,7 @@ func SimulateBlockTimeout(duration time.Duration) func([]sdk.Step) (int, error) 
 //	    WithExecuteBlock(SimulateBlockRetries(2, 1)) // Fail twice, then succeed
 //	exitCode, _ := retryHandler(ctx, block)
 //	// Should retry and eventually succeed
-func SimulateBlockRetries(failCount int, failExitCode int) func([]sdk.Step) (int, error) {
+func SimulateBlockRetries(failCount, failExitCode int) func([]sdk.Step) (int, error) {
 	attempts := 0
 	return func(steps []sdk.Step) (int, error) {
 		attempts++

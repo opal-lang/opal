@@ -107,6 +107,16 @@ func (m *MonitoredSession) Cwd() string {
 	return m.wrapped.Cwd()
 }
 
+// ID returns the session identifier, delegating to the wrapped session.
+func (m *MonitoredSession) ID() string {
+	return m.wrapped.ID()
+}
+
+// TransportScope returns the transport scope, delegating to the wrapped session.
+func (m *MonitoredSession) TransportScope() TransportScope {
+	return m.wrapped.TransportScope()
+}
+
 func (m *MonitoredSession) Close() error {
 	m.stats.mu.Lock()
 	m.stats.CloseCalls++

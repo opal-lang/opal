@@ -39,6 +39,12 @@ func Register(path string, impl Decorator) error {
 	return global.register(path, impl)
 }
 
+// ResolveValue resolves a value decorator using the global registry.
+// This is the package-level convenience function (database/sql pattern).
+func ResolveValue(ctx ValueEvalContext, call ValueCall, currentScope TransportScope) (ResolvedValue, error) {
+	return global.ResolveValue(ctx, call, currentScope)
+}
+
 func (r *Registry) register(path string, impl Decorator) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,31 +124,62 @@ func inferRoles(decorator Decorator) []Role {
 // Global registry instance (database/sql pattern)
 var global = NewRegistry()
 
-// ResolveValue resolves a value decorator with scope enforcement and parameter validation.
-// This is the high-level method that should be used by the planner.
+// ResolveValue resolves a single value decorator with scope enforcement and parameter validation.
+// This is a convenience wrapper around ResolveValues for single calls.
 func (r *Registry) ResolveValue(
 	ctx ValueEvalContext,
 	call ValueCall,
 	currentScope TransportScope,
 ) (ResolvedValue, error) {
+	results, err := r.ResolveValues(ctx, currentScope, call)
+	if err != nil {
+		return ResolvedValue{}, err
+	}
+
+	if len(results) != 1 {
+		return ResolvedValue{}, fmt.Errorf("expected 1 result, got %d", len(results))
+	}
+
+	return results[0], nil
+}
+
+// ResolveValues resolves multiple value decorator calls with scope enforcement.
+// All calls must be for the same decorator (same Path).
+func (r *Registry) ResolveValues(
+	ctx ValueEvalContext,
+	currentScope TransportScope,
+	calls ...ValueCall,
+) ([]ResolvedValue, error) {
+	if len(calls) == 0 {
+		return nil, fmt.Errorf("no calls provided")
+	}
+
+	// All calls must be for the same decorator
+	decoratorPath := calls[0].Path
+	for i, call := range calls {
+		if call.Path != decoratorPath {
+			return nil, fmt.Errorf("call %d has different path %q, expected %q", i, call.Path, decoratorPath)
+		}
+	}
+
 	// Step 1: Lookup decorator
-	entry, ok := r.Lookup(call.Path)
+	entry, ok := r.Lookup(decoratorPath)
 	if !ok {
-		return ResolvedValue{}, fmt.Errorf("decorator %q not found", call.Path)
+		return nil, fmt.Errorf("decorator %q not found", decoratorPath)
 	}
 
 	// Step 2: Type assert to Value interface
 	valueDecorator, ok := entry.Impl.(Value)
 	if !ok {
-		return ResolvedValue{}, fmt.Errorf("decorator %q does not implement Value interface", call.Path)
+		return nil, fmt.Errorf("decorator %q does not implement Value interface", decoratorPath)
 	}
 
 	// Step 3: Check transport scope compatibility
 	desc := entry.Impl.Descriptor()
 	if !desc.Capabilities.TransportScope.Allows(currentScope) {
-		return ResolvedValue{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"decorator %q cannot be used in current transport scope (requires %s, current: %s)",
-			call.Path,
+			decoratorPath,
 			desc.Capabilities.TransportScope,
 			currentScope,
 		)
@@ -151,18 +188,28 @@ func (r *Registry) ResolveValue(
 	// Step 4: TODO - Validate parameters (enum, range, pattern from schema)
 	// This will be implemented when we have proper schema validation
 
-	// Step 5: Call decorator's Resolve method
-	value, err := valueDecorator.Resolve(ctx, call)
+	// Step 5: Call decorator's Resolve method (batch)
+	results, err := valueDecorator.Resolve(ctx, calls...)
 	if err != nil {
-		return ResolvedValue{}, err
+		return nil, err
 	}
 
-	// Step 6: TODO - Wrap secrets in ResolvedValue
-	// This will be implemented in Phase 4 when we add secret handling
-	resolved := ResolvedValue{
-		Value:     value,
-		Handle:    nil, // TODO: Secret wrapping
-		DisplayID: "",  // TODO: Secret ID generation
+	if len(results) != len(calls) {
+		return nil, fmt.Errorf("decorator returned %d results for %d calls", len(results), len(calls))
+	}
+
+	// Step 6: Convert to ResolvedValue (TODO: Secret wrapping)
+	resolved := make([]ResolvedValue, len(results))
+	for i, result := range results {
+		if result.Error != nil {
+			return nil, fmt.Errorf("call %d failed: %w", i, result.Error)
+		}
+
+		resolved[i] = ResolvedValue{
+			Value:     result.Value,
+			Handle:    nil, // TODO: Secret wrapping
+			DisplayID: "",  // TODO: Secret ID generation
+		}
 	}
 
 	return resolved, nil

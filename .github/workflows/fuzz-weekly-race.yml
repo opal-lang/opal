@@ -9,97 +9,11 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-env:
-  GO_VERSION: '1.25.x'
-
 jobs:
   fuzz-race:
-    name: Race Detector Fuzzing (2min per target)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run fuzz targets with race detector
-        run: |
-          set -euo pipefail
-          cd runtime/parser
-          
-          echo "==> Running fuzz tests with race detector"
-          echo "This catches data races and nondeterminism"
-          echo ""
-          
-          # Main fuzz targets (shorter time with race detector due to overhead)
-          # Each target gets full 2 minutes
-          FUZZ_TARGETS=(
-            "FuzzParserDeterminism"
-            "FuzzParserNoPanic"
-            "FuzzParserEventBalance"
-            "FuzzParserMemorySafety"
-            "FuzzParserWhitespaceInvariance"
-          )
-          
-          for target in "${FUZZ_TARGETS[@]}"; do
-            echo "==> Race fuzzing $target (2 minutes)"
-            go test -run '^$' -fuzz "^${target}$" -fuzztime=2m -race || {
-              echo "ERROR: $target failed with race detector"
-              exit 1
-            }
-          done
-          
-          echo ""
-          echo "==> All race fuzz targets completed successfully"
-          echo "No data races detected!"
-
-  fuzz-platforms:
-    name: Platform Fuzzing (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run quick fuzz on ${{ matrix.os }}
-        run: |
-          set -euo pipefail
-          cd runtime/parser
-          
-          echo "==> Platform fuzzing on ${{ matrix.os }}"
-          echo "Catches CRLF/locale/platform quirks"
-          echo ""
-          
-          # Quick 1-minute fuzz on each platform (each target gets full minute)
-          FUZZ_TARGETS=(
-            "FuzzParserWhitespaceInvariance"
-            "FuzzParserDeterminism"
-          )
-          
-          for target in "${FUZZ_TARGETS[@]}"; do
-            echo "==> Fuzzing $target (1 minute)"
-            go test -run '^$' -fuzz "^${target}$" -fuzztime=1m || {
-              echo "ERROR: $target failed on ${{ matrix.os }}"
-              exit 1
-            }
-          done
-          
-          echo ""
-          echo "==> Platform fuzzing completed on ${{ matrix.os }}"
+    uses: ./.github/workflows/_fuzz.yml
+    with:
+      targets: '["FuzzParserDeterminism", "FuzzParserNoPanic", "FuzzParserEventBalance", "FuzzParserMemorySafety", "FuzzParserPathologicalDepth", "FuzzParserErrorRecovery", "FuzzParserWhitespaceInvariance", "FuzzReadPlan"]'
+      per_target: "2m"
+      race: true
+      upload_corpus: true

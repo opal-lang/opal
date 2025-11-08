@@ -7,8 +7,9 @@ import (
 	"io"
 	"math"
 
-	"github.com/aledsdavies/opal/core/invariant"
 	"golang.org/x/crypto/blake2b"
+
+	"github.com/aledsdavies/opal/core/invariant"
 )
 
 const (
@@ -130,7 +131,7 @@ func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 // writePreambleToBuffer writes the fixed-size preamble (20 bytes) to a buffer
 func (wr *Writer) writePreambleToBuffer(buf *bytes.Buffer, headerLen uint32, bodyLen uint64) error {
 	// Magic number (4 bytes)
-	if _, err := buf.Write([]byte(Magic)); err != nil {
+	if _, err := buf.WriteString(Magic); err != nil {
 		return err
 	}
 
@@ -151,11 +152,7 @@ func (wr *Writer) writePreambleToBuffer(buf *bytes.Buffer, headerLen uint32, bod
 	}
 
 	// Body length (8 bytes, uint64, little-endian)
-	if err := binary.Write(buf, binary.LittleEndian, bodyLen); err != nil {
-		return err
-	}
-
-	return nil
+	return binary.Write(buf, binary.LittleEndian, bodyLen)
 }
 
 // writeHeader writes the plan header to the buffer
@@ -233,11 +230,7 @@ func (wr *Writer) writeStep(buf *bytes.Buffer, s *Step) error {
 	}
 
 	// Write execution tree (Commands field is ignored - only exists for executor during transition)
-	if err := wr.writeExecutionNode(buf, s.Tree); err != nil {
-		return err
-	}
-
-	return nil
+	return wr.writeExecutionNode(buf, s.Tree)
 }
 
 // Node type constants for binary serialization

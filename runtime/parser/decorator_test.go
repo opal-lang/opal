@@ -26,8 +26,16 @@ func (d *ConfigDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-func (d *ConfigDecorator) Resolve(ctx decorator.ValueEvalContext, call decorator.ValueCall) (any, error) {
-	return "test", nil
+func (d *ConfigDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{
+			Value:  "test",
+			Origin: "config",
+			Error:  nil,
+		}
+	}
+	return results, nil
 }
 
 // DeployDecorator is a test decorator that accepts array parameters
@@ -1441,6 +1449,46 @@ func TestDecoratorArrayParameter(t *testing.T) {
 
 			if !hasDecorator {
 				t.Error("expected decorator node")
+			}
+		})
+	}
+}
+
+// TestMultiSegmentDecoratorPaths tests that decorators can have multiple dots
+// in their path (e.g., @aws.ssm.param).
+func TestMultiSegmentDecoratorPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		shouldPass bool
+	}{
+		{
+			name:       "two segments (current working)",
+			input:      "var x = @env.HOME",
+			shouldPass: true,
+		},
+		{
+			name:       "three segments (should work)",
+			input:      "var x = @aws.ssm",
+			shouldPass: true,
+		},
+		{
+			name:       "four segments (should work)",
+			input:      "var x = @aws.ssm.param",
+			shouldPass: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+
+			hasErrors := len(tree.Errors) > 0
+			if tt.shouldPass && hasErrors {
+				t.Errorf("Expected parse to succeed, got error: %v", tree.Errors[0])
+			}
+			if !tt.shouldPass && !hasErrors {
+				t.Error("Expected parse to fail, but it succeeded")
 			}
 		})
 	}

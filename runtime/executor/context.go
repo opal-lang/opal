@@ -113,11 +113,11 @@ func (e *executionContext) ArgDuration(key string) time.Duration {
 // Args returns a snapshot of all arguments for logging
 func (e *executionContext) Args() map[string]interface{} {
 	// Return a copy to prevent external mutation
-	copy := make(map[string]interface{}, len(e.args))
+	argsCopy := make(map[string]interface{}, len(e.args))
 	for k, v := range e.args {
-		copy[k] = v
+		argsCopy[k] = v
 	}
-	return copy
+	return argsCopy
 }
 
 // Environ returns the environment variables (immutable snapshot)

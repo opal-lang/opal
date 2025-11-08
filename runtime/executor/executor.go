@@ -406,8 +406,8 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 		type ExecutionDecorator interface {
 			Execute(sdk.ExecutionContext, []sdk.Step) (int, error)
 		}
-		if decorator, ok := handler.(ExecutionDecorator); ok {
-			sdkHandler = decorator.Execute
+		if execDecorator, ok := handler.(ExecutionDecorator); ok {
+			sdkHandler = execDecorator.Execute
 		} else {
 			invariant.Invariant(false, "invalid handler type for %s", cmd.Name)
 		}
@@ -760,7 +760,7 @@ func (e *executor) executeRedirectWithStdin(execCtx sdk.ExecutionContext, redire
 }
 
 // recordDebugEvent records a debug event (only if debug enabled)
-func (e *executor) recordDebugEvent(event string, stepID uint64, context string) {
+func (e *executor) recordDebugEvent(event string, stepID uint64, contextInfo string) {
 	if e.config.Debug == DebugOff {
 		return
 	}
@@ -769,6 +769,6 @@ func (e *executor) recordDebugEvent(event string, stepID uint64, context string)
 		Timestamp: time.Now(),
 		Event:     event,
 		StepID:    stepID,
-		Context:   context,
+		Context:   contextInfo,
 	})
 }

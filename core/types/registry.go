@@ -120,6 +120,7 @@ func (r *Registry) GetExecutionHandler(path string) (ExecutionHandler, bool) {
 }
 
 // Register adds a decorator (defaults to value for backward compatibility)
+//
 // Deprecated: Use RegisterValue or RegisterExecution instead
 func (r *Registry) Register(name string) {
 	// For backward compatibility, register with a nil handler

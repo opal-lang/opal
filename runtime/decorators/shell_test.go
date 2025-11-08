@@ -5,11 +5,8 @@ import (
 	"context"
 	"io"
 	"os"
-	"time"
-)
-
-import (
 	"testing"
+	"time"
 
 	"github.com/aledsdavies/opal/core/decorator"
 )

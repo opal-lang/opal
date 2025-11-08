@@ -7,8 +7,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/aledsdavies/opal/core/invariant"
 	"golang.org/x/crypto/blake2b"
+
+	"github.com/aledsdavies/opal/core/invariant"
+)
+
+const (
+	// redactionMask is used to hide secret values in logs and output
+	redactionMask = "***"
 )
 
 // DebugMode enables panic-on-leak for testing
@@ -26,8 +32,8 @@ var globalCapability *Capability
 
 // SetCapability sets the global capability (executor only)
 // This enables UnsafeUnwrap/Bytes/ForEnv in production
-func SetCapability(cap *Capability) {
-	globalCapability = cap
+func SetCapability(capability *Capability) {
+	globalCapability = capability
 }
 
 // Handle wraps a secret value with taint tracking
@@ -99,17 +105,17 @@ func (h *Handle) String() string {
 // Safe to print: "sec***123" for "secret-password-123"
 func (h *Handle) UnwrapWithMask() string {
 	if len(h.value) <= 6 {
-		return "***"
+		return redactionMask
 	}
 	// Show first 3 and last 3 characters
-	return h.value[:3] + "***" + h.value[len(h.value)-3:]
+	return h.value[:3] + redactionMask + h.value[len(h.value)-3:]
 }
 
 // UnwrapLast4 returns only the last 4 characters
 // Safe to print: "...-123" for "secret-password-123"
 func (h *Handle) UnwrapLast4() string {
 	if len(h.value) <= 4 {
-		return "***"
+		return redactionMask
 	}
 	return "..." + h.value[len(h.value)-4:]
 }
@@ -120,9 +126,9 @@ func (h *Handle) UnwrapLast4() string {
 func (h *Handle) Mask(n int) string {
 	invariant.Precondition(n >= 0, "mask count must be non-negative")
 	if len(h.value) <= n*2 {
-		return "***"
+		return redactionMask
 	}
-	return h.value[:n] + "***" + h.value[len(h.value)-n:]
+	return h.value[:n] + redactionMask + h.value[len(h.value)-n:]
 }
 
 // ForEnv returns a safe environment variable assignment string
@@ -170,7 +176,7 @@ func (h *Handle) UnsafeUnwrap() string {
 
 // IsEmpty returns true if the secret is empty
 func (h *Handle) IsEmpty() bool {
-	return len(h.value) == 0
+	return h.value == ""
 }
 
 // Len returns the length of the secret without exposing the value

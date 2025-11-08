@@ -1,0 +1,74 @@
+name: Fuzz Testing
+on:
+  workflow_call:
+    inputs:
+      targets:
+        type: string
+        required: true
+        description: JSON array of fuzz targets
+      per_target:
+        type: string
+        default: "2m"
+        description: Duration per fuzz target
+      race:
+        type: boolean
+        default: false
+        description: Enable race detector
+      upload_corpus:
+        type: boolean
+        default: false
+        description: Upload corpus as artifact
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Snapshot corpus (before)
+        id: corpus_before
+        run: |
+          set -euo pipefail
+          CORPUS_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          CORPUS_BYTES=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          echo "count=$CORPUS_COUNT" >> $GITHUB_OUTPUT
+          echo "bytes=$CORPUS_BYTES" >> $GITHUB_OUTPUT
+          echo "Corpus before: $CORPUS_COUNT files, $CORPUS_BYTES bytes"
+
+      - name: Run fuzz tests
+        run: |
+          set -euo pipefail
+          nix develop -c bash -c '
+            export FUZZ_TARGETS='\''${{ inputs.targets }}'\''
+            cd runtime
+            for target in $(echo "$FUZZ_TARGETS" | jq -r ".[]"); do
+              echo "==> Fuzzing $target for ${{ inputs.per_target }}"
+              flags=""
+              [ "${{ inputs.race }}" = "true" ] && flags="-race"
+              go test -run "^$" -fuzz "^$target$" -fuzztime=${{ inputs.per_target }} $flags ./...
+            done
+          '
+
+      - name: Snapshot corpus (after)
+        id: corpus_after
+        run: |
+          set -euo pipefail
+          CORPUS_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
+          CORPUS_BYTES=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
+          GROWTH=$((CORPUS_BYTES - ${{ steps.corpus_before.outputs.bytes }}))
+          echo "count=$CORPUS_COUNT" >> $GITHUB_OUTPUT
+          echo "bytes=$CORPUS_BYTES" >> $GITHUB_OUTPUT
+          echo "growth=$GROWTH" >> $GITHUB_OUTPUT
+          echo "Corpus after: $CORPUS_COUNT files, $CORPUS_BYTES bytes (growth: $GROWTH bytes)"
+
+      - name: Upload corpus
+        if: inputs.upload_corpus && steps.corpus_after.outputs.growth > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ github.run_id }}
+          path: testdata/fuzz/
+          retention-days: 30

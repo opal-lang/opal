@@ -10,9 +10,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aledsdavies/opal/core/invariant"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/aledsdavies/opal/core/invariant"
 )
 
 // SSHSession implements Session for remote command execution over SSH.
@@ -42,11 +43,12 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 	var authMethods []ssh.AuthMethod
 
 	// Try direct signer first (for testing)
-	if signer, ok := params["key"].(ssh.Signer); ok {
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	} else if keyPath, ok := params["key"].(string); ok {
+	switch key := params["key"].(type) {
+	case ssh.Signer:
+		authMethods = append(authMethods, ssh.PublicKeys(key))
+	case string:
 		// Try keyfile auth if string path provided
-		if keyAuth := sshKeyAuth(keyPath); keyAuth != nil {
+		if keyAuth := sshKeyAuth(key); keyAuth != nil {
 			authMethods = append(authMethods, keyAuth)
 		}
 	}
@@ -254,6 +256,17 @@ func (s *SSHSession) Cwd() string {
 	return strings.TrimSpace(stdout.String())
 }
 
+// ID returns the session identifier for SSH sessions.
+// Format: "ssh:hostname" to distinguish from local and other SSH sessions.
+func (s *SSHSession) ID() string {
+	return "ssh:" + s.host
+}
+
+// TransportScope returns the transport scope for SSH sessions.
+func (s *SSHSession) TransportScope() TransportScope {
+	return TransportScopeSSH
+}
+
 // Close closes the SSH connection.
 func (s *SSHSession) Close() error {
 	return s.client.Close()
@@ -388,6 +401,16 @@ func (s *SSHSessionWithEnv) Cwd() string {
 		return s.cwd
 	}
 	return s.base.Cwd()
+}
+
+// ID returns the session identifier, delegating to the base SSH session.
+func (s *SSHSessionWithEnv) ID() string {
+	return s.base.ID()
+}
+
+// TransportScope returns the transport scope, delegating to the base SSH session.
+func (s *SSHSessionWithEnv) TransportScope() TransportScope {
+	return s.base.TransportScope()
 }
 
 func (s *SSHSessionWithEnv) Close() error {

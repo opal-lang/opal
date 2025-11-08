@@ -176,11 +176,11 @@ func (t *TestExecutionContext) ArgDuration(key string) time.Duration {
 // Args implements sdk.ExecutionContext.
 func (t *TestExecutionContext) Args() map[string]interface{} {
 	// Return a copy to prevent external mutation
-	copy := make(map[string]interface{}, len(t.args))
+	argsCopy := make(map[string]interface{}, len(t.args))
 	for k, v := range t.args {
-		copy[k] = v
+		argsCopy[k] = v
 	}
-	return copy
+	return argsCopy
 }
 
 // Environ implements sdk.ExecutionContext.

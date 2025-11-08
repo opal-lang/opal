@@ -196,7 +196,7 @@ func (rd *Reader) readBody(r io.Reader, plan *Plan, maxDepth int) error {
 }
 
 // readStep reads a single step and its commands recursively
-func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) {
+func (rd *Reader) readStep(r io.Reader, depth, maxDepth int) (*Step, error) {
 	// Check depth limit to prevent stack overflow
 	if depth >= maxDepth {
 		return nil, fmt.Errorf("max recursion depth %d exceeded", maxDepth)
@@ -220,7 +220,7 @@ func (rd *Reader) readStep(r io.Reader, depth int, maxDepth int) (*Step, error) 
 }
 
 // readExecutionNode reads an execution tree node recursively
-func (rd *Reader) readExecutionNode(r io.Reader, depth int, maxDepth int) (ExecutionNode, error) {
+func (rd *Reader) readExecutionNode(r io.Reader, depth, maxDepth int) (ExecutionNode, error) {
 	// Check depth limit
 	if depth >= maxDepth {
 		return nil, fmt.Errorf("max recursion depth %d exceeded", maxDepth)
@@ -317,7 +317,7 @@ func (rd *Reader) readExecutionNode(r io.Reader, depth int, maxDepth int) (Execu
 }
 
 // readCommand reads a single command
-func (rd *Reader) readCommand(r io.Reader, depth int, maxDepth int) (*CommandNode, error) {
+func (rd *Reader) readCommand(r io.Reader, depth, maxDepth int) (*CommandNode, error) {
 	cmd := &CommandNode{}
 
 	// Read decorator length (2 bytes, uint16, little-endian)

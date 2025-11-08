@@ -192,14 +192,22 @@ func TestPrimaryParamHandling(t *testing.T) {
 		t.Fatal("decorator doesn't implement Value")
 	}
 
-	result, err := value.Resolve(ValueEvalContext{}, call)
+	results, err := value.Resolve(ValueEvalContext{}, call)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error != nil {
+		t.Fatalf("result error: %v", results[0].Error)
+	}
+
 	// Mock returns "mock-value" regardless, but primary param was passed
-	if result != "mock-value" {
-		t.Errorf("unexpected result: %v", result)
+	if results[0].Value != "mock-value" {
+		t.Errorf("unexpected result: %v", results[0].Value)
 	}
 }
 
@@ -337,12 +345,26 @@ type mockValueDecorator struct {
 	path string
 }
 
+// Compile-time check that mockValueDecorator implements Value
+var _ Value = (*mockValueDecorator)(nil)
+
+// Compile-time check that mockValueDecorator implements Value
+var _ Value = (*mockValueDecorator)(nil)
+
 func (m *mockValueDecorator) Descriptor() Descriptor {
 	return Descriptor{Path: m.path}
 }
 
-func (m *mockValueDecorator) Resolve(ctx ValueEvalContext, call ValueCall) (any, error) {
-	return "mock-value", nil
+func (m *mockValueDecorator) Resolve(ctx ValueEvalContext, calls ...ValueCall) ([]ResolveResult, error) {
+	results := make([]ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = ResolveResult{
+			Value:  "mock-value",
+			Origin: "mock.value",
+			Error:  nil,
+		}
+	}
+	return results, nil
 }
 
 type mockExecDecorator struct {
@@ -393,8 +415,16 @@ func (m *mockMultiRoleDecorator) Descriptor() Descriptor {
 	return Descriptor{Path: m.path}
 }
 
-func (m *mockMultiRoleDecorator) Resolve(ctx ValueEvalContext, call ValueCall) (any, error) {
-	return map[string]any{"size": 1024}, nil
+func (m *mockMultiRoleDecorator) Resolve(ctx ValueEvalContext, calls ...ValueCall) ([]ResolveResult, error) {
+	results := make([]ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = ResolveResult{
+			Value:  map[string]any{"size": 1024},
+			Origin: "mock.multi",
+			Error:  nil,
+		}
+	}
+	return results, nil
 }
 
 func (m *mockMultiRoleDecorator) Open(ctx ExecContext, mode IOType) (io.ReadWriteCloser, error) {
@@ -416,8 +446,16 @@ func (m *mockScopedValueDecorator) Descriptor() Descriptor {
 	}
 }
 
-func (m *mockScopedValueDecorator) Resolve(ctx ValueEvalContext, call ValueCall) (any, error) {
-	return "scoped-value", nil
+func (m *mockScopedValueDecorator) Resolve(ctx ValueEvalContext, calls ...ValueCall) ([]ResolveResult, error) {
+	results := make([]ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = ResolveResult{
+			Value:  "scoped-value",
+			Origin: "mock.scoped",
+			Error:  nil,
+		}
+	}
+	return results, nil
 }
 
 // TestTransportScopeAllows verifies TransportScope.Allows() logic

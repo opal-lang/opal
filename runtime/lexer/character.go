@@ -62,7 +62,7 @@ func init() {
 
 // isValidASCIIIdentifier checks if a string is a valid ASCII identifier
 func isValidASCIIIdentifier(s string) bool {
-	if len(s) == 0 {
+	if s == "" {
 		return false
 	}
 

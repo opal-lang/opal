@@ -6,6 +6,23 @@ import (
 	"github.com/aledsdavies/opal/core/decorator"
 )
 
+// resolveSingle is a test helper that calls Resolve with a single call and returns the result.
+// It fails the test if there are any errors.
+func resolveSingle(t *testing.T, d decorator.Value, ctx decorator.ValueEvalContext, call decorator.ValueCall) decorator.ResolveResult {
+	t.Helper()
+
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	return results[0]
+}
+
 // TestVarDecoratorDescriptor verifies the decorator metadata
 func TestVarDecoratorDescriptor(t *testing.T) {
 	d := &VarDecorator{}
@@ -66,13 +83,18 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 		Params:  map[string]any{},
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if value != "Alice" {
-		t.Errorf("Value: got %v, want %q", value, "Alice")
+	if result.Value != "Alice" {
+		t.Errorf("Value: got %v, want %q", result.Value, "Alice")
+	}
+
+	if result.Origin != "var.name" {
+		t.Errorf("Origin: got %q, want %q", result.Origin, "var.name")
 	}
 }
 
@@ -93,13 +115,14 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 		Primary: &varName,
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if value != 42 {
-		t.Errorf("Value: got %v, want 42", value)
+	if result.Value != 42 {
+		t.Errorf("Value: got %v, want 42", result.Value)
 	}
 }
 
@@ -120,13 +143,14 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 		Primary: &varName,
 	}
 
-	value, err := d.Resolve(ctx, call)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	result := resolveSingle(t, d, ctx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if value != true {
-		t.Errorf("Value: got %v, want true", value)
+	if result.Value != true {
+		t.Errorf("Value: got %v, want true", result.Value)
 	}
 }
 
@@ -147,14 +171,22 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 		Primary: &varName,
 	}
 
-	_, err := d.Resolve(ctx, call)
-	if err == nil {
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error == nil {
 		t.Fatal("Expected error for missing variable")
 	}
 
 	expectedMsg := `variable "missing" not found`
-	if err.Error() != expectedMsg {
-		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
+	if results[0].Error.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
 }
 
@@ -164,22 +196,32 @@ func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars:    map[string]any{},
+		Vars: map[string]any{
+			"value": "test",
+		},
 	}
 
 	call := decorator.ValueCall{
 		Path:    "var",
-		Primary: nil, // No variable name
+		Primary: nil, // No primary parameter
 	}
 
-	_, err := d.Resolve(ctx, call)
-	if err == nil {
-		t.Fatal("Expected error when no variable name provided")
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error == nil {
+		t.Fatal("Expected error when no primary parameter")
 	}
 
 	expectedMsg := "@var requires a variable name"
-	if err.Error() != expectedMsg {
-		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
+	if results[0].Error.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
 }
 
@@ -201,12 +243,18 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 		Primary: &varName,
 	}
 
-	value, err := d.Resolve(localCtx, call)
-	if err != nil {
-		t.Fatalf("Resolve with LocalSession failed: %v", err)
+	result := resolveSingle(t, d, localCtx, call)
+
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
 	}
-	if value != "local" {
-		t.Errorf("LocalSession value: got %v, want %q", value, "local")
+
+	if result.Value != "local" {
+		t.Errorf("LocalSession value: got %v, want %q", result.Value, "local")
+	}
+
+	if result.Value != "local" {
+		t.Errorf("LocalSession value: got %v, want %q", result.Value, "local")
 	}
 
 	// @var should work the same regardless of transport
@@ -228,8 +276,21 @@ func TestVarDecoratorEmptyVars(t *testing.T) {
 		Primary: &varName,
 	}
 
-	_, err := d.Resolve(ctx, call)
-	if err == nil {
+	results, err := d.Resolve(ctx, call)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Error == nil {
 		t.Fatal("Expected error when vars map is empty")
+	}
+
+	expectedMsg := `variable "anything" not found`
+	if results[0].Error.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
 }

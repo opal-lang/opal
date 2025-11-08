@@ -3,7 +3,7 @@ module github.com/aledsdavies/opal/cli
 go 1.25.0
 
 require (
-	github.com/aledsdavies/opal/core v0.0.0-00010101000000-000000000000
+	github.com/aledsdavies/opal/core v0.0.0-20251105223424-05107dc292f1
 	github.com/aledsdavies/opal/runtime v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
