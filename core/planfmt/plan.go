@@ -26,6 +26,36 @@ import (
 
 // Plan is the in-memory representation of an execution plan.
 // This is the stable contract between planner, executor, and formatters.
+//
+// # Contract Verification Model
+//
+// Plans serve as execution contracts that detect environment drift and tampering:
+//
+// 1. Plan Time: Create plan from source → serialize → hash → store as contract
+// 2. Execution Time: Deserialize contract → re-plan with SAME PlanSalt → compare hashes
+// 3. If hashes match: Environment unchanged, safe to execute
+// 4. If hashes differ: Show diff to user (env vars changed, secrets moved, steps added, etc.)
+//
+// # Why PlanSalt is Critical
+//
+// PlanSalt provides both security and deterministic verification:
+//
+//   - Security: Random salt per contract prevents DisplayID correlation across executions
+//     (attacker can't tell if two runs used same secrets by comparing DisplayIDs in logs)
+//
+//   - Determinism: Contract stores the salt, executor reuses it during re-planning
+//     (same source + same salt → same DisplayIDs → same hash → verification works)
+//
+// Without salt reuse, verification would always fail (random salt → different hash).
+//
+// # What Contract Verification Detects
+//
+// - Environment drift: @env.DATABASE_URL changed from "prod" to "staging"
+// - Secret authorization changes: API_KEY now authorized at different decorator
+// - Source modifications: New steps added, decorators changed
+// - Decorator version changes: @retry behavior updated
+//
+// The full plan is stored in the contract to enable rich diffs showing exactly what changed.
 type Plan struct {
 	Header     PlanHeader
 	Target     string      // Function/command being executed (e.g., "deploy")

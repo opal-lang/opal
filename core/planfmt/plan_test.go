@@ -370,3 +370,165 @@ func TestPlanHash_ChangesWhenSecretUsesChange(t *testing.T) {
 		t.Error("Hash with 0 and 2 SecretUses should differ")
 	}
 }
+
+// TestContractVerification_SaltReuse verifies that contract verification works
+// by reusing the PlanSalt from the stored contract during re-planning.
+//
+// This tests the core contract verification workflow:
+// 1. Plan with random salt → store as contract
+// 2. Re-plan with SAME salt from contract → hashes match
+// 3. Re-plan with DIFFERENT salt → hashes differ (detects drift)
+func TestContractVerification_SaltReuse(t *testing.T) {
+	// GIVEN: A plan with random salt (simulating initial planning)
+	plan1 := planfmt.NewPlan()
+	plan1.Target = "deploy"
+	plan1.Steps = []planfmt.Step{
+		{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				},
+			},
+		},
+	}
+	plan1.SecretUses = []planfmt.SecretUse{
+		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+	}
+	plan1.Freeze()
+	hash1 := plan1.Hash
+	salt1 := plan1.PlanSalt
+
+	// Verify salt is set and non-zero
+	if len(salt1) != 32 {
+		t.Fatalf("Expected PlanSalt to be 32 bytes, got %d", len(salt1))
+	}
+	isZero := true
+	for _, b := range salt1 {
+		if b != 0 {
+			isZero = false
+			break
+		}
+	}
+	if isZero {
+		t.Fatal("Expected PlanSalt to be non-zero (random)")
+	}
+
+	// WHEN: Re-planning with SAME salt (simulating contract verification)
+	plan2 := &planfmt.Plan{
+		Target:   "deploy",
+		Steps:    plan1.Steps,
+		PlanSalt: salt1, // REUSE salt from contract
+	}
+	plan2.SecretUses = []planfmt.SecretUse{
+		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+	}
+	plan2.Freeze()
+	hash2 := plan2.Hash
+
+	// THEN: Hashes should match (same source + same salt → same hash)
+	if hash1 != hash2 {
+		t.Errorf("Contract verification failed: hashes differ with same salt\n  plan1: %s\n  plan2: %s", hash1, hash2)
+	}
+
+	// WHEN: Re-planning with DIFFERENT salt (simulating fresh planning)
+	plan3 := planfmt.NewPlan() // New random salt
+	plan3.Target = "deploy"
+	plan3.Steps = plan1.Steps
+	plan3.SecretUses = []planfmt.SecretUse{
+		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+	}
+	plan3.Freeze()
+	hash3 := plan3.Hash
+
+	// THEN: Hashes should differ (different salt → different hash)
+	if hash1 == hash3 {
+		t.Error("Expected different hashes with different salts (proves salt affects hash)")
+	}
+}
+
+// TestContractVerification_DetectsEnvironmentDrift verifies that contract
+// verification detects when environment variables or secrets change.
+func TestContractVerification_DetectsEnvironmentDrift(t *testing.T) {
+	// GIVEN: Original plan with specific SecretUses
+	plan1 := planfmt.NewPlan()
+	plan1.Target = "deploy"
+	plan1.SecretUses = []planfmt.SecretUse{
+		{DisplayID: "opal:v:DB_URL", SiteID: "site1", Site: "root/shell[0]/params/env"},
+	}
+	plan1.Freeze()
+	hash1 := plan1.Hash
+	salt1 := plan1.PlanSalt
+
+	// WHEN: Re-planning with same salt but DIFFERENT SecretUses (environment changed)
+	plan2 := &planfmt.Plan{
+		Target:   "deploy",
+		PlanSalt: salt1, // Same salt
+	}
+	plan2.SecretUses = []planfmt.SecretUse{
+		{DisplayID: "opal:v:DB_URL", SiteID: "site2", Site: "root/retry[0]/params/env"}, // Different site!
+	}
+	plan2.Freeze()
+	hash2 := plan2.Hash
+
+	// THEN: Hashes should differ (detects secret authorization change)
+	if hash1 == hash2 {
+		t.Error("Contract verification failed to detect SecretUse change")
+	}
+}
+
+// TestContractVerification_DetectsSourceModification verifies that contract
+// verification detects when source code changes (steps added/removed/modified).
+func TestContractVerification_DetectsSourceModification(t *testing.T) {
+	// GIVEN: Original plan with one step
+	plan1 := planfmt.NewPlan()
+	plan1.Target = "deploy"
+	plan1.Steps = []planfmt.Step{
+		{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				},
+			},
+		},
+	}
+	plan1.Freeze()
+	hash1 := plan1.Hash
+	salt1 := plan1.PlanSalt
+
+	// WHEN: Re-planning with same salt but DIFFERENT steps (source modified)
+	plan2 := &planfmt.Plan{
+		Target:   "deploy",
+		PlanSalt: salt1, // Same salt
+	}
+	plan2.Steps = []planfmt.Step{
+		{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+				},
+			},
+		},
+		{
+			ID: 2, // NEW STEP ADDED
+			Tree: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args: []planfmt.Arg{
+					{Key: "cmd", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo world"}},
+				},
+			},
+		},
+	}
+	plan2.Freeze()
+	hash2 := plan2.Hash
+
+	// THEN: Hashes should differ (detects source modification)
+	if hash1 == hash2 {
+		t.Error("Contract verification failed to detect source modification (step added)")
+	}
+}

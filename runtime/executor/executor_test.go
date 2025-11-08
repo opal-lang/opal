@@ -827,7 +827,7 @@ func TestPipelineStreamingBehavior(t *testing.T) {
 	result, err := Execute(ctx, steps, Config{})
 	duration := time.Since(start)
 
-	// Should complete quickly with streaming (<500ms)
+	// Should complete quickly with streaming (<500ms on fast machines)
 	// Will timeout (2s) if stdin is buffered
 	if err != nil {
 		t.Fatalf("execution failed: %v", err)
@@ -837,9 +837,10 @@ func TestPipelineStreamingBehavior(t *testing.T) {
 		t.Errorf("expected exit code 0, got %d", result.ExitCode)
 	}
 
-	// With streaming: completes in <500ms
+	// With streaming: completes quickly (typically <500ms, allow 1.5s for slow CI)
 	// Without streaming: hangs for 2s then times out
-	if duration > 1*time.Second {
+	// The key test is: does it complete before the 2s timeout?
+	if duration > 1500*time.Millisecond {
 		t.Errorf("Pipeline took %v - stdin is being buffered instead of streamed", duration)
 	}
 

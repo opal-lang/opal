@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2025-11-08
+- Added site-based secret authority (SecretUse tracks authorized use-sites per secret)
+- Plan.Freeze() prevents mutations after hash computation for tamper detection
+- Plan hash changed from JSON encoding to deterministic binary serialization (BLAKE2b-256)
+- Contract verification model documented (salt reuse enables drift detection)
+- Shell commands now support decorator interpolation (e.g., `echo @var.HOME`)
+- Parser now emits NodeDecorator events for variable references in command strings
+- Planner now creates placeholders for decorator values in shell command arguments
+
 ### 2025-11-03
 - Added object and array literal support with compile-time validation
 - Added schema validation for decorator parameters (int range, enum, object, array)
