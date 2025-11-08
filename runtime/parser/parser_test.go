@@ -516,8 +516,21 @@ func TestRedirectOperatorValidation(t *testing.T) {
 		expectedError *ParseError
 	}{
 		{
-			name:  "redirect to decorator without redirect support",
+			name:  "redirect to decorator without block - syntax error first",
 			input: `echo "test" > @timeout(5s)`,
+			expectedError: &ParseError{
+				Position:   lexer.Position{Line: 1, Column: 27, Offset: 26},
+				Message:    "@timeout requires a block",
+				Context:    "decorator block",
+				Got:        lexer.EOF,
+				Suggestion: "Add a block: @timeout(...) { ... }",
+				Example:    "",
+				Note:       "",
+			},
+		},
+		{
+			name:  "redirect to decorator with block but no redirect support",
+			input: `echo "test" > @timeout(5s) { echo "inner" }`,
 			expectedError: &ParseError{
 				Position:   lexer.Position{Line: 1, Column: 13, Offset: 12},
 				Message:    "@timeout does not support redirection",

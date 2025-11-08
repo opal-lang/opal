@@ -54,6 +54,7 @@ func FuzzReadPlan(f *testing.F) {
 
 // addSeedCorpus adds valid plans to the fuzz corpus
 func addSeedCorpus(f *testing.F) {
+	f.Helper()
 	seeds := []struct {
 		name string
 		plan *planfmt.Plan

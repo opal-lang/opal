@@ -216,6 +216,75 @@ func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
 		}
 	}
 
+	// Write PlanSalt (32 bytes, fixed size, or all zeros if not set)
+	var salt [32]byte
+	if len(p.PlanSalt) == 32 {
+		copy(salt[:], p.PlanSalt)
+	} else if len(p.PlanSalt) != 0 {
+		return fmt.Errorf("PlanSalt must be 32 bytes or empty, got %d", len(p.PlanSalt))
+	}
+	// Write 32 bytes (zeros if PlanSalt not set, for backward compatibility)
+	if _, err := buf.Write(salt[:]); err != nil {
+		return err
+	}
+
+	// Write SecretUses count (2 bytes, uint16)
+	if err := validateUint16(len(p.SecretUses), "secret uses count"); err != nil {
+		return err
+	}
+	secretUsesCount := uint16(len(p.SecretUses))
+	if err := binary.Write(buf, binary.LittleEndian, secretUsesCount); err != nil {
+		return err
+	}
+
+	// Write each SecretUse
+	for i := range p.SecretUses {
+		if err := wr.writeSecretUse(buf, &p.SecretUses[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeSecretUse writes a single SecretUse entry
+func (wr *Writer) writeSecretUse(buf *bytes.Buffer, use *SecretUse) error {
+	// Write DisplayID (2-byte length + string)
+	if err := validateUint16(len(use.DisplayID), "DisplayID length"); err != nil {
+		return err
+	}
+	displayIDLen := uint16(len(use.DisplayID))
+	if err := binary.Write(buf, binary.LittleEndian, displayIDLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(use.DisplayID); err != nil {
+		return err
+	}
+
+	// Write SiteID (2-byte length + string)
+	if err := validateUint16(len(use.SiteID), "SiteID length"); err != nil {
+		return err
+	}
+	siteIDLen := uint16(len(use.SiteID))
+	if err := binary.Write(buf, binary.LittleEndian, siteIDLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(use.SiteID); err != nil {
+		return err
+	}
+
+	// Write Site (2-byte length + string)
+	if err := validateUint16(len(use.Site), "Site length"); err != nil {
+		return err
+	}
+	siteLen := uint16(len(use.Site))
+	if err := binary.Write(buf, binary.LittleEndian, siteLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(use.Site); err != nil {
+		return err
+	}
+
 	return nil
 }
 

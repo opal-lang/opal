@@ -60,6 +60,7 @@ linters:
         - (*io.Closer).Close
         - (net/http.(*Response)).Body.Close
         - (fmt.*).Print*
+        - (hash.Hash).Write  # hash.Hash.Write never returns an error
     revive:
       # Keep this small; add rules as the team agrees
       rules:

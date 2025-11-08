@@ -2,8 +2,12 @@ package planfmt
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sort"
+
+	"github.com/aledsdavies/opal/core/invariant"
 )
 
 // Format limits (enforced by wire types):
@@ -23,10 +27,14 @@ import (
 // Plan is the in-memory representation of an execution plan.
 // This is the stable contract between planner, executor, and formatters.
 type Plan struct {
-	Header  PlanHeader
-	Target  string   // Function/command being executed (e.g., "deploy")
-	Steps   []Step   // List of steps (newline-separated statements)
-	Secrets []Secret // Secrets to scrub from output (value decorators)
+	Header     PlanHeader
+	Target     string      // Function/command being executed (e.g., "deploy")
+	Steps      []Step      // List of steps (newline-separated statements)
+	Secrets    []Secret    // Secrets to scrub from output (value decorators)
+	SecretUses []SecretUse // Authorization list (DisplayID → SiteID mappings)
+	PlanSalt   []byte      // Per-plan random salt (32 bytes, for DisplayID derivation)
+	Hash       string      // Plan integrity hash (includes SecretUses, computed on Freeze)
+	frozen     bool        // Immutability flag (prevents mutations after Freeze)
 }
 
 // Secret represents a resolved value that must be scrubbed from output.
@@ -40,6 +48,15 @@ type Secret struct {
 	Key          string // Variable name (e.g., "db_password", "HOME", "commit_hash")
 	RuntimeValue string // Actual resolved value (runtime only, never serialized)
 	DisplayID    string // Opaque ID for display: opal:secret:3J98t56A
+}
+
+// SecretUse records an authorized use-site for a secret.
+// Each SecretUse grants permission for one decorator parameter to unwrap one secret.
+// Site-based authority: secrets accessible ONLY at declared sites, no propagation.
+type SecretUse struct {
+	DisplayID string // Secret identifier (e.g., "opal:v:3J98t56A")
+	SiteID    string // Canonical site ID (HMAC-based, unforgeable)
+	Site      string // Human-readable path (e.g., "root/retry[0]/params/apiKey")
 }
 
 // PlanHeader contains metadata about the plan.
@@ -257,4 +274,46 @@ func (p *Plan) Digest() (string, error) {
 	}
 
 	return fmt.Sprintf("blake2b:%x", hash), nil
+}
+
+// NewPlan creates a new Plan with a random PlanSalt.
+// The salt is used for deterministic DisplayID generation within this plan.
+func NewPlan() *Plan {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		panic(fmt.Sprintf("failed to generate plan salt: %v", err))
+	}
+	return &Plan{
+		PlanSalt: salt,
+	}
+}
+
+// AddSecretUse adds a SecretUse to the plan's authorization list.
+// Returns error if plan is frozen (immutable after Freeze()).
+func (p *Plan) AddSecretUse(use SecretUse) error {
+	if p.frozen {
+		return fmt.Errorf("cannot modify frozen plan")
+	}
+	p.SecretUses = append(p.SecretUses, use)
+	return nil
+}
+
+// Freeze computes the plan hash and marks the plan as immutable.
+// After freezing, AddSecretUse will return an error.
+// The hash includes all security-relevant data to prevent tampering.
+func (p *Plan) Freeze() {
+	p.Hash = p.ComputeHash()
+	p.frozen = true
+}
+
+// ComputeHash computes BLAKE2b-256 hash of the complete serialized plan.
+// Uses binary serialization (via Write) for deterministic encoding across Go versions.
+// Includes all security-relevant fields: Target, Steps, Secrets, SecretUses, PlanSalt, Header.
+func (p *Plan) ComputeHash() string {
+	var buf bytes.Buffer
+	hash, err := Write(&buf, p)
+	invariant.ExpectNoError(err, "plan serialization failed (bytes.Buffer never fails)")
+
+	// Write returns BLAKE2b-256 hash as [32]byte, convert to hex string
+	return hex.EncodeToString(hash[:])
 }

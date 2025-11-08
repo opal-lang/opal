@@ -6,6 +6,7 @@ import (
 
 	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestTreeRoundTrip(t *testing.T) {
@@ -212,8 +213,9 @@ func TestTreeRoundTrip(t *testing.T) {
 				t.Errorf("bytes mismatch (not lossless)\n  first:  %d bytes\n  second: %d bytes", len(bytes1), len(bytes2))
 			}
 
-			// Structure must match (deep equality)
-			if diff := cmp.Diff(tt.plan, plan2); diff != "" {
+			// Structure must match (deep equality, ignore unexported fields)
+			opts := cmpopts.IgnoreUnexported(planfmt.Plan{}, planfmt.PlanHeader{})
+			if diff := cmp.Diff(tt.plan, plan2, opts); diff != "" {
 				t.Errorf("plan mismatch (-want +got):\n%s", diff)
 			}
 

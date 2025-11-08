@@ -214,7 +214,7 @@ func TestRoundTripPreservesSemantics(t *testing.T) {
 	}
 
 	// Compare semantics (use cmp for deep equality, ignore unexported fields)
-	opts := cmpopts.IgnoreUnexported(planfmt.PlanHeader{})
+	opts := cmpopts.IgnoreUnexported(planfmt.PlanHeader{}, planfmt.Plan{})
 	if diff := cmp.Diff(original, decoded, opts); diff != "" {
 		t.Errorf("Semantic mismatch after round-trip (-original +decoded):\n%s", diff)
 	}

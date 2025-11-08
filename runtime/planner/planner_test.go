@@ -1049,3 +1049,90 @@ func TestVarDeclWithStructuredValues(t *testing.T) {
 		})
 	}
 }
+
+// TestBareVariableInterpolation tests that bare @var.HOME gets replaced with a placeholder
+func TestBareVariableInterpolation(t *testing.T) {
+	source := []byte(`
+var HOME = "/home/alice"
+echo @var.HOME
+`)
+
+	// Parse
+	tree := parser.Parse(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Plan
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Target: "",
+	})
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	// ASSERT: Plan has one secret (HOME variable)
+	if len(plan.Secrets) != 1 {
+		t.Fatalf("Expected 1 secret, got %d", len(plan.Secrets))
+	}
+
+	secret := plan.Secrets[0]
+
+	// ASSERT: Secret has correct key
+	if secret.Key != "HOME" {
+		t.Errorf("Expected key=HOME, got %s", secret.Key)
+	}
+
+	// ASSERT: Secret has runtime value
+	if secret.RuntimeValue != "/home/alice" {
+		t.Errorf("Expected runtime value=/home/alice, got %s", secret.RuntimeValue)
+	}
+
+	// ASSERT: Secret has placeholder ID with correct prefix
+	if !strings.HasPrefix(secret.DisplayID, "opal:v:") {
+		t.Errorf("Expected DisplayID prefix opal:v:, got %s", secret.DisplayID)
+	}
+
+	// ASSERT: Step uses placeholder, not raw value
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	step := plan.Steps[0]
+	if step.Tree == nil {
+		t.Fatal("Step.Tree is nil")
+	}
+
+	// Find the @shell decorator's command argument
+	shellNode, ok := step.Tree.(*planfmt.CommandNode)
+	if !ok {
+		t.Fatalf("Expected CommandNode, got %T", step.Tree)
+	}
+
+	if shellNode.Decorator != "@shell" {
+		t.Errorf("Expected @shell decorator, got %s", shellNode.Decorator)
+	}
+
+	// Find command argument
+	var commandArg *planfmt.Arg
+	for i := range shellNode.Args {
+		if shellNode.Args[i].Key == "command" {
+			commandArg = &shellNode.Args[i]
+			break
+		}
+	}
+
+	if commandArg == nil {
+		t.Fatal("No 'command' argument found")
+	}
+
+	// ASSERT: Command uses placeholder reference
+	if commandArg.Val.Kind != planfmt.ValuePlaceholder {
+		t.Errorf("Expected ValuePlaceholder, got %v", commandArg.Val.Kind)
+	}
+
+	// ASSERT: Placeholder ref points to first secret
+	if commandArg.Val.Ref != 0 {
+		t.Errorf("Expected Ref=0 (first secret), got %d", commandArg.Val.Ref)
+	}
+}

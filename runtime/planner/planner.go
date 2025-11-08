@@ -22,6 +22,7 @@
 package planner
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
 	"time"
@@ -160,6 +161,16 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		debugEvents = make([]DebugEvent, 0, 100)
 	}
 
+	// Initialize ID factory for deterministic placeholder generation
+	idFactory := config.IDFactory
+	if idFactory == nil {
+		// Default: use plan mode with random 32-byte key
+		key := make([]byte, 32)
+		_, err := rand.Read(key)
+		invariant.ExpectNoError(err, "failed to generate IDFactory key")
+		idFactory = secret.NewIDFactory(secret.ModePlan, key)
+	}
+
 	p := &planner{
 		events:      events,
 		tokens:      tokens,
@@ -168,6 +179,8 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		stepID:      1,
 		scopes:      NewScopeGraph("local"),      // Hierarchical variable scoping
 		session:     decorator.NewLocalSession(), // Session for decorator resolution
+		secrets:     []planfmt.Secret{},          // Accumulated secrets
+		idFactory:   idFactory,                   // For placeholder generation
 		telemetry:   telemetry,
 		debugEvents: debugEvents,
 	}
@@ -204,6 +217,10 @@ type planner struct {
 	// Variable scoping with transport boundary guards
 	scopes  *ScopeGraph       // Hierarchical variable scoping
 	session decorator.Session // Session for decorator resolution (LocalSession by default)
+
+	// Secret tracking for variable interpolation
+	secrets   []planfmt.Secret // Accumulated secrets from decorators
+	idFactory secret.IDFactory // For generating deterministic placeholder IDs
 
 	// Observability
 	telemetry   *PlanTelemetry
@@ -272,12 +289,15 @@ func (p *planner) plan() (*planfmt.Plan, error) {
 		plan.Steps = steps
 	}
 
+	// Add accumulated secrets to plan
+	plan.Secrets = p.secrets
+
 	// POSTCONDITION: plan must be valid
 	err := plan.Validate()
 	invariant.ExpectNoError(err, "plan validation")
 
 	if p.config.Debug >= DebugPaths {
-		p.recordDebugEvent("exit_plan", fmt.Sprintf("steps=%d", len(plan.Steps)))
+		p.recordDebugEvent("exit_plan", fmt.Sprintf("steps=%d secrets=%d", len(plan.Steps), len(plan.Secrets)))
 	}
 
 	return plan, nil
@@ -623,7 +643,9 @@ func (p *planner) planCommand() (Command, error) {
 	p.pos++ // Move past OPEN ShellCommand
 
 	// Collect all token indices in the shell command
+	// Also detect NodeDecorator for variable interpolation
 	var tokenIndices []uint32
+	var hasDecorator bool
 	depth := 1
 
 	for p.pos < len(p.events) && depth > 0 {
@@ -631,6 +653,10 @@ func (p *planner) planCommand() (Command, error) {
 
 		if evt.Kind == parser.EventOpen {
 			depth++
+			// Check if this is a NodeDecorator (variable interpolation)
+			if parser.NodeKind(evt.Data) == parser.NodeDecorator {
+				hasDecorator = true
+			}
 		} else if evt.Kind == parser.EventClose {
 			depth--
 			if depth == 0 {
@@ -662,6 +688,30 @@ func (p *planner) planCommand() (Command, error) {
 
 	// POSTCONDITION: command must not be empty
 	invariant.Postcondition(command != "", "shell command must not be empty")
+
+	// If command contains decorators (@var.X), resolve them and create placeholders
+	var commandValue planfmt.Value
+	if hasDecorator {
+		// For MVP: entire command with decorator becomes a placeholder
+		// TODO: Support multiple decorators in one command
+		// TODO: Preserve literal text around decorators (e.g., "echo @var.HOME" should keep "echo")
+		//       Currently drops literal text - functional regression for mixed commands
+		//       Need to store command template with placeholder markers, not just secret value
+		resolvedValue, secretIndex, err := p.resolveCommandDecorator(command)
+		if err != nil {
+			return Command{}, err
+		}
+		_ = resolvedValue // Will use this for runtime expansion
+		commandValue = planfmt.Value{
+			Kind: planfmt.ValuePlaceholder,
+			Ref:  uint32(secretIndex),
+		}
+	} else {
+		commandValue = planfmt.Value{
+			Kind: planfmt.ValueString,
+			Str:  command,
+		}
+	}
 
 	// Check for redirect operator after this command (> or >>)
 	var redirectTarget *Command
@@ -799,10 +849,7 @@ func (p *planner) planCommand() (Command, error) {
 		Args: []planfmt.Arg{
 			{
 				Key: "command",
-				Val: planfmt.Value{
-					Kind: planfmt.ValueString,
-					Str:  command,
-				},
+				Val: commandValue,
 			},
 		},
 		Operator:       operator,
@@ -818,6 +865,86 @@ func (p *planner) planCommand() (Command, error) {
 	invariant.Postcondition(p.pos > startPos, "position must advance in planCommand")
 
 	return cmd, nil
+}
+
+// resolveCommandDecorator resolves a decorator in a shell command and creates a placeholder
+// Returns: (resolved value, secret index, error)
+func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
+	// Extract decorator name and property from command string
+	// For now, assume simple @var.NAME pattern
+	// TODO: Support more complex patterns and multiple decorators
+
+	// Parse @var.NAME from command string
+	// Example: "echo @var.HOME" or "@var.HOME"
+	decoratorStart := strings.Index(command, "@var.")
+	if decoratorStart == -1 {
+		return "", 0, &PlanError{
+			Message: "decorator not found in command",
+			Context: "resolving command decorator",
+		}
+	}
+
+	// Extract variable name after @var.
+	varStart := decoratorStart + 5 // len("@var.")
+	varEnd := varStart
+	for varEnd < len(command) && (isAlphaNumeric(command[varEnd]) || command[varEnd] == '_') {
+		varEnd++
+	}
+
+	if varEnd == varStart {
+		return "", 0, &PlanError{
+			Message: "invalid variable name in decorator",
+			Context: "resolving command decorator",
+		}
+	}
+
+	varName := command[varStart:varEnd]
+
+	// Resolve variable from scope graph
+	value, _, err := p.scopes.Resolve(varName)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// Convert value to string
+	var strValue string
+	switch v := value.(type) {
+	case string:
+		strValue = v
+	case int, int64:
+		strValue = fmt.Sprintf("%d", v)
+	case bool:
+		strValue = fmt.Sprintf("%t", v)
+	default:
+		strValue = fmt.Sprintf("%v", v)
+	}
+
+	// Create secret handle and placeholder
+	// Use IDFactory for deterministic IDs in plan mode
+	ctx := secret.IDContext{
+		PlanHash:  []byte("plan-hash"), // TODO: Use actual plan hash
+		StepPath:  fmt.Sprintf("step-%d", p.stepID),
+		Decorator: "var",
+		KeyName:   varName,
+		Kind:      "v", // v = variable
+	}
+
+	handle := secret.NewHandleWithFactory(strValue, p.idFactory, ctx)
+
+	// Store in secrets (will be added to plan later)
+	secretIndex := len(p.secrets)
+	p.secrets = append(p.secrets, planfmt.Secret{
+		Key:          varName,
+		RuntimeValue: strValue,
+		DisplayID:    handle.ID(),
+	})
+
+	return strValue, secretIndex, nil
+}
+
+// isAlphaNumeric checks if a byte is alphanumeric
+func isAlphaNumeric(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
 }
 
 // getTokenText returns the string representation of a token.

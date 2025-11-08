@@ -1340,6 +1340,9 @@ func (p *parser) shellArg() {
 	if p.at(lexer.STRING) && p.stringNeedsInterpolation() {
 		// Parse string with interpolation
 		p.stringLiteral()
+	} else if p.at(lexer.AT) {
+		// Decorator: @var.HOME, @env.PATH, etc.
+		p.decorator()
 	} else {
 		// Consume first token (guaranteed to exist due to precondition)
 		if p.config.debug >= DebugDetailed {

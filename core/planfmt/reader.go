@@ -192,7 +192,82 @@ func (rd *Reader) readBody(r io.Reader, plan *Plan, maxDepth int) error {
 		}
 	}
 
+	// Read PlanSalt (32 bytes, fixed size)
+	saltBytes := make([]byte, 32)
+	if _, err := io.ReadFull(r, saltBytes); err != nil {
+		return fmt.Errorf("read plan salt: %w", err)
+	}
+	// Only set PlanSalt if non-zero (backward compatibility)
+	isZero := true
+	for _, b := range saltBytes {
+		if b != 0 {
+			isZero = false
+			break
+		}
+	}
+	if !isZero {
+		plan.PlanSalt = saltBytes
+	}
+
+	// Read SecretUses count (2 bytes, uint16)
+	var secretUsesCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &secretUsesCount); err != nil {
+		return fmt.Errorf("read secret uses count: %w", err)
+	}
+
+	// Read each SecretUse
+	if secretUsesCount > 0 {
+		plan.SecretUses = make([]SecretUse, secretUsesCount)
+		for i := 0; i < int(secretUsesCount); i++ {
+			use, err := rd.readSecretUse(r)
+			if err != nil {
+				return fmt.Errorf("read secret use %d: %w", i, err)
+			}
+			plan.SecretUses[i] = *use
+		}
+	}
+
 	return nil
+}
+
+// readSecretUse reads a single SecretUse entry
+func (rd *Reader) readSecretUse(r io.Reader) (*SecretUse, error) {
+	use := &SecretUse{}
+
+	// Read DisplayID (2-byte length + string)
+	var displayIDLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &displayIDLen); err != nil {
+		return nil, fmt.Errorf("read DisplayID length: %w", err)
+	}
+	displayIDBytes := make([]byte, displayIDLen)
+	if _, err := io.ReadFull(r, displayIDBytes); err != nil {
+		return nil, fmt.Errorf("read DisplayID: %w", err)
+	}
+	use.DisplayID = string(displayIDBytes)
+
+	// Read SiteID (2-byte length + string)
+	var siteIDLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &siteIDLen); err != nil {
+		return nil, fmt.Errorf("read SiteID length: %w", err)
+	}
+	siteIDBytes := make([]byte, siteIDLen)
+	if _, err := io.ReadFull(r, siteIDBytes); err != nil {
+		return nil, fmt.Errorf("read SiteID: %w", err)
+	}
+	use.SiteID = string(siteIDBytes)
+
+	// Read Site (2-byte length + string)
+	var siteLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &siteLen); err != nil {
+		return nil, fmt.Errorf("read Site length: %w", err)
+	}
+	siteBytes := make([]byte, siteLen)
+	if _, err := io.ReadFull(r, siteBytes); err != nil {
+		return nil, fmt.Errorf("read Site: %w", err)
+	}
+	use.Site = string(siteBytes)
+
+	return use, nil
 }
 
 // readStep reads a single step and its commands recursively

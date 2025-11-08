@@ -2351,28 +2351,504 @@ Opal provides a secure-by-default SDK in `core/sdk/` for building decorators:
 
 ### Secret Handling (`core/sdk/secret`)
 
-All value decorators return `secret.Handle` for automatic scrubbing:
+**Core Principle:** Runtime controls all secret access through site-based authority. Secrets flow as opaque handles through planning, only unwrapped at authorized execution sites.
 
-```go
-import "github.com/aledsdavies/opal/core/sdk/secret"
+#### Security Model: Site-Based Authority
 
-func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error) {
-    secretName := ctx.ArgString("secretName")
-    value := fetchFromAWS(secretName)
-    return secret.NewHandle(value), nil
+Secrets are accessible **only at their use-site**. No propagation to parent/child decorators.
+
+```opal
+var API_KEY = "sk-..."
+
+@retry(apiKey=@var.API_KEY) {  # ✅ @retry can unwrap (authorized site)
+    @timeout {                  # ❌ @timeout CANNOT unwrap (different site)
+        @shell { ... }          # ❌ @shell CANNOT unwrap (different site)
+    }
 }
 ```
 
-**Safe operations:**
+**Three-piece model:**
+1. **Plan records use-sites** - `Plan.SecretUses[]` tracks DisplayID + AST path
+2. **Runtime checks authority** - Executor verifies site before unwrap
+3. **Unwrap fails if unauthorized** - Simple lookup, no complex leases
+
+#### Decorator Parameter Classes
+
+Decorators declare what parameters can accept via `ParamClass`:
+
+```go
+type ParamClass uint8
+
+const (
+    // Plain data/config. Must never receive a secret.
+    ParamData ParamClass = iota
+    
+    // May receive a SecretRef (DisplayID/handle proxy) but cannot unwrap.
+    ParamSecretRef
+    
+    // May receive a SecretRef and is allowed to unwrap it at the declared site.
+    // Planner will emit a SecretUse(siteID, displayID) for this param.
+    ParamSecretConsumer
+)
+
+type ParamSpec struct {
+    Class       ParamClass
+    Optional    bool
+    Description string
+}
+
+type DecoratorSpec struct {
+    Name   string
+    Params map[string]ParamSpec
+    MayConsumeSecrets bool  // If false, all consumer params downgraded to SecretRef
+}
+```
+
+**Example specs:**
+```go
+var RetrySpec = DecoratorSpec{
+    Name: "retry",
+    Params: map[string]ParamSpec{
+        "times":  {Class: ParamData},              // @retry(times=@var.retryCount) ✓
+        "apiKey": {Class: ParamSecretConsumer, Optional: true}, // here-only unwrap
+    },
+    MayConsumeSecrets: true,
+}
+
+var ShellSpec = DecoratorSpec{
+    Name: "shell",
+    Params: map[string]ParamSpec{
+        "cmd":         {Class: ParamData},
+        "stdinSecret": {Class: ParamSecretConsumer, Optional: true}, // unwrap via FD only
+    },
+    MayConsumeSecrets: true,
+}
+```
+
+**Plan-time validation:**
+- Passing secret into `ParamData` → **plan-time error**
+- Passing raw secret into `ParamSecretRef`/`ParamSecretConsumer` → **plan-time error** (must be SecretRef)
+- `ParamSecretConsumer` records use-site for executor authorization
+
+#### Secret Transport: FD/Stdin Only (Never Env/Argv)
+
+**⚠️ CRITICAL SECURITY REQUIREMENT**
+
+Secrets MUST be delivered via **file descriptors or stdin**, NEVER via environment variables or command-line arguments.
+
+**Why env/argv are forbidden:**
+- Visible in `/proc/PID/environ` and `/proc/PID/cmdline`
+- Leaked in process tables (`ps aux`, `top`)
+- Exposed in core dumps and crash logs
+- Inherited by child processes
+- Visible to monitoring tools
+
+**Approved transport mechanisms:**
+
+```go
+// ✅ GOOD: Stdin delivery
+cmd := exec.Command("sh", "-c", "read SECRET; echo $SECRET")
+cmd.Stdin = strings.NewReader(secretValue)
+
+// ✅ GOOD: Anonymous FD (Linux)
+r, w := os.Pipe()
+w.WriteString(secretValue)
+w.Close()
+cmd.ExtraFiles = []*os.File{r}  // FD 3
+cmd := exec.Command("sh", "-c", "read SECRET <&3; echo $SECRET")
+
+// ✅ GOOD: Memfd (Linux 3.17+)
+fd, _ := unix.MemfdCreate("secret", 0)
+unix.Write(fd, []byte(secretValue))
+unix.Lseek(fd, 0, 0)
+cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(fd), "secret")}
+
+// ❌ FORBIDDEN: Environment variables
+cmd.Env = append(os.Environ(), "SECRET="+secretValue)  // NEVER DO THIS
+
+// ❌ FORBIDDEN: Command-line arguments
+cmd := exec.Command("app", "--secret", secretValue)  // NEVER DO THIS
+```
+
+**Decorator SDK enforcement:**
+
+```go
+// executor.Command() enforces FD/stdin delivery
+func (e *Executor) DeliverSecret(cmd *exec.Cmd, secret string) error {
+    // Only stdin or FD delivery allowed
+    // Panics if attempted via env or argv
+}
+```
+
+#### Plan-Time: Recording Use-Sites
+
+```go
+// Plan tracks where secrets are used with canonical site IDs
+type SecretUse struct {
+    DisplayID string  // "opal:v:3J98t56A"
+    SiteID    string  // HMAC(planHash, canonicalPath) - unforgeable
+    Site      string  // "root/retry[0]/params/apiKey" (human-readable diagnostic)
+}
+
+// Planner records each use with canonical site ID
+func (p *Planner) recordSecretUse(displayID, stepID, paramName string) {
+    canonicalPath := fmt.Sprintf("%s/params/%s", stepID, paramName)
+    siteID := p.computeSiteID(canonicalPath)  // HMAC-based, unforgeable
+    
+    p.plan.SecretUses = append(p.plan.SecretUses, SecretUse{
+        DisplayID: displayID,
+        SiteID:    siteID,
+        Site:      canonicalPath,  // For debugging only
+    })
+}
+
+// Canonical site ID prevents forgery and refactor brittleness
+func (p *Planner) computeSiteID(canonicalPath string) string {
+    h := hmac.New(sha256.New, p.planKey)
+    h.Write([]byte(canonicalPath))
+    return base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:16])
+}
+```
+
+**Why canonical site IDs:**
+- String comparison is spoofable and brittle across refactors
+- HMAC-based IDs are unforgeable (require plan key)
+- Executor compares `SiteID` only, `Site` is diagnostic
+- Prevents decorator forgery attacks
+
+#### Execution-Time: Authority Checks
+
+```go
+type ExecutionFrame struct {
+    SiteID    string  // Canonical site ID (HMAC-based, immutable)
+    Site      string  // Human-readable path (diagnostic only)
+    StepID    string
+    Decorator string
+    ParamPath string
+}
+
+// Executor controls site (decorator cannot forge)
+func (e *Executor) EnterFrame(stepID, decorator, paramPath string) *ExecutionFrame {
+    canonicalPath := fmt.Sprintf("%s/%s/params/%s", stepID, decorator, paramPath)
+    return &ExecutionFrame{
+        SiteID:    e.computeSiteID(canonicalPath),  // Unforgeable
+        Site:      canonicalPath,
+        StepID:    stepID,
+        Decorator: decorator,
+        ParamPath: paramPath,
+    }
+}
+
+// Build index for O(1) authority checks
+type SecretAuthority struct {
+    index map[string]map[string]bool  // DisplayID → set[SiteID]
+}
+
+func (e *Executor) buildAuthorityIndex() *SecretAuthority {
+    index := make(map[string]map[string]bool)
+    for _, use := range e.plan.SecretUses {
+        if index[use.DisplayID] == nil {
+            index[use.DisplayID] = make(map[string]bool)
+        }
+        index[use.DisplayID][use.SiteID] = true
+    }
+    return &SecretAuthority{index: index}
+}
+
+// Unwrap checks frame site (O(1) lookup)
+func (e *Executor) unwrap(displayID string, frame *ExecutionFrame) (string, error) {
+    // O(1) authority check via index
+    if !e.authority.index[displayID][frame.SiteID] {
+        // Audit failed attempt
+        e.auditLog(AuditEvent{
+            Timestamp: time.Now(),
+            DisplayID: displayID,
+            SiteID:    frame.SiteID,
+            Site:      frame.Site,
+            Decorator: frame.Decorator,
+            Success:   false,
+        })
+        return "", fmt.Errorf("no authority to unwrap %s at %s", displayID, frame.Site)
+    }
+    
+    handle := e.secretVault[displayID]
+    value := handle.UnsafeUnwrap(e.capability)
+    
+    // Audit successful unwrap
+    e.auditLog(AuditEvent{
+        Timestamp: time.Now(),
+        DisplayID: displayID,
+        SiteID:    frame.SiteID,
+        Site:      frame.Site,
+        Decorator: frame.Decorator,
+        ParamPath: frame.ParamPath,
+        Success:   true,
+    })
+    
+    return value, nil
+}
+```
+
+**Audit logging (OpenTelemetry span events):**
+
+Secret unwrap events are emitted as OpenTelemetry span events with standardized attributes:
+
+```go
+// Emit as span event (conforms to existing opal.* attribute convention)
+span.AddEvent("secret.unwrap", trace.WithAttributes(
+    attribute.String("opal.secret.display_id", displayID),
+    attribute.String("opal.secret.site_id", frame.SiteID),
+    attribute.String("opal.secret.site", frame.Site),
+    attribute.String("opal.decorator", frame.Decorator),
+    attribute.String("opal.param", frame.ParamPath),
+    attribute.Bool("opal.secret.success", true),
+))
+
+// Failed unwrap attempts also logged
+span.AddEvent("secret.unwrap.denied", trace.WithAttributes(
+    attribute.String("opal.secret.display_id", displayID),
+    attribute.String("opal.secret.site_id", frame.SiteID),
+    attribute.String("opal.secret.site", frame.Site),
+    attribute.String("opal.decorator", frame.Decorator),
+    attribute.String("opal.param", frame.ParamPath),
+    attribute.String("error", "no authority at site"),
+))
+```
+
+**Attributes follow existing `opal.*` convention:**
+- `opal.env`, `opal.target`, `opal.step_path` - Existing run context
+- `opal.secret.display_id` - Which secret (DisplayID, never raw value)
+- `opal.secret.site_id` - Canonical site ID (unforgeable)
+- `opal.secret.site` - Human-readable path (diagnostic)
+- `opal.decorator` - Which decorator requested unwrap
+- `opal.param` - Which parameter
+- `opal.secret.success` - Unwrap succeeded or denied
+
+**Security properties:**
+- Raw secret values NEVER logged
+- DisplayIDs are opaque, safe to export
+- Audit trail shows access patterns without exposing data
+- Integrates with existing OpenTelemetry infrastructure
+
+#### Variable Classification
+
+Variables have different security levels:
+
+```go
+type VarClass int
+
+const (
+    VarClassData   VarClass = iota  // Public (no protection)
+    VarClassConfig                  // Semi-public (no protection, but tracked)
+    VarClassSecret                  // Protected (requires site authority)
+)
+```
+
+**Examples:**
+```opal
+var NAME = "alice"          # VarClassData - no protection
+var RETRIES = 3             # VarClassConfig - tracked but not protected
+var API_KEY = "sk-..."      # VarClassSecret - requires authority to unwrap
+```
+
+#### Transport Boundary Enforcement
+
+Secrets respect scope boundaries and cannot leak across transports:
+
+```go
+type VarTaint int
+
+const (
+    VarTaintAgnostic         VarTaint = iota  // Can cross any boundary
+    VarTaintLocalOnly                         // Cannot leave local scope
+    VarTaintBoundaryImported                  // Crossed via explicit import
+)
+```
+
+**Boundary enforcement:**
+```opal
+var LOCAL_SECRET = "secret123"
+
+# ❌ ERROR: Implicit cross-boundary use
+@ssh(host="remote") {
+    echo @var.LOCAL_SECRET
+}
+
+# ✅ OK: Explicit import via env
+@ssh(host="remote", env={SECRET: @var.LOCAL_SECRET}) {
+    # Inside SSH scope, capture as variable
+    var SECRET = @env.SECRET
+    
+    @docker(container="app", env={SECRET: @var.SECRET}) {
+        echo @var.SECRET  # ✅ OK - explicitly imported at each boundary
+    }
+}
+```
+
+**Plan-time validation:**
+```go
+func (p *Planner) checkTransportBoundary(varEntry VarEntry, originScope *Scope) error {
+    currentScope := p.scopes.Current()
+    
+    // Check if crossing transport boundary
+    if currentScope.transportDepth > originScope.transportDepth {
+        if varEntry.Taint == VarTaintLocalOnly {
+            return &TransportBoundaryError{
+                VarName:      varEntry.Name,
+                CurrentScope: currentScope.sessionID,
+                OriginScope:  originScope.sessionID,
+            }
+        }
+    }
+    
+    return nil
+}
+```
+
+**Remote boundary enforcement:**
+
+Capabilities and leases NEVER cross transport boundaries. Remote executors must re-resolve secrets:
+
+```go
+// Local executor has vault + capability
+localExecutor := NewExecutor(plan, localVault, localCapability)
+
+// Remote executor (SSH/Docker) CANNOT use local vault
+// Must re-resolve via provider or planner blocks it
+remoteExecutor := NewExecutor(plan, remoteVault, remoteCapability)
+
+// If secret is LocalOnly and not explicitly imported → plan-time error
+// If secret is imported → remote executor fetches from its own provider
+```
+
+**Why this matters:**
+- Prevents secrets from leaking across trust boundaries
+- Remote systems cannot access local secrets without explicit import
+- Each transport has its own vault + capability (isolated)
+- Plan-time validation prevents accidental cross-boundary use
+
+#### Meta-Programming (Plan-Time Sites)
+
+Plan-time control flow is just another site with planner authority:
+
+```opal
+var ENVIRONMENT = "production"
+
+if @var.ENVIRONMENT == "production" {  # Site: "planner/if[0]/condition"
+    deploy_to_prod()
+}
+```
+
+**Same model applies:**
+- Planner unwraps at site `"planner/if[0]/condition"`
+- Recorded in `SecretUses[]` with planner site
+- Planner has authority for plan-time sites
+- Runtime has authority for execution-time sites
+
+#### Security Hardening
+
+**1. Executor Controls Site (Prevent Forgery)**
+
+Decorators cannot determine their own site:
+
+```go
+// Decorator receives frame, cannot modify frame.Site
+func (d *RetryDecorator) Execute(frame *ExecutionFrame) error {
+    // frame.Site is immutable, set by executor
+}
+```
+
+**2. No Handle Exposure (Prevent Reflection)**
+
+Decorators never receive `*secret.Handle` objects:
+
+```go
+// ❌ BAD: Decorator can use reflection
+func (d *Decorator) Execute(params map[string]any) {
+    handle := params["apiKey"].(*secret.Handle)  // Reflection attack possible
+}
+
+// ✅ GOOD: Decorator gets DisplayIDs only
+func (d *Decorator) Execute(params map[string]string) {
+    displayID := params["apiKey"]  // Just a string "opal:v:3J98t56A"
+}
+```
+
+**3. Capability Protection (Prevent Bypass)**
+
+Capability is unforgeable:
+
+```go
+type Capability struct {
+    token  uint64    // Random token
+    issuer string    // "planner" or "executor"
+    nonce  [16]byte  // Unforgeable nonce
+}
+
+// Package-private (not exported)
+func newCapability(issuer string) *Capability {
+    var nonce [16]byte
+    rand.Read(nonce[:])
+    return &Capability{
+        token:  rand.Uint64(),
+        issuer: issuer,
+        nonce:  nonce,
+    }
+}
+```
+
+**4. Immutable Plan (Prevent TOCTOU)**
+
+Plan is frozen after creation:
+
+```go
+type Plan struct {
+    Secrets     []Secret
+    SecretUses  []SecretUse
+    hash        string  // Includes SecretUses
+    frozen      bool
+}
+
+func (p *Plan) Freeze() {
+    p.hash = p.computeHash()
+    p.frozen = true
+}
+
+// Executor verifies hash
+func (e *Executor) Execute(plan *Plan) error {
+    if plan.hash != plan.computeHash() {
+        return fmt.Errorf("plan tampered - hash mismatch")
+    }
+    // ...
+}
+```
+
+**5. Planner Vault Separation**
+
+Planner has its own vault + capability:
+
+```go
+type Planner struct {
+    secretVault  map[string]*secret.Handle
+    capability   *secret.Capability
+    plannerSites map[string]bool  // Authorized plan-time sites
+}
+```
+
+#### Secret Handle API
+
+**Safe operations (always available):**
 - `handle.ID()` - Opaque display ID: `opal:s:3J98t56A`
 - `handle.Mask(3)` - Masked display: `abc***xyz`
-- `handle.ForEnv("KEY")` - Environment variable: `KEY=value` (requires capability)
+- `handle.Len()` - Length without exposing value
+- `handle.IsEmpty()` - Check if empty
+
+**Unsafe operations (capability-gated):**
+- `handle.UnsafeUnwrap()` - Raw value (requires capability)
+- `handle.ForEnv("KEY")` - Environment variable (requires capability)
 - `handle.Bytes()` - Raw bytes (requires capability)
 
-**Unsafe operations (explicit, capability-gated):**
-- `handle.UnsafeUnwrap()` - Raw value (panics in debug mode without capability)
-
-**Capability gating**: Only the executor can issue capabilities. This prevents accidental leaks in plugins while enabling legitimate subprocess/environment wiring.
+**Capability gating:** Only executor/planner can issue capabilities. Decorators cannot forge or access raw values.
 
 ### Command Execution (`core/sdk/executor`)
 
@@ -2396,11 +2872,32 @@ exitCode, err := cmd.Run()
 **API:**
 - `Command(name, args...)` - Create command
 - `Bash(script)` - Execute bash script
-- `AppendEnv(map)` - Add environment (preserves PATH)
+- `AppendEnv(map)` - Add environment (preserves PATH) - **⚠️ NEVER use for secrets**
 - `SetStdin(reader)` - Feed input
 - `Run()` - Execute and wait
 - `Start()` / `Wait()` - Async execution
-- `Output()` / `CombinedOutput()` - Capture output (not scrubbed)
+- `Output()` / `CombinedOutput()` - **⚠️ DANGEROUS: Capture output (NOT scrubbed)**
+
+**⚠️ CRITICAL: Output() / CombinedOutput() Foot-Gun**
+
+These methods capture output **without scrubbing**. Use only when:
+1. You are certain no secrets are in the output
+2. Output is immediately scrubbed before logging/display
+3. You have a lint rule enforcing scrubbing
+
+**Safer alternatives:**
+```go
+// ✅ GOOD: Use Run() with scrubbed stdout/stderr
+cmd := executor.Command("kubectl", "get", "pods")
+err := cmd.Run()  // Output automatically scrubbed
+
+// ❌ DANGEROUS: Unscrubbed capture
+output, _ := cmd.CombinedOutput()  // Secrets may leak!
+
+// ✅ GOOD: Manual scrubbing if capture needed
+output, _ := cmd.CombinedOutput()
+scrubbed := scrubber.Scrub(output)  // Explicit scrubbing
+```
 
 ### Security Model
 
@@ -2511,25 +3008,40 @@ Secrets need two representations for different purposes:
 
 **DisplayID Generation (Keyed PRF):**
 
-DisplayIDs use a keyed BLAKE2s-128 PRF over `(plan_hash, step_path, decorator, key_name, hash(value))`:
+DisplayIDs use a keyed BLAKE2s-128 PRF over `(plan_salt, step_path, decorator, key_name, hash(value))`:
 
-- **Resolved plans** (`ModePlan`): Deterministic IDs derived from plan digest
+- **Resolved plans** (`ModePlan`): Deterministic IDs with per-plan salt
   - Key: `plan_key = HKDF(plan_digest, "opal/displayid/plan/v1")`
-  - Same plan + context + value → same DisplayID
-  - Enables contract verification (plan hash includes DisplayIDs)
-  - Different plans → different DisplayIDs (unlinkability)
+  - Salt: `plan_salt = CSPRNG(32 bytes)` (generated once per plan, stored in plan header)
+  - Same plan + context + value → same DisplayID (within that plan)
+  - Different plans → different DisplayIDs (prevents cross-plan correlation)
+  - Enables contract verification (plan hash includes DisplayIDs + salt)
 
 - **Direct execution** (`ModeRun`): Random-looking IDs with fresh per-run key
   - Key: `run_key = CSPRNG(32 bytes)`
   - Different runs → different DisplayIDs
   - Prevents correlation and tracking
 
+**DisplayID policy (structure-only, not value-linked):**
+- DisplayIDs are derived from **structure** (step path, decorator, param name) + **per-plan salt**
+- Value hash included in PRF input to prevent oracle attacks
+- Same secret value in different plans → different DisplayIDs (unlinkability)
+- Secret rotation does NOT change DisplayID (structure unchanged)
+- Plan hash changes on rotation (new value → new plan)
+
 **Why this works:**
 - **Contract verification**: Deterministic DisplayIDs in resolved plans ensure same plan → same hash
-- **Security**: Context-aware PRF prevents oracle attacks; per-run keys prevent correlation
+- **Security**: Context-aware PRF prevents oracle attacks; per-plan salt prevents cross-plan correlation
 - **Unlinkability**: Different plans produce different DisplayIDs even for same value
 - **No length leak**: `hash(value)` used in PRF input, not raw value
+- **Rotation-safe**: DisplayID stable across rotations, plan hash changes
 - **UX**: Users see short, readable identifiers (11 chars typical)
+
+**Secret rotation semantics:**
+- DisplayID remains stable (structure unchanged)
+- Plan hash changes (new value)
+- Scrubber seeds updated (new value → new fingerprints)
+- Audit trail shows rotation via plan hash change
 
 **Implementation:**
 - `secret.IDFactory` interface with `ModePlan` and `ModeRun` modes
@@ -2567,9 +3079,39 @@ All resolved plans include provenance metadata for audit trails:
     }
   },
   "plan_hash": "sha256:5f6c...",
+  "plan_salt": "base64:Xj9K...",
   "steps": [...]
 }
 ```
+
+**Plan hash inputs (contract verification):**
+
+The plan hash covers ALL security-relevant data to prevent tampering:
+
+```go
+func (p *Plan) computeHash() string {
+    h := sha256.New()
+    
+    // Structure
+    h.Write([]byte(p.Steps))           // Execution steps
+    h.Write([]byte(p.Secrets))         // Secret inventory
+    h.Write([]byte(p.SecretUses))      // Authorization list (critical!)
+    
+    // Provenance
+    h.Write([]byte(p.Header.Plugins))  // Plugin versions + verification
+    h.Write([]byte(p.PlanSalt))        // Per-plan salt for DisplayIDs
+    
+    // Metadata (optional, for drift detection)
+    h.Write([]byte(p.Header.SourceCommit))
+    
+    return hex.EncodeToString(h.Sum(nil))
+}
+```
+
+**Why SecretUses in hash is critical:**
+- Prevents adding unauthorized use-sites after plan approval
+- Tampering with SecretUses → hash mismatch → execution fails
+- Ensures reviewed authorization list matches execution
 
 **Provenance benefits:**
 - **Audit compliance**: See exactly which plugins were used and their verification status
