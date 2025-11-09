@@ -10,49 +10,58 @@ import (
 	"github.com/aledsdavies/opal/core/invariant"
 )
 
-// Vault tracks secret-producing expressions and enforces site-based access control.
+// Vault manages variable scoping and secret tracking with site-based access control.
 //
-// In Opal's security model, ALL value decorators produce secrets.
-// No classification needed - if it's a value decorator, it's a secret.
+// # Architecture
+//
+// Vault uses pathStack as a scope trie where each level stores variables.
+// Variable lookup walks up the trie (current → parent → root) enabling parent → child flow.
+// Expression IDs are hash-based (content + transport) to support:
+//   - Variable shadowing (same name, different values in different scopes)
+//   - Transport-sensitive expressions (@env.HOME differs per SSH session)
+//   - Expression deduplication (multiple variables can share same expression)
+//
+// # Security Model
+//
+// ALL value decorators produce secrets. Vault enforces:
+//  1. Transport boundaries - secrets cannot cross transport boundaries
+//  2. Site authorization - secrets only accessible at authorized sites (HMAC-based SiteID)
 //
 // # Usage
 //
-// The planner uses Vault in three passes:
-//
-//	// Pass 1: Track expressions and their use-sites
+//	// Pass 1: Declare variables and track references
 //	vault := vault.NewWithPlanKey(planKey)
-//	id := vault.DeclareVariable("API_KEY", "@env.API_KEY")
-//	vault.RecordReference(id, "command")
+//	exprID := vault.DeclareVariable("API_KEY", "@env.API_KEY")  // Returns hash-based ID
+//	vault.RecordReference(exprID, "command")
 //
-//	// Pass 2: Resolve touched expressions
-//	vault.MarkTouched(id)
-//	vault.MarkResolved(id, "ghp_abc123")
-//	value, _ := vault.Access(id, "command")
+//	// Pass 2: Resolve and access
+//	vault.MarkTouched(exprID)
+//	vault.MarkResolved(exprID, "ghp_abc123")
+//	value, _ := vault.Access(exprID, "command")
 //
 //	// Pass 3: Finalize
 //	vault.PruneUntouched()
 //	uses := vault.BuildSecretUses()
 //
-// # Access Control
+// # Variable Lookup
 //
-// Vault enforces two security checks:
+//	// Declare at root
+//	rootID := vault.DeclareVariable("COUNT", "5")
 //
-//  1. Transport Boundary: Secrets cannot cross transport boundaries
-//     (@env expressions resolved in "local" cannot be used in "ssh:host")
+//	// Enter child scope
+//	vault.EnterDecorator("@retry")
 //
-//  2. Site Authorization: Secrets can only be accessed at authorized sites
-//     (SiteID is HMAC-based and unforgeable)
-//
-// Both checks must pass for Access to succeed.
+//	// Lookup walks up trie
+//	foundID, _ := vault.LookupVariable("COUNT")  // Finds rootID from parent scope
 //
 // # Rules
 //
-//  1. Call MarkResolved when resolving expressions (captures transport)
+//  1. Call MarkResolved when resolving (captures transport context)
 //  2. Call MarkTouched for expressions in execution path
 //  3. Call PruneUntouched before BuildSecretUses
-//  4. A Vault must not be copied after first use
+//  4. Do not copy Vault after first use
 //
-// For detailed architecture, see docs/ARCHITECTURE.md.
+// See docs/ARCHITECTURE.md for complete architecture.
 type Vault struct {
 	// Path tracking (DAG traversal)
 	pathStack       []PathSegment
@@ -63,6 +72,9 @@ type Vault struct {
 	expressions map[string]*Expression // exprID → Expression
 	references  map[string][]SiteRef   // exprID → sites that use it
 	touched     map[string]bool        // exprID → in execution path
+
+	// Scope-aware variable storage (pathStack IS the trie)
+	scopes map[string]*VaultScope // scopePath → scope
 
 	// Transport boundary tracking
 	currentTransport string            // Current transport scope
@@ -83,6 +95,16 @@ type Expression struct {
 
 // Note: No ExprType, no IsSecret - everything is a secret.
 // Vault stores raw values directly - access control via SiteID + transport checks.
+
+// VaultScope represents a scope in the variable trie.
+// Each scope corresponds to a level in the pathStack.
+// Variables declared at a scope are stored in that scope.
+// Lookup walks up the trie (current → parent → grandparent → root).
+type VaultScope struct {
+	path   string            // "root/step-1/@retry[0]"
+	parent string            // Parent scope path (empty for root)
+	vars   map[string]string // varName → exprID
+}
 
 // SiteRef represents a reference to an expression at a specific site.
 type SiteRef struct {
@@ -109,16 +131,26 @@ const (
 
 // New creates a new Vault.
 func New() *Vault {
-	return &Vault{
+	v := &Vault{
 		pathStack:        []PathSegment{{Type: SegmentRoot, Name: "root", Index: -1}},
 		stepCount:        0,
 		decoratorCounts:  make(map[string]int),
 		expressions:      make(map[string]*Expression),
 		references:       make(map[string][]SiteRef),
 		touched:          make(map[string]bool),
+		scopes:           make(map[string]*VaultScope),
 		currentTransport: "local",
 		exprTransport:    make(map[string]string),
 	}
+
+	// Initialize root scope
+	v.scopes["root"] = &VaultScope{
+		path:   "root",
+		parent: "",
+		vars:   make(map[string]string),
+	}
+
+	return v
 }
 
 // NewWithPlanKey creates a new Vault with a specific plan key for HMAC-based SiteIDs.
@@ -199,13 +231,101 @@ func (v *Vault) BuildSitePath(paramName string) string {
 	return strings.Join(parts, "/")
 }
 
-// DeclareVariable registers a variable declaration.
-// Returns the variable name as the expression ID.
-func (v *Vault) DeclareVariable(name, raw string) string {
-	v.expressions[name] = &Expression{
-		Raw: raw,
+// ========== Scope Management ==========
+
+// currentScopePath converts pathStack to a scope path string.
+// Scope paths identify variable storage locations in the trie.
+func (v *Vault) currentScopePath() string {
+	var parts []string
+	for _, seg := range v.pathStack {
+		switch seg.Type {
+		case SegmentRoot:
+			parts = append(parts, seg.Name)
+		case SegmentStep:
+			parts = append(parts, seg.Name)
+		case SegmentDecorator:
+			parts = append(parts, fmt.Sprintf("%s[%d]", seg.Name, seg.Index))
+		}
 	}
-	return name
+	return strings.Join(parts, "/")
+}
+
+// getOrCreateScope ensures a scope exists at the given path.
+// Creates parent link to enable trie walk during variable lookup.
+func (v *Vault) getOrCreateScope(scopePath string) *VaultScope {
+	if scope, exists := v.scopes[scopePath]; exists {
+		return scope
+	}
+
+	parentPath := v.parentScopePath(scopePath)
+
+	scope := &VaultScope{
+		path:   scopePath,
+		parent: parentPath,
+		vars:   make(map[string]string),
+	}
+	v.scopes[scopePath] = scope
+	return scope
+}
+
+// parentScopePath computes the parent scope path for trie traversal.
+// Returns empty string for root since it has no parent.
+func (v *Vault) parentScopePath(scopePath string) string {
+	lastSlash := strings.LastIndex(scopePath, "/")
+	if lastSlash == -1 {
+		return ""
+	}
+	return scopePath[:lastSlash]
+}
+
+// LookupVariable resolves a variable name to its expression ID.
+// Walks up the scope trie from current scope to root, enabling parent → child flow.
+// Handles missing scopes by computing parent path directly (scopes created lazily).
+func (v *Vault) LookupVariable(varName string) (string, error) {
+	scopePath := v.currentScopePath()
+	visited := make(map[string]bool)
+
+	for scopePath != "" {
+		// Safety: Detect cycles in scope trie (visiting same scope twice)
+		invariant.Invariant(!visited[scopePath], "cycle detected in scope trie at %q", scopePath)
+		visited[scopePath] = true
+
+		scope := v.scopes[scopePath]
+		if scope != nil {
+			if exprID, exists := scope.vars[varName]; exists {
+				return exprID, nil
+			}
+			scopePath = scope.parent
+		} else {
+			// Scope not created yet, compute parent directly
+			scopePath = v.parentScopePath(scopePath)
+		}
+	}
+
+	return "", fmt.Errorf("variable %q not found in any scope", varName)
+}
+
+// ========== Expression Tracking ==========
+
+// DeclareVariable registers a variable in the current scope.
+// Uses hash-based exprID (not variable name) to support:
+// - Same variable name with different values in different scopes (shadowing)
+// - Same expression shared by multiple variables (deduplication)
+// - Transport-sensitive expressions (@env.HOME differs per SSH session)
+func (v *Vault) DeclareVariable(name, raw string) string {
+	exprID := v.generateExprID(raw)
+
+	if _, exists := v.expressions[exprID]; !exists {
+		v.expressions[exprID] = &Expression{
+			Raw: raw,
+		}
+	}
+
+	scopePath := v.currentScopePath()
+	scope := v.getOrCreateScope(scopePath)
+	scope.vars[name] = exprID
+
+	return exprID
 }
 
 // TrackExpression registers a direct decorator call (e.g., @env.HOME).

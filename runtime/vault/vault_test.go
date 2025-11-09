@@ -380,27 +380,19 @@ func TestVault_BuildSecretUses_OnlyTouched(t *testing.T) {
 
 // ========== DeclareVariable Tests ==========
 
-// TestVault_DeclareVariable_ReturnsVariableName tests that DeclareVariable returns the variable name as ID.
-func TestVault_DeclareVariable_ReturnsVariableName(t *testing.T) {
-	v := New()
-
-	// WHEN: We declare a variable
-	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
-
-	// THEN: Should return variable name as ID
-	if exprID != "API_KEY" {
-		t.Errorf("DeclareVariable() = %q, want %q", exprID, "API_KEY")
-	}
-}
-
-// TestVault_DeclareVariable_StoresExpression tests that the expression is stored.
+// TestVault_DeclareVariable_StoresExpression tests that the expression is stored with hash-based ID.
 func TestVault_DeclareVariable_StoresExpression(t *testing.T) {
 	v := New()
 
 	// WHEN: We declare a variable
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
 
-	// THEN: Expression should be stored (check via internal state)
+	// THEN: Should return hash-based ID (not variable name)
+	if exprID == "API_KEY" {
+		t.Error("DeclareVariable() should return hash-based ID, not variable name")
+	}
+
+	// THEN: Expression should be stored with hash-based ID
 	if v.expressions[exprID] == nil {
 		t.Error("Expression should be stored")
 	}
@@ -629,6 +621,192 @@ func TestVault_EndToEnd_PruneAndBuild(t *testing.T) {
 	// Verify UNUSED_SECRET was pruned
 	if v.expressions[id2] != nil {
 		t.Error("UNUSED_SECRET should have been pruned")
+	}
+}
+
+// ========== Scope-Aware Variable Tests ==========
+
+// TestVault_LookupVariable tests basic variable lookup.
+func TestVault_LookupVariable(t *testing.T) {
+	v := New()
+
+	// GIVEN: Variable declared at root
+	exprID := v.DeclareVariable("NAME", "Aled")
+
+	// WHEN: We lookup the variable
+	foundID, err := v.LookupVariable("NAME")
+	// THEN: Should find it
+	if err != nil {
+		t.Fatalf("LookupVariable() failed: %v", err)
+	}
+	if foundID != exprID {
+		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+	}
+}
+
+// TestVault_LookupVariable_NotFound tests error handling for missing variables.
+func TestVault_LookupVariable_NotFound(t *testing.T) {
+	v := New()
+
+	// WHEN: We lookup a non-existent variable
+	_, err := v.LookupVariable("DOES_NOT_EXIST")
+
+	// THEN: Should return error
+	if err == nil {
+		t.Error("LookupVariable() should fail for non-existent variable")
+	}
+	if err != nil && !containsString(err.Error(), "not found") {
+		t.Errorf("Error should mention 'not found', got: %v", err)
+	}
+}
+
+// TestVault_DeclareVariable_RegistersName tests that DeclareVariable registers the name.
+func TestVault_DeclareVariable_RegistersName(t *testing.T) {
+	v := New()
+
+	// GIVEN: We declare a variable
+	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
+
+	// WHEN: We lookup the variable
+	foundID, err := v.LookupVariable("API_KEY")
+	// THEN: Should find it with same exprID
+	if err != nil {
+		t.Fatalf("LookupVariable() failed: %v", err)
+	}
+	if foundID != exprID {
+		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+	}
+}
+
+// TestVault_ScopeAwareVariables_BasicDeclaration tests variable storage in root scope.
+func TestVault_ScopeAwareVariables_BasicDeclaration(t *testing.T) {
+	v := New()
+
+	// GIVEN: Variable declared at root
+	exprID := v.DeclareVariable("COUNT", "5")
+
+	// THEN: Should be stored in root scope
+	rootScope := v.scopes["root"]
+	if rootScope == nil {
+		t.Fatal("Root scope should exist")
+	}
+	if rootScope.vars["COUNT"] != exprID {
+		t.Errorf("Root scope vars[COUNT] = %q, want %q", rootScope.vars["COUNT"], exprID)
+	}
+}
+
+// TestVault_ScopeAwareVariables_ParentToChild tests parent → child variable flow.
+func TestVault_ScopeAwareVariables_ParentToChild(t *testing.T) {
+	v := New()
+
+	// GIVEN: Variable declared at root
+	exprID := v.DeclareVariable("COUNT", "5")
+
+	// WHEN: We enter a child scope
+	v.EnterDecorator("@retry")
+
+	// THEN: Child can lookup parent's variable
+	foundID, err := v.LookupVariable("COUNT")
+	if err != nil {
+		t.Fatalf("LookupVariable() failed: %v", err)
+	}
+	if foundID != exprID {
+		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+	}
+}
+
+// TestVault_ScopeAwareVariables_Shadowing tests variable shadowing.
+func TestVault_ScopeAwareVariables_Shadowing(t *testing.T) {
+	v := New()
+
+	// GIVEN: Variable declared at root
+	rootExprID := v.DeclareVariable("COUNT", "5")
+
+	// WHEN: We enter child scope and shadow the variable
+	v.EnterDecorator("@retry")
+	childExprID := v.DeclareVariable("COUNT", "3")
+
+	// THEN: Child lookup should find child's value (shadows parent)
+	foundID, err := v.LookupVariable("COUNT")
+	if err != nil {
+		t.Fatalf("LookupVariable() in child failed: %v", err)
+	}
+	if foundID != childExprID {
+		t.Errorf("Child LookupVariable() = %q, want %q (child shadows parent)", foundID, childExprID)
+	}
+
+	// WHEN: We exit child scope
+	v.ExitDecorator()
+
+	// THEN: Parent lookup should find parent's value (unchanged)
+	foundID, err = v.LookupVariable("COUNT")
+	if err != nil {
+		t.Fatalf("LookupVariable() in parent failed: %v", err)
+	}
+	if foundID != rootExprID {
+		t.Errorf("Parent LookupVariable() = %q, want %q (parent unchanged)", foundID, rootExprID)
+	}
+}
+
+// TestVault_ScopeAwareVariables_NotFound tests not found in any scope.
+func TestVault_ScopeAwareVariables_NotFound(t *testing.T) {
+	v := New()
+
+	// GIVEN: Some variables exist
+	v.DeclareVariable("EXISTS", "value")
+
+	// WHEN: We enter nested scopes and lookup non-existent variable
+	v.EnterDecorator("@retry")
+	v.EnterDecorator("@timeout")
+
+	_, err := v.LookupVariable("DOES_NOT_EXIST")
+
+	// THEN: Should return error
+	if err == nil {
+		t.Error("LookupVariable() should fail for non-existent variable")
+	}
+	if err != nil && !containsString(err.Error(), "not found") {
+		t.Errorf("Error should mention 'not found', got: %v", err)
+	}
+}
+
+// TestVault_ScopeAwareVariables_NestedScopes tests multiple scope levels.
+func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
+	v := New()
+
+	// GIVEN: Variables at different scope levels
+	aID := v.DeclareVariable("A", "1")
+
+	v.EnterDecorator("@retry")
+	bID := v.DeclareVariable("B", "2")
+
+	v.EnterDecorator("@timeout")
+	cID := v.DeclareVariable("C", "3")
+
+	// WHEN: We lookup from deepest scope
+	// THEN: Should find all three variables
+	foundA, err := v.LookupVariable("A")
+	if err != nil {
+		t.Fatalf("LookupVariable(A) failed: %v", err)
+	}
+	if foundA != aID {
+		t.Errorf("LookupVariable(A) = %q, want %q", foundA, aID)
+	}
+
+	foundB, err := v.LookupVariable("B")
+	if err != nil {
+		t.Fatalf("LookupVariable(B) failed: %v", err)
+	}
+	if foundB != bID {
+		t.Errorf("LookupVariable(B) = %q, want %q", foundB, bID)
+	}
+
+	foundC, err := v.LookupVariable("C")
+	if err != nil {
+		t.Fatalf("LookupVariable(C) failed: %v", err)
+	}
+	if foundC != cID {
+		t.Errorf("LookupVariable(C) = %q, want %q", foundC, cID)
 	}
 }
 
