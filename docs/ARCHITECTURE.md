@@ -91,13 +91,13 @@ The core architectural principle: **every operation that performs work** becomes
 
 This means metaprogramming constructs like `for`, `if`, `when` are **not** decorators - they're language constructs that decide what work gets done. The actual work is always performed by decorators.
 
-**Value decorators** inject values inline:
-- `@env.PORT` pulls environment variables
-- `@var.REPLICAS` references script variables  
-- `@aws.secret.api_key` fetches from AWS (expensive)
+**Value decorators** inject values inline (resolved at **plan time**):
+- `@env.PORT` pulls environment variables (plan-time resolution)
+- `@var.REPLICAS` references script variables (already resolved)
+- `@aws.secret.api_key` fetches from AWS (plan-time API call - expensive!)
 
-**Execution decorators** run commands:
-- `@shell("npm run build")` executes shell commands
+**Execution decorators** run commands (executed at **execution time**):
+- `@shell("npm run build")` executes shell commands (runtime execution)
 - `@retry(3) { ... }` adds retry logic around blocks
 - `@parallel { ... }` runs commands concurrently
 
@@ -114,6 +114,51 @@ This separation means:
 - **AST structure** represents both metaprogramming constructs and decorators appropriately
 - **Execution model** is unified through decorators (no special cases for different work types)  
 - **New features** integrate by adding decorators, not special execution paths
+
+### Wave-Based Plan-Time Resolution
+
+**CRITICAL**: Value decorators resolve at **plan time**, not execution time. This enables deterministic planning and contract verification.
+
+**Resolution happens in dependency waves**:
+
+```opal
+# Wave 1: Resolve @env first (no dependencies)
+var ENVIRONMENT = @env.DEPLOY_ENV  # Resolves to "prod" or "dev"
+
+# Wave 2: Evaluate if/else based on Wave 1 result
+if ENVIRONMENT == "prod" {
+    # Wave 3a: Only resolve if prod branch taken
+    var API_KEY = @aws.secret.prod_api_key
+    var DB_URL = @aws.secret.prod_db_url
+} else {
+    # Wave 3b: Only resolve if dev branch taken  
+    var API_KEY = @aws.secret.dev_api_key
+    var DB_URL = @aws.secret.dev_db_url
+}
+
+# Wave 4: Use resolved values (already in plan)
+kubectl create secret --from-literal=key=@var.API_KEY
+```
+
+**Why waves matter**:
+1. **Branching** - Can't resolve all secrets upfront; must know which branch first
+2. **Dependencies** - Some values depend on others being resolved first
+3. **Batching** - Within each wave, batch API calls by provider (performance)
+4. **Fail-fast** - Errors at plan-time, not execution-time
+
+**Batch resolution within waves**:
+```opal
+var prodAuth = @aws.auth(profile="prod")
+
+# All three in same wave → batched into ONE AWS API call
+var db_pass = @aws.secret.db_password(auth=prodAuth)  # \
+var api_key = @aws.secret.api_key(auth=prodAuth)      #  } Single batch
+var cert = @aws.secret.tls_cert(auth=prodAuth)        # /
+
+# Performance: 1 API call (150ms) vs 3 separate calls (450ms)
+```
+
+**Key insight**: The plan is fully resolved before execution starts. All `@env`, `@aws.secret`, `@file.read` calls happen during planning. Execution just runs the commands with the resolved values.
 
 ## The Execution Context Pattern
 
@@ -1133,17 +1178,568 @@ if runtime.GOOS != "windows" && cmd.Process != nil {
 - Critical for pipelines (kills all commands in pipeline)
 - Example: `yes | head -n1` - both processes killed on cancel
 
-## Variable Scoping via Scope Graph
+## Vault: Secret Tracking and Variable Management
 
-### The Problem: Cross-Session Variable Leakage
+### The Problem: Secret Leakage and Unauthorized Access
 
-Variables resolved in one session could leak to another session, exposing sensitive values:
+**Two security requirements:**
+
+1. **Cross-session leakage:** Variables resolved in one session could leak to another
+2. **Unauthorized unwrapping:** Secrets could be unwrapped at sites they weren't intended for
+
+**Example violations:**
 
 ```opal
-var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in local session
+# Violation 1: Cross-session leakage
+var LOCAL_TOKEN = @env.GITHUB_TOKEN
+@ssh(host="untrusted") {
+    curl -H "Auth: @var.LOCAL_TOKEN" ...  # ❌ Local token sent to remote!
+}
 
-@ssh(host="untrusted-server") {
-    curl -H "Auth: @var.LOCAL_TOKEN" ...  # ❌ Sends local token to remote!
+# Violation 2: Decorator trying to access secret it wasn't given
+var API_KEY = "sk-secret"
+@retry(apiKey=@var.API_KEY) {  # ✅ @retry receives secret, can unwrap
+    echo "test"
+}
+
+# Inside @retry decorator implementation:
+# ✅ Can unwrap: apiKey parameter (authorized site: root/retry[0]/params/apiKey)
+# ❌ Cannot unwrap: secrets from parent/child decorators (different sites)
+# ❌ Cannot forge SiteID to steal secrets from other sites
+```
+
+### The Solution: Vault
+
+**Vault is the single source of truth for:**
+1. Variable storage and resolution (replaces ScopeGraph)
+2. Secret tracking and use-site recording
+3. DAG path tracking for site-based authority
+4. Expression pruning (remove unused secrets)
+
+### Core Security Model
+
+**ALL value decorators produce secrets:**
+- `@var.X` → secret
+- `@env.X` → secret
+- `@aws.secret()` → secret
+- `@vault.read()` → secret
+
+**No classification needed** - if it's a value decorator, it's a secret.
+
+### Expression IDs: Deterministic and Transport-Aware
+
+Expression IDs must be **unique and include transport context**:
+
+**Variables:**
+- ID = variable name (scoped to current context)
+- Example: `"API_KEY"`
+
+**Direct Decorator Calls:**
+- ID = hash(transport + decorator + params)
+- Examples:
+  - `@env.HOME` in local → `"local:env:HOME:abc123"`
+  - `@env.HOME` in ssh:server1 → `"ssh:server1:env:HOME:def456"`
+  - `@env.HOME` in ssh:server2 → `"ssh:server2:env:HOME:ghi789"`
+
+**Why transport in ID?** Same decorator in different transports resolves to **different values**:
+
+```opal
+@ssh(host="server1") {
+    echo @env.HOME  # /home/user1 (server1's HOME)
+}
+
+@ssh(host="server2") {
+    echo @env.HOME  # /home/user2 (server2's HOME)
+}
+```
+
+These are **different expressions** with different IDs.
+
+### Access Control: Zanzibar-Style Model
+
+Vault implements **Tuple (Position) + Caveat (Constraint)** access control, inspired by Google's Zanzibar authorization system.
+
+**Tuple (Position): (exprID, siteID)**
+- Represents: "Expression X can be accessed at site Y"
+- Checked via: HMAC-based SiteID matching
+- Unforgeable: SiteID = `HMAC(planKey, canonicalSitePath)`
+- Recorded: During planning via `RecordReference(exprID, paramName)`
+- Example: `("API_KEY", "Xj9K...")` means API_KEY can be accessed at site with ID Xj9K...
+
+**Caveat (Constraint): Transport Isolation**
+- Represents: Additional restrictions beyond position
+- Currently: `@env` expressions cannot cross transport boundaries
+- Future: Any decorator can declare transport isolation requirement
+- Checked: Before position check (more fundamental security rule)
+- Example:
+  ```opal
+  var LOCAL = @env.HOME  # Resolved in "local" transport
+  
+  @ssh(host="remote") {
+      echo @var.LOCAL  # ❌ ERROR: transport boundary violation (Caveat fails)
+  }
+  ```
+
+**Access Check Order:**
+1. **Caveat first**: Check transport boundary (if decorator requires it)
+2. **Tuple second**: Check if (exprID, currentSiteID) is authorized
+
+Both must pass for `Access()` to succeed.
+
+**Why this model:**
+- **Proven**: Zanzibar powers Google's authorization at scale
+- **Extensible**: Easy to add new caveats (time-based, count-based, etc.)
+- **Clear separation**: Position (where) vs Constraint (how)
+- **Unforgeable**: HMAC-based SiteIDs prevent decorator forgery
+
+### Three-Pass Planning
+
+**Pass 1: Scan & Build Graph**
+
+Planner scans parser events and tells Vault:
+
+```go
+// Track variable (returns variable name as ID)
+exprID := vault.DeclareVariable("API_KEY", "@env.API_KEY")  // "API_KEY"
+
+// Track direct decorator call (returns hash-based ID with transport)
+exprID := vault.TrackExpression("@env.HOME")  // "local:env:HOME:abc123"
+
+// Record use-site (builds site path from current pathStack)
+vault.RecordReference(exprID, "params/command")
+// Records: site="root/step-1/@shell[0]/params/command"
+//          siteID=HMAC(planKey, site)
+```
+
+**Result:** Vault has complete registry of all possible expressions and their use-sites.
+
+**Pass 2: Resolve (Wave-Based)**
+
+Planner orchestrates resolution in waves to handle dependencies:
+
+```go
+// Wave 1: Mark expressions in execution path
+vault.MarkTouched("API_KEY")
+
+// Vault resolves all touched expressions
+vault.ResolveTouched(ctx)
+// Internally:
+//   - For each touched expression
+//   - Call decorator (@env.API_KEY)
+//   - Wrap result in secret.Handle
+//   - Store in vault
+
+// Meta-programming: Planner needs value for conditional
+// Planner is at: root/step-1/@if[0]/params/condition
+value, err := vault.Access("API_KEY", "condition")
+// Checks: Transport boundary (if @env expression) - Caveat
+// Checks: Is current SiteID authorized for "API_KEY"? - Tuple
+// Returns: "sk-prod-key" (raw value for conditional)
+
+// Planner evaluates: @if("sk-prod-key" != "")
+// Result: true, enters block
+
+// Wave 2: Planner discovered new expressions in @if block
+vault.MarkTouched("SECRET_KEY")
+vault.ResolveTouched(ctx)
+```
+
+Repeat until all reachable expressions resolved.
+
+**Pass 3: Finalize**
+
+```go
+vault.PruneUntouched()  // Remove unreachable expressions
+uses := vault.BuildSecretUses()
+// Returns: []SecretUse with only resolved + touched expressions
+```
+
+**Complete Example:**
+
+```opal
+var ENV = @env.ENVIRONMENT
+
+@if(@var.ENV == "prod") {
+    var PROD_KEY = @aws.secret("prod-key")
+    echo @var.PROD_KEY
+}
+
+@if(@var.ENV == "dev") {
+    var DEV_KEY = @aws.secret("dev-key")
+    echo @var.DEV_KEY
+}
+```
+
+```go
+// Pass 1: Scan
+envID := vault.DeclareVariable("ENV", "@env.ENVIRONMENT")  // "ENV"
+vault.RecordReference("ENV", "params/condition")  // @if uses it
+
+prodID := vault.DeclareVariable("PROD_KEY", "@aws.secret('prod-key')")  // "PROD_KEY"
+vault.RecordReference("PROD_KEY", "params/command")  // echo uses it
+
+devID := vault.DeclareVariable("DEV_KEY", "@aws.secret('dev-key')")  // "DEV_KEY"
+vault.RecordReference("DEV_KEY", "params/command")  // echo uses it
+
+// Pass 2: Resolve Wave 1
+vault.MarkTouched("ENV")
+vault.ResolveTouched(ctx)
+// Vault calls @env.ENVIRONMENT → "prod" → wraps in Handle → stores
+
+// Planner evaluates @if
+vault.EnterDecorator("@if")  // Sets current site
+value, _ := vault.Access("ENV", "condition")  // "prod" (checks SiteID + transport)
+vault.ExitDecorator()
+
+// Evaluates: "prod" == "prod" → true, enters first block
+vault.MarkTouched("PROD_KEY")  // First branch taken
+// DEV_KEY NOT marked (second branch not taken)
+
+// Pass 2: Resolve Wave 2
+vault.ResolveTouched(ctx)
+// Vault calls @aws.secret("prod-key") → "sk-..." → wraps → stores
+// DEV_KEY not resolved (not touched)
+
+// Pass 3: Finalize
+vault.PruneUntouched()  // Removes DEV_KEY
+uses := vault.BuildSecretUses()
+// Returns:
+// [
+//   {DisplayID: "opal:v:ENV123", SiteID: "Xj9K...", Site: "root/@if[0]/params/condition"},
+//   {DisplayID: "opal:v:PROD456", SiteID: "mN2p...", Site: "root/@if[0]/body/@shell[0]/params/command"}
+// ]
+```
+
+### Transport Boundaries
+
+**Vault enforces transport boundaries to prevent secret leakage:**
+
+```opal
+# ❌ VIOLATION: Local secret crosses to remote
+var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in local transport
+
+@ssh(host="untrusted") {
+    curl -H "Auth: @var.LOCAL_TOKEN" ...  # ERROR: Transport boundary violation
+}
+
+# ✅ CORRECT: Explicit passing via decorator parameter
+@ssh(host="server", env={TOKEN: @env.GITHUB_TOKEN}) {
+    curl -H "Auth: $TOKEN" ...  # OK: Passed explicitly
+}
+```
+
+**How it works:**
+
+```go
+// Vault tracks current transport scope
+vault.EnterTransport("ssh:untrusted")  // Entering SSH session
+
+// When recording reference, check boundary
+vault.RecordReference("LOCAL_TOKEN", "command")
+// → Error: "LOCAL_TOKEN" resolved in "local" transport
+//          Cannot use in "ssh:untrusted" transport
+```
+
+**Transport scopes:**
+- `local` - Local machine execution
+- `ssh:hostname` - Remote SSH session
+- `docker:container` - Docker container
+- `k8s:pod` - Kubernetes pod
+
+**Rules:**
+1. Expressions resolved in parent transport cannot cross to child transport
+2. Sibling transports are isolated (ssh:host1 cannot access ssh:host2 secrets)
+3. Explicit passing via decorator parameters is allowed
+
+### Invocation Modes: Script vs Command
+
+Vault's pruning strategy differs based on how Opal is invoked:
+
+**Script Mode** (file execution):
+```bash
+opal run deploy.opl
+```
+
+Full three-pass planning with meta-programming:
+- **Pass 1**: Scan entire file, track all expressions
+- **Pass 2**: Wave-based resolution with conditionals
+  - Resolve expressions based on execution path
+  - Evaluate `@if` conditions, mark touched branches
+  - Handle loops, nested expressions
+- **Pass 3**: Prune untouched (unreachable code)
+
+Example:
+```opal
+var ENV = @env.ENVIRONMENT
+
+@if(@var.ENV == "prod") {
+    var PROD_KEY = @aws.secret("prod-key")  # Only resolved if ENV=="prod"
+}
+
+@if(@var.ENV == "dev") {
+    var DEV_KEY = @aws.secret("dev-key")   # Only resolved if ENV=="dev"
+}
+```
+
+**Command Mode** (function invocation):
+```bash
+opal deploy --env prod
+```
+
+Early pruning before meta-programming:
+- **Pass 1**: Scan only the target function, track expressions in function body
+- **Pass 2**: Resolve only values needed for function parameters
+  - No conditional evaluation
+  - No branching logic
+  - Just resolve what's needed for this specific invocation
+- **Pass 3**: Build SecretUses for function parameters only
+
+Example:
+```opal
+fun deploy(env: String, region: String) {
+    var API_KEY = @aws.secret("@var.env-api-key")  # Always resolved
+    kubectl apply -f k8s/@var.region/
+}
+```
+
+In command mode, `API_KEY` is always resolved (no conditional pruning), but expressions outside the `deploy` function are never scanned.
+
+**Key Differences:**
+
+| Aspect | Script Mode | Command Mode |
+|--------|-------------|--------------|
+| Scope | Entire file | Single function |
+| Meta-programming | Full evaluation | Minimal/none |
+| Pruning | Execution path-based | Function scope-based |
+| Performance | Slower (full graph) | Faster (targeted) |
+| Use case | Complex workflows | Simple CLI commands |
+
+### Vault API
+
+**Pass 1 - Scan:**
+```go
+// Track variable (returns variable name as ID)
+exprID := vault.DeclareVariable(name, raw string) string
+
+// Track direct decorator call (returns hash-based ID with transport)
+exprID := vault.TrackExpression(raw string) string
+
+// Record use-site (builds site path from current pathStack)
+err := vault.RecordReference(exprID, paramName string) error
+```
+
+**Pass 2 - Resolve:**
+```go
+// Mark expression as in execution path
+vault.MarkTouched(exprID string)
+
+// Resolve all touched-but-unresolved expressions
+err := vault.ResolveTouched(ctx context.Context) error
+
+// Access at current site (checks transport + SiteID)
+value, err := vault.Access(exprID, paramName string) (string, error)
+```
+
+**Pass 3 - Finalize:**
+```go
+// Remove untouched expressions
+vault.PruneUntouched()
+
+// Build final authorization list
+uses := vault.BuildSecretUses() []SecretUse
+```
+
+**Utilities (already implemented):**
+```go
+// Path tracking
+vault.EnterStep()
+vault.EnterDecorator(name string) int
+vault.ExitDecorator()
+vault.BuildSitePath(paramName string) string
+
+// Transport tracking
+vault.EnterTransport(scope string)
+vault.ExitTransport()
+vault.CurrentTransport() string
+
+// Execution path tracking
+vault.MarkTouched(exprID string)
+vault.IsTouched(exprID string) bool
+vault.PruneUntouched()
+```
+
+### Implementation
+
+```go
+// Vault manages variables, secrets, and DAG path tracking.
+type Vault struct {
+    // Path tracking (decorator DAG traversal)
+    pathStack       []PathSegment
+    stepCount       int
+    decoratorCounts map[string]int
+    
+    // Expression tracking (all value decorators are secrets)
+    expressions map[string]*Expression    // exprID → Expression
+    references  map[string][]SiteRef      // exprID → sites that use it
+    touched     map[string]bool           // exprID → in execution path
+    
+    // Transport boundary tracking
+    currentTransport string                // Current transport scope
+    exprTransport    map[string]string     // exprID → transport where resolved
+    
+    // Security
+    planKey []byte  // For HMAC-based SiteIDs
+}
+
+type Expression struct {
+    Raw    string          // Original: "@env.HOME", "@aws.secret('key')"
+    Handle *secret.Handle  // Resolved value (nil if not resolved)
+}
+
+type SiteRef struct {
+    Site      string // "root/step-1/@shell[0]/params/command"
+    SiteID    string // HMAC-based unforgeable ID
+    ParamName string // "command", "apiKey", etc.
+}
+
+// Key operations:
+
+// Pass 1: Scanning
+func (v *Vault) TrackExpression(id, raw string)
+func (v *Vault) RecordReference(id, paramName string) error  // Checks transport boundary
+
+// Pass 2: Resolution
+func (v *Vault) MarkTouched(id string)
+func (v *Vault) ResolveTouched(ctx ValueEvalContext) error
+func (v *Vault) GetForMeta(id string) (any, error)  // Unwrap for meta-programming
+
+// Pass 3: Finalization
+func (v *Vault) PruneUntouched()
+func (v *Vault) BuildSecretUses() []SecretUse
+
+// Transport tracking
+func (v *Vault) EnterTransport(scope string)
+func (v *Vault) ExitTransport()
+```
+
+### Path Tracking
+
+**Vault tracks exact decorator DAG path:**
+
+```opal
+@retry {
+    @timeout {
+        @shell { echo "test" }
+    }
+}
+```
+
+**Path at @shell:**
+```
+root/@retry[0]/@timeout[0]/@shell[0]/params/command
+```
+
+**Multiple instances tracked:**
+```opal
+echo "one"   # root/step-1/@shell[0]/params/command
+echo "two"   # root/step-2/@shell[0]/params/command
+```
+
+### Site-Based Authority
+
+**Each secret use creates a SecretUse entry:**
+
+```go
+type SecretUse struct {
+    DisplayID string // "opal:v:3J98t56A"
+    SiteID    string // HMAC(planKey, canonicalPath) - unforgeable
+    Site      string // "root/retry[0]/params/apiKey" - diagnostic
+}
+```
+
+**Executor enforces:**
+- Secret can ONLY be unwrapped at authorized sites
+- SiteID is HMAC-based (unforgeable without planKey)
+- Parent/child decorators CANNOT unwrap (different sites)
+
+**Example:**
+```opal
+var API_KEY = "sk-secret"
+@retry(apiKey=@var.API_KEY) {
+    echo "test"
+}
+
+# Plan contains SecretUse:
+# - DisplayID: opal:v:ABC123
+# - SiteID: Xj9K... (HMAC of "root/retry[0]/params/apiKey")
+# - Site: root/retry[0]/params/apiKey
+#
+# Executor enforcement:
+# - Secret can ONLY be unwrapped at site "root/retry[0]/params/apiKey"
+# - @retry decorator receives the secret at this exact site → can unwrap
+# - Any other site (different decorator, different parameter) → cannot unwrap
+#
+# Simple rule: Secrets are only unwrappable at the site where they are used.
+```
+
+### Benefits
+
+**1. Unified System**
+- One component handles variables AND secrets
+- No separate ScopeGraph needed
+- Simpler architecture
+
+**2. Security by Default**
+- ALL value decorators are secrets
+- Site-based authority prevents leakage
+- Unforgeable SiteIDs (HMAC-based)
+
+**3. Efficient**
+- Prunes unused secrets automatically
+- O(1) authority checks (index lookup)
+- Wave-based resolution handles dependencies
+
+**4. Debuggable**
+```go
+func (v *Vault) DebugPrint() {
+    // Show all expressions and their references
+    for id, expr := range v.expressions {
+        refs := v.references[id]
+        fmt.Printf("%s: %d references\n", id, len(refs))
+        for _, ref := range refs {
+            fmt.Printf("  - %s\n", ref.Site)
+        }
+    }
+}
+```
+
+### Planner Integration
+
+```go
+// Planner uses vault for everything
+type planner struct {
+    vault *vault.Vault
+    // ... other fields ...
+}
+
+func Plan(events []parser.Event) (*planfmt.Plan, error) {
+    planKey := make([]byte, 32)
+    rand.Read(planKey)
+    
+    p := &planner{
+        vault: vault.NewWithPlanKey(planKey),
+    }
+    
+    // Pass 1: Scan events
+    p.scanEvents()
+    
+    // Pass 2: Resolve and prune
+    p.resolveAndPrune()
+    
+    // Extract SecretUses
+    plan.SecretUses = p.vault.BuildSecretUses()
+    
+    return plan, nil
 }
 ```
 
@@ -2359,10 +2955,14 @@ Secrets are accessible **only at their use-site**. No propagation to parent/chil
 
 ```opal
 var API_KEY = "sk-..."
+var MAX_RETRIES = "5"
 
-@retry(apiKey=@var.API_KEY) {  # ✅ @retry can unwrap (authorized site)
-    @timeout {                  # ❌ @timeout CANNOT unwrap (different site)
-        @shell { ... }          # ❌ @shell CANNOT unwrap (different site)
+@retry(times=@var.MAX_RETRIES) {  # ✅ @retry can unwrap (authorized site)
+    @http.post(
+        url="https://api.com",
+        headers={Authorization: @var.API_KEY}  # ✅ @http.post can unwrap (authorized site)
+    ) {
+        @shell { ... }  # ❌ @shell CANNOT unwrap either secret (different site)
     }
 }
 ```
@@ -2372,63 +2972,86 @@ var API_KEY = "sk-..."
 2. **Runtime checks authority** - Executor verifies site before unwrap
 3. **Unwrap fails if unauthorized** - Simple lookup, no complex leases
 
-#### Decorator Parameter Classes
+#### Planner Automatic Secret Tracking
 
-Decorators declare what parameters can accept via `ParamClass`:
+**Key Insight:** The planner automatically observes which parameters receive secrets during planning and records SecretUse entries. Decorators don't need to declare what can accept secrets.
 
-```go
-type ParamClass uint8
+**How it works:**
 
-const (
-    // Plain data/config. Must never receive a secret.
-    ParamData ParamClass = iota
-    
-    // May receive a SecretRef (DisplayID/handle proxy) but cannot unwrap.
-    ParamSecretRef
-    
-    // May receive a SecretRef and is allowed to unwrap it at the declared site.
-    // Planner will emit a SecretUse(siteID, displayID) for this param.
-    ParamSecretConsumer
+1. **All value decorators produce secrets** - Even `@env.HOME` or `@var.retryCount` become `secret.Handle` (could leak sensitive info)
+2. **Planner tracks usage automatically** - When a parameter receives a `secret.Handle`, planner records it
+3. **String interpolation tracked** - `Authorization: "Bearer @var.API_KEY"` is detected and recorded
+4. **Transport boundaries tracked** - Secrets crossing from local to remote execution are flagged
+
+**Example:**
+
+```opal
+var API_KEY = "sk-secret"
+var RETRY_COUNT = "3"
+
+@http.post(
+    url="https://api.example.com",
+    headers={Authorization: "Bearer @var.API_KEY"}  # Planner records: API_KEY used here
 )
 
-type ParamSpec struct {
-    Class       ParamClass
-    Optional    bool
-    Description string
-}
-
-type DecoratorSpec struct {
-    Name   string
-    Params map[string]ParamSpec
-    MayConsumeSecrets bool  // If false, all consumer params downgraded to SecretRef
+@retry(times=@var.RETRY_COUNT) {  # Planner records: RETRY_COUNT used here
+    echo "test"
 }
 ```
 
-**Example specs:**
+**What gets recorded:**
+
 ```go
-var RetrySpec = DecoratorSpec{
-    Name: "retry",
-    Params: map[string]ParamSpec{
-        "times":  {Class: ParamData},              // @retry(times=@var.retryCount) ✓
-        "apiKey": {Class: ParamSecretConsumer, Optional: true}, // here-only unwrap
+Plan.SecretUses = []SecretUse{
+    {
+        DisplayID: "opal:v:ABC123",  // API_KEY
+        SiteID:    "Xj9K...",         // HMAC(planKey, "root/http.post[0]/params/headers/Authorization")
+        Site:      "root/http.post[0]/params/headers/Authorization",  // Path to object field
     },
-    MayConsumeSecrets: true,
-}
-
-var ShellSpec = DecoratorSpec{
-    Name: "shell",
-    Params: map[string]ParamSpec{
-        "cmd":         {Class: ParamData},
-        "stdinSecret": {Class: ParamSecretConsumer, Optional: true}, // unwrap via FD only
+    {
+        DisplayID: "opal:v:XYZ789",  // RETRY_COUNT
+        SiteID:    "mN2p...",         // HMAC(planKey, "root/retry[0]/params/times")
+        Site:      "root/retry[0]/params/times",
     },
-    MayConsumeSecrets: true,
 }
 ```
 
-**Plan-time validation:**
-- Passing secret into `ParamData` → **plan-time error**
-- Passing raw secret into `ParamSecretRef`/`ParamSecretConsumer` → **plan-time error** (must be SecretRef)
-- `ParamSecretConsumer` records use-site for executor authorization
+**Transport boundary tracking:**
+
+```opal
+var LOCAL_SECRET = "secret"
+
+@ssh.connect(host="remote") {
+    echo @var.LOCAL_SECRET  # Planner records: crosses transport boundary
+}
+```
+
+```go
+SecretUse{
+    DisplayID:        "opal:v:DEF456",
+    SiteID:           "pQ8r...",
+    Site:             "root/ssh.connect[0]/body/shell[0]",
+    CrossesTransport: true,
+    SourceTransport:  "local",
+    TargetTransport:  "ssh:remote",
+}
+```
+
+**Benefits:**
+
+- **No decorator declarations needed** - Planner observes actual usage
+- **Catches all secret usage** - Including string interpolation and nested objects
+- **Transport-aware** - Detects when secrets cross execution boundaries
+- **Automatic** - Works for all decorators without special code
+
+**User errors are still user errors:**
+
+If someone writes `@retry(times=@var.API_KEY)`, that's a bug in their code. The planner will:
+1. Record that `times` parameter uses `API_KEY` secret
+2. Store DisplayID in plan: `times: "opal:v:ABC123"`
+3. At execution, @retry tries to parse as integer, fails with clear error showing DisplayID
+
+The security model prevents @retry from unwrapping the secret, but it can't prevent users from passing secrets to wrong parameters.
 
 #### Secret Transport: FD/Stdin Only (Never Env/Argv)
 
@@ -2487,8 +3110,15 @@ func (e *Executor) DeliverSecret(cmd *exec.Cmd, secret string) error {
 type SecretUse struct {
     DisplayID string  // "opal:v:3J98t56A"
     SiteID    string  // HMAC(planHash, canonicalPath) - unforgeable
-    Site      string  // "root/retry[0]/params/apiKey" (human-readable diagnostic)
+    Site      string  // "root/retry[0]/params/times" or "root/http.post[0]/params/headers/Authorization"
 }
+
+// Path format: root/[@decorator[index]/]*/params/paramName[/objectField]*
+// Examples:
+//   - Simple param: "root/@retry[0]/params/times"
+//   - Object field: "root/@http.post[0]/params/headers/Authorization"
+//   - Nested: "root/@retry[0]/@timeout[0]/@shell[0]/params/command"
+//   - Array element: "root/@parallel[0]/tasks[2]/params/name"
 
 // Planner records each use with canonical site ID
 func (p *Planner) recordSecretUse(displayID, stepID, paramName string) {
