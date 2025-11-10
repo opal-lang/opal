@@ -386,5 +386,6 @@ func TestContextNotBackgroundFailsOnNil(t *testing.T) {
 		}
 	}()
 
+	//nolint:staticcheck // SA1012: intentionally passing nil to test panic behavior
 	invariant.ContextNotBackground(nil, "test location")
 }

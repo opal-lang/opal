@@ -260,11 +260,9 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		}
 	}
 
-	// Register all secrets with scrubber (ALL value decorator results are secrets)
-	for _, secret := range plan.Secrets {
-		// Use DisplayID as placeholder (e.g., "opal:secret:3J98t56A")
-		scrubber.RegisterSecret([]byte(secret.RuntimeValue), []byte(secret.DisplayID))
-	}
+	// TODO(Phase 3): Wire up Vault's SecretProvider here
+	// Once planner exposes Vault, use: scrubber.SetProvider(vault.SecretProvider())
+	// For now, secrets won't be scrubbed (will be fixed in Phase 3)
 
 	// Dry-run mode: show plan or generate contract
 	if dryRun {
@@ -489,10 +487,9 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 		fmt.Fprintf(os.Stderr, "Steps: %d\n", len(freshPlan.Steps))
 	}
 
-	// Register all secrets with scrubber
-	for _, secret := range freshPlan.Secrets {
-		scrubber.RegisterSecret([]byte(secret.RuntimeValue), []byte(secret.DisplayID))
-	}
+	// TODO(Phase 3): Wire up Vault's SecretProvider here
+	// Once planner exposes Vault, use: scrubber.SetProvider(vault.SecretProvider())
+	// For now, secrets won't be scrubbed (will be fixed in Phase 3)
 
 	// Step 4: Execute the verified plan
 	execDebug := executor.DebugOff

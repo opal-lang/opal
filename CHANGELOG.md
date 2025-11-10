@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2025-11-09
+- Added scope-aware variable storage to Vault using pathStack as scope trie
+- Variables now properly scoped with parent-to-child flow and shadowing support
+- Added SecretProvider interface for pluggable secret scrubbing
+- Scrubber now detects encoded secrets (hex, base64, percent-encoding, separators)
+- Removed legacy RegisterSecret API in favor of provider-based scrubbing
+
 ### 2025-11-08
 - Added site-based secret authority (SecretUse tracks authorized use-sites per secret)
 - Plan.Freeze() prevents mutations after hash computation for tamper detection

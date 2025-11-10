@@ -1,8 +1,13 @@
 package vault
 
 import (
+	"bytes"
+	"sync"
 	"testing"
 )
+
+// testKey is a fixed 32-byte key for deterministic testing
+var testKey = []byte("test-key-32-bytes-for-hmac-12345")
 
 // ========== Path Tracking Tests ==========
 
@@ -818,4 +823,252 @@ func containsString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ============================================================================
+// SecretProvider Tests
+// ============================================================================
+
+// TestVault_SecretProvider_NoExpressions tests provider with no expressions
+func TestVault_SecretProvider_NoExpressions(t *testing.T) {
+	v := New()
+	provider := v.SecretProvider()
+
+	chunk := []byte("No secrets here")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	if !bytes.Equal(result, chunk) {
+		t.Errorf("Expected unchanged chunk, got %q", result)
+	}
+}
+
+// TestVault_SecretProvider_UnresolvedExpression tests provider with unresolved expression
+func TestVault_SecretProvider_UnresolvedExpression(t *testing.T) {
+	v := New()
+
+	// Declare but don't resolve
+	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
+	_ = exprID
+
+	provider := v.SecretProvider()
+	chunk := []byte("The key is: secret123")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	// Should not replace (expression not resolved)
+	if !bytes.Equal(result, chunk) {
+		t.Errorf("Expected unchanged chunk, got %q", result)
+	}
+}
+
+// TestVault_SecretProvider_ResolvedExpression tests provider with resolved expression
+func TestVault_SecretProvider_ResolvedExpression(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Declare and resolve
+	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
+	v.MarkResolved(exprID, "secret123")
+
+	provider := v.SecretProvider()
+	chunk := []byte("The key is: secret123")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	// Should replace with DisplayID
+	if bytes.Contains(result, []byte("secret123")) {
+		t.Errorf("Secret not replaced: %q", result)
+	}
+
+	// Should contain DisplayID (format: opal:v:...)
+	if !bytes.Contains(result, []byte("opal:v:")) {
+		t.Errorf("DisplayID not found in result: %q", result)
+	}
+}
+
+// TestVault_SecretProvider_MultipleSecrets tests provider with multiple secrets
+func TestVault_SecretProvider_MultipleSecrets(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Declare and resolve multiple secrets
+	id1 := v.DeclareVariable("KEY1", "@env.KEY1")
+	v.MarkResolved(id1, "secret1")
+
+	id2 := v.DeclareVariable("KEY2", "@env.KEY2")
+	v.MarkResolved(id2, "secret2")
+
+	provider := v.SecretProvider()
+	chunk := []byte("First: secret1, Second: secret2")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	// Both secrets should be replaced
+	if bytes.Contains(result, []byte("secret1")) {
+		t.Errorf("secret1 not replaced: %q", result)
+	}
+	if bytes.Contains(result, []byte("secret2")) {
+		t.Errorf("secret2 not replaced: %q", result)
+	}
+
+	// Should contain DisplayIDs
+	if !bytes.Contains(result, []byte("opal:v:")) {
+		t.Errorf("DisplayIDs not found in result: %q", result)
+	}
+}
+
+// TestVault_SecretProvider_LongestFirst tests longest-first matching
+func TestVault_SecretProvider_LongestFirst(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Declare overlapping secrets (use different raw expressions)
+	id1 := v.DeclareVariable("SHORT", "@env.SHORT")
+	v.MarkResolved(id1, "SECRET")
+
+	id2 := v.DeclareVariable("LONG", "@env.LONG")
+	v.MarkResolved(id2, "SECRET_EXTENDED")
+
+	provider := v.SecretProvider()
+	chunk := []byte("Value: SECRET_EXTENDED")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	// Should replace entire "SECRET_EXTENDED", not just "SECRET"
+	if bytes.Contains(result, []byte("SECRET")) {
+		t.Errorf("Secret not fully replaced (longest-first failed): %q", result)
+	}
+
+	// Should have one DisplayID
+	count := bytes.Count(result, []byte("opal:v:"))
+	if count != 1 {
+		t.Errorf("Expected 1 DisplayID, got %d in: %q", count, result)
+	}
+}
+
+// TestVault_SecretProvider_EmptyValue tests provider with empty resolved value
+func TestVault_SecretProvider_EmptyValue(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Resolve to empty string
+	id := v.DeclareVariable("EMPTY", "@env.EMPTY")
+	v.MarkResolved(id, "")
+
+	provider := v.SecretProvider()
+	chunk := []byte("No secrets here")
+	result, err := provider.HandleChunk(chunk)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+
+	// Should not replace (empty value ignored)
+	if !bytes.Equal(result, chunk) {
+		t.Errorf("Expected unchanged chunk, got %q", result)
+	}
+}
+
+// TestVault_SecretProvider_ThreadSafety tests concurrent access to provider
+func TestVault_SecretProvider_ThreadSafety(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Declare and resolve
+	id := v.DeclareVariable("KEY", "@env.KEY")
+	v.MarkResolved(id, "secret")
+
+	provider := v.SecretProvider()
+
+	// Call HandleChunk concurrently
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			chunk := []byte("The secret is: secret")
+			result, err := provider.HandleChunk(chunk)
+			if err != nil {
+				t.Errorf("HandleChunk failed: %v", err)
+			}
+			if bytes.Contains(result, []byte("secret")) {
+				t.Errorf("Secret not replaced in concurrent call: %q", result)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestVault_SecretProvider_DynamicPatterns tests that patterns update dynamically
+func TestVault_SecretProvider_DynamicPatterns(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// Declare and resolve first secret
+	id1 := v.DeclareVariable("KEY1", "@env.KEY1")
+	v.MarkResolved(id1, "secret1")
+
+	provider := v.SecretProvider()
+
+	// First call - should replace secret1
+	chunk1 := []byte("Value: secret1")
+	result1, err := provider.HandleChunk(chunk1)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+	if bytes.Contains(result1, []byte("secret1")) {
+		t.Errorf("secret1 not replaced: %q", result1)
+	}
+
+	// Add second secret
+	id2 := v.DeclareVariable("KEY2", "@env.KEY2")
+	v.MarkResolved(id2, "secret2")
+
+	// Second call - should replace both secrets
+	chunk2 := []byte("Value: secret1 and secret2")
+	result2, err := provider.HandleChunk(chunk2)
+	if err != nil {
+		t.Fatalf("HandleChunk failed: %v", err)
+	}
+	if bytes.Contains(result2, []byte("secret1")) {
+		t.Errorf("secret1 not replaced: %q", result2)
+	}
+	if bytes.Contains(result2, []byte("secret2")) {
+		t.Errorf("secret2 not replaced: %q", result2)
+	}
+}
+
+// TestVault_SecretProvider_MaxSecretLength tests MaxSecretLength method
+func TestVault_SecretProvider_MaxSecretLength(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	provider := v.SecretProvider()
+
+	// Initially no secrets
+	if got := provider.MaxSecretLength(); got != 0 {
+		t.Errorf("MaxSecretLength() = %d, want 0", got)
+	}
+
+	// Add short secret
+	id1 := v.DeclareVariable("SHORT", "@env.SHORT")
+	v.MarkResolved(id1, "short")
+
+	// With variants, max length includes encoded forms (hex, base64, percent-encoding, separators)
+	// "short" (5 bytes) -> percent-encoded "%73%68%6F%72%74" (15 bytes) is longest
+	if got := provider.MaxSecretLength(); got != 15 {
+		t.Errorf("MaxSecretLength() = %d, want 15 (includes percent-encoded variant)", got)
+	}
+
+	// Add longer secret
+	id2 := v.DeclareVariable("LONG", "@env.LONG")
+	v.MarkResolved(id2, "this_is_a_much_longer_secret")
+
+	// "this_is_a_much_longer_secret" (28 bytes) -> percent-encoded (84 bytes) is longest
+	if got := provider.MaxSecretLength(); got != 84 {
+		t.Errorf("MaxSecretLength() = %d, want 84 (includes percent-encoded variant)", got)
+	}
 }

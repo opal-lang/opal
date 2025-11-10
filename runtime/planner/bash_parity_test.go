@@ -40,6 +40,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect attaches to first command, AND runs second",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: AndNode(RedirectNode(echo "a", out.txt), echo "b")
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
@@ -64,6 +65,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Append redirect with AND",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -86,6 +88,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect succeeds, OR skips second command",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				orNode, ok := tree.(*planfmt.OrNode)
 				if !ok {
 					t.Fatalf("Expected OrNode, got %T", tree)
@@ -104,6 +107,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect happens, pipe gets empty stdin",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: PipelineNode([RedirectNode(echo "a" > out.txt), cat])
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
@@ -131,6 +135,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Semicolon runs both commands regardless",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {
 					t.Fatalf("Expected SequenceNode, got %T", tree)
@@ -158,6 +163,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b",
 			description: "Redirect attaches to second command only",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -181,6 +187,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b",
 			description: "Append redirect on second command",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -203,6 +210,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "",
 			description: "First succeeds, OR skips second (with redirect)",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				orNode, ok := tree.(*planfmt.OrNode)
 				if !ok {
 					t.Fatalf("Expected OrNode, got %T", tree)
@@ -221,6 +229,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Pipe happens, redirect captures cat's output",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
 					t.Fatalf("Expected PipelineNode, got %T", tree)
@@ -241,6 +250,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b",
 			description: "Semicolon with redirect on second",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {
 					t.Fatalf("Expected SequenceNode, got %T", tree)
@@ -268,6 +278,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b", // out2.txt
 			description: "Both commands have redirects",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -291,6 +302,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a", // out1.txt (second doesn't run)
 			description: "First redirect succeeds, OR skips second",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				orNode, ok := tree.(*planfmt.OrNode)
 				if !ok {
 					t.Fatalf("Expected OrNode, got %T", tree)
@@ -314,6 +326,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a", // out1.txt
 			description: "Both commands in pipeline have redirects",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be PipelineNode with both commands having redirects
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
@@ -340,6 +353,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b", // out2.txt
 			description: "Semicolon with both having redirects",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {
 					t.Fatalf("Expected SequenceNode, got %T", tree)
@@ -372,6 +386,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b", // Last write wins
 			description: "Both redirect to same file, last write wins",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -396,6 +411,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a\nb", // Overwrite then append
 			description: "Overwrite then append to same file",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -427,6 +443,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a\nb", // Both append
 			description: "Both append to same file",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -463,6 +480,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Only first has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: AndNode(AndNode(Redirect(a), echo b), echo c)
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
@@ -498,6 +516,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b",
 			description: "Middle command has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -526,6 +545,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "c",
 			description: "Last command has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -544,6 +564,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b", // out.txt
 			description: "All three have redirects",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -582,6 +603,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect on first, pipe on second",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -605,6 +627,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Pipe with redirect, then AND",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
 					t.Fatalf("Expected AndNode, got %T", tree)
@@ -628,6 +651,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect then pipe then AND",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: AndNode(PipelineNode([RedirectNode, cat]), echo "b")
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
@@ -657,6 +681,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Redirect, semicolon, then pipe",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {
 					t.Fatalf("Expected SequenceNode, got %T", tree)
@@ -684,6 +709,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Pipe with redirect, semicolon, then command",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {
 					t.Fatalf("Expected SequenceNode, got %T", tree)
@@ -716,6 +742,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Middle command in pipeline has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be PipelineNode([echo "a", RedirectNode(cat > out.txt), cat])
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
@@ -748,6 +775,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "First in pipeline has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be PipelineNode([RedirectNode(echo "a" > out.txt), cat, cat])
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
@@ -779,6 +807,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Last in pipeline has redirect",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				pipeNode, ok := tree.(*planfmt.PipelineNode)
 				if !ok {
 					t.Fatalf("Expected PipelineNode, got %T", tree)
@@ -803,6 +832,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "test", // out2.txt
 			description: "Real-world: build logs, test results, deploy output",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: AndNode(AndNode(Redirect(build), Redirect(test)), echo deploy)
 				andNode, ok := tree.(*planfmt.AndNode)
 				if !ok {
@@ -837,6 +867,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "a",
 			description: "Complex: pipe with redirect, AND, OR",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: OrNode(AndNode(PipelineNode([echo a, cat with redirect]), echo b), echo c)
 				orNode, ok := tree.(*planfmt.OrNode)
 				if !ok {
@@ -861,6 +892,7 @@ func TestBashParity(t *testing.T) {
 			bashFile:    "b", // out2.txt
 			description: "Complex: multiple semicolons with redirects and pipes",
 			verify: func(t *testing.T, tree planfmt.ExecutionNode) {
+				t.Helper()
 				// Should be: SequenceNode([Redirect(a), PipelineNode([echo b, cat with redirect]), echo c])
 				seqNode, ok := tree.(*planfmt.SequenceNode)
 				if !ok {

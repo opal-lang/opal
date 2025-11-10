@@ -50,7 +50,8 @@ type tokenExpectation struct {
 }
 
 // assertTokens compares actual tokens with expected, providing clear error messages
-func assertTokens(t *testing.T, name string, input string, expected []tokenExpectation) {
+func assertTokens(t *testing.T, name, input string, expected []tokenExpectation) {
+	t.Helper()
 	t.Helper()
 
 	lexer := newTestLexer(input)
@@ -391,6 +392,7 @@ func TestBenchmarkPerformanceRequirements(t *testing.T) {
 
 	// Run the benchmark - use arithmetic scenario for realistic performance test
 	result := testing.Benchmark(func(b *testing.B) {
+		b.Helper()
 		inputBytes := []byte("var x = 5")
 		lexer := newTestLexer("")
 		b.ResetTimer()

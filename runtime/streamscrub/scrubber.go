@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"sort"
 	"sync"
 
 	"github.com/aledsdavies/opal/core/invariant"
@@ -21,17 +20,10 @@ type PlaceholderFunc func(secret []byte) string
 type Scrubber struct {
 	mu              sync.Mutex // Protects all fields below
 	out             io.Writer
-	secrets         []secretEntry
+	provider        SecretProvider // Provider for secret detection and replacement
 	frames          []frame
 	carry           []byte // Rolling window for chunk-boundary secrets
-	maxLen          int    // Longest registered secret
 	placeholderFunc PlaceholderFunc
-}
-
-// secretEntry holds a secret pattern and its placeholder.
-type secretEntry struct {
-	pattern     []byte
-	placeholder []byte
 }
 
 // frame represents a buffering scope.
@@ -48,6 +40,21 @@ type Option func(*Scrubber)
 func WithPlaceholderFunc(fn PlaceholderFunc) Option {
 	return func(s *Scrubber) {
 		s.placeholderFunc = fn
+	}
+}
+
+// WithSecretProvider sets a secret provider for on-demand detection.
+// The provider is queried for each chunk of data to determine if it contains
+// secrets. This enables automatic secret detection without manual registration.
+//
+// Example:
+//
+//	vault := vault.New()
+//	scrubber := streamscrub.New(output, streamscrub.WithSecretProvider(vault))
+//	// Secrets automatically detected via vault
+func WithSecretProvider(provider SecretProvider) Option {
+	return func(s *Scrubber) {
+		s.provider = provider
 	}
 }
 
@@ -86,7 +93,6 @@ func New(w io.Writer, opts ...Option) *Scrubber {
 	// OUTPUT CONTRACT
 	invariant.Postcondition(s.out != nil, "scrubber must have output writer")
 	invariant.Postcondition(len(s.frames) == 0, "scrubber must start with no active frames")
-	invariant.Postcondition(len(s.secrets) == 0, "scrubber must start with no registered secrets")
 	invariant.Postcondition(s.placeholderFunc != nil, "scrubber must have placeholder function")
 
 	return s
@@ -95,44 +101,6 @@ func New(w io.Writer, opts ...Option) *Scrubber {
 // simplePlaceholder is a fallback placeholder generator (used only if keyed generation fails).
 func simplePlaceholder(secret []byte) string {
 	return "<REDACTED>"
-}
-
-// RegisterSecret registers a secret to be redacted.
-func (s *Scrubber) RegisterSecret(secret, placeholder []byte) {
-	// INPUT CONTRACT
-	invariant.Precondition(len(secret) > 0, "secret cannot be empty")
-	invariant.Precondition(len(placeholder) > 0, "placeholder cannot be empty")
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.registerSecretNoLock(secret, placeholder)
-}
-
-// registerSecretNoLock registers a secret without acquiring the mutex.
-// Caller MUST hold s.mu.
-func (s *Scrubber) registerSecretNoLock(secret, placeholder []byte) {
-	// INPUT CONTRACT
-	invariant.Precondition(len(secret) > 0, "secret cannot be empty")
-	invariant.Precondition(len(placeholder) > 0, "placeholder cannot be empty")
-
-	oldMaxLen := s.maxLen
-	oldSecretCount := len(s.secrets)
-
-	s.secrets = append(s.secrets, secretEntry{
-		pattern:     secret,
-		placeholder: placeholder,
-	})
-
-	// Update maxLen to track longest secret
-	if len(secret) > s.maxLen {
-		s.maxLen = len(secret)
-	}
-
-	// OUTPUT CONTRACT
-	invariant.Postcondition(len(s.secrets) == oldSecretCount+1, "secret must be registered")
-	invariant.Postcondition(s.maxLen >= oldMaxLen, "maxLen must not decrease")
-	invariant.Postcondition(s.maxLen >= len(secret), "maxLen must be at least as long as new secret")
 }
 
 // StartFrame begins a new buffering scope.
@@ -156,7 +124,8 @@ func (s *Scrubber) StartFrame(label string) {
 }
 
 // EndFrame ends the current frame and flushes scrubbed output.
-func (s *Scrubber) EndFrame(secrets [][]byte) error {
+// Secrets are provided by the SecretProvider, not passed as parameters.
+func (s *Scrubber) EndFrame() error {
 	// INPUT CONTRACT
 	invariant.Precondition(len(s.frames) > 0, "cannot end frame when no frame is active")
 
@@ -164,31 +133,30 @@ func (s *Scrubber) EndFrame(secrets [][]byte) error {
 	defer s.mu.Unlock()
 
 	oldFrameCount := len(s.frames)
-	oldSecretCount := len(s.secrets)
 
 	// Pop current frame
 	currentFrame := s.frames[len(s.frames)-1]
 	s.frames = s.frames[:len(s.frames)-1]
 
-	// Register secrets with generated placeholders
-	// LOOP INVARIANT: Track progress through secrets slice
-	prevIdx := -1
-	for idx, secret := range secrets {
-		// Assert loop makes progress
-		invariant.Postcondition(idx > prevIdx, "loop must make progress")
-		prevIdx = idx
+	// Get frame buffer bytes
+	frameBuf := currentFrame.buf.Bytes()
 
-		if len(secret) > 0 {
-			placeholder := s.placeholderFunc(secret)
-			s.registerSecretNoLock(secret, []byte(placeholder))
+	// Scrub frame buffer with provider (if available)
+	scrubbed, err := s.scrubAll(frameBuf)
+	if err != nil {
+		// Provider rejected chunk - do not write unsanitized data
+		// Zeroize buffer and return error
+		for i := range frameBuf {
+			frameBuf[i] = 0
 		}
+		currentFrame.buf.Reset()
+		return err
 	}
 
-	// Scrub frame buffer with all known secrets (longest-first)
-	scrubbed := s.scrubAll(currentFrame.buf.Bytes())
+	// Flush to output BEFORE zeroizing (scrubbed may share underlying array with frameBuf)
+	_, err = s.out.Write(scrubbed)
 
-	// Zeroize frame buffer after scrubbing
-	frameBuf := currentFrame.buf.Bytes()
+	// Zeroize frame buffer after writing
 	for i := range frameBuf {
 		frameBuf[i] = 0
 	}
@@ -196,93 +164,37 @@ func (s *Scrubber) EndFrame(secrets [][]byte) error {
 
 	// OUTPUT CONTRACT
 	invariant.Postcondition(len(s.frames) == oldFrameCount-1, "frame must be popped from stack")
-	invariant.Postcondition(len(s.secrets) >= oldSecretCount, "secrets must be registered")
 
-	// Flush to output
-	_, err := s.out.Write(scrubbed)
 	return err
 }
 
-// RegisterSecretWithVariants registers a secret and all its encoding variants.
-func (s *Scrubber) RegisterSecretWithVariants(secret []byte) {
-	// INPUT CONTRACT
-	invariant.Precondition(len(secret) > 0, "secret cannot be empty")
-
-	placeholder := []byte(s.placeholderFunc(secret))
-
-	// Register raw secret
-	s.RegisterSecret(secret, placeholder)
-
-	// Register encoding variants
-	s.registerVariants(secret, placeholder)
-}
-
-// registerVariants registers all encoding variants of a secret.
-func (s *Scrubber) registerVariants(secret, placeholder []byte) {
-	// Hex: lowercase and uppercase
-	hexLower := []byte(toHex(secret))
-	hexUpper := []byte(toUpperHex(toHex(secret)))
-	s.RegisterSecret(hexLower, placeholder)
-	s.RegisterSecret(hexUpper, placeholder)
-
-	// Base64: standard, raw, and URL encodings
-	b64Std := []byte(toBase64(secret))
-	b64Raw := []byte(toBase64Raw(secret))
-	b64URL := []byte(toBase64URL(secret))
-	s.RegisterSecret(b64Std, placeholder)
-	s.RegisterSecret(b64Raw, placeholder)
-	s.RegisterSecret(b64URL, placeholder)
-
-	// Percent encoding: lowercase and uppercase
-	percentLower := []byte(toPercentEncoding(secret, false))
-	percentUpper := []byte(toPercentEncoding(secret, true))
-	s.RegisterSecret(percentLower, placeholder)
-	s.RegisterSecret(percentUpper, placeholder)
-
-	// Separator-inserted variants
-	separators := []string{"-", "_", ":", ".", " "}
-	for _, sep := range separators {
-		variant := []byte(insertSeparators(secret, sep))
-		s.RegisterSecret(variant, placeholder)
-	}
-}
-
-// SecretCount returns the number of registered secret patterns (for testing/debugging).
-func (s *Scrubber) SecretCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.secrets)
-}
-
-// MaxPatternLen returns the longest registered secret pattern (for testing/debugging).
-func (s *Scrubber) MaxPatternLen() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.maxLen
-}
-
-// scrubAll replaces all secrets in buf using longest-first matching.
+// scrubAll replaces all secrets in buf using the SecretProvider.
+// Returns an error if the provider rejects the chunk (e.g., fail-fast mode).
 // Assumes mu is held.
-func (s *Scrubber) scrubAll(buf []byte) []byte {
-	// Sort secrets by descending length (longest first)
-	entries := make([]secretEntry, len(s.secrets))
-	copy(entries, s.secrets)
-	sort.Slice(entries, func(i, j int) bool {
-		return len(entries[i].pattern) > len(entries[j].pattern)
-	})
-
-	result := buf
-	// LOOP INVARIANT: Track progress through secrets
-	prevIdx := -1
-	for idx, entry := range entries {
-		// Assert loop makes progress
-		invariant.Postcondition(idx > prevIdx, "loop must make progress")
-		prevIdx = idx
-
-		result = bytes.ReplaceAll(result, entry.pattern, entry.placeholder)
+func (s *Scrubber) scrubAll(buf []byte) ([]byte, error) {
+	// Use provider-based scrubbing if available
+	if s.provider != nil {
+		return s.scrubAllProvider(buf)
 	}
 
-	return result
+	// No provider - pass through unchanged
+	return buf, nil
+}
+
+// scrubAllProvider uses SecretProvider to process chunk.
+// Provider handles all secret detection and replacement internally.
+// Returns an error if the provider rejects the chunk.
+// Assumes mu is held.
+func (s *Scrubber) scrubAllProvider(buf []byte) ([]byte, error) {
+	// Provider does all the work - finds and replaces all secrets
+	processed, err := s.provider.HandleChunk(buf)
+	if err != nil {
+		// Provider rejected chunk (e.g., fail-fast mode detected secret)
+		// Return error to prevent writing unsanitized data
+		return nil, err
+	}
+
+	return processed, nil
 }
 
 // Helper functions for encoding variants
@@ -440,13 +352,24 @@ func (s *Scrubber) Write(p []byte) (int, error) {
 	buf := append(append([]byte{}, s.carry...), p...)
 
 	// Scrub all secrets (longest-first)
-	result := s.scrubAll(buf)
+	result, err := s.scrubAll(buf)
+	if err != nil {
+		// Provider rejected chunk - do not write unsanitized data
+		return 0, err
+	}
 
 	// Keep last maxLen-1 bytes as carry for next write
 	// (in case secret is split across chunk boundary)
 	carrySize := 0
-	if s.maxLen > 0 {
-		carrySize = s.maxLen - 1
+	maxLen := 0
+
+	// Get max secret length from provider
+	if s.provider != nil {
+		maxLen = s.provider.MaxSecretLength()
+	}
+
+	if maxLen > 0 {
+		carrySize = maxLen - 1
 		// UTF-8 safety: hold back at least 3 bytes for multi-byte code points
 		if carrySize < 3 {
 			carrySize = 3
@@ -498,10 +421,18 @@ func (s *Scrubber) Flush() error {
 	}
 
 	// Scrub carry one final time (longest-first)
-	result := s.scrubAll(s.carry)
+	result, err := s.scrubAll(s.carry)
+	if err != nil {
+		// Provider rejected chunk - zeroize carry and return error
+		for i := range s.carry {
+			s.carry[i] = 0
+		}
+		s.carry = s.carry[:0]
+		return err
+	}
 
 	// Write and zeroize carry
-	_, err := s.out.Write(result)
+	_, err = s.out.Write(result)
 
 	// Zeroize carry buffer
 	for i := range s.carry {

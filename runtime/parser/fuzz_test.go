@@ -24,6 +24,7 @@ import (
 
 // addSeedCorpus adds common test cases to all fuzz functions
 func addSeedCorpus(f *testing.F) {
+	f.Helper()
 	// Basic syntax
 	f.Add([]byte(""))
 	f.Add([]byte("fun greet() {}"))

@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/aledsdavies/opal/core/invariant"
+	"github.com/aledsdavies/opal/runtime/streamscrub"
 )
 
 // Vault manages variable scoping and secret tracking with site-based access control.
@@ -63,6 +65,8 @@ import (
 //
 // See docs/ARCHITECTURE.md for complete architecture.
 type Vault struct {
+	mu sync.RWMutex // Protects all fields below (RWMutex for better read performance)
+
 	// Path tracking (DAG traversal)
 	pathStack       []PathSegment
 	stepCount       int
@@ -82,6 +86,9 @@ type Vault struct {
 
 	// Security
 	planKey []byte // For HMAC-based SiteIDs
+
+	// Secret scrubbing (lazy initialization)
+	provider streamscrub.SecretProvider
 }
 
 // Expression represents a secret-producing expression.
@@ -282,6 +289,9 @@ func (v *Vault) parentScopePath(scopePath string) string {
 // Walks up the scope trie from current scope to root, enabling parent → child flow.
 // Handles missing scopes by computing parent path directly (scopes created lazily).
 func (v *Vault) LookupVariable(varName string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	scopePath := v.currentScopePath()
 	visited := make(map[string]bool)
 
@@ -316,8 +326,15 @@ func (v *Vault) DeclareVariable(name, raw string) string {
 	exprID := v.generateExprID(raw)
 
 	if _, exists := v.expressions[exprID]; !exists {
+		// Generate DisplayID from exprID hash (strip transport prefix)
+		// exprID format: "transport:hash" -> DisplayID format: "opal:v:hash"
+		parts := strings.SplitN(exprID, ":", 2)
+		hash := parts[1] // Extract hash part after transport prefix
+		displayID := fmt.Sprintf("opal:v:%s", hash)
+
 		v.expressions[exprID] = &Expression{
-			Raw: raw,
+			Raw:       raw,
+			DisplayID: displayID,
 		}
 	}
 
@@ -332,13 +349,23 @@ func (v *Vault) DeclareVariable(name, raw string) string {
 // Returns a deterministic hash-based ID that includes transport context.
 // Format: "transport:hash"
 func (v *Vault) TrackExpression(raw string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	// Generate deterministic ID including transport
 	exprID := v.generateExprID(raw)
 
 	// Store expression if not already tracked
 	if _, exists := v.expressions[exprID]; !exists {
+		// Generate DisplayID from exprID hash (strip transport prefix)
+		// exprID format: "transport:hash" -> DisplayID format: "opal:v:hash"
+		parts := strings.SplitN(exprID, ":", 2)
+		hash := parts[1] // Extract hash part after transport prefix
+		displayID := fmt.Sprintf("opal:v:%s", hash)
+
 		v.expressions[exprID] = &Expression{
-			Raw: raw,
+			Raw:       raw,
+			DisplayID: displayID,
 		}
 	}
 
@@ -363,6 +390,9 @@ func (v *Vault) generateExprID(raw string) string {
 // RecordReference records that an expression is used at the current site.
 // Transport boundary check is deferred to Access() time (after resolution).
 func (v *Vault) RecordReference(exprID, paramName string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	site := v.BuildSitePath(paramName)
 	siteID := v.computeSiteID(site)
 
@@ -412,6 +442,9 @@ func (v *Vault) PruneUnused() {
 // In our security model: ALL value decorators are secrets.
 // Note: Empty string values are valid secrets (e.g., empty env vars).
 func (v *Vault) BuildSecretUses() []SecretUse {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	var uses []SecretUse
 
 	for id, expr := range v.expressions {
@@ -454,16 +487,25 @@ type SecretUse struct {
 
 // MarkTouched marks an expression as touched (in execution path).
 func (v *Vault) MarkTouched(exprID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	v.touched[exprID] = true
 }
 
 // IsTouched checks if an expression is marked as touched.
 func (v *Vault) IsTouched(exprID string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	return v.touched[exprID]
 }
 
 // PruneUntouched removes expressions not in execution path.
 func (v *Vault) PruneUntouched() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	for id := range v.expressions {
 		if !v.touched[id] {
 			delete(v.expressions, id)
@@ -499,6 +541,9 @@ func (v *Vault) CurrentTransport() string {
 //
 // Panics if expression not found or already resolved (programmer errors).
 func (v *Vault) MarkResolved(exprID, value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	expr, exists := v.expressions[exprID]
 	invariant.Precondition(exists, "MarkResolved: expression %q not found", exprID)
 	invariant.Precondition(!expr.Resolved, "MarkResolved: expression %q already resolved", exprID)
@@ -551,6 +596,9 @@ func (v *Vault) checkTransportBoundary(exprID string) error {
 //	vault.EnterDecorator("@shell")
 //	value, err := vault.Access("API_KEY", "command")  // Checks site: root/@shell[0]/params/command
 func (v *Vault) Access(exprID, paramName string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	// 1. Get expression
 	expr, exists := v.expressions[exprID]
 	if !exists {
@@ -583,4 +631,60 @@ func (v *Vault) Access(exprID, paramName string) (string, error) {
 
 	// 5. Return value
 	return expr.Value, nil
+}
+
+// ============================================================================
+// SecretProvider Implementation (for streamscrub integration)
+// ============================================================================
+
+// getPatterns returns all resolved expressions as scrubbing patterns.
+// This is called by the pattern provider on each HandleChunk invocation.
+func (v *Vault) getPatterns() []streamscrub.Pattern {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	var patterns []streamscrub.Pattern
+
+	for _, expr := range v.expressions {
+		// Only include resolved expressions with non-empty values
+		if !expr.Resolved || expr.Value == "" {
+			continue
+		}
+
+		patterns = append(patterns, streamscrub.Pattern{
+			Value:       []byte(expr.Value),
+			Placeholder: []byte(expr.DisplayID),
+		})
+	}
+
+	return patterns
+}
+
+// SecretProvider returns a streamscrub.SecretProvider for this vault.
+// The provider replaces all resolved expression values with their DisplayIDs.
+//
+// This enables automatic secret scrubbing in output streams without manual
+// registration. The scrubber calls the provider to process each chunk.
+//
+// The provider is lazily initialized on first call and reused.
+// Thread-safe: Safe for concurrent calls.
+func (v *Vault) SecretProvider() streamscrub.SecretProvider {
+	// Fast path: check with read lock first
+	v.mu.RLock()
+	if v.provider != nil {
+		defer v.mu.RUnlock()
+		return v.provider
+	}
+	v.mu.RUnlock()
+
+	// Slow path: initialize with write lock
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine might have initialized)
+	if v.provider == nil {
+		v.provider = streamscrub.NewPatternProviderWithVariants(v.getPatterns)
+	}
+
+	return v.provider
 }
