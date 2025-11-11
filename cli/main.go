@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/aledsdavies/opal/runtime/parser"
 	"github.com/aledsdavies/opal/runtime/planner"
 	"github.com/aledsdavies/opal/runtime/streamscrub"
+	"github.com/aledsdavies/opal/runtime/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +28,16 @@ func main() {
 	// This ensures even lexer/parser/planner cannot leak secrets
 	var outputBuf bytes.Buffer
 
+	// Create Vault early (before scrubber) with random planKey for security
+	// Vault provides patterns for scrubbing resolved values
+	planKey := make([]byte, 32)
+	_, err := rand.Read(planKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: failed to generate plan key: %v\n", err)
+		os.Exit(1)
+	}
+	vlt := vault.NewWithPlanKey(planKey)
+
 	// Create Opal-specific placeholder generator (format: opal:s:hash)
 	opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
 	if err != nil {
@@ -33,8 +45,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create scrubber with Opal placeholders
-	scrubber := streamscrub.New(&outputBuf, streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()))
+	// Create scrubber with Opal placeholders and Vault's secret provider
+	scrubber := streamscrub.New(&outputBuf,
+		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+		streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
 	// Redirect all stdout/stderr through scrubber
 	restore := scrubber.LockdownStreams()
@@ -206,7 +220,12 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		for _, parseErr := range tree.Errors {
 			fmt.Fprint(os.Stderr, formatter.Format(parseErr))
 		}
-		return 1, fmt.Errorf("parse errors encountered")
+
+		errorCount := len(tree.Errors)
+		if errorCount == 1 {
+			return 1, fmt.Errorf("found 1 syntax error (see details above)")
+		}
+		return 1, fmt.Errorf("found %d syntax errors (see details above)", errorCount)
 	}
 
 	// Plan
@@ -216,14 +235,12 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 	}
 
 	// Create IDFactory based on mode
-	// - resolve mode (contract generation): use ModePlan for deterministic IDs
-	// - direct execution: use ModeRun for random IDs (security)
-	// Note: For contract generation, we need to plan twice:
-	//   1. First plan to get the plan hash
-	//   2. Second plan with deterministic IDFactory derived from plan hash
-	// For MVP (no value decorators yet), we can skip this and just use nil
+	// - Mode 1 (direct execution): use ModeRun for random IDs (security)
+	// - Mode 2 (dry-run): no IDFactory needed (nil)
+	// - Mode 3 (contract generation): no IDFactory needed (PlanSalt stored in contract)
+	// - Mode 4 (contract execution): use ModePlan with contract's PlanSalt
 	var idFactory secret.IDFactory
-	if !resolve {
+	if !dryRun && !resolve {
 		// Mode 1: Direct execution - use random IDs for security
 		var err error
 		idFactory, err = planfmt.NewRunIDFactory()
@@ -231,8 +248,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 			return 1, fmt.Errorf("failed to create ID factory: %w", err)
 		}
 	}
-	// For resolve mode, leave idFactory as nil for now (MVP has no value decorators)
-	// When we add value decorators, we'll need to plan twice to get deterministic IDs
+	// Modes 2 & 3: leave idFactory as nil (PlanSalt is in the plan, will be stored in contract)
 
 	// Plan with telemetry if timing enabled
 	var plan *planfmt.Plan
@@ -259,10 +275,6 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 			return 1, fmt.Errorf("planning failed: %w", err)
 		}
 	}
-
-	// TODO(Phase 3): Wire up Vault's SecretProvider here
-	// Once planner exposes Vault, use: scrubber.SetProvider(vault.SecretProvider())
-	// For now, secrets won't be scrubbed (will be fixed in Phase 3)
 
 	// Dry-run mode: show plan or generate contract
 	if dryRun {
@@ -439,7 +451,21 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 		for _, parseErr := range tree.Errors {
 			fmt.Fprint(os.Stderr, formatter.Format(parseErr))
 		}
-		return 1, fmt.Errorf("parse errors in source (contract verification failed)")
+
+		errorCount := len(tree.Errors)
+		if errorCount == 1 {
+			return 1, fmt.Errorf(
+				"found 1 syntax error in source file (see details above)\n\n" +
+					"Cannot verify contract with syntax errors.\n" +
+					"Fix the syntax error and try again",
+			)
+		}
+		return 1, fmt.Errorf(
+			"found %d syntax errors in source file (see details above)\n\n"+
+				"Cannot verify contract with syntax errors.\n"+
+				"Fix the syntax errors and try again",
+			errorCount,
+		)
 	}
 
 	// Plan (use same target as contract)
@@ -448,18 +474,50 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 		debugLevel = planner.DebugDetailed
 	}
 
-	// For contract verification, we want deterministic IDs
-	// But we need the plan hash first to create the IDFactory
-	// For MVP (no value decorators), we can use nil
-	// When we add value decorators, we'll need to plan twice
+	// Mode 4: Reuse PlanSalt from contract for deterministic DisplayIDs
+	// This ensures fresh plan generates same DisplayIDs as contract, enabling hash comparison
+
+	// Validate PlanSalt before using it (NewIDFactory panics if not 32 bytes)
+	if len(contractPlan.PlanSalt) != 32 {
+		if len(contractPlan.PlanSalt) == 0 {
+			return 1, fmt.Errorf(
+				"contract file '%s' is missing plan salt\n\n"+
+					"The contract file may be corrupted or manually edited.\n"+
+					"Plan salt is required for contract verification to ensure DisplayIDs remain consistent.\n\n"+
+					"To fix:\n"+
+					"  1. Regenerate the contract: opal plan --mode=contract <file>\n"+
+					"  2. Or restore from backup if available\n"+
+					"  3. Or use --mode=plan to execute without contract verification",
+				planFile,
+			)
+		}
+		return 1, fmt.Errorf(
+			"contract file '%s' has corrupted plan salt\n\n"+
+				"Expected 32 bytes, but found %d bytes.\n"+
+				"The contract file may be corrupted or manually edited.\n\n"+
+				"To fix:\n"+
+				"  1. Regenerate the contract: opal plan --mode=contract <file>\n"+
+				"  2. Or restore from backup if available\n"+
+				"  3. Or use --mode=plan to execute without contract verification",
+			planFile, len(contractPlan.PlanSalt),
+		)
+	}
+
+	idFactory := secret.NewIDFactory(secret.ModePlan, contractPlan.PlanSalt)
+
 	freshPlan, err := planner.Plan(tree.Events, tokens, planner.Config{
 		Target:    target,
-		IDFactory: nil, // MVP: no value decorators yet
+		IDFactory: idFactory,
 		Debug:     debugLevel,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("planning failed: %w", err)
 	}
+
+	// CRITICAL: Copy PlanSalt from contract to fresh plan
+	// Without this, fresh plan gets random PlanSalt (from NewPlan) and hash will never match
+	// The IDFactory uses PlanSalt to generate DisplayIDs, but the plan itself needs the same salt
+	freshPlan.PlanSalt = contractPlan.PlanSalt
 
 	// Step 3: Compare hashes (contract verification)
 	var freshHashBuf bytes.Buffer
@@ -479,17 +537,20 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 			fmt.Fprintf(os.Stderr, "  Fresh hash:    %x\n", freshHash)
 		}
 
-		return 1, fmt.Errorf("contract verification failed")
+		return 1, fmt.Errorf(
+			"contract verification failed: source file has changed since contract was created\n\n"+
+				"The differences are shown above. To fix:\n"+
+				"  1. Review the changes to ensure they are intentional\n"+
+				"  2. Regenerate the contract: opal plan --mode=contract %s\n"+
+				"  3. Or use --mode=plan to execute without verification",
+			planFile,
+		)
 	}
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "✓ Contract verified (hash matches)\n")
 		fmt.Fprintf(os.Stderr, "Steps: %d\n", len(freshPlan.Steps))
 	}
-
-	// TODO(Phase 3): Wire up Vault's SecretProvider here
-	// Once planner exposes Vault, use: scrubber.SetProvider(vault.SecretProvider())
-	// For now, secrets won't be scrubbed (will be fixed in Phase 3)
 
 	// Step 4: Execute the verified plan
 	execDebug := executor.DebugOff

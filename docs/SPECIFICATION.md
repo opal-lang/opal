@@ -1156,15 +1156,24 @@ opal run --plan prod.plan
 > Machine-readable: `opal:s:3J98t56A` (without emoji for JSON/files)
 > 
 > **DisplayID Determinism:**
-> - **Resolved plans** (`--dry-run --resolve`): Deterministic IDs derived from plan digest
->   - Same plan + context + value → same DisplayID (enables contract verification)
->   - Different plans → different DisplayIDs (unlinkability across plans)
-> - **Direct execution**: Random-looking IDs with fresh per-run key
->   - Different runs → different DisplayIDs (prevents correlation)
-> - **Contract execution**: Fresh random IDs, but plan structure matches
->   - Plan hash compares structure, not specific DisplayID values
 > 
-> DisplayIDs use a keyed PRF over `(plan_hash, step_path, decorator, key_name, hash(value))`.
+> Each plan has a random `PlanSalt` (32 bytes) that determines DisplayID generation:
+> 
+> - **Mode 1 (Direct execution)**: Random PlanSalt per run
+>   - Different runs → different DisplayIDs (prevents correlation across runs)
+>   - Security: Attackers can't track secrets across executions
+> 
+> - **Mode 3 (Resolved plans / Contract generation)**: Random PlanSalt per contract
+>   - Different contracts → different PlanSalts → different DisplayIDs (prevents correlation)
+>   - Within contract: Same PlanSalt → deterministic DisplayIDs (enables verification)
+>   - Security: Each contract gets unique DisplayIDs, no cross-contract correlation
+> 
+> - **Mode 4 (Contract execution)**: Reuses PlanSalt from contract
+>   - Fresh plan uses contract's PlanSalt → same DisplayIDs as contract
+>   - Hash comparison succeeds if structure unchanged (DisplayIDs match)
+>   - Hash comparison fails if structure changed (drift detected)
+> 
+> DisplayIDs use a keyed PRF: `BLAKE2s(PlanSalt, step_path || decorator || key_name || hash(value))`.
 > This prevents oracle attacks while enabling deterministic contract verification.
 
 

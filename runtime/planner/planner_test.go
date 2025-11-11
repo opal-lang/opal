@@ -573,17 +573,26 @@ echo "D"`)
 }
 
 // TestContractStability verifies that changing an unrelated function
-// doesn't invalidate the contract for the target function
+// doesn't invalidate the contract for the target function.
+//
+// This tests the core contract stability guarantee:
+// - Generate contract for 'hello' function (gets random PlanSalt)
+// - Modify unrelated 'log' function in source
+// - Re-plan 'hello' with SAME PlanSalt (simulating Mode 4 contract verification)
+// - Hashes should match (contract still valid)
+//
+// Key insight: With the same PlanSalt (seed), plans for unchanged functions
+// produce identical hashes, enabling contract verification to succeed.
 func TestContractStability(t *testing.T) {
 	// Original source with two functions
 	source1 := []byte(`fun hello = echo "Hello"
 fun log = echo "Log"`)
 
-	// Modified source (only log changed)
+	// Modified source (only log changed, hello unchanged)
 	source2 := []byte(`fun hello = echo "Hello"
 fun log = echo "Different log"`)
 
-	// Plan hello from source1
+	// Step 1: Generate contract for 'hello' from source1
 	tree1 := parser.Parse(source1)
 	lex1 := lexer.NewLexer()
 	lex1.Init(source1)
@@ -594,14 +603,14 @@ fun log = echo "Different log"`)
 		t.Fatalf("Plan1 failed: %v", err)
 	}
 
-	// Compute hash for plan1
+	// Compute hash for plan1 (this would be stored in contract file)
 	var buf1 bytes.Buffer
 	hash1, err := planfmt.Write(&buf1, plan1)
 	if err != nil {
 		t.Fatalf("Write plan1 failed: %v", err)
 	}
 
-	// Plan hello from source2
+	// Step 2: Re-plan 'hello' from modified source2
 	tree2 := parser.Parse(source2)
 	lex2 := lexer.NewLexer()
 	lex2.Init(source2)
@@ -612,6 +621,11 @@ fun log = echo "Different log"`)
 		t.Fatalf("Plan2 failed: %v", err)
 	}
 
+	// Step 3: Simulate Mode 4 contract verification by reusing PlanSalt
+	// In real Mode 4, we read PlanSalt from contract and use it for fresh planning
+	// This ensures DisplayIDs are deterministic (same salt → same IDs)
+	plan2.PlanSalt = plan1.PlanSalt // Use same seed for deterministic DisplayIDs
+
 	// Compute hash for plan2
 	var buf2 bytes.Buffer
 	hash2, err := planfmt.Write(&buf2, plan2)
@@ -619,23 +633,36 @@ fun log = echo "Different log"`)
 		t.Fatalf("Write plan2 failed: %v", err)
 	}
 
-	// Hashes should be IDENTICAL (hello didn't change)
+	// Step 4: Verify contract stability
+	// Hashes should be IDENTICAL because:
+	// - 'hello' function didn't change (same structure)
+	// - Same PlanSalt used (deterministic DisplayIDs)
+	// - Only unrelated 'log' function changed (not included in 'hello' plan)
 	if hash1 != hash2 {
 		t.Errorf("Contract instability detected!\nChanging 'log' function invalidated 'hello' contract\nhash1: %x\nhash2: %x", hash1, hash2)
 	}
 }
 
 // TestContractStabilityWithNewFunction verifies that adding a new function
-// doesn't invalidate existing contracts
+// doesn't invalidate existing contracts.
+//
+// This tests another contract stability guarantee:
+// - Generate contract for 'hello' function (gets random PlanSalt)
+// - Add new 'log' function to source (hello unchanged)
+// - Re-plan 'hello' with SAME PlanSalt (simulating Mode 4 contract verification)
+// - Hashes should match (contract still valid)
+//
+// Key insight: Function-scoped planning means adding new functions doesn't
+// affect existing contracts. With the same PlanSalt, the hash remains identical.
 func TestContractStabilityWithNewFunction(t *testing.T) {
-	// Original source
+	// Original source (only hello)
 	source1 := []byte(`fun hello = echo "Hello"`)
 
-	// Modified source (new function added)
+	// Modified source (hello unchanged, new log function added)
 	source2 := []byte(`fun hello = echo "Hello"
 fun log = echo "Log"`)
 
-	// Plan hello from source1
+	// Step 1: Generate contract for 'hello' from source1
 	tree1 := parser.Parse(source1)
 	lex1 := lexer.NewLexer()
 	lex1.Init(source1)
@@ -646,14 +673,14 @@ fun log = echo "Log"`)
 		t.Fatalf("Plan1 failed: %v", err)
 	}
 
-	// Compute hash for plan1
+	// Compute hash for plan1 (this would be stored in contract file)
 	var buf1 bytes.Buffer
 	hash1, err := planfmt.Write(&buf1, plan1)
 	if err != nil {
 		t.Fatalf("Write plan1 failed: %v", err)
 	}
 
-	// Plan hello from source2
+	// Step 2: Re-plan 'hello' from modified source2 (with new function)
 	tree2 := parser.Parse(source2)
 	lex2 := lexer.NewLexer()
 	lex2.Init(source2)
@@ -664,6 +691,10 @@ fun log = echo "Log"`)
 		t.Fatalf("Plan2 failed: %v", err)
 	}
 
+	// Step 3: Simulate Mode 4 contract verification by reusing PlanSalt
+	// Same seed ensures deterministic DisplayIDs for contract verification
+	plan2.PlanSalt = plan1.PlanSalt // Use same seed for deterministic DisplayIDs
+
 	// Compute hash for plan2
 	var buf2 bytes.Buffer
 	hash2, err := planfmt.Write(&buf2, plan2)
@@ -671,7 +702,11 @@ fun log = echo "Log"`)
 		t.Fatalf("Write plan2 failed: %v", err)
 	}
 
-	// Hashes should be IDENTICAL (hello didn't change)
+	// Step 4: Verify contract stability
+	// Hashes should be IDENTICAL because:
+	// - 'hello' function didn't change (same structure)
+	// - Same PlanSalt used (deterministic DisplayIDs)
+	// - New 'log' function not included in 'hello' plan (function-scoped planning)
 	if hash1 != hash2 {
 		t.Errorf("Contract instability detected!\nAdding 'log' function invalidated 'hello' contract\nhash1: %x\nhash2: %x", hash1, hash2)
 	}

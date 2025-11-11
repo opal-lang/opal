@@ -265,13 +265,12 @@ func (p *planner) plan() (*planfmt.Plan, error) {
 		p.recordDebugEvent("enter_plan", "target="+p.config.Target)
 	}
 
-	plan := &planfmt.Plan{
-		Header: planfmt.PlanHeader{
-			PlanKind: 0, // View plan
-		},
-		Target: p.config.Target,
-		Steps:  []planfmt.Step{},
-	}
+	// Create plan with random PlanSalt for security
+	plan := planfmt.NewPlan()
+	// Preserve header fields from NewPlan (schema UUID, CreatedAt, etc.)
+	plan.Header.PlanKind = 0 // View plan
+	plan.Target = p.config.Target
+	plan.Steps = []planfmt.Step{}
 
 	// Command mode: find target function
 	if p.config.Target != "" {

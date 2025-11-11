@@ -23,7 +23,7 @@ pkgs.buildGoModule rec {
   };
 
   # Vendor hash for CLI module dependencies  
-  vendorHash = "sha256-Kalol3IZ7BGWYo15NZxp3Kd5Ar3yNb7GCpveezxwjyM=";
+  vendorHash = "sha256-fbifIu4IyRaMe+HE+mP3grX9++yUlfzRtVtaUqJnNGs=";
 
   # Build with version info
   ldflags = [
