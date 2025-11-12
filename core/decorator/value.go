@@ -35,8 +35,9 @@ type ValueEvalContext struct {
 	// Session is the ambient execution context (env, cwd, transport)
 	Session Session
 
-	// Vars contains plan-time variable bindings
-	Vars map[string]any
+	// Vault is the scope-aware variable storage (primary source of truth)
+	// All variable lookups go through Vault (no direct variable access)
+	Vault any // *vault.Vault (any to avoid circular import)
 
 	// IDFactory creates deterministic secret IDs
 	IDFactory any // TODO: Replace with actual secret.IDFactory type in Phase 2

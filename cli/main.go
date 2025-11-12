@@ -74,7 +74,7 @@ func main() {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot specify command name with --plan flag")
 				}
-				exitCode, err := runFromPlan(planFile, file, debug, noColor, scrubber, &outputBuf)
+				exitCode, err := runFromPlan(planFile, file, debug, noColor, vlt, scrubber, &outputBuf)
 				if err != nil {
 					cmd.SilenceUsage = true // We've already printed detailed error
 					return err
@@ -94,7 +94,7 @@ func main() {
 			}
 			// else: commandName = "" (script mode)
 
-			exitCode, err := runCommand(cmd, commandName, file, dryRun, resolve, debug, noColor, timing, scrubber, &outputBuf)
+			exitCode, err := runCommand(cmd, commandName, file, dryRun, resolve, debug, noColor, timing, vlt, scrubber, &outputBuf)
 			if err != nil {
 				cmd.SilenceUsage = true // We've already printed detailed error
 				return err
@@ -155,7 +155,7 @@ func newCancellableContext() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, debug, noColor, timing bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
+func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, debug, noColor, timing bool, vlt *vault.Vault, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	// commandName is empty string for script mode, function name for command mode
 
 	// Get input reader based on file options
@@ -256,6 +256,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		planResult, err := planner.PlanWithObservability(tree.Events, tokens, planner.Config{
 			Target:    commandName,
 			IDFactory: idFactory,
+			Vault:     vlt, // Share vault with scrubber for variable scrubbing
 			Debug:     debugLevel,
 			Telemetry: planner.TelemetryTiming,
 		})
@@ -269,6 +270,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		plan, err = planner.Plan(tree.Events, tokens, planner.Config{
 			Target:    commandName,
 			IDFactory: idFactory,
+			Vault:     vlt, // Share vault with scrubber for variable scrubbing
 			Debug:     debugLevel,
 		})
 		if err != nil {
@@ -398,7 +400,7 @@ func hasPipedInput() bool {
 
 // runFromPlan executes with contract verification (Mode 4: Contract Execution)
 // Flow: Load contract → Replan fresh → Compare hashes → Execute if match
-func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
+func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Vault, scrubber *streamscrub.Scrubber, outputBuf *bytes.Buffer) (int, error) {
 	// Step 1: Load contract from plan file
 	f, err := os.Open(planFile)
 	if err != nil {
@@ -508,6 +510,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, scrubber *str
 	freshPlan, err := planner.Plan(tree.Events, tokens, planner.Config{
 		Target:    target,
 		IDFactory: idFactory,
+		Vault:     vlt, // Share vault with scrubber for variable scrubbing
 		Debug:     debugLevel,
 	})
 	if err != nil {

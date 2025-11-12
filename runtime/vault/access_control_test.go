@@ -62,8 +62,8 @@ func TestAccess_AuthorizedSite_DifferentTransport_FailsWithTransportError(t *tes
 	if err == nil {
 		t.Fatal("Access() should fail when crossing transport boundary")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %q", value)
 	}
 	if !containsString(err.Error(), "transport") {
 		t.Errorf("Error should mention 'transport', got: %v", err)
@@ -93,8 +93,8 @@ func TestAccess_UnauthorizedSite_SameTransport_FailsWithAuthorityError(t *testin
 	if err == nil {
 		t.Fatal("Access() should fail at unauthorized site")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %q", value)
 	}
 	if !containsString(err.Error(), "no authority") {
 		t.Errorf("Error should mention 'no authority', got: %v", err)
@@ -127,8 +127,8 @@ func TestAccess_UnauthorizedSite_DifferentTransport_Fails(t *testing.T) {
 	if err == nil {
 		t.Fatal("Access() should fail when both site and transport are wrong")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %q", value)
 	}
 	// Accept either transport or authority error
 	hasTransportError := containsString(err.Error(), "transport")
@@ -224,8 +224,8 @@ func TestAccess_UnresolvedExpression_FailsWithResolvedError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Access() should fail for unresolved expression")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %q", value)
 	}
 	if !containsString(err.Error(), "not resolved") {
 		t.Errorf("Error should mention 'not resolved', got: %v", err)
@@ -246,8 +246,8 @@ func TestAccess_NonexistentExpression_FailsWithNotFoundError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Access() should fail for nonexistent expression")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %q", value)
 	}
 	if !containsString(err.Error(), "not found") {
 		t.Errorf("Error should mention 'not found', got: %v", err)
@@ -399,7 +399,7 @@ func TestAccess_EmptyStringSecret_IsValid(t *testing.T) {
 		t.Errorf("Access() should succeed for empty string secret, got error: %v", err)
 	}
 	if value != "" {
-		t.Errorf("Access() = %q, want empty string", value)
+		t.Errorf("Access() = %v, want empty string", value)
 	}
 }
 

@@ -509,7 +509,6 @@ func TestResolveValueSuccess(t *testing.T) {
 	session := NewLocalSession()
 	ctx := ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{"name": "test"},
 	}
 
 	// Create call
@@ -539,7 +538,6 @@ func TestResolveValueNotFound(t *testing.T) {
 	session := NewLocalSession()
 	ctx := ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	call := ValueCall{
@@ -570,7 +568,6 @@ func TestResolveValueNotValueDecorator(t *testing.T) {
 	session := NewLocalSession()
 	ctx := ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	call := ValueCall{
@@ -604,7 +601,6 @@ func TestResolveValueScopeViolation(t *testing.T) {
 	session := NewLocalSession()
 	ctx := ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	call := ValueCall{
@@ -639,7 +635,6 @@ func TestResolveValueScopeAllowed(t *testing.T) {
 	session := NewLocalSession()
 	ctx := ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	call := ValueCall{

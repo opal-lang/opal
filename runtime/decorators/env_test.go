@@ -54,7 +54,6 @@ func TestEnvDecoratorResolveFromLocalSession(t *testing.T) {
 
 	ctx := decorator.ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	// Read USER env var (should exist in most environments)
@@ -90,7 +89,6 @@ func TestEnvDecoratorResolveFromSessionWithEnv(t *testing.T) {
 
 	ctx := decorator.ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	envVar := "OPAL_TEST_VAR"
@@ -117,7 +115,6 @@ func TestEnvDecoratorResolveNotFound(t *testing.T) {
 	session := decorator.NewLocalSession()
 	ctx := decorator.ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	envVar := "NONEXISTENT_VAR_12345"
@@ -152,7 +149,6 @@ func TestEnvDecoratorResolveWithDefault(t *testing.T) {
 	session := decorator.NewLocalSession()
 	ctx := decorator.ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	envVar := "NONEXISTENT_VAR_12345"
@@ -182,7 +178,6 @@ func TestEnvDecoratorResolveNoPrimary(t *testing.T) {
 	session := decorator.NewLocalSession()
 	ctx := decorator.ValueEvalContext{
 		Session: session,
-		Vars:    map[string]any{},
 	}
 
 	call := decorator.ValueCall{
@@ -221,7 +216,6 @@ func TestEnvDecoratorTransportAware(t *testing.T) {
 	localSession := decorator.NewLocalSession()
 	localCtx := decorator.ValueEvalContext{
 		Session: localSession,
-		Vars:    map[string]any{},
 	}
 
 	// Read HOME from local session
@@ -262,11 +256,9 @@ func TestEnvDecoratorSessionEnvIsolation(t *testing.T) {
 
 	ctx1 := decorator.ValueEvalContext{
 		Session: session1,
-		Vars:    map[string]any{},
 	}
 	ctx2 := decorator.ValueEvalContext{
 		Session: session2,
-		Vars:    map[string]any{},
 	}
 
 	envVar := "OPAL_VAR"

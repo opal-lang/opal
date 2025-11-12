@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aledsdavies/opal/core/decorator"
+	"github.com/aledsdavies/opal/runtime/vault"
 )
 
 // resolveSingle is a test helper that calls Resolve with a single call and returns the result.
@@ -65,14 +66,15 @@ func TestVarDecoratorDescriptor(t *testing.T) {
 func TestVarDecoratorResolveSuccess(t *testing.T) {
 	d := &VarDecorator{}
 
-	// Create context with variables
+	// Create Vault and declare variables
+	v := vault.New()
+	nameID := v.DeclareVariable("name", "literal:Alice")
+	v.MarkResolved(nameID, "Alice")
+
+	// Create context with Vault
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"name":  "Alice",
-			"count": 42,
-			"flag":  true,
-		},
+		Vault:   v,
 	}
 
 	// Test string variable
@@ -102,11 +104,13 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 func TestVarDecoratorResolveInt(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New()
+	countID := v.DeclareVariable("count", "literal:42")
+	v.MarkResolved(countID, "42")
+
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"count": 42,
-		},
+		Vault:   v,
 	}
 
 	varName := "count"
@@ -121,8 +125,8 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if result.Value != 42 {
-		t.Errorf("Value: got %v, want 42", result.Value)
+	if result.Value != "42" {
+		t.Errorf("Value: got %v, want \"42\"", result.Value)
 	}
 }
 
@@ -130,11 +134,13 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 func TestVarDecoratorResolveBool(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New()
+	flagID := v.DeclareVariable("flag", "literal:true")
+	v.MarkResolved(flagID, "true")
+
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"flag": true,
-		},
+		Vault:   v,
 	}
 
 	varName := "flag"
@@ -149,8 +155,8 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if result.Value != true {
-		t.Errorf("Value: got %v, want true", result.Value)
+	if result.Value != "true" {
+		t.Errorf("Value: got %v, want \"true\"", result.Value)
 	}
 }
 
@@ -158,11 +164,13 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 func TestVarDecoratorResolveNotFound(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New()
+	nameID := v.DeclareVariable("name", "literal:Alice")
+	v.MarkResolved(nameID, "Alice")
+
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"name": "Alice",
-		},
+		Vault:   v,
 	}
 
 	varName := "missing"
@@ -184,7 +192,7 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 		t.Fatal("Expected error for missing variable")
 	}
 
-	expectedMsg := `variable "missing" not found`
+	expectedMsg := `variable "missing" not found in any scope`
 	if results[0].Error.Error() != expectedMsg {
 		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}
@@ -194,11 +202,10 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New()
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"value": "test",
-		},
+		Vault:   v,
 	}
 
 	call := decorator.ValueCall{
@@ -229,12 +236,14 @@ func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 func TestVarDecoratorTransportAgnostic(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New()
+	valueID := v.DeclareVariable("value", "literal:local")
+	v.MarkResolved(valueID, "local")
+
 	// Test with LocalSession
 	localCtx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars: map[string]any{
-			"value": "local",
-		},
+		Vault:   v,
 	}
 
 	varName := "value"
@@ -253,10 +262,6 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 		t.Errorf("LocalSession value: got %v, want %q", result.Value, "local")
 	}
 
-	if result.Value != "local" {
-		t.Errorf("LocalSession value: got %v, want %q", result.Value, "local")
-	}
-
 	// @var should work the same regardless of transport
 	// (We can't test SSH here without a server, but the point is it's transport-agnostic)
 }
@@ -265,9 +270,11 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 func TestVarDecoratorEmptyVars(t *testing.T) {
 	d := &VarDecorator{}
 
+	v := vault.New() // Empty vault
+
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
-		Vars:    map[string]any{}, // Empty
+		Vault:   v,
 	}
 
 	varName := "anything"
@@ -286,10 +293,10 @@ func TestVarDecoratorEmptyVars(t *testing.T) {
 	}
 
 	if results[0].Error == nil {
-		t.Fatal("Expected error when vars map is empty")
+		t.Fatal("Expected error when vault is empty")
 	}
 
-	expectedMsg := `variable "anything" not found`
+	expectedMsg := `variable "anything" not found in any scope`
 	if results[0].Error.Error() != expectedMsg {
 		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
 	}

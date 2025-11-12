@@ -95,9 +95,9 @@ type Vault struct {
 // In our security model: ALL expressions are secrets.
 type Expression struct {
 	Raw       string // Original source: "@var.X", "@aws.secret('key')", etc.
-	Value     string // Resolved value (can be empty string - check Resolved flag)
+	Value     any    // Resolved value (preserves original type: string, int, bool, map, slice)
 	DisplayID string // Placeholder ID for plan (e.g., "opal:v:3J98t56A")
-	Resolved  bool   // True if expression has been resolved (even if Value is "")
+	Resolved  bool   // True if expression has been resolved (even if Value is nil)
 }
 
 // Note: No ExprType, no IsSecret - everything is a secret.
@@ -539,8 +539,9 @@ func (v *Vault) CurrentTransport() string {
 // not when it's first accessed. Otherwise, a local @env secret could be first
 // accessed in an @ssh block, incorrectly capturing the transport as "ssh:*".
 //
+// Value can be any type (string, int, bool, map, slice) to preserve original types.
 // Panics if expression not found or already resolved (programmer errors).
-func (v *Vault) MarkResolved(exprID, value string) {
+func (v *Vault) MarkResolved(exprID string, value any) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -551,6 +552,15 @@ func (v *Vault) MarkResolved(exprID, value string) {
 	expr.Value = value
 	expr.Resolved = true
 	v.exprTransport[exprID] = v.currentTransport // CRITICAL: Capture transport NOW
+}
+
+// GetExpression retrieves an expression by ID.
+// Returns nil if expression doesn't exist.
+func (v *Vault) GetExpression(exprID string) *Expression {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	return v.expressions[exprID]
 }
 
 // checkTransportBoundary checks if expression can be used in current transport.
@@ -588,29 +598,29 @@ func (v *Vault) checkTransportBoundary(exprID string) error {
 //   - paramName: Parameter name accessing the value (e.g., "command", "apiKey")
 //
 // Returns:
-//   - Resolved value if both checks pass
+//   - Resolved value (preserves original type: string, int, bool, map, slice) if both checks pass
 //   - Error if expression not found, not resolved, unauthorized site, or transport violation
 //
 // Example:
 //
 //	vault.EnterDecorator("@shell")
 //	value, err := vault.Access("API_KEY", "command")  // Checks site: root/@shell[0]/params/command
-func (v *Vault) Access(exprID, paramName string) (string, error) {
+func (v *Vault) Access(exprID, paramName string) (any, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	// 1. Get expression
 	expr, exists := v.expressions[exprID]
 	if !exists {
-		return "", fmt.Errorf("expression %q not found", exprID)
+		return nil, fmt.Errorf("expression %q not found", exprID)
 	}
 	if !expr.Resolved {
-		return "", fmt.Errorf("expression %q not resolved yet", exprID)
+		return nil, fmt.Errorf("expression %q not resolved yet", exprID)
 	}
 
 	// 2. Check transport boundary (Caveat - checked first as more fundamental)
 	if err := v.checkTransportBoundary(exprID); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// 3. Build current site with parameter name
@@ -626,10 +636,10 @@ func (v *Vault) Access(exprID, paramName string) (string, error) {
 		}
 	}
 	if !authorized {
-		return "", fmt.Errorf("no authority to unwrap %q at site %q", exprID, currentSite)
+		return nil, fmt.Errorf("no authority to unwrap %q at site %q", exprID, currentSite)
 	}
 
-	// 5. Return value
+	// 5. Return value (preserves original type)
 	return expr.Value, nil
 }
 
@@ -639,6 +649,7 @@ func (v *Vault) Access(exprID, paramName string) (string, error) {
 
 // getPatterns returns all resolved expressions as scrubbing patterns.
 // This is called by the pattern provider on each HandleChunk invocation.
+// Converts values to strings for pattern matching (scrubbing only needs string representation).
 func (v *Vault) getPatterns() []streamscrub.Pattern {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -646,13 +657,20 @@ func (v *Vault) getPatterns() []streamscrub.Pattern {
 	var patterns []streamscrub.Pattern
 
 	for _, expr := range v.expressions {
-		// Only include resolved expressions with non-empty values
-		if !expr.Resolved || expr.Value == "" {
+		// Only include resolved expressions
+		if !expr.Resolved {
+			continue
+		}
+
+		// Convert value to string for pattern matching
+		// Skip nil values and empty strings
+		valueStr := fmt.Sprintf("%v", expr.Value)
+		if valueStr == "" || valueStr == "<nil>" {
 			continue
 		}
 
 		patterns = append(patterns, streamscrub.Pattern{
-			Value:       []byte(expr.Value),
+			Value:       []byte(valueStr),
 			Placeholder: []byte(expr.DisplayID),
 		})
 	}

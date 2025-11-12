@@ -519,8 +519,8 @@ func TestVault_Access_RejectsUnauthorizedSite(t *testing.T) {
 	if err == nil {
 		t.Error("Access() at unauthorized site should fail")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %v", value)
 	}
 	if err != nil && !containsString(err.Error(), "no authority") {
 		t.Errorf("Error should mention 'no authority', got: %v", err)
@@ -548,8 +548,8 @@ func TestVault_Access_UnresolvedExpression(t *testing.T) {
 	if err == nil {
 		t.Error("Access() on unresolved expression should fail")
 	}
-	if value != "" {
-		t.Errorf("Access() should return empty string on error, got %q", value)
+	if value != nil {
+		t.Errorf("Access() should return nil on error, got %v", value)
 	}
 	if err != nil && !containsString(err.Error(), "not resolved") {
 		t.Errorf("Error should mention 'not resolved', got: %v", err)

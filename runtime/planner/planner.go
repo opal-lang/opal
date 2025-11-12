@@ -33,6 +33,7 @@ import (
 	"github.com/aledsdavies/opal/core/sdk/secret"
 	"github.com/aledsdavies/opal/runtime/lexer"
 	"github.com/aledsdavies/opal/runtime/parser"
+	"github.com/aledsdavies/opal/runtime/vault"
 	"github.com/lithammer/fuzzysearch/fuzzy"
 )
 
@@ -52,6 +53,7 @@ type Command struct {
 type Config struct {
 	Target    string           // Command name (e.g., "hello") or "" for script mode
 	IDFactory secret.IDFactory // Factory for generating deterministic secret IDs (optional, uses run-mode if nil)
+	Vault     *vault.Vault     // Shared vault for variable storage and scrubbing (optional, creates new if nil)
 	Telemetry TelemetryLevel   // Telemetry level (production-safe)
 	Debug     DebugLevel       // Debug level (development only)
 }
@@ -171,13 +173,27 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		idFactory = secret.NewIDFactory(secret.ModePlan, key)
 	}
 
+	// Use provided Vault or create new one with random planKey
+	var vlt *vault.Vault
+	if config.Vault != nil {
+		// Use shared vault from caller (e.g., CLI for scrubbing integration)
+		vlt = config.Vault
+	} else {
+		// Create new vault with random planKey for HMAC-based SiteIDs
+		planKey := make([]byte, 32)
+		_, err := rand.Read(planKey)
+		invariant.ExpectNoError(err, "failed to generate Vault planKey")
+		vlt = vault.NewWithPlanKey(planKey)
+	}
+
 	p := &planner{
 		events:      events,
 		tokens:      tokens,
 		config:      config,
 		pos:         0,
 		stepID:      1,
-		scopes:      NewScopeGraph("local"),      // Hierarchical variable scoping
+		vault:       vlt,                         // Scope-aware variable storage (shared or new)
+		scopes:      NewScopeGraph("local"),      // Hierarchical variable scoping (legacy)
 		session:     decorator.NewLocalSession(), // Session for decorator resolution
 		secrets:     []planfmt.Secret{},          // Accumulated secrets
 		idFactory:   idFactory,                   // For placeholder generation
@@ -215,7 +231,8 @@ type planner struct {
 	stepID uint64 // Next step ID to assign
 
 	// Variable scoping with transport boundary guards
-	scopes  *ScopeGraph       // Hierarchical variable scoping
+	vault   *vault.Vault      // Scope-aware variable storage (primary)
+	scopes  *ScopeGraph       // Hierarchical variable scoping (legacy - to be removed)
 	session decorator.Session // Session for decorator resolution (LocalSession by default)
 
 	// Secret tracking for variable interpolation
@@ -505,6 +522,9 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	// We're at EventStepEnter, move past it
 	p.pos++
 
+	// Track step in Vault for scope-aware variable storage
+	p.vault.EnterStep()
+
 	var commands []Command
 
 	// Collect all shell commands and var declarations until EventStepExit
@@ -611,14 +631,29 @@ func (p *planner) planVarDecl() error {
 		return err
 	}
 
-	// Determine origin and classification
-	// For now, literals are session-agnostic
-	// Decorators will be handled in Week 2
+	// Declare variable in Vault (returns hash-based exprID)
+	rawExpr := fmt.Sprintf("literal:%v", value)
+	exprID := p.vault.DeclareVariable(varName, rawExpr)
+
+	// Get expression to check if already resolved (expression deduplication)
+	expr := p.vault.GetExpression(exprID)
+
+	// Mark as resolved only if not already resolved
+	// Multiple variables can share the same literal value (same exprID via hash-based deduplication)
+	// Only the first declaration resolves the expression; subsequent ones reuse it
+	if !expr.Resolved {
+		// First time this literal is resolved
+		// Pass original value to preserve type (string, int, bool, map, slice)
+		p.vault.MarkResolved(exprID, value)
+	}
+	// Note: If already resolved, we reuse the existing resolved value
+	// For literals, the value should always match (same source → same value)
+	// If there's a mismatch, it indicates a bug in the parser/planner
+
+	// LEGACY: Also store in ScopeGraph (will be removed in Phase 4)
 	origin := "literal"
 	class := VarClassData
 	taint := VarTaintAgnostic
-
-	// Store variable in current scope
 	p.scopes.Store(varName, origin, value, class, taint)
 
 	// Record telemetry
@@ -626,7 +661,8 @@ func (p *planner) planVarDecl() error {
 
 	// Record debug event
 	if p.config.Debug >= DebugDetailed {
-		p.recordDebugEvent("var_declared", fmt.Sprintf("name=%s value=%v", varName, value))
+		p.recordDebugEvent("var_declared", fmt.Sprintf("name=%s value=%v exprID=%s displayID=%s",
+			varName, value, exprID, expr.DisplayID))
 	}
 
 	return nil
@@ -1395,7 +1431,7 @@ func (p *planner) parseDecoratorValue(varName string) (any, error) {
 	// Create evaluation context
 	ctx := decorator.ValueEvalContext{
 		Session: p.session,
-		Vars:    p.scopes.AsMap(),
+		Vault:   p.vault, // Scope-aware variable storage
 	}
 
 	// Get transport scope from current session to enforce transport-scope guards

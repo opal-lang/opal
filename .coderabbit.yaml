@@ -1,0 +1,145 @@
+# CodeRabbit configuration
+# Docs: https://docs.coderabbit.ai/
+
+# Tone: Direct and technical, focus on bugs not style
+tone_instructions: "Be direct and technical. Focus only on bugs, security issues, logic errors, and correctness problems. Skip style suggestions - we have gofumpt and golangci-lint for that."
+
+reviews:
+  # Assertive profile for more thorough issue detection
+  profile: "assertive"
+  
+  auto_review:
+    enabled: true
+
+  # Disable summary/walkthrough fluff for faster reviews
+  high_level_summary: false
+  auto_title_placeholder: ""
+  poem: false
+  in_progress_fortune: false
+  changed_files_summary: false
+  estimate_code_review_effort: false
+  
+  # Keep only the useful diagram
+  sequence_diagrams: true
+  
+  # Disable metadata features
+  suggested_labels: false
+  suggested_reviewers: false
+  related_issues: false
+  related_prs: true  # Keep this - useful to see related work
+  assess_linked_issues: false
+  
+  # Focus AI review on actual issues, not style
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        Focus ONLY on:
+        - Bugs: nil panics, race conditions, logic errors, off-by-one errors
+        - Security: data leaks, injection vulnerabilities, improper auth checks
+        - Correctness: wrong algorithm, incorrect error handling, missing edge cases
+        - Performance: N+1 queries, memory leaks, unnecessary allocations
+        - Concurrency: missing locks, channel misuse, goroutine leaks
+        
+        IGNORE:
+        - Style/formatting (we use gofumpt)
+        - Linting issues (we use golangci-lint)
+        - Naming conventions
+        - Comment suggestions
+        - Trivial refactoring
+    
+    - path: "**/*_test.go"
+      instructions: |
+        Focus ONLY on:
+        - Missing critical test cases (edge cases, error paths)
+        - Incorrect test logic or assertions
+        - Tests that don't actually verify the behavior
+        - Race conditions in tests
+        
+        IGNORE:
+        - Test naming
+        - Suggesting "add more tests" without specifics
+  
+  # Disable all static analysis tools - we run these in CI already
+  tools:
+    golangci-lint:
+      enabled: false  # We run this in CI
+    gitleaks:
+      enabled: false  # We run this in CI
+    shellcheck:
+      enabled: false  # We run this in CI
+    yamllint:
+      enabled: false  # We run this in CI
+    actionlint:
+      enabled: false  # We run this in CI
+    
+    # Disable everything else
+    ast-grep:
+      essential_rules: false
+    ruff:
+      enabled: false
+    markdownlint:
+      enabled: false
+    github-checks:
+      enabled: false
+    languagetool:
+      enabled: false
+    biome:
+      enabled: false
+    hadolint:
+      enabled: false
+    swiftlint:
+      enabled: false
+    phpstan:
+      enabled: false
+    phpmd:
+      enabled: false
+    phpcs:
+      enabled: false
+    detekt:
+      enabled: false
+    eslint:
+      enabled: false
+    flake8:
+      enabled: false
+    rubocop:
+      enabled: false
+    buf:
+      enabled: false
+    regal:
+      enabled: false
+    pmd:
+      enabled: false
+    clang:
+      enabled: false
+    cppcheck:
+      enabled: false
+    semgrep:
+      enabled: false
+    circleci:
+      enabled: false
+    clippy:
+      enabled: false
+    sqlfluff:
+      enabled: false
+    prismaLint:
+      enabled: false
+    pylint:
+      enabled: false
+    oxc:
+      enabled: false
+    shopifyThemeCheck:
+      enabled: false
+    luacheck:
+      enabled: false
+    brakeman:
+      enabled: false
+    dotenvLint:
+      enabled: false
+    htmlhint:
+      enabled: false
+    checkmake:
+      enabled: false
+    osvScanner:
+      enabled: false
+    checkov:
+      enabled: false
