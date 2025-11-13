@@ -60,24 +60,10 @@ type Plan struct {
 	Header     PlanHeader
 	Target     string      // Function/command being executed (e.g., "deploy")
 	Steps      []Step      // List of steps (newline-separated statements)
-	Secrets    []Secret    // Secrets to scrub from output (value decorators)
 	SecretUses []SecretUse // Authorization list (DisplayID → SiteID mappings)
 	PlanSalt   []byte      // Per-plan random salt (32 bytes, for DisplayID derivation)
 	Hash       string      // Plan integrity hash (includes SecretUses, computed on Freeze)
 	frozen     bool        // Immutability flag (prevents mutations after Freeze)
-}
-
-// Secret represents a resolved value that must be scrubbed from output.
-// ALL value decorators produce secrets - even @env.HOME or @git.commit_hash
-// could leak sensitive system information. Scrub everything by default.
-//
-// Two-track identity:
-// - DisplayID: Opaque random ID shown to users (no length leak, no correlation)
-// - RuntimeValue: Actual secret value (runtime only, never serialized)
-type Secret struct {
-	Key          string // Variable name (e.g., "db_password", "HOME", "commit_hash")
-	RuntimeValue string // Actual resolved value (runtime only, never serialized)
-	DisplayID    string // Opaque ID for display: opal:secret:3J98t56A
 }
 
 // SecretUse records an authorized use-site for a secret.

@@ -1106,26 +1106,27 @@ echo @var.HOME
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// ASSERT: Plan has one secret (HOME variable)
-	if len(plan.Secrets) != 1 {
-		t.Fatalf("Expected 1 secret, got %d", len(plan.Secrets))
+	// ASSERT: Plan has one SecretUse entry (HOME variable used once)
+	// Phase 5.5: Plan contains SecretUses (authorization list), not Secrets (RuntimeValue)
+	if len(plan.SecretUses) != 1 {
+		t.Fatalf("Expected 1 SecretUse, got %d", len(plan.SecretUses))
 	}
 
-	secret := plan.Secrets[0]
+	secretUse := plan.SecretUses[0]
 
-	// ASSERT: Secret has correct key
-	if secret.Key != "HOME" {
-		t.Errorf("Expected key=HOME, got %s", secret.Key)
+	// ASSERT: SecretUse has DisplayID with correct prefix
+	if !strings.HasPrefix(secretUse.DisplayID, "opal:v:") {
+		t.Errorf("Expected DisplayID prefix opal:v:, got %s", secretUse.DisplayID)
 	}
 
-	// ASSERT: Secret has runtime value
-	if secret.RuntimeValue != "/home/alice" {
-		t.Errorf("Expected runtime value=/home/alice, got %s", secret.RuntimeValue)
+	// ASSERT: SecretUse has SiteID (HMAC-based authorization)
+	if secretUse.SiteID == "" {
+		t.Error("Expected non-empty SiteID")
 	}
 
-	// ASSERT: Secret has placeholder ID with correct prefix
-	if !strings.HasPrefix(secret.DisplayID, "opal:v:") {
-		t.Errorf("Expected DisplayID prefix opal:v:, got %s", secret.DisplayID)
+	// ASSERT: SecretUse has Site path
+	if secretUse.Site == "" {
+		t.Error("Expected non-empty Site")
 	}
 
 	// ASSERT: Step uses placeholder, not raw value
@@ -1161,13 +1162,24 @@ echo @var.HOME
 		t.Fatal("No 'command' argument found")
 	}
 
-	// ASSERT: Command uses placeholder reference
-	if commandArg.Val.Kind != planfmt.ValuePlaceholder {
-		t.Errorf("Expected ValuePlaceholder, got %v", commandArg.Val.Kind)
+	// ASSERT: Command uses string with DisplayID embedded (Phase 5)
+	// Plan should show: echo opal:v:XXXXX
+	// NOT: echo /home/alice
+	if commandArg.Val.Kind != planfmt.ValueString {
+		t.Errorf("Expected ValueString, got %v", commandArg.Val.Kind)
 	}
 
-	// ASSERT: Placeholder ref points to first secret
-	if commandArg.Val.Ref != 0 {
-		t.Errorf("Expected Ref=0 (first secret), got %d", commandArg.Val.Ref)
+	commandStr := commandArg.Val.Str
+
+	// ASSERT: Command contains DisplayID placeholder
+	if !strings.Contains(commandStr, "opal:v:") {
+		t.Errorf("Expected command to contain DisplayID 'opal:v:', got: %s", commandStr)
 	}
+
+	// ASSERT: Command does NOT contain actual value
+	if strings.Contains(commandStr, "/home/alice") {
+		t.Errorf("Command should NOT contain actual value '/home/alice', got: %s", commandStr)
+	}
+
+	t.Logf("✓ Plan command: %s", commandStr)
 }

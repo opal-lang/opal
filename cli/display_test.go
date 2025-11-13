@@ -82,8 +82,8 @@ func TestDisplayPlan_WithSecrets(t *testing.T) {
 				Tree: shellCmd("echo $SECRET"),
 			},
 		},
-		Secrets: []planfmt.Secret{
-			{Key: "SECRET", DisplayID: "opal:s:abc123", RuntimeValue: "secret123"},
+		SecretUses: []planfmt.SecretUse{
+			{DisplayID: "opal:s:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
 		},
 	}
 

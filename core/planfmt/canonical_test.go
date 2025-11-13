@@ -201,12 +201,13 @@ func TestCanonicalTargetUnlinkability(t *testing.T) {
 	}
 }
 
-// TestCanonicalHashIgnoresDisplayIDs verifies that canonical hash is structure-only
-// The canonical hash must be stable whether DisplayIDs exist or not, since it's used
-// as input to DisplayID generation. If it included DisplayIDs, we'd have circular dependency.
-func TestCanonicalHashIgnoresDisplayIDs(t *testing.T) {
-	// Plan without DisplayIDs (fresh from parsing)
-	planWithoutIDs := &planfmt.Plan{
+// TestCanonicalHashIncludesSecretUses verifies that canonical hash includes SecretUses
+// Phase 5.5: SecretUses (DisplayID + Site) are part of the contract for verification.
+// If value changes → DisplayID changes → hash changes → contract invalid
+// If site changes → Site changes → hash changes → contract invalid
+func TestCanonicalHashIncludesSecretUses(t *testing.T) {
+	// Plan with one SecretUse
+	plan1 := &planfmt.Plan{
 		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
@@ -219,13 +220,13 @@ func TestCanonicalHashIgnoresDisplayIDs(t *testing.T) {
 				},
 			},
 		},
-		Secrets: []planfmt.Secret{
-			{Key: "api_key", DisplayID: ""}, // No DisplayID yet
+		SecretUses: []planfmt.SecretUse{
+			{DisplayID: "opal:v:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
 		},
 	}
 
-	// Same plan WITH DisplayIDs (after ID generation)
-	planWithIDs := &planfmt.Plan{
+	// Same plan with DIFFERENT DisplayID (value changed)
+	plan2 := &planfmt.Plan{
 		Target: "deploy",
 		Steps: []planfmt.Step{
 			{
@@ -238,37 +239,37 @@ func TestCanonicalHashIgnoresDisplayIDs(t *testing.T) {
 				},
 			},
 		},
-		Secrets: []planfmt.Secret{
-			{Key: "api_key", DisplayID: "opal:s:ABC123"}, // DisplayID populated
+		SecretUses: []planfmt.SecretUse{
+			{DisplayID: "opal:v:def456", SiteID: "site1", Site: "root/step-1/params/command"}, // Different DisplayID
 		},
 	}
 
 	// Canonicalize both
-	canonical1, err := planWithoutIDs.Canonicalize()
+	canonical1, err := plan1.Canonicalize()
 	if err != nil {
-		t.Fatalf("canonicalization without IDs failed: %v", err)
+		t.Fatalf("canonicalization plan1 failed: %v", err)
 	}
 
-	canonical2, err := planWithIDs.Canonicalize()
+	canonical2, err := plan2.Canonicalize()
 	if err != nil {
-		t.Fatalf("canonicalization with IDs failed: %v", err)
+		t.Fatalf("canonicalization plan2 failed: %v", err)
 	}
 
 	// Hash both
 	hash1, err := canonical1.Hash()
 	if err != nil {
-		t.Fatalf("hash without IDs failed: %v", err)
+		t.Fatalf("hash plan1 failed: %v", err)
 	}
 
 	hash2, err := canonical2.Hash()
 	if err != nil {
-		t.Fatalf("hash with IDs failed: %v", err)
+		t.Fatalf("hash plan2 failed: %v", err)
 	}
 
-	// CRITICAL: Hashes MUST be identical (canonical hash is structure-only)
-	if hash1 != hash2 {
-		t.Errorf("Canonical hash changed when DisplayIDs added - breaks deterministic ID generation!\nWithout IDs: %x\nWith IDs: %x", hash1, hash2)
-		t.Errorf("This violates the architecture: canonical hash must be structure-only to break circular dependency")
+	// CRITICAL: Hashes MUST be different (DisplayID is part of contract)
+	if hash1 == hash2 {
+		t.Errorf("Canonical hash identical despite different DisplayIDs - contract verification broken!\nPlan1: %x\nPlan2: %x", hash1, hash2)
+		t.Errorf("This violates Phase 5.5: DisplayID changes should invalidate contract")
 	}
 }
 

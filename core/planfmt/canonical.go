@@ -21,10 +21,10 @@ import (
 //  3. Generate DisplayIDs using plan_hash
 //  4. Substitute DisplayIDs into plan
 type CanonicalPlan struct {
-	Version uint8             // Canonical format version (for forward compatibility)
-	Target  string            // Command/function being executed (ensures deploy != destroy)
-	Steps   []CanonicalStep   // Steps in canonical form
-	Secrets []CanonicalSecret // Secrets in canonical form
+	Version    uint8                // Canonical format version (for forward compatibility)
+	Target     string               // Command/function being executed (ensures deploy != destroy)
+	Steps      []CanonicalStep      // Steps in canonical form
+	SecretUses []CanonicalSecretUse // Secret uses in canonical form
 }
 
 // CanonicalStep represents a step in canonical form
@@ -33,12 +33,12 @@ type CanonicalStep struct {
 	Tree CanonicalNode
 }
 
-// CanonicalSecret represents a secret in canonical form.
-// DisplayID is intentionally omitted - canonical hash is structure-only.
-// Including DisplayID would create circular dependency: DisplayIDs need plan_hash,
-// but plan_hash can't depend on DisplayIDs that don't exist yet.
-type CanonicalSecret struct {
-	Key string // Secret key only, never the DisplayID
+// CanonicalSecretUse represents a secret use in canonical form.
+// Includes DisplayID and Site for contract verification.
+// SiteID is derived from Site, so it's redundant for hashing.
+type CanonicalSecretUse struct {
+	DisplayID string // Secret identifier (e.g., "opal:v:3J98t56A")
+	Site      string // Human-readable path (e.g., "root/step-1/params/command")
 }
 
 // CanonicalNode is a union type for execution tree nodes in canonical form
@@ -85,10 +85,10 @@ func (p *Plan) Canonicalize() (*CanonicalPlan, error) {
 	p.sortArgs()
 
 	cp := &CanonicalPlan{
-		Version: 1,        // Canonical format version
-		Target:  p.Target, // Include target to distinguish deploy vs destroy
-		Steps:   make([]CanonicalStep, len(p.Steps)),
-		Secrets: make([]CanonicalSecret, len(p.Secrets)),
+		Version:    1,        // Canonical format version
+		Target:     p.Target, // Include target to distinguish deploy vs destroy
+		Steps:      make([]CanonicalStep, len(p.Steps)),
+		SecretUses: make([]CanonicalSecretUse, len(p.SecretUses)),
 	}
 
 	// Canonicalize steps
@@ -100,19 +100,22 @@ func (p *Plan) Canonicalize() (*CanonicalPlan, error) {
 		cp.Steps[i] = cs
 	}
 
-	// Canonicalize secrets (sorted by key for determinism)
-	// Only Key is copied because canonical hash must be structure-only.
-	// DisplayIDs are generated using this hash, so they cannot be included here.
-	secrets := make([]CanonicalSecret, len(p.Secrets))
-	for i := range p.Secrets {
-		secrets[i] = CanonicalSecret{
-			Key: p.Secrets[i].Key,
+	// Canonicalize secret uses (sorted by DisplayID then Site for determinism)
+	// SiteID is omitted because it's derived from Site via HMAC (redundant for hashing)
+	secretUses := make([]CanonicalSecretUse, len(p.SecretUses))
+	for i := range p.SecretUses {
+		secretUses[i] = CanonicalSecretUse{
+			DisplayID: p.SecretUses[i].DisplayID,
+			Site:      p.SecretUses[i].Site,
 		}
 	}
-	sort.Slice(secrets, func(i, j int) bool {
-		return secrets[i].Key < secrets[j].Key
+	sort.Slice(secretUses, func(i, j int) bool {
+		if secretUses[i].DisplayID != secretUses[j].DisplayID {
+			return secretUses[i].DisplayID < secretUses[j].DisplayID
+		}
+		return secretUses[i].Site < secretUses[j].Site
 	})
-	cp.Secrets = secrets
+	cp.SecretUses = secretUses
 
 	return cp, nil
 }

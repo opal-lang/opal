@@ -194,7 +194,6 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		stepID:      1,
 		vault:       vlt,                         // Scope-aware variable storage (shared or new)
 		session:     decorator.NewLocalSession(), // Session for decorator resolution
-		secrets:     []planfmt.Secret{},          // Accumulated secrets
 		idFactory:   idFactory,                   // For placeholder generation
 		telemetry:   telemetry,
 		debugEvents: debugEvents,
@@ -233,8 +232,7 @@ type planner struct {
 	vault   *vault.Vault      // Scope-aware variable storage
 	session decorator.Session // Session for decorator resolution (LocalSession by default)
 
-	// Secret tracking for variable interpolation
-	secrets   []planfmt.Secret // Accumulated secrets from decorators
+	// Placeholder generation (for deterministic IDs in plan mode)
 	idFactory secret.IDFactory // For generating deterministic placeholder IDs
 
 	// Observability
@@ -303,15 +301,24 @@ func (p *planner) plan() (*planfmt.Plan, error) {
 		plan.Steps = steps
 	}
 
-	// Add accumulated secrets to plan
-	plan.Secrets = p.secrets
+	// Build SecretUses from Vault (authorization list for contract verification)
+	// This populates the plan with DisplayID → SiteID mappings for each variable usage.
+	// Same DisplayID can appear multiple times (different usage sites).
+	vaultUses := p.vault.BuildSecretUses()
+	for _, use := range vaultUses {
+		plan.SecretUses = append(plan.SecretUses, planfmt.SecretUse{
+			DisplayID: use.DisplayID,
+			SiteID:    use.SiteID,
+			Site:      use.Site,
+		})
+	}
 
 	// POSTCONDITION: plan must be valid
 	err := plan.Validate()
 	invariant.ExpectNoError(err, "plan validation")
 
 	if p.config.Debug >= DebugPaths {
-		p.recordDebugEvent("exit_plan", fmt.Sprintf("steps=%d secrets=%d", len(plan.Steps), len(plan.Secrets)))
+		p.recordDebugEvent("exit_plan", fmt.Sprintf("steps=%d secretUses=%d", len(plan.Steps), len(plan.SecretUses)))
 	}
 
 	return plan, nil
@@ -724,19 +731,16 @@ func (p *planner) planCommand() (Command, error) {
 	// If command contains decorators (@var.X), resolve them and create placeholders
 	var commandValue planfmt.Value
 	if hasDecorator {
-		// For MVP: entire command with decorator becomes a placeholder
-		// TODO: Support multiple decorators in one command
-		// TODO: Preserve literal text around decorators (e.g., "echo @var.HOME" should keep "echo")
-		//       Currently drops literal text - functional regression for mixed commands
-		//       Need to store command template with placeholder markers, not just secret value
-		resolvedValue, secretIndex, err := p.resolveCommandDecorator(command)
+		// Replace @var.NAME with DisplayID in command string
+		// Example: "echo @var.NAME" → "echo opal:v:3J98t56A"
+		// The DisplayID will be replaced with actual value at execution time
+		commandWithDisplayID, err := p.resolveCommandDecorator(command)
 		if err != nil {
 			return Command{}, err
 		}
-		_ = resolvedValue // Will use this for runtime expansion
 		commandValue = planfmt.Value{
-			Kind: planfmt.ValuePlaceholder,
-			Ref:  uint32(secretIndex),
+			Kind: planfmt.ValueString,
+			Str:  commandWithDisplayID,
 		}
 	} else {
 		commandValue = planfmt.Value{
@@ -901,7 +905,7 @@ func (p *planner) planCommand() (Command, error) {
 
 // resolveCommandDecorator resolves a decorator in a shell command and creates a placeholder
 // Returns: (resolved value, secret index, error)
-func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
+func (p *planner) resolveCommandDecorator(command string) (string, error) {
 	// Extract decorator name and property from command string
 	// For now, assume simple @var.NAME pattern
 	// TODO: Support more complex patterns and multiple decorators
@@ -910,7 +914,7 @@ func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
 	// Example: "echo @var.HOME" or "@var.HOME"
 	decoratorStart := strings.Index(command, "@var.")
 	if decoratorStart == -1 {
-		return "", 0, &PlanError{
+		return "", &PlanError{
 			Message: "decorator not found in command",
 			Context: "resolving command decorator",
 		}
@@ -924,7 +928,7 @@ func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
 	}
 
 	if varEnd == varStart {
-		return "", 0, &PlanError{
+		return "", &PlanError{
 			Message: "invalid variable name in decorator",
 			Context: "resolving command decorator",
 		}
@@ -935,56 +939,28 @@ func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
 	// Resolve variable from Vault
 	exprID, err := p.vault.LookupVariable(varName)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 
-	// TODO: This should use GetDisplayID for plan output (Phase 5)
-	// For now, keep existing behavior to avoid breaking tests
 	// Authorize this site to access the variable
 	if err := p.vault.RecordReference(exprID, "command"); err != nil {
-		return "", 0, err
+		return "", err
 	}
 
-	// Get the actual value (this bypasses security - will fix in Phase 5)
-	value, err := p.vault.Access(exprID, "command")
-	if err != nil {
-		return "", 0, err
-	}
+	// Mark as touched (in execution path) for BuildSecretUses
+	p.vault.MarkTouched(exprID)
 
-	// Convert value to string
-	var strValue string
-	switch v := value.(type) {
-	case string:
-		strValue = v
-	case int, int64:
-		strValue = fmt.Sprintf("%d", v)
-	case bool:
-		strValue = fmt.Sprintf("%t", v)
-	default:
-		strValue = fmt.Sprintf("%v", v)
-	}
+	// Phase 5: Get DisplayID for plan output (not actual value)
+	// The plan stores DisplayIDs, execution resolves them to actual values
+	displayID := p.vault.GetDisplayID(exprID)
 
-	// Create secret handle and placeholder
-	// Use IDFactory for deterministic IDs in plan mode
-	ctx := secret.IDContext{
-		PlanHash:  []byte("plan-hash"), // TODO: Use actual plan hash
-		StepPath:  fmt.Sprintf("step-%d", p.stepID),
-		Decorator: "var",
-		KeyName:   varName,
-		Kind:      "v", // v = variable
-	}
+	// Replace @var.NAME in command with DisplayID
+	// Example: "echo @var.NAME" → "echo opal:v:3J98t56A"
+	// The DisplayID is already generated by Vault and retrieved above
+	decoratorText := command[decoratorStart:varEnd]
+	commandWithDisplayID := strings.Replace(command, decoratorText, displayID, 1)
 
-	handle := secret.NewHandleWithFactory(strValue, p.idFactory, ctx)
-
-	// Store in secrets (will be added to plan later)
-	secretIndex := len(p.secrets)
-	p.secrets = append(p.secrets, planfmt.Secret{
-		Key:          varName,
-		RuntimeValue: strValue,
-		DisplayID:    handle.ID(),
-	})
-
-	return strValue, secretIndex, nil
+	return commandWithDisplayID, nil
 }
 
 // isAlphaNumeric checks if a byte is alphanumeric

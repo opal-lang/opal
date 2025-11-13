@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -463,6 +464,9 @@ func (v *Vault) PruneUnused() {
 //
 // In our security model: ALL value decorators are secrets.
 // Note: Empty string values are valid secrets (e.g., empty env vars).
+//
+// Returns a deterministically sorted slice (by DisplayID, then Site) to ensure
+// stable contract hashes across runs. Map iteration order is non-deterministic.
 func (v *Vault) BuildSecretUses() []SecretUse {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -495,6 +499,16 @@ func (v *Vault) BuildSecretUses() []SecretUse {
 			})
 		}
 	}
+
+	// Sort for deterministic contract hashing
+	// Primary: DisplayID (same secret used at multiple sites)
+	// Secondary: Site (deterministic order for same DisplayID)
+	sort.Slice(uses, func(i, j int) bool {
+		if uses[i].DisplayID != uses[j].DisplayID {
+			return uses[i].DisplayID < uses[j].DisplayID
+		}
+		return uses[i].Site < uses[j].Site
+	})
 
 	return uses
 }

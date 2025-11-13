@@ -1,8 +1,10 @@
 package planner
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/aledsdavies/opal/runtime/parser"
 )
 
@@ -196,4 +198,225 @@ var F = true`
 	}
 
 	t.Logf("Multiple variables with same literal values (different types) planned successfully")
+}
+
+// TestVarUsage_DisplayIDInPlan tests that when a variable is used in a command,
+// the plan contains the DisplayID placeholder, NOT the actual value.
+//
+// This is Phase 5 of variable resolution:
+// - Planning: Plan stores DisplayID (e.g., "opal:v:3J98t56A")
+// - Execution: Executor replaces DisplayID with actual value
+// - Scrubbing: Scrubber replaces actual value back to DisplayID in output
+//
+// Security: The plan never contains sensitive values, only placeholders.
+//
+// Requirements from WORK.md Phase 5:
+// 1. Plan should show: `echo "Hello, opal:v:3J98t56A"`
+// 2. NOT: `echo "Hello, Aled"`
+// 3. Plan output contains `opal:v:` placeholder
+// 4. Plan does NOT contain "Aled"
+func TestVarUsage_DisplayIDInPlan(t *testing.T) {
+	source := `var NAME = "Aled"
+echo "Hello, @var.NAME"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// Should have 1 step (the echo command)
+	if len(result.Plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(result.Plan.Steps))
+	}
+
+	step := result.Plan.Steps[0]
+	if step.Tree == nil {
+		t.Fatal("Expected tree, got nil")
+	}
+
+	// Tree should be a CommandNode with @shell decorator
+	cmd, ok := step.Tree.(*planfmt.CommandNode)
+	if !ok {
+		t.Fatalf("Expected CommandNode, got %T", step.Tree)
+	}
+
+	if cmd.Decorator != "@shell" {
+		t.Errorf("Expected @shell decorator, got %q", cmd.Decorator)
+	}
+
+	// Get the command argument
+	var commandVal planfmt.Value
+	var found bool
+	for _, arg := range cmd.Args {
+		if arg.Key == "command" {
+			commandVal = arg.Val
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("Command argument not found")
+	}
+
+	// REQUIREMENT: Command should be a string containing DisplayID, not a placeholder reference
+	// The plan formatter needs to see: echo "Hello, opal:v:3J98t56A"
+	// Phase 5: Commands now store DisplayID strings directly (not placeholder references)
+	if commandVal.Kind != planfmt.ValueString {
+		t.Fatalf("Expected ValueString, got kind=%v", commandVal.Kind)
+	}
+
+	commandArg := commandVal.Str
+	t.Logf("Command string: %s", commandArg)
+
+	// ASSERT: Command should contain "opal:v:" placeholder
+	if !strings.Contains(commandArg, "opal:v:") {
+		t.Errorf("FAIL: Command should contain DisplayID placeholder 'opal:v:', got: %s", commandArg)
+	}
+
+	// ASSERT: Command should NOT contain the actual value "Aled"
+	if strings.Contains(commandArg, "Aled") {
+		t.Errorf("FAIL: Command should NOT contain actual value 'Aled', got: %s", commandArg)
+	}
+
+	// SUCCESS
+	t.Logf("✓ Plan command contains DisplayID: %s", commandArg)
+}
+
+// TestVarUsage_FormattedPlanOutput tests that the formatted plan output
+// (what users see with --dry-run) contains DisplayID, not actual values.
+//
+// This verifies the end-to-end flow: parsing → planning → formatting
+//
+// Plan contract security:
+// - Command strings contain DisplayID: echo "Hello, opal:v:3J98t56A"
+// - Secret.RuntimeValue is NEVER serialized (runtime only, see plan.go:79)
+// - Only DisplayIDs are stored in the contract for scrubbing
+func TestVarUsage_FormattedPlanOutput(t *testing.T) {
+	source := `var NAME = "Aled"
+echo "Hello, @var.NAME"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// Format the plan (simulates what CLI shows with --dry-run)
+	formatted := formatPlanForTest(result.Plan)
+	t.Logf("Formatted plan:\n%s", formatted)
+
+	// ASSERT: Formatted output contains DisplayID
+	if !strings.Contains(formatted, "opal:v:") {
+		t.Errorf("Formatted plan should contain DisplayID 'opal:v:', got:\n%s", formatted)
+	}
+
+	// ASSERT: Formatted output does NOT contain actual value
+	if strings.Contains(formatted, "Aled") {
+		t.Errorf("Formatted plan should NOT contain actual value 'Aled', got:\n%s", formatted)
+	}
+
+	t.Logf("✓ Formatted plan contains DisplayID, not actual value")
+}
+
+// formatPlanForTest formats a plan's steps for testing (simplified version)
+func formatPlanForTest(plan *planfmt.Plan) string {
+	var b strings.Builder
+	for _, step := range plan.Steps {
+		b.WriteString(formatStepForTest(step.Tree, 0))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func formatStepForTest(node planfmt.ExecutionNode, indent int) string {
+	switch n := node.(type) {
+	case *planfmt.CommandNode:
+		var args []string
+		for _, arg := range n.Args {
+			if arg.Key == "command" {
+				args = append(args, arg.Val.Str)
+			}
+		}
+		return strings.Repeat("  ", indent) + n.Decorator + " " + strings.Join(args, " ")
+	default:
+		return strings.Repeat("  ", indent) + "(unsupported node type)"
+	}
+}
+
+// TestVarUsage_SecretUsesPopulated tests that plan.SecretUses is populated
+// with authorization entries from Vault.
+//
+// This is Phase 5.5 of variable resolution:
+// - Plan contract contains SecretUses (DisplayID + SiteID + Site)
+// - Same DisplayID can appear multiple times (different usage sites)
+// - Plan does NOT contain Secrets field (RuntimeValue never leaves Vault)
+//
+// Contract verification model:
+// - Plan time: Build SecretUses, compute hash
+// - Execution time: Re-plan with same PlanSalt, compare hashes
+// - If value changes → DisplayID changes → hash changes → contract invalid
+// - If site changes → SiteID changes → hash changes → contract invalid
+func TestVarUsage_SecretUsesPopulated(t *testing.T) {
+	source := `var NAME = "Aled"
+echo "Hello, @var.NAME"
+echo "Goodbye, @var.NAME"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// ASSERT: SecretUses should have 2 entries (same DisplayID, different sites)
+	if len(result.Plan.SecretUses) != 2 {
+		t.Fatalf("Expected 2 SecretUses (same DisplayID, different sites), got %d", len(result.Plan.SecretUses))
+	}
+
+	// Both entries should have same DisplayID (same variable value)
+	displayID1 := result.Plan.SecretUses[0].DisplayID
+	displayID2 := result.Plan.SecretUses[1].DisplayID
+	if displayID1 != displayID2 {
+		t.Errorf("Expected same DisplayID for both uses, got %q and %q", displayID1, displayID2)
+	}
+
+	// But different SiteIDs (different usage sites)
+	siteID1 := result.Plan.SecretUses[0].SiteID
+	siteID2 := result.Plan.SecretUses[1].SiteID
+	if siteID1 == siteID2 {
+		t.Errorf("Expected different SiteIDs for different sites, got same: %q", siteID1)
+	}
+
+	// Each entry should have all fields populated
+	for i, use := range result.Plan.SecretUses {
+		if use.DisplayID == "" {
+			t.Errorf("SecretUse[%d].DisplayID is empty", i)
+		}
+		if use.SiteID == "" {
+			t.Errorf("SecretUse[%d].SiteID is empty", i)
+		}
+		if use.Site == "" {
+			t.Errorf("SecretUse[%d].Site is empty", i)
+		}
+		if !strings.Contains(use.DisplayID, "opal:v:") {
+			t.Errorf("SecretUse[%d].DisplayID should contain 'opal:v:', got %q", i, use.DisplayID)
+		}
+		t.Logf("SecretUse[%d]: DisplayID=%s, SiteID=%s, Site=%s",
+			i, use.DisplayID, use.SiteID, use.Site)
+	}
+
+	t.Logf("✓ Plan.SecretUses populated correctly with %d entries", len(result.Plan.SecretUses))
 }
