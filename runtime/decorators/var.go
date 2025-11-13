@@ -75,7 +75,15 @@ func (d *VarDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 
 		// Check for error
 		if !lookupResults[1].IsNil() {
-			err := lookupResults[1].Interface().(error)
+			err, ok := lookupResults[1].Interface().(error)
+			if !ok {
+				results[i] = decorator.ResolveResult{
+					Value:  nil,
+					Origin: fmt.Sprintf("var.%s", varName),
+					Error:  fmt.Errorf("lookupVariable returned unexpected error type: %T", lookupResults[1].Interface()),
+				}
+				continue
+			}
 			results[i] = decorator.ResolveResult{
 				Value:  nil,
 				Origin: fmt.Sprintf("var.%s", varName),
@@ -84,7 +92,16 @@ func (d *VarDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 			continue
 		}
 
-		exprID := lookupResults[0].String()
+		// Extract exprID with type assertion
+		exprID, ok := lookupResults[0].Interface().(string)
+		if !ok {
+			results[i] = decorator.ResolveResult{
+				Value:  nil,
+				Origin: fmt.Sprintf("var.%s", varName),
+				Error:  fmt.Errorf("lookupVariable returned non-string exprID: %T", lookupResults[0].Interface()),
+			}
+			continue
+		}
 
 		// Record reference to authorize this site before accessing
 		// Use a default parameter name for decorator resolution
@@ -117,7 +134,15 @@ func (d *VarDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 
 		// Check if RecordReference returned an error
 		if !recordResults[0].IsNil() {
-			err := recordResults[0].Interface().(error)
+			err, ok := recordResults[0].Interface().(error)
+			if !ok {
+				results[i] = decorator.ResolveResult{
+					Value:  nil,
+					Origin: fmt.Sprintf("var.%s", varName),
+					Error:  fmt.Errorf("recordReference returned unexpected type: %T", recordResults[0].Interface()),
+				}
+				continue
+			}
 			results[i] = decorator.ResolveResult{
 				Value:  nil,
 				Origin: fmt.Sprintf("var.%s", varName),
@@ -152,7 +177,15 @@ func (d *VarDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 
 		// Check for error
 		if !accessResults[1].IsNil() {
-			err := accessResults[1].Interface().(error)
+			err, ok := accessResults[1].Interface().(error)
+			if !ok {
+				results[i] = decorator.ResolveResult{
+					Value:  nil,
+					Origin: fmt.Sprintf("var.%s", varName),
+					Error:  fmt.Errorf("access returned unexpected error type: %T", accessResults[1].Interface()),
+				}
+				continue
+			}
 			results[i] = decorator.ResolveResult{
 				Value:  nil,
 				Origin: fmt.Sprintf("var.%s", varName),
