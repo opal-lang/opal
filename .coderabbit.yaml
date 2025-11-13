@@ -1,12 +1,12 @@
 # CodeRabbit configuration
 # Docs: https://docs.coderabbit.ai/
 
-# Tone: Direct and technical, focus on bugs not style
-tone_instructions: "Be direct and technical. Focus only on bugs, security issues, logic errors, and correctness problems. Skip style suggestions - we have gofumpt and golangci-lint for that."
+# Tone: Calm and helpful, focus on bugs not style
+tone_instructions: "Be calm, helpful, and constructive. Focus only on bugs, security issues, logic errors, and correctness problems. Skip style suggestions - we have gofumpt and golangci-lint for that. When suggesting improvements, explain the reasoning gently."
 
 reviews:
-  # Assertive profile for more thorough issue detection
-  profile: "assertive"
+  # Chill profile for calmer, less aggressive reviews
+  profile: "chill"
   
   auto_review:
     enabled: true
