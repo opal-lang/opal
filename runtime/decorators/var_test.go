@@ -70,6 +70,7 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 	v := vault.New()
 	nameID := v.DeclareVariable("name", "literal:Alice")
 	v.MarkResolved(nameID, "Alice")
+	v.RecordReference(nameID, "value") // Authorize access at root/params/value
 
 	// Create context with Vault
 	ctx := decorator.ValueEvalContext{
@@ -107,6 +108,7 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 	v := vault.New()
 	countID := v.DeclareVariable("count", "literal:42")
 	v.MarkResolved(countID, "42")
+	v.RecordReference(countID, "value") // Authorize access
 
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
@@ -137,6 +139,7 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 	v := vault.New()
 	flagID := v.DeclareVariable("flag", "literal:true")
 	v.MarkResolved(flagID, "true")
+	v.RecordReference(flagID, "value") // Authorize access
 
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
@@ -239,6 +242,7 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 	v := vault.New()
 	valueID := v.DeclareVariable("value", "literal:local")
 	v.MarkResolved(valueID, "local")
+	v.RecordReference(valueID, "value") // Authorize access
 
 	// Test with LocalSession
 	localCtx := decorator.ValueEvalContext{

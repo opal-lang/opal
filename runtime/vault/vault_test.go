@@ -17,8 +17,8 @@ func TestVault_PathTracking_SingleDecorator(t *testing.T) {
 	v := New()
 
 	// GIVEN: We enter a step and a decorator
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 
 	// WHEN: We build the site path for a parameter
 	path := v.BuildSitePath("command")
@@ -36,20 +36,25 @@ func TestVault_PathTracking_MultipleInstances(t *testing.T) {
 	v := New()
 
 	// GIVEN: Three shell commands in three steps
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	path1 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-1
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.ResetCounts() // Reset for new step
+	v.Push("step-2")
+	v.Push("@shell")
 	path2 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-2
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.ResetCounts() // Reset for new step
+	v.Push("step-3")
+	v.Push("@shell")
 	path3 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-3
 
 	// THEN: Each should have different step but same decorator index [0]
 	expected := []string{
@@ -72,9 +77,9 @@ func TestVault_PathTracking_NestedDecorators(t *testing.T) {
 	v := New()
 
 	// GIVEN: Nested decorators @retry -> @timeout -> @shell
-	v.EnterDecorator("@retry")
-	v.EnterDecorator("@timeout")
-	v.EnterDecorator("@shell")
+	v.Push("@retry")
+	v.Push("@timeout")
+	v.Push("@shell")
 
 	// WHEN: We build the site path
 	path := v.BuildSitePath("command")
@@ -91,22 +96,22 @@ func TestVault_PathTracking_NestedDecorators(t *testing.T) {
 func TestVault_PathTracking_MultipleDecoratorsAtSameLevel(t *testing.T) {
 	v := New()
 
-	v.EnterStep()
+	v.Push("step-1")
 
 	// First shell command
-	v.EnterDecorator("@shell")
+	v.Push("@shell")
 	path1 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop()
 
 	// Second shell command
-	v.EnterDecorator("@shell")
+	v.Push("@shell")
 	path2 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop()
 
 	// A retry decorator
-	v.EnterDecorator("@retry")
+	v.Push("@retry")
 	path3 := v.BuildSitePath("times")
-	v.ExitDecorator()
+	v.Pop()
 
 	// THEN: Shell commands get [0] and [1], retry gets [0]
 	expected := []string{
@@ -129,18 +134,21 @@ func TestVault_PathTracking_ResetCountsPerStep(t *testing.T) {
 	v := New()
 
 	// Step 1: Two shell commands
-	v.EnterStep()
-	v.EnterDecorator("@shell")
-	v.ExitDecorator()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
+	v.Pop()
+	v.Push("@shell")
 	path1 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop()
+	v.Pop() // Pop step-1
 
 	// Step 2: One shell command (should be [0] again)
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.ResetCounts() // Reset for new step
+	v.Push("step-2")
+	v.Push("@shell")
 	path2 := v.BuildSitePath("command")
-	v.ExitDecorator()
+	v.Pop()
+	v.Pop() // Pop step-2
 
 	// THEN: Step 1 has @shell[1], Step 2 has @shell[0]
 	if path1 != "root/step-1/@shell[1]/params/command" {
@@ -189,8 +197,8 @@ func TestVault_TransportBoundaryViolation(t *testing.T) {
 	v.MarkTouched(exprID)
 
 	// AND: Record reference in local transport (allowed)
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	err := v.RecordReference(exprID, "command")
 	if err != nil {
 		t.Fatalf("RecordReference should succeed in same transport: %v", err)
@@ -198,8 +206,8 @@ func TestVault_TransportBoundaryViolation(t *testing.T) {
 
 	// WHEN: We enter SSH transport and try to access it
 	v.EnterTransport("ssh:untrusted")
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command") // Recording is allowed
 
 	// THEN: Access should fail with transport boundary violation
@@ -222,8 +230,8 @@ func TestVault_SameTransportAllowed(t *testing.T) {
 	v.MarkTouched(exprID)
 
 	// WHEN: We use it in same transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	err := v.RecordReference(exprID, "command")
 	// THEN: Should succeed
 	if err != nil {
@@ -288,13 +296,13 @@ func TestVault_BuildSecretUses(t *testing.T) {
 
 	// GIVEN: Variables with references
 	exprID := v.DeclareVariable("API_KEY", "sk-secret")
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
-	v.ExitDecorator()
+	v.Pop()
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// Resolve expression (normally done during planning)
@@ -332,8 +340,8 @@ func TestVault_BuildSecretUses_RequiresDisplayID(t *testing.T) {
 	// GIVEN: Variable with reference but no DisplayID (not resolved yet)
 	exprID := v.DeclareVariable("UNRESOLVED", "value")
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// Don't assign DisplayID - simulates unresolved expression
@@ -355,8 +363,8 @@ func TestVault_BuildSecretUses_OnlyTouched(t *testing.T) {
 	id1 := v.DeclareVariable("TOUCHED", "@env.HOME")
 	id2 := v.DeclareVariable("UNTOUCHED", "@env.PATH")
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(id1, "command")
 	v.RecordReference(id2, "command")
 
@@ -481,8 +489,8 @@ func TestVault_Access_ChecksSiteID(t *testing.T) {
 	v.MarkResolved(exprID, "sk-secret-123")
 
 	// Record authorized site
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: We try to access at authorized site (current site)
@@ -505,14 +513,14 @@ func TestVault_Access_RejectsUnauthorizedSite(t *testing.T) {
 	v.MarkResolved(exprID, "sk-secret-123")
 
 	// Record authorized site
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
-	v.ExitDecorator()
+	v.Pop()
 
 	// WHEN: We try to access at different site (not authorized)
-	v.EnterStep()
-	v.EnterDecorator("@timeout")
+	v.Push("step-1")
+	v.Push("@timeout")
 	value, err := v.Access(exprID, "duration")
 
 	// THEN: Should fail with authorization error
@@ -537,8 +545,8 @@ func TestVault_Access_UnresolvedExpression(t *testing.T) {
 	exprID := v.DeclareVariable("UNRESOLVED", "@env.FOO")
 
 	// Record use-site
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: We try to access
@@ -566,8 +574,8 @@ func TestVault_PruneUnusedExpressions(t *testing.T) {
 	id1 := v.DeclareVariable("USED", "sk-used")
 	id2 := v.DeclareVariable("UNUSED", "sk-unused")
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(id1, "command")
 
 	// WHEN: We prune unused expressions
@@ -592,8 +600,8 @@ func TestVault_EndToEnd_PruneAndBuild(t *testing.T) {
 	id3 := v.DeclareVariable("ANOTHER_USED", "value")
 
 	// Only reference USED_SECRET and ANOTHER_USED
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(id1, "command")
 	v.RecordReference(id3, "command")
 
@@ -708,7 +716,7 @@ func TestVault_ScopeAwareVariables_ParentToChild(t *testing.T) {
 	exprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter a child scope
-	v.EnterDecorator("@retry")
+	v.Push("@retry")
 
 	// THEN: Child can lookup parent's variable
 	foundID, err := v.LookupVariable("COUNT")
@@ -728,7 +736,7 @@ func TestVault_ScopeAwareVariables_Shadowing(t *testing.T) {
 	rootExprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter child scope and shadow the variable
-	v.EnterDecorator("@retry")
+	v.Push("@retry")
 	childExprID := v.DeclareVariable("COUNT", "3")
 
 	// THEN: Child lookup should find child's value (shadows parent)
@@ -741,7 +749,7 @@ func TestVault_ScopeAwareVariables_Shadowing(t *testing.T) {
 	}
 
 	// WHEN: We exit child scope
-	v.ExitDecorator()
+	v.Pop()
 
 	// THEN: Parent lookup should find parent's value (unchanged)
 	foundID, err = v.LookupVariable("COUNT")
@@ -761,8 +769,8 @@ func TestVault_ScopeAwareVariables_NotFound(t *testing.T) {
 	v.DeclareVariable("EXISTS", "value")
 
 	// WHEN: We enter nested scopes and lookup non-existent variable
-	v.EnterDecorator("@retry")
-	v.EnterDecorator("@timeout")
+	v.Push("@retry")
+	v.Push("@timeout")
 
 	_, err := v.LookupVariable("DOES_NOT_EXIST")
 
@@ -782,10 +790,10 @@ func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
 	// GIVEN: Variables at different scope levels
 	aID := v.DeclareVariable("A", "1")
 
-	v.EnterDecorator("@retry")
+	v.Push("@retry")
 	bID := v.DeclareVariable("B", "2")
 
-	v.EnterDecorator("@timeout")
+	v.Push("@timeout")
 	cID := v.DeclareVariable("C", "3")
 
 	// WHEN: We lookup from deepest scope

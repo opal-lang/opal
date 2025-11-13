@@ -28,8 +28,8 @@ func TestBug1_DuplicateTransportCheck_RedundantValidation(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site in local transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access at authorized site
@@ -63,8 +63,8 @@ func TestBug2_LazyInit_CapturesTransportAtFirstReference(t *testing.T) {
 
 	// AND: First reference happens in REMOTE SSH transport
 	v.EnterTransport("ssh:server1")
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access is called in SSH transport (first reference)
@@ -97,8 +97,8 @@ func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 
 	// AND: First reference in SSH transport
 	v.EnterTransport("ssh:server1")
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Try to access in SSH transport (should fail - wrong transport)
@@ -118,10 +118,10 @@ func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 	}
 
 	// AND: Second reference in LOCAL transport (where it was actually resolved)
-	v.ExitDecorator()
+	v.Pop()
 	v.ExitTransport() // Back to local
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "env")
 
 	// WHEN: Access in local transport (the CORRECT transport)
@@ -190,8 +190,8 @@ func TestBug_FullScenario_LocalEnvLeaksToSSH(t *testing.T) {
 
 	// AND: Code enters SSH transport (remote server)
 	v.EnterTransport("ssh:production-server")
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 
 	// AND: Remote shell tries to use local secret
 	v.RecordReference(exprID, "command")
@@ -234,8 +234,8 @@ func TestAfterFix_ExistingBehaviorStillWorks(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site in same transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access at authorized site in same transport

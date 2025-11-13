@@ -22,8 +22,8 @@ func TestAccess_AuthorizedSite_SameTransport_Succeeds(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site recorded
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access at authorized site in same transport
@@ -47,8 +47,8 @@ func TestAccess_AuthorizedSite_DifferentTransport_FailsWithTransportError(t *tes
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site recorded in local transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 	// Site: root/step-1/@shell[0]/params/command
 
@@ -80,13 +80,13 @@ func TestAccess_UnauthorizedSite_SameTransport_FailsWithAuthorityError(t *testin
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site: root/step-1/@shell[0]/params/command
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
-	v.ExitDecorator()
+	v.Pop()
 
 	// WHEN: Try to access at different site (different decorator)
-	v.EnterDecorator("@timeout")
+	v.Push("@timeout")
 	value, err := v.Access(exprID, "duration")
 
 	// THEN: Should fail with authorization error
@@ -111,15 +111,15 @@ func TestAccess_UnauthorizedSite_DifferentTransport_Fails(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Authorized site in local transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
-	v.ExitDecorator()
+	v.Pop()
 
 	// WHEN: Enter different transport AND different site
 	v.EnterTransport("ssh:remote")
-	v.EnterStep()
-	v.EnterDecorator("@timeout")
+	v.Push("step-1")
+	v.Push("@timeout")
 
 	value, err := v.Access(exprID, "duration")
 
@@ -148,18 +148,20 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// Site 1: root/step-1/@shell[0]/params/command
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	site1 := v.BuildSitePath("command")
 	v.RecordReference(exprID, "command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-1
 
 	// Site 2: root/step-2/@retry[0]/params/apiKey
-	v.EnterStep()
-	v.EnterDecorator("@retry")
+	v.Push("step-2")
+	v.Push("@retry")
 	site2 := v.BuildSitePath("apiKey")
 	v.RecordReference(exprID, "apiKey")
-	v.ExitDecorator()
+	v.Pop() // Pop @retry
+	v.Pop() // Pop step-2
 
 	// Verify sites are different
 	if site1 == site2 {
@@ -168,11 +170,10 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 
 	// WHEN: Access at site 1 (need to reconstruct the exact path)
 	// Reset to step 1 state
-	v.pathStack = []PathSegment{{Type: SegmentRoot, Name: "root"}}
-	v.stepCount = 0
+	v.pathStack = []PathSegment{{Name: "root", Index: -1}}
 	v.decoratorCounts = make(map[string]int)
-	v.EnterStep() // step-1
-	v.EnterDecorator("@shell")
+	v.Push("step-1") // step-1
+	v.Push("@shell")
 	value1, err1 := v.Access(exprID, "command")
 
 	// THEN: Should succeed at site 1
@@ -183,15 +184,14 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 		t.Errorf("Access() at site 1 = %q, want %q", value1, "secret-value")
 	}
 
-	v.ExitDecorator()
+	v.Pop()
 
 	// WHEN: Access at site 2 (need to reconstruct the exact path)
 	// Reset to step 2 state
-	v.pathStack = []PathSegment{{Type: SegmentRoot, Name: "root"}}
-	v.stepCount = 1 // Will become 2 on EnterStep
+	v.pathStack = []PathSegment{{Name: "root", Index: -1}}
 	v.decoratorCounts = make(map[string]int)
-	v.EnterStep() // step-2
-	v.EnterDecorator("@retry")
+	v.Push("step-2")
+	v.Push("@retry")
 	value2, err2 := v.Access(exprID, "apiKey")
 
 	// THEN: Should succeed at site 2
@@ -213,8 +213,8 @@ func TestAccess_UnresolvedExpression_FailsWithResolvedError(t *testing.T) {
 	// Note: Value is empty string (not resolved)
 
 	// AND: Authorized site recorded
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Try to access unresolved expression
@@ -238,8 +238,8 @@ func TestAccess_NonexistentExpression_FailsWithNotFoundError(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	// WHEN: Try to access expression that was never declared
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	value, err := v.Access("NONEXISTENT", "command")
 
 	// THEN: Should fail with "not found" error
@@ -263,20 +263,23 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 	localID := v.TrackExpression("@env.HOME")
 	v.MarkResolved(localID, "/home/local")
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(localID, "command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-1
 
 	// AND: @env.HOME in ssh:server1 transport (different expression!)
 	v.EnterTransport("ssh:server1")
 	sshID := v.TrackExpression("@env.HOME")
 	v.MarkResolved(sshID, "/home/server1")
 
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.ResetCounts() // Reset for new step
+	v.Push("step-2")
+	v.Push("@shell")
 	v.RecordReference(sshID, "command")
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-2
 
 	// Verify they are different expressions
 	if localID == sshID {
@@ -286,11 +289,10 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 	// WHEN: Access local expression in local transport
 	v.ExitTransport() // Back to local
 	// Reset to step 1 state
-	v.pathStack = []PathSegment{{Type: SegmentRoot, Name: "root"}}
-	v.stepCount = 0
+	v.pathStack = []PathSegment{{Name: "root", Index: -1}}
 	v.decoratorCounts = make(map[string]int)
-	v.EnterStep() // step-1
-	v.EnterDecorator("@shell")
+	v.Push("step-1") // step-1
+	v.Push("@shell")
 	localValue, localErr := v.Access(localID, "command")
 
 	// THEN: Should get local value
@@ -301,16 +303,16 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 		t.Errorf("Access() local = %q, want %q", localValue, "/home/local")
 	}
 
-	v.ExitDecorator()
+	v.Pop() // Pop @shell
+	v.Pop() // Pop step-1
 
 	// WHEN: Access SSH expression in SSH transport
 	v.EnterTransport("ssh:server1")
 	// Reset to step 2 state
-	v.pathStack = []PathSegment{{Type: SegmentRoot, Name: "root"}}
-	v.stepCount = 1 // Will become 2 on EnterStep
+	v.pathStack = []PathSegment{{Name: "root", Index: -1}}
 	v.decoratorCounts = make(map[string]int)
-	v.EnterStep() // step-2
-	v.EnterDecorator("@shell")
+	v.Push("step-2")
+	v.Push("@shell")
 	sshValue, sshErr := v.Access(sshID, "command")
 
 	// THEN: Should get SSH value
@@ -332,8 +334,8 @@ func TestAccess_NoPlanKey_SkipsSiteIDCheck(t *testing.T) {
 	v.MarkResolved(exprID, "secret-value")
 
 	// AND: Reference recorded (SiteID will be empty without plan key)
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access without plan key
@@ -359,8 +361,8 @@ func TestAccess_NonEnvDecorator_CrossesTransportBoundary(t *testing.T) {
 	v.MarkResolved(exprID, "sk-secret-123")
 
 	// AND: Authorized site in local transport
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Enter different transport but stay at same site
@@ -388,8 +390,8 @@ func TestAccess_EmptyStringSecret_IsValid(t *testing.T) {
 	v.MarkResolved(exprID, "")
 
 	// AND: Authorized site recorded
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
 	// WHEN: Access the empty string secret
@@ -413,8 +415,8 @@ func TestBuildSecretUses_EmptyStringSecret_IsIncluded(t *testing.T) {
 	v.expressions[exprID].DisplayID = "opal:v:EMPTY"
 
 	// AND: Has reference and is touched
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 	v.MarkTouched(exprID)
 
@@ -440,8 +442,8 @@ func TestBuildSecretUses_UnresolvedExpression_IsExcluded(t *testing.T) {
 	v.expressions[exprID].DisplayID = "opal:v:UNRES"
 
 	// AND: Has reference and is touched
-	v.EnterStep()
-	v.EnterDecorator("@shell")
+	v.Push("step-1")
+	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 	v.MarkTouched(exprID)
 

@@ -193,7 +193,6 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		pos:         0,
 		stepID:      1,
 		vault:       vlt,                         // Scope-aware variable storage (shared or new)
-		scopes:      NewScopeGraph("local"),      // Hierarchical variable scoping (legacy)
 		session:     decorator.NewLocalSession(), // Session for decorator resolution
 		secrets:     []planfmt.Secret{},          // Accumulated secrets
 		idFactory:   idFactory,                   // For placeholder generation
@@ -231,8 +230,7 @@ type planner struct {
 	stepID uint64 // Next step ID to assign
 
 	// Variable scoping with transport boundary guards
-	vault   *vault.Vault      // Scope-aware variable storage (primary)
-	scopes  *ScopeGraph       // Hierarchical variable scoping (legacy - to be removed)
+	vault   *vault.Vault      // Scope-aware variable storage
 	session decorator.Session // Session for decorator resolution (LocalSession by default)
 
 	// Secret tracking for variable interpolation
@@ -522,8 +520,13 @@ func (p *planner) planStep() (planfmt.Step, error) {
 	// We're at EventStepEnter, move past it
 	p.pos++
 
-	// Track step in Vault for scope-aware variable storage
-	p.vault.EnterStep()
+	// Track step in Vault for site path generation (authorization)
+	// Note: Variables are declared at root scope (accessible across all steps)
+	// but site paths include step segment for authorization granularity
+	stepName := fmt.Sprintf("step-%d", p.stepID)
+	p.vault.ResetCounts() // Reset decorator indices for new step
+	p.vault.Push(stepName)
+	defer p.vault.Pop()
 
 	var commands []Command
 
@@ -631,17 +634,16 @@ func (p *planner) planVarDecl() error {
 		return err
 	}
 
-	// Declare variable in Vault (returns hash-based exprID)
+	// Declare variable in current variable scope
+	// Variable scope excludes step segments (steps are not scopes)
+	// Only root and decorator blocks create variable scopes
 	rawExpr := fmt.Sprintf("literal:%v", value)
 	exprID := p.vault.DeclareVariable(varName, rawExpr)
 
-	// Get expression to check if already resolved (expression deduplication)
-	expr := p.vault.GetExpression(exprID)
-
-	// Mark as resolved only if not already resolved
+	// Mark as resolved only if not already resolved (expression deduplication)
 	// Multiple variables can share the same literal value (same exprID via hash-based deduplication)
 	// Only the first declaration resolves the expression; subsequent ones reuse it
-	if !expr.Resolved {
+	if !p.vault.IsResolved(exprID) {
 		// First time this literal is resolved
 		// Pass original value to preserve type (string, int, bool, map, slice)
 		p.vault.MarkResolved(exprID, value)
@@ -650,19 +652,14 @@ func (p *planner) planVarDecl() error {
 	// For literals, the value should always match (same source → same value)
 	// If there's a mismatch, it indicates a bug in the parser/planner
 
-	// LEGACY: Also store in ScopeGraph (will be removed in Phase 4)
-	origin := "literal"
-	class := VarClassData
-	taint := VarTaintAgnostic
-	p.scopes.Store(varName, origin, value, class, taint)
-
 	// Record telemetry
 	p.recordDecoratorResolution("@var")
 
 	// Record debug event
 	if p.config.Debug >= DebugDetailed {
+		displayID := p.vault.GetDisplayID(exprID)
 		p.recordDebugEvent("var_declared", fmt.Sprintf("name=%s value=%v exprID=%s displayID=%s",
-			varName, value, exprID, expr.DisplayID))
+			varName, value, exprID, displayID))
 	}
 
 	return nil
@@ -935,8 +932,21 @@ func (p *planner) resolveCommandDecorator(command string) (string, int, error) {
 
 	varName := command[varStart:varEnd]
 
-	// Resolve variable from scope graph
-	value, _, err := p.scopes.Resolve(varName)
+	// Resolve variable from Vault
+	exprID, err := p.vault.LookupVariable(varName)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// TODO: This should use GetDisplayID for plan output (Phase 5)
+	// For now, keep existing behavior to avoid breaking tests
+	// Authorize this site to access the variable
+	if err := p.vault.RecordReference(exprID, "command"); err != nil {
+		return "", 0, err
+	}
+
+	// Get the actual value (this bypasses security - will fix in Phase 5)
+	value, err := p.vault.Access(exprID, "command")
 	if err != nil {
 		return "", 0, err
 	}

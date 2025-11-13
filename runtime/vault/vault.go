@@ -120,26 +120,18 @@ type SiteRef struct {
 	ParamName string // "command", "apiKey", etc.
 }
 
-// PathSegment represents one level in the decorator DAG path.
+// PathSegment represents one level in the scope/site path.
+// Generic representation - Vault doesn't know what the name means.
+// The caller (planner) decides: "root", "step-1", "@retry", etc.
 type PathSegment struct {
-	Type  SegmentType
-	Name  string
-	Index int // -1 if not applicable
+	Name  string // Scope name: "root", "step-1", "@retry", etc.
+	Index int    // Instance index (-1 if not applicable)
 }
-
-// SegmentType identifies the type of path segment.
-type SegmentType int
-
-const (
-	SegmentRoot SegmentType = iota
-	SegmentStep
-	SegmentDecorator
-)
 
 // New creates a new Vault.
 func New() *Vault {
 	v := &Vault{
-		pathStack:        []PathSegment{{Type: SegmentRoot, Name: "root", Index: -1}},
+		pathStack:        []PathSegment{{Name: "root", Index: -1}},
 		stepCount:        0,
 		decoratorCounts:  make(map[string]int),
 		expressions:      make(map[string]*Expression),
@@ -167,68 +159,66 @@ func NewWithPlanKey(planKey []byte) *Vault {
 	return v
 }
 
-// EnterStep pushes a new step onto the path stack and resets decorator counts.
-// If there's already a step in the stack, it's replaced (steps don't nest).
-func (v *Vault) EnterStep() {
-	v.stepCount++
-	stepID := fmt.Sprintf("step-%d", v.stepCount)
+// Push adds a segment to the path stack.
+// The caller (planner) decides what the segment represents: "step-1", "@retry", etc.
+// Returns the index for this segment name at the current level.
+func (v *Vault) Push(name string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	// Pop previous step if exists (steps are siblings, not nested)
-	if len(v.pathStack) > 1 && v.pathStack[len(v.pathStack)-1].Type == SegmentStep {
-		v.pathStack = v.pathStack[:len(v.pathStack)-1]
-	}
-
-	v.pathStack = append(v.pathStack, PathSegment{
-		Type:  SegmentStep,
-		Name:  stepID,
-		Index: -1,
-	})
-
-	// Reset decorator counts for new step
-	v.decoratorCounts = make(map[string]int)
-}
-
-// EnterDecorator pushes a decorator onto the path stack and returns its index.
-func (v *Vault) EnterDecorator(decorator string) int {
-	// Get next instance index for this decorator at current level
-	index := v.decoratorCounts[decorator]
-	v.decoratorCounts[decorator]++
+	// Get next instance index for this name at current level
+	index := v.decoratorCounts[name]
+	v.decoratorCounts[name]++
 
 	v.pathStack = append(v.pathStack, PathSegment{
-		Type:  SegmentDecorator,
-		Name:  decorator,
+		Name:  name,
 		Index: index,
 	})
 
 	return index
 }
 
-// ExitDecorator pops the current decorator from the path stack.
-func (v *Vault) ExitDecorator() {
-	if len(v.pathStack) <= 1 {
-		panic("cannot exit root")
-	}
+// Pop removes the top segment from the path stack.
+// Panics if attempting to pop root (programmer error).
+func (v *Vault) Pop() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	// Only pop if top is a decorator
-	if v.pathStack[len(v.pathStack)-1].Type == SegmentDecorator {
-		v.pathStack = v.pathStack[:len(v.pathStack)-1]
-	}
+	invariant.Precondition(len(v.pathStack) > 1, "cannot pop root from path stack")
+	v.pathStack = v.pathStack[:len(v.pathStack)-1]
+}
+
+// ResetCounts resets the decorator instance counters.
+// Used when entering a new step to reset decorator indices to 0.
+// The caller (planner) decides when to reset - typically when starting a new step.
+func (v *Vault) ResetCounts() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.decoratorCounts = make(map[string]int)
 }
 
 // BuildSitePath constructs the canonical site path for a parameter.
 // Format: root/step-N/@decorator[index]/params/paramName
+// Thread-safe: Acquires read lock.
 func (v *Vault) BuildSitePath(paramName string) string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.buildSitePathLocked(paramName)
+}
+
+// buildSitePathLocked is the internal unlocked version of BuildSitePath.
+// Caller must hold at least a read lock.
+func (v *Vault) buildSitePathLocked(paramName string) string {
 	var parts []string
 
 	for _, seg := range v.pathStack {
-		switch seg.Type {
-		case SegmentRoot:
-			parts = append(parts, seg.Name)
-		case SegmentStep:
-			parts = append(parts, seg.Name)
-		case SegmentDecorator:
-			// Decorator with index: @shell[0]
+		// Decorators (starting with @) include instance index
+		if strings.HasPrefix(seg.Name, "@") {
 			parts = append(parts, fmt.Sprintf("%s[%d]", seg.Name, seg.Index))
+		} else {
+			// Non-decorators (root, step-N) are just the name
+			parts = append(parts, seg.Name)
 		}
 	}
 
@@ -241,19 +231,46 @@ func (v *Vault) BuildSitePath(paramName string) string {
 // ========== Scope Management ==========
 
 // currentScopePath converts pathStack to a scope path string.
-// Scope paths identify variable storage locations in the trie.
+// Used for site paths (authorization). Includes all segments.
 func (v *Vault) currentScopePath() string {
 	var parts []string
 	for _, seg := range v.pathStack {
-		switch seg.Type {
-		case SegmentRoot:
-			parts = append(parts, seg.Name)
-		case SegmentStep:
-			parts = append(parts, seg.Name)
-		case SegmentDecorator:
+		// Decorators (starting with @) include instance index
+		if strings.HasPrefix(seg.Name, "@") {
 			parts = append(parts, fmt.Sprintf("%s[%d]", seg.Name, seg.Index))
+		} else {
+			// Non-decorators (root, step-N) are just the name
+			parts = append(parts, seg.Name)
 		}
 	}
+	return strings.Join(parts, "/")
+}
+
+// currentVariableScopePath converts pathStack to a variable scope path.
+// Variable scopes exclude step segments (steps are not scopes).
+// Only root and decorator blocks create variable scopes.
+func (v *Vault) currentVariableScopePath() string {
+	var parts []string
+	for _, seg := range v.pathStack {
+		// Skip step segments (step-N) - they're for site paths, not variable scoping
+		if strings.HasPrefix(seg.Name, "step-") {
+			continue
+		}
+
+		// Include decorators with instance index
+		if strings.HasPrefix(seg.Name, "@") {
+			parts = append(parts, fmt.Sprintf("%s[%d]", seg.Name, seg.Index))
+		} else {
+			// Include root
+			parts = append(parts, seg.Name)
+		}
+	}
+
+	// If no parts (only step segments), return root
+	if len(parts) == 0 {
+		return "root"
+	}
+
 	return strings.Join(parts, "/")
 }
 
@@ -317,12 +334,18 @@ func (v *Vault) LookupVariable(varName string) (string, error) {
 
 // ========== Expression Tracking ==========
 
-// DeclareVariable registers a variable in the current scope.
+// DeclareVariable registers a variable in the current variable scope.
+// Variable scope excludes step segments (steps are not scopes, only decorator blocks are).
 // Uses hash-based exprID (not variable name) to support:
 // - Same variable name with different values in different scopes (shadowing)
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
 func (v *Vault) DeclareVariable(name, raw string) string {
+	return v.declareVariableAt(name, raw, v.currentVariableScopePath())
+}
+
+// declareVariableAt is the internal implementation for declaring variables at a specific scope.
+func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
 	exprID := v.generateExprID(raw)
 
 	if _, exists := v.expressions[exprID]; !exists {
@@ -338,7 +361,6 @@ func (v *Vault) DeclareVariable(name, raw string) string {
 		}
 	}
 
-	scopePath := v.currentScopePath()
 	scope := v.getOrCreateScope(scopePath)
 	scope.vars[name] = exprID
 
@@ -393,7 +415,7 @@ func (v *Vault) RecordReference(exprID, paramName string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	site := v.BuildSitePath(paramName)
+	site := v.buildSitePathLocked(paramName)
 	siteID := v.computeSiteID(site)
 
 	v.references[exprID] = append(v.references[exprID], SiteRef{
@@ -554,13 +576,28 @@ func (v *Vault) MarkResolved(exprID string, value any) {
 	v.exprTransport[exprID] = v.currentTransport // CRITICAL: Capture transport NOW
 }
 
-// GetExpression retrieves an expression by ID.
-// Returns nil if expression doesn't exist.
-func (v *Vault) GetExpression(exprID string) *Expression {
+// GetDisplayID returns the placeholder ID for an expression.
+// Safe to call - returns only the DisplayID, not the actual secret value.
+// Returns empty string if expression doesn't exist or isn't resolved.
+func (v *Vault) GetDisplayID(exprID string) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	return v.expressions[exprID]
+	expr, exists := v.expressions[exprID]
+	if !exists || !expr.Resolved {
+		return ""
+	}
+	return expr.DisplayID
+}
+
+// IsResolved checks if an expression has been resolved.
+// Safe to call - returns only resolution status, not the actual value.
+func (v *Vault) IsResolved(exprID string) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	expr, exists := v.expressions[exprID]
+	return exists && expr.Resolved
 }
 
 // checkTransportBoundary checks if expression can be used in current transport.
@@ -624,7 +661,7 @@ func (v *Vault) Access(exprID, paramName string) (any, error) {
 	}
 
 	// 3. Build current site with parameter name
-	currentSite := v.BuildSitePath(paramName)
+	currentSite := v.buildSitePathLocked(paramName)
 	currentSiteID := v.computeSiteID(currentSite)
 
 	// 4. Check if current site is authorized (Tuple)
