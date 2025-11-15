@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -97,7 +98,7 @@ type Vault struct {
 type Expression struct {
 	Raw       string // Original source: "@var.X", "@aws.secret('key')", etc.
 	Value     any    // Resolved value (preserves original type: string, int, bool, map, slice)
-	DisplayID string // Placeholder ID for plan (e.g., "opal:v:3J98t56A")
+	DisplayID string // Placeholder ID for plan (e.g., "opal:3J98t56A")
 	Resolved  bool   // True if expression has been resolved (even if Value is nil)
 }
 
@@ -347,18 +348,17 @@ func (v *Vault) DeclareVariable(name, raw string) string {
 
 // declareVariableAt is the internal implementation for declaring variables at a specific scope.
 func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
 	exprID := v.generateExprID(raw)
 
 	if _, exists := v.expressions[exprID]; !exists {
-		// Generate DisplayID from exprID hash (strip transport prefix)
-		// exprID format: "transport:hash" -> DisplayID format: "opal:v:hash"
-		parts := strings.SplitN(exprID, ":", 2)
-		hash := parts[1] // Extract hash part after transport prefix
-		displayID := fmt.Sprintf("opal:v:%s", hash)
-
+		// DisplayID will be generated in MarkResolved() when we have the actual value
+		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
 		v.expressions[exprID] = &Expression{
 			Raw:       raw,
-			DisplayID: displayID,
+			DisplayID: "", // Empty until resolved
 		}
 	}
 
@@ -380,15 +380,11 @@ func (v *Vault) TrackExpression(raw string) string {
 
 	// Store expression if not already tracked
 	if _, exists := v.expressions[exprID]; !exists {
-		// Generate DisplayID from exprID hash (strip transport prefix)
-		// exprID format: "transport:hash" -> DisplayID format: "opal:v:hash"
-		parts := strings.SplitN(exprID, ":", 2)
-		hash := parts[1] // Extract hash part after transport prefix
-		displayID := fmt.Sprintf("opal:v:%s", hash)
-
+		// DisplayID will be generated in MarkResolved() when we have the actual value
+		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
 		v.expressions[exprID] = &Expression{
 			Raw:       raw,
-			DisplayID: displayID,
+			DisplayID: "", // Empty until resolved
 		}
 	}
 
@@ -440,6 +436,43 @@ func (v *Vault) computeSiteID(canonicalPath string) string {
 	mac := h.Sum(nil)
 
 	// Truncate to 16 bytes and base64 encode
+	return base64.RawURLEncoding.EncodeToString(mac[:16])
+}
+
+// computeDisplayID generates a DisplayID from a resolved value using HMAC.
+// DisplayID = HMAC(planKey, value) ensures unlinkability across plans.
+// Same secret in different plans → different DisplayIDs (prevents correlation).
+// Same secret in same plan → same DisplayID (enables contract verification).
+//
+// Maps have non-deterministic iteration order in Go, so JSON marshaling
+// provides canonical representation with sorted keys.
+func (v *Vault) computeDisplayID(value any) string {
+	var canonical []byte
+
+	switch v := value.(type) {
+	case string:
+		canonical = []byte(v)
+	case []byte:
+		// Must match getPatterns() representation for scrubbing to work
+		canonical = v
+	default:
+		// JSON marshaling sorts map keys for determinism
+		var err error
+		canonical, err = json.Marshal(value)
+		invariant.Invariant(err == nil, "computeDisplayID: failed to marshal value to JSON: %v", err)
+	}
+
+	if len(v.planKey) == 0 {
+		// Backward compatibility for tests that don't set planKey
+		h := sha256.New()
+		h.Write(canonical)
+		hash := h.Sum(nil)
+		return base64.RawURLEncoding.EncodeToString(hash[:16])
+	}
+
+	h := hmac.New(sha256.New, v.planKey)
+	h.Write(canonical)
+	mac := h.Sum(nil)
 	return base64.RawURLEncoding.EncodeToString(mac[:16])
 }
 
@@ -516,7 +549,7 @@ func (v *Vault) BuildSecretUses() []SecretUse {
 // SecretUse represents an authorized secret usage at a specific site.
 // This is what gets added to the Plan for executor enforcement.
 type SecretUse struct {
-	DisplayID string // "opal:v:3J98t56A"
+	DisplayID string // "opal:3J98t56A"
 	SiteID    string // HMAC-based unforgeable ID
 	Site      string // "root/step-1/@shell[0]/params/command" (diagnostic)
 }
@@ -588,6 +621,11 @@ func (v *Vault) MarkResolved(exprID string, value any) {
 	expr.Value = value
 	expr.Resolved = true
 	v.exprTransport[exprID] = v.currentTransport // CRITICAL: Capture transport NOW
+
+	// Generate DisplayID from value using HMAC(planKey, value)
+	// This ensures unlinkability: same secret in different plans → different DisplayIDs
+	hash := v.computeDisplayID(value)
+	expr.DisplayID = fmt.Sprintf("opal:%s", hash)
 }
 
 // GetDisplayID returns the placeholder ID for an expression.
@@ -612,6 +650,23 @@ func (v *Vault) IsResolved(exprID string) bool {
 
 	expr, exists := v.expressions[exprID]
 	return exists && expr.Resolved
+}
+
+// GetPlanKey returns the plan key used for HMAC-based DisplayID generation.
+// This should be stored in plan.PlanSalt for contract verification.
+// Returns a copy to prevent external modification.
+func (v *Vault) GetPlanKey() []byte {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	if len(v.planKey) == 0 {
+		return nil
+	}
+
+	// Return a copy to prevent external modification
+	keyCopy := make([]byte, len(v.planKey))
+	copy(keyCopy, v.planKey)
+	return keyCopy
 }
 
 // checkTransportBoundary checks if expression can be used in current transport.
@@ -708,20 +763,33 @@ func (v *Vault) getPatterns() []streamscrub.Pattern {
 	var patterns []streamscrub.Pattern
 
 	for _, expr := range v.expressions {
-		// Only include resolved expressions
 		if !expr.Resolved {
 			continue
 		}
 
-		// Convert value to string for pattern matching
-		// Skip nil values and empty strings
-		valueStr := fmt.Sprintf("%v", expr.Value)
-		if valueStr == "" || valueStr == "<nil>" {
+		// Must match computeDisplayID() representation for scrubbing to work
+		var valueBytes []byte
+		switch v := expr.Value.(type) {
+		case string:
+			valueBytes = []byte(v)
+		case []byte:
+			valueBytes = v
+		case nil:
+			continue
+		default:
+			valueStr := fmt.Sprintf("%v", v)
+			if valueStr == "" || valueStr == "<nil>" {
+				continue
+			}
+			valueBytes = []byte(valueStr)
+		}
+
+		if len(valueBytes) == 0 {
 			continue
 		}
 
 		patterns = append(patterns, streamscrub.Pattern{
-			Value:       []byte(valueStr),
+			Value:       valueBytes,
 			Placeholder: []byte(expr.DisplayID),
 		})
 	}

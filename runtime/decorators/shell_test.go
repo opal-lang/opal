@@ -3,8 +3,10 @@ package decorators
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -569,4 +571,82 @@ func TestShellDecorator_NewArch_StreamingPipe(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Test timed out - stdin is being buffered instead of streamed")
 	}
+}
+
+// TestShellDecorator_DisplayIDInvariant_FalsePositiveAvoidance tests that
+// legitimate commands containing "opal:" don't trigger the invariant.
+// The invariant should only catch actual DisplayIDs (opal:<base64url-22chars>).
+func TestShellDecorator_DisplayIDInvariant_FalsePositiveAvoidance(t *testing.T) {
+	shell := &ShellDecorator{}
+	session := decorator.NewLocalSession()
+	defer session.Close()
+
+	// Test cases that should NOT trigger the invariant
+	legitimateCommands := []string{
+		`echo "Documentation for opal: see docs/"`,
+		`echo "URL: https://opal:8080/api/health"`,
+		`echo "opal: a deployment tool"`,
+		`echo "Visit opal:// for more info"`,
+		`echo "opal:short"`, // Too short to be a DisplayID
+	}
+
+	for _, cmd := range legitimateCommands {
+		t.Run(cmd, func(t *testing.T) {
+			params := map[string]any{
+				"command": cmd,
+			}
+			node := shell.Wrap(nil, params)
+
+			ctx := decorator.ExecContext{
+				Session: session,
+				Context: context.Background(),
+				Trace:   nil,
+			}
+
+			// Should NOT panic
+			result, err := node.Execute(ctx)
+			if err != nil {
+				t.Errorf("Command should execute without error, got: %v", err)
+			}
+			if result.ExitCode != 0 {
+				t.Errorf("Expected exit code 0, got: %d", result.ExitCode)
+			}
+		})
+	}
+}
+
+// TestShellDecorator_DisplayIDInvariant_ActualDisplayID tests that
+// actual unresolved DisplayIDs DO trigger the invariant panic.
+func TestShellDecorator_DisplayIDInvariant_ActualDisplayID(t *testing.T) {
+	shell := &ShellDecorator{}
+	session := decorator.NewLocalSession()
+	defer session.Close()
+
+	// This is what an actual DisplayID looks like (22 base64url chars)
+	params := map[string]any{
+		"command": `echo "Key: opal:l39o2YWR_YNQ-94ScK_I4w"`,
+	}
+	node := shell.Wrap(nil, params)
+
+	ctx := decorator.ExecContext{
+		Session: session,
+		Context: context.Background(),
+		Trace:   nil,
+	}
+
+	// Should panic with invariant violation
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic for unresolved DisplayID, but didn't panic")
+		} else {
+			// Verify panic message mentions DisplayID
+			panicMsg := fmt.Sprintf("%v", r)
+			if !regexp.MustCompile(`INVARIANT VIOLATION.*DisplayID`).MatchString(panicMsg) {
+				t.Errorf("Expected panic about DisplayID, got: %v", r)
+			}
+		}
+	}()
+
+	// This should panic
+	_, _ = node.Execute(ctx)
 }

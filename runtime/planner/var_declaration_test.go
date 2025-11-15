@@ -204,16 +204,16 @@ var F = true`
 // the plan contains the DisplayID placeholder, NOT the actual value.
 //
 // This is Phase 5 of variable resolution:
-// - Planning: Plan stores DisplayID (e.g., "opal:v:3J98t56A")
+// - Planning: Plan stores DisplayID (e.g., "opal:3J98t56A")
 // - Execution: Executor replaces DisplayID with actual value
 // - Scrubbing: Scrubber replaces actual value back to DisplayID in output
 //
 // Security: The plan never contains sensitive values, only placeholders.
 //
 // Requirements from WORK.md Phase 5:
-// 1. Plan should show: `echo "Hello, opal:v:3J98t56A"`
+// 1. Plan should show: `echo "Hello, opal:3J98t56A"`
 // 2. NOT: `echo "Hello, Aled"`
-// 3. Plan output contains `opal:v:` placeholder
+// 3. Plan output contains `opal:` placeholder
 // 4. Plan does NOT contain "Aled"
 func TestVarUsage_DisplayIDInPlan(t *testing.T) {
 	source := `var NAME = "Aled"
@@ -265,7 +265,7 @@ echo "Hello, @var.NAME"`
 	}
 
 	// REQUIREMENT: Command should be a string containing DisplayID, not a placeholder reference
-	// The plan formatter needs to see: echo "Hello, opal:v:3J98t56A"
+	// The plan formatter needs to see: echo "Hello, opal:3J98t56A"
 	// Phase 5: Commands now store DisplayID strings directly (not placeholder references)
 	if commandVal.Kind != planfmt.ValueString {
 		t.Fatalf("Expected ValueString, got kind=%v", commandVal.Kind)
@@ -274,9 +274,9 @@ echo "Hello, @var.NAME"`
 	commandArg := commandVal.Str
 	t.Logf("Command string: %s", commandArg)
 
-	// ASSERT: Command should contain "opal:v:" placeholder
-	if !strings.Contains(commandArg, "opal:v:") {
-		t.Errorf("FAIL: Command should contain DisplayID placeholder 'opal:v:', got: %s", commandArg)
+	// ASSERT: Command should contain "opal:" placeholder
+	if !strings.Contains(commandArg, "opal:") {
+		t.Errorf("FAIL: Command should contain DisplayID placeholder 'opal:', got: %s", commandArg)
 	}
 
 	// ASSERT: Command should NOT contain the actual value "Aled"
@@ -294,7 +294,7 @@ echo "Hello, @var.NAME"`
 // This verifies the end-to-end flow: parsing → planning → formatting
 //
 // Plan contract security:
-// - Command strings contain DisplayID: echo "Hello, opal:v:3J98t56A"
+// - Command strings contain DisplayID: echo "Hello, opal:3J98t56A"
 // - Secret.RuntimeValue is NEVER serialized (runtime only, see plan.go:79)
 // - Only DisplayIDs are stored in the contract for scrubbing
 func TestVarUsage_FormattedPlanOutput(t *testing.T) {
@@ -316,8 +316,8 @@ echo "Hello, @var.NAME"`
 	t.Logf("Formatted plan:\n%s", formatted)
 
 	// ASSERT: Formatted output contains DisplayID
-	if !strings.Contains(formatted, "opal:v:") {
-		t.Errorf("Formatted plan should contain DisplayID 'opal:v:', got:\n%s", formatted)
+	if !strings.Contains(formatted, "opal:") {
+		t.Errorf("Formatted plan should contain DisplayID 'opal:', got:\n%s", formatted)
 	}
 
 	// ASSERT: Formatted output does NOT contain actual value
@@ -411,8 +411,8 @@ echo "Goodbye, @var.NAME"`
 		if use.Site == "" {
 			t.Errorf("SecretUse[%d].Site is empty", i)
 		}
-		if !strings.Contains(use.DisplayID, "opal:v:") {
-			t.Errorf("SecretUse[%d].DisplayID should contain 'opal:v:', got %q", i, use.DisplayID)
+		if !strings.Contains(use.DisplayID, "opal:") {
+			t.Errorf("SecretUse[%d].DisplayID should contain 'opal:', got %q", i, use.DisplayID)
 		}
 		t.Logf("SecretUse[%d]: DisplayID=%s, SiteID=%s, Site=%s",
 			i, use.DisplayID, use.SiteID, use.Site)

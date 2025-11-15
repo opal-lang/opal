@@ -78,8 +78,8 @@ echo "test"`
 	}
 
 	// Verify output contains DisplayID marker
-	if !strings.Contains(output, "opal:v:") {
-		t.Error("Output should contain DisplayID marker (opal:v:...)")
+	if !strings.Contains(output, "opal:") {
+		t.Error("Output should contain DisplayID marker (opal:...)")
 		t.Logf("Output: %s", output)
 	}
 
@@ -151,7 +151,7 @@ echo "test"`
 	}
 
 	// Verify output contains DisplayID markers
-	if !strings.Contains(output, "opal:v:") {
+	if !strings.Contains(output, "opal:") {
 		t.Error("Output should contain DisplayID markers")
 	}
 

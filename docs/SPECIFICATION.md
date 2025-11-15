@@ -374,224 +374,155 @@ echo "Version: @env.APP_VERSION(default="latest")"
 
 ## Variables
 
-### Variable Access and Interpolation
+### Overview
 
-**Opal uses `@var.NAME` syntax for all variable access.** Variables are plan-time values that get expanded during plan generation.
+Variables store plan-time values that get resolved and interpolated into commands. All variables are resolved during planning, making execution deterministic and verifiable.
 
-```opal
-var service = "api"
-var replicas = 3
+**Two ways to use values:**
 
-// In command arguments (unquoted)
-kubectl scale --replicas=@var.replicas deployment/@var.service
+1. **Variable binding** - Declare once, use many times
+   ```opal
+   var service = "api"
+   kubectl scale deployment/@var.service --replicas=3
+   kubectl logs deployment/@var.service
+   ```
 
-// In strings (quoted)
-echo "Deploying @var.service with @var.replicas replicas"
-
-// In paths
-kubectl apply -f k8s/@var.service/
-
-// Terminate decorator with () if followed by ASCII with no spaces
-echo "@var.service()_backup"  // Expands to "api_backup"
-```
-
-**Plan-time expansion:** The parser expands `@var.NAME` during plan generation into literal values:
-
-```opal
-// Source code
-for service in ["api", "worker"] {
-    kubectl apply -f k8s/@var.service/
-}
-
-// Expands to plan
-kubectl apply -f k8s/api/
-kubectl apply -f k8s/worker/
-```
-
-**Shell variables (`${}`) are NOT Opal syntax.** If you need actual shell environment variables, they stay inside shell commands and are evaluated by the shell at runtime, not by Opal:
-
-```opal
-// Shell variable (rare - evaluated by shell at runtime)
-@shell("echo Current user: $USER")
-
-// Opal variable (common - expanded by Opal at plan-time)
-echo "Deploying to: @var.ENV"
-```
+2. **Direct decorator usage** - No variable needed
+   ```opal
+   echo "Home: @env.HOME"
+   kubectl create secret --key=@aws.secret("api-key")
+   ```
 
 ### Variable Declaration
 
-Pull values from real sources:
-
+**Literals:**
 ```opal
-// Required variables (error if not set)
-var DATABASE_URL = @env.DATABASE_URL
-var API_KEY = @env.API_KEY
+var service = "api"
+var replicas = 3
+var enabled = true
+var timeout = 30s
+```
 
-// Optional variables (use default if not set)
-var ENV = @env.ENVIRONMENT(default="development")
-var PORT = @env.PORT(default=3000)
-var DEBUG = @env.DEBUG(default=false)
-var TIMEOUT = @env.DEPLOY_TIMEOUT(default=30s)
+**From decorators:**
+```opal
+var HOME = @env.HOME                    # Environment variable
+var KEY = @aws.secret("prod-key")       # AWS secret
+var VERSION = @file.read("VERSION")     # File content
+```
 
-// Arrays and maps
+**Collections:**
+```opal
 var SERVICES = ["api", "worker", "ui"]
 var CONFIG = {
-    "database": @env.DATABASE_URL,  // Required
-    "redis": @env.REDIS_URL(default="redis://localhost:6379")  // Optional
-}
-
-// Go-style grouped declarations
-var (
-    API_URL = @env.API_URL(default="https://api.dev.com")
-    REPLICAS = @env.REPLICAS(default=1)
-    SERVICES = ["api", "worker"]
-)
-```
-
-**Environment variable behavior:**
-- `@env.VAR` without `default` → Error if not set (required)
-- `@env.VAR(default="value")` → Use default if not set (optional)
-- Defaults can be typed: `default=3000` (int), `default=false` (bool), `default=30s` (duration)
-
-**Types**: `String | Bool | Int | Float | Duration | Array | Map`. 
-
-Type checking is optional (TypeScript-style):
-- Variables are untyped by default (flexible, inferred from values)
-- Function parameters can have optional type annotations
-- Type errors are caught at plan-time when types are specified
-- Future: `--strict-types` flag for requiring explicit types
-
-### Identifier Names
-
-Variable names, command names, and value decorator and execution decorator names follow ASCII identifier rules for fast tokenization:
-
-```opal
-// Valid identifiers - start with letter, then letters/numbers/underscores
-var apiUrl = "https://api.example.com"
-var PORT = 3000
-var service_name = "api-gateway"
-var deployToProduction = true
-
-// Command names follow same rules
-deployToProduction: kubectl apply -f prod/
-check_api_health: curl /health
-buildAndTest: npm run build && npm test
-```
-
-**Identifier rules**:
-- Must start with letter: `[a-zA-Z]`
-- Can contain letters, numbers, underscores: `[a-zA-Z0-9_]*`
-- Case-sensitive: `myVar` ≠ `MyVar` ≠ `MYVAR`
-- No hyphens to avoid parsing ambiguity with minus operator
-- ASCII-only for optimal performance
-
-**Supported naming styles**:
-- `camelCase` - common in JavaScript/Java
-- `snake_case` - common in Python/Go
-- `PascalCase` - common for types/commands
-- `SCREAMING_SNAKE` - common for constants
-
-### Duration Format
-
-Duration literals use human-readable time units common in operations:
-
-```opal
-// Simple durations
-var TIMEOUT = 30s           // 30 seconds
-var RETRY_DELAY = 5m        // 5 minutes
-var DEPLOY_WINDOW = 2h      // 2 hours
-var RETENTION = 7d          // 7 days
-var BACKUP_CYCLE = 1w       // 1 week
-var LICENSE_EXPIRY = 2y     // 2 years
-
-// Compound durations (high to low order)
-var SESSION_TIMEOUT = 1h30m     // 1 hour 30 minutes
-var MAINTENANCE_WINDOW = 2d12h  // 2 days 12 hours
-var GRACE_PERIOD = 5m30s        // 5 minutes 30 seconds
-var API_TIMEOUT = 1s500ms       // 1 second 500 milliseconds
-```
-
-**Supported units** (in descending order):
-- `y` - years
-- `w` - weeks
-- `d` - days
-- `h` - hours
-- `m` - minutes
-- `s` - seconds
-- `ms` - milliseconds
-- `us` - microseconds
-- `ns` - nanoseconds
-
-**Compound duration rules**:
-- Must be in descending order: `1h30m` ✓, `30m1h` ✗
-- No duplicate units: `1h30m` ✓, `1h2h` ✗
-- No whitespace within: `1h30m` ✓, `1h 30m` = two separate durations
-- Can skip units: `1d30m` ✓ (skipping hours is fine)
-- Integer values only: `1h30m` ✓, `1.5h` ✗ (use compound format for precision)
-
-**Duration arithmetic**:
-```opal
-// Duration arithmetic with other durations
-var total = 1h30m + 45m        // total = 2h15m
-var remaining = 5m - 2m30s     // remaining = 2m30s
-var scaled = 30s * 3           // scaled = 1m30s
-
-// Variables can hold negative durations
-var grace = 1m - 5m            // grace = -4m (preserved for logic)
-var timeout = 30s - 1h         // timeout = -29m30s (preserved for logic)
-
-// Conditional logic with negative durations
-if grace < 0s {
-    echo "No grace period remaining"
-    exit 1
-} else {
-    @timeout(grace) { deploy() }
+    "database": @env.DATABASE_URL,
+    "redis": @env.REDIS_URL(default="redis://localhost")
 }
 ```
 
-**Duration execution rules**:
-```opal
-// Runtime functions clamp negative durations to zero
-@timeout(-4m) { cmd }          // Executes with 0s timeout
-@retry(attempts=3, delay=-30s) { cmd }  // Uses 0s delay
-sleep(-1h)                     // Sleeps for 0s (no-op)
+### Variable Usage
 
-// Variables preserve negative values for arithmetic/logic
-var remaining = deadline - current_time
-echo "Time remaining: @var.remaining"     // Shows "-5m" if past deadline
-@timeout(remaining) { task() }          // Uses max(remaining, 0s) = 0s
+**In commands:**
+```opal
+kubectl scale --replicas=@var.replicas deployment/@var.service
+echo "Deploying @var.service with @var.replicas replicas"
+kubectl apply -f k8s/@var.service/
 ```
 
-**Duration evaluation rules**:
-- All duration arithmetic evaluated at plan time with resolved values
-- Variables can store negative durations for conditional logic
-- Runtime functions automatically clamp negative durations to zero
-- Duration literals are always non-negative (`30s`, `1h30m`)
-- Negative expressions use minus operator: `-30s` = `MINUS` + `DURATION`
-
-### Accessing Data
-
-Use dot notation for nested access:
-
+**Terminating decorator:**
 ```opal
-// Array access
-start-api: docker run -p @var.SERVICES.0:3000 app
-start-worker: docker run -p @var.SERVICES.1:3001 app
-
-// Map access
-connect: psql @var.CONFIG.database
-cache: redis-cli -u @var.CONFIG.redis
-
-// Wildcards expand to space-separated values
-list-services: echo "Services: @var.SERVICES.*"    # "api worker ui"
-
-// All equivalent ways to access arrays
-@var.SERVICES.0    # Dot notation
-@var.SERVICES[0]   # Bracket notation
-@var.SERVICES.[0]  # Mixed notation
+echo "@var.service()_backup"  # Expands to "api_backup"
 ```
 
-## Arithmetic and Assignment
+**Accessing nested data:**
+```opal
+@var.SERVICES.0        # First element: "api"
+@var.CONFIG.database   # Map access
+@var.SERVICES.*        # All elements: "api worker ui"
+```
+
+### Scoping Rules
+
+1. **Variables must be declared before use** - no hoisting
+   ```opal
+   echo "@var.NAME"  # ERROR: not declared yet
+   var NAME = "Aled"
+   ```
+
+2. **Root scope** - accessible across all steps
+   ```opal
+   var COUNT = 5
+   echo "@var.COUNT"  # Step 1
+   echo "@var.COUNT"  # Step 2 - same variable
+   ```
+
+3. **Block scope** - decorator blocks create isolated scopes
+   ```opal
+   var COUNT = 5
+   @retry {
+       var COUNT = 3  # Shadows outer COUNT
+       echo "@var.COUNT"  # Prints 3
+   }
+   echo "@var.COUNT"  # Prints 5 (unchanged)
+   ```
+
+4. **Same-level override** - later declaration shadows earlier
+   ```opal
+   var COUNT = 5
+   var COUNT = 10  # Overrides
+   echo "@var.COUNT"  # Prints 10
+   ```
+
+### Resolution and Pruning
+
+**Only touched variables are resolved:**
+
+```opal
+var SECRET = @aws.secret("unused")  # Declared but never used
+var NAME = "Aled"                   # Used below
+echo "Hello, @var.NAME"
+```
+
+- `NAME` is touched (referenced) → resolved
+- `SECRET` is untouched (never referenced) → NOT resolved, pruned from plan
+- Saves API calls and reduces secrets in plan
+
+**Direct decorator usage is also touched:**
+
+```opal
+echo "Home: @env.HOME"  # @env.HOME is touched → resolved
+```
+
+### Types
+
+Variables are untyped by default (TypeScript-style):
+
+```opal
+var port = 3000              # Inferred as int
+var service = "api"          # Inferred as string
+var enabled = true           # Inferred as bool
+var timeout = 30s            # Inferred as duration
+```
+
+**Supported types:** `String | Bool | Int | Float | Duration | Array | Map`
+
+**Future:** Optional type annotations for function parameters and `--strict-types` flag.
+
+### Shell Variables vs Opal Variables
+
+**Opal variables** (`@var.X`) - resolved at plan-time:
+```opal
+var ENV = "prod"
+echo "Environment: @var.ENV"  # Plan shows: echo "Environment: prod"
+```
+
+**Shell variables** (`$X`) - resolved at execution-time:
+```opal
+echo "Current user: $USER"  # Shell resolves $USER at runtime
+```
+
+**When to use each:**
+- Use `@var.X` for plan-time values (most common)
+- Use `$X` for runtime shell environment (rare)
 
 Opal supports arithmetic operations for deterministic calculations in operations scripts. All arithmetic is evaluated at plan time, ensuring predictable results.
 
@@ -1093,7 +1024,7 @@ deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=¹@aws.secret("api-token")
 └─ @if(ENV == "production")
-   └─ kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 
 Deferred Values:
 1. @aws.secret("api-token") → <expensive: AWS lookup>
@@ -1118,15 +1049,15 @@ opal deploy --dry-run --resolve > prod.plan
 ```
 deploy:
 ├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=🔒 opal:s:3J98t56A
+├─ kubectl create secret --token=🔒 opal:3J98t56A
 └─ @if(ENV == "production")
-   └─ kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 
 Contract Hash: sha256:abc123...
 ```
 
 **Key principles**:
-- All resolved values use `opal:s:ID` format (security by default)
+- All resolved values use `opal:ID` format (security by default)
 - Metaprogramming constructs (`@if`, `@for`, `@when`) show which path was taken
 - Original constructs are preserved for audit trails while showing expanded results
 
@@ -1148,12 +1079,12 @@ opal run --plan prod.plan
 3. **Contract verification** (if using plan file): Ensures resolved values match contract hashes
 4. **Execution**: Runs commands with internally resolved values
 
-**Security by default**: All values appear as `🔒 opal:s:3J98t56A` format (opaque context-aware ID, no length leak).
+**Security by default**: All values appear as `🔒 opal:3J98t56A` format (opaque context-aware ID, no length leak).
 
 > **Placeholder Format**
 > `opal:kind:ID` where kind is `s` (secret), `v` (value), etc., and ID is Base58-encoded.
-> Format: `🔒 opal:s:3J98t56A` (with emoji for terminal display)
-> Machine-readable: `opal:s:3J98t56A` (without emoji for JSON/files)
+> Format: `🔒 opal:3J98t56A` (with emoji for terminal display)
+> Machine-readable: `opal:3J98t56A` (without emoji for JSON/files)
 > 
 > **DisplayID Determinism:**
 > 
@@ -1182,10 +1113,10 @@ opal run --plan prod.plan
 
 
 
-**Plan hash scope**: Ordered steps + arguments (with `opal:s:ID` placeholders) + operator graph + resolution timing flags; excludes ephemeral run IDs/logs.
+**Plan hash scope**: Ordered steps + arguments (with `opal:ID` placeholders) + operator graph + resolution timing flags; excludes ephemeral run IDs/logs.
 
 > **Security Invariant**
-> Raw secrets never appear in plans or logs, only `🔒 opal:s:3J98t56A` placeholders.
+> Raw secrets never appear in plans or logs, only `🔒 opal:3J98t56A` placeholders.
 > This applies to all value decorators: `@env.KEY`, `@var.NAME`, `@aws.secret.name`, etc.
 > Compliance teams can review plans with confidence.
 > 
@@ -1233,8 +1164,8 @@ Contract execution always replans from current source and state. The plan file i
 ```
 ERROR: Contract verification failed
 
-Expected: kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
-Actual:   kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+Expected: kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+Actual:   kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 
 Variable REPLICAS changed: was 3, now 5
 → Source or environment changed since plan generation
@@ -1284,7 +1215,7 @@ deploy:
 // Plan shows:
 deploy:
 └─ @if(ENV == "production")
-   └─ kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 ```
 
 **When patterns** show the matched pattern:
@@ -1294,7 +1225,7 @@ deploy:
 // Plan shows:
 deploy:
 └─ @when(ENV == "production")
-   └─ kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 ```
 
 **Try/catch blocks** show all possible paths:
@@ -1315,10 +1246,10 @@ deploy:
 
 **Security by default**: Opal prevents secrets from leaking into plans, logs, and terminal output through automatic scrubbing. ALL value decorator results are treated as secrets - no exceptions.
 
-**DisplayID format**: All resolved values appear as `🔒 opal:s:3J98t56A` (opaque context-aware ID):
-- `🔒 opal:s:3J98t56A` - single character value (e.g., "3")
-- `🔒 opal:s:3J98t56A` - 32 character value (e.g., secret token)
-- `🔒 opal:s:3J98t56A` - 8 character value (e.g., hostname)
+**DisplayID format**: All resolved values appear as `🔒 opal:3J98t56A` (opaque context-aware ID):
+- `🔒 opal:3J98t56A` - single character value (e.g., "3")
+- `🔒 opal:3J98t56A` - 32 character value (e.g., secret token)
+- `🔒 opal:3J98t56A` - 8 character value (e.g., hostname)
 
 **Why all values are secrets**: Even seemingly innocuous values could leak sensitive information:
 - `@env.HOME` - Could leak system paths
@@ -1432,7 +1363,7 @@ Source file modified since plan generation.
 ```
 ERROR: Infrastructure state changed
 
-Expected: kubectl scale --replicas=🔒 opal:s:3J98t56A deployment/app
+Expected: kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 Current:  No deployment/app found
 
 Infrastructure changed since plan generation.
@@ -1444,8 +1375,8 @@ Consider regenerating plan or using --force.
 ERROR: Contract verification failed
 
 @http.get("https://time-api.com/now") returned different value:
-  Plan time: 🔒 opal:s:3J98t56A
-  Execution:  🔒 opal:s:3J98t56A
+  Plan time: 🔒 opal:3J98t56A
+  Execution:  🔒 opal:3J98t56A
 
 Non-deterministic value decorators cannot be used in resolved plans.
 Consider separating dynamic value acquisition from deterministic execution.
@@ -1480,8 +1411,8 @@ rotate-secrets: {
 
 **Plan shows placeholders** (maintaining security invariant):
 ```
-kubectl create secret generic db --from-literal=password=¹🔒 opal:s:3J98t56A
-kubectl create secret generic api --from-literal=key=¹🔒 opal:s:3J98t56A
+kubectl create secret generic db --from-literal=password=¹🔒 opal:3J98t56A
+kubectl create secret generic api --from-literal=key=¹🔒 opal:3J98t56A
 ```
 
 **How PSE works**:

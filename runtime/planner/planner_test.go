@@ -9,6 +9,7 @@ import (
 	"github.com/aledsdavies/opal/runtime/lexer"
 	"github.com/aledsdavies/opal/runtime/parser"
 	"github.com/aledsdavies/opal/runtime/planner"
+	"github.com/aledsdavies/opal/runtime/vault"
 )
 
 // Helper: Extract command argument from tree (assumes tree is a CommandNode)
@@ -1115,8 +1116,8 @@ echo @var.HOME
 	secretUse := plan.SecretUses[0]
 
 	// ASSERT: SecretUse has DisplayID with correct prefix
-	if !strings.HasPrefix(secretUse.DisplayID, "opal:v:") {
-		t.Errorf("Expected DisplayID prefix opal:v:, got %s", secretUse.DisplayID)
+	if !strings.HasPrefix(secretUse.DisplayID, "opal:") {
+		t.Errorf("Expected DisplayID prefix opal:, got %s", secretUse.DisplayID)
 	}
 
 	// ASSERT: SecretUse has SiteID (HMAC-based authorization)
@@ -1163,7 +1164,7 @@ echo @var.HOME
 	}
 
 	// ASSERT: Command uses string with DisplayID embedded (Phase 5)
-	// Plan should show: echo opal:v:XXXXX
+	// Plan should show: echo opal:XXXXX
 	// NOT: echo /home/alice
 	if commandArg.Val.Kind != planfmt.ValueString {
 		t.Errorf("Expected ValueString, got %v", commandArg.Val.Kind)
@@ -1172,8 +1173,8 @@ echo @var.HOME
 	commandStr := commandArg.Val.Str
 
 	// ASSERT: Command contains DisplayID placeholder
-	if !strings.Contains(commandStr, "opal:v:") {
-		t.Errorf("Expected command to contain DisplayID 'opal:v:', got: %s", commandStr)
+	if !strings.Contains(commandStr, "opal:") {
+		t.Errorf("Expected command to contain DisplayID 'opal:', got: %s", commandStr)
 	}
 
 	// ASSERT: Command does NOT contain actual value
@@ -1182,4 +1183,274 @@ echo @var.HOME
 	}
 
 	t.Logf("✓ Plan command: %s", commandStr)
+}
+
+// ========== PlanSalt and Contract Verification Tests ==========
+
+// TestPlanSalt_MatchesVaultPlanKey verifies that plan.PlanSalt equals vault.planKey.
+// This is CRITICAL for contract verification - if they don't match, re-planning
+// with the same PlanSalt will produce different DisplayIDs and verification fails.
+func TestPlanSalt_MatchesVaultPlanKey(t *testing.T) {
+	source := `var NAME = "Aled"
+echo "@var.NAME"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Create vault with known planKey (must be exactly 32 bytes)
+	planKey := []byte("test-plan-key-32-bytes-for-hmac!")
+	vlt := vault.NewWithPlanKey(planKey)
+
+	// Plan with this vault
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: vlt,
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// ASSERT: plan.PlanSalt should equal vault's planKey
+	if !bytes.Equal(plan.PlanSalt, planKey) {
+		t.Errorf("CRITICAL BUG: plan.PlanSalt does not match vault.planKey\n"+
+			"  Vault planKey: %x\n"+
+			"  Plan PlanSalt: %x\n"+
+			"This breaks contract verification - re-planning won't produce same DisplayIDs",
+			planKey, plan.PlanSalt)
+	}
+
+	t.Logf("✓ plan.PlanSalt matches vault.planKey: %x", plan.PlanSalt)
+}
+
+// TestContractVerification_SamePlanSalt_SameDisplayIDs verifies that re-planning
+// with the same PlanSalt produces the same DisplayIDs (contract verification).
+func TestContractVerification_SamePlanSalt_SameDisplayIDs(t *testing.T) {
+	source := `var API_KEY = "sk-secret-123"
+echo "Key: @var.API_KEY"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Simulate initial planning
+	planKey1 := []byte("contract-plan-key-32bytes-hmac!!")
+	vault1 := vault.NewWithPlanKey(planKey1)
+
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: vault1,
+	})
+	if err != nil {
+		t.Fatalf("Initial planning failed: %v", err)
+	}
+
+	// Simulate contract verification (re-plan with SAME PlanSalt)
+	vault2 := vault.NewWithPlanKey(plan1.PlanSalt) // Reuse PlanSalt from contract
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: vault2,
+	})
+	if err != nil {
+		t.Fatalf("Verification planning failed: %v", err)
+	}
+
+	// ASSERT: Plans should have same PlanSalt
+	if !bytes.Equal(plan1.PlanSalt, plan2.PlanSalt) {
+		t.Errorf("Plans have different PlanSalt:\n  Plan1: %x\n  Plan2: %x",
+			plan1.PlanSalt, plan2.PlanSalt)
+	}
+
+	// ASSERT: Plans should have same SecretUses (same DisplayIDs)
+	if len(plan1.SecretUses) != len(plan2.SecretUses) {
+		t.Fatalf("Different number of SecretUses: %d vs %d",
+			len(plan1.SecretUses), len(plan2.SecretUses))
+	}
+
+	for i := range plan1.SecretUses {
+		if plan1.SecretUses[i].DisplayID != plan2.SecretUses[i].DisplayID {
+			t.Errorf("SecretUse[%d] has different DisplayID:\n"+
+				"  Plan1: %s\n"+
+				"  Plan2: %s\n"+
+				"Contract verification FAILED - DisplayIDs don't match!",
+				i, plan1.SecretUses[i].DisplayID, plan2.SecretUses[i].DisplayID)
+		}
+	}
+
+	// ASSERT: Plans should have same hash (contract verification)
+	plan1.Freeze()
+	plan2.Freeze()
+
+	if plan1.Hash != plan2.Hash {
+		t.Errorf("Contract verification FAILED - hashes don't match:\n"+
+			"  Plan1 hash: %s\n"+
+			"  Plan2 hash: %s\n"+
+			"Re-planning with same PlanSalt should produce same hash",
+			plan1.Hash, plan2.Hash)
+	}
+
+	t.Logf("✓ Contract verification passed")
+	t.Logf("  PlanSalt: %x", plan1.PlanSalt)
+	t.Logf("  DisplayID: %s", plan1.SecretUses[0].DisplayID)
+	t.Logf("  Hash: %s", plan1.Hash)
+}
+
+// TestContractVerification_DifferentPlanSalt_DifferentDisplayIDs verifies that
+// different PlanSalts produce different DisplayIDs (unlinkability).
+func TestContractVerification_DifferentPlanSalt_DifferentDisplayIDs(t *testing.T) {
+	source := `var API_KEY = "sk-secret-123"
+echo "Key: @var.API_KEY"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Plan 1 with random PlanSalt
+	planKey1 := []byte("plan-key-1-32-bytes-for-hmac-123")
+	vault1 := vault.NewWithPlanKey(planKey1)
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: vault1,
+	})
+	if err != nil {
+		t.Fatalf("Plan 1 failed: %v", err)
+	}
+
+	// Plan 2 with different PlanSalt
+	planKey2 := []byte("plan-key-2-32-bytes-for-hmac-456")
+	vault2 := vault.NewWithPlanKey(planKey2)
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: vault2,
+	})
+	if err != nil {
+		t.Fatalf("Plan 2 failed: %v", err)
+	}
+
+	// ASSERT: Plans should have different PlanSalt
+	if bytes.Equal(plan1.PlanSalt, plan2.PlanSalt) {
+		t.Errorf("Plans have same PlanSalt (should be different)")
+	}
+
+	// ASSERT: Plans should have different DisplayIDs (unlinkability)
+	if len(plan1.SecretUses) == 0 || len(plan2.SecretUses) == 0 {
+		t.Fatal("No SecretUses found")
+	}
+
+	displayID1 := plan1.SecretUses[0].DisplayID
+	displayID2 := plan2.SecretUses[0].DisplayID
+
+	if displayID1 == displayID2 {
+		t.Errorf("SECURITY BUG: Same secret value produced same DisplayID across different plans!\n"+
+			"  Plan1 DisplayID: %s\n"+
+			"  Plan2 DisplayID: %s\n"+
+			"This violates unlinkability - attacker can correlate secrets across plans",
+			displayID1, displayID2)
+	}
+
+	// ASSERT: Plans should have different hashes
+	plan1.Freeze()
+	plan2.Freeze()
+
+	if plan1.Hash == plan2.Hash {
+		t.Errorf("Different plans produced same hash (should be different)")
+	}
+
+	t.Logf("✓ Unlinkability verified")
+	t.Logf("  Plan1 DisplayID: %s", displayID1)
+	t.Logf("  Plan2 DisplayID: %s", displayID2)
+}
+
+// TestPlanSalt_NilVault_UsesRandomPlanKey verifies that when no vault is provided,
+// the planner creates one with a random planKey and sets plan.PlanSalt accordingly.
+func TestPlanSalt_NilVault_UsesRandomPlanKey(t *testing.T) {
+	source := `var NAME = "Aled"
+echo "@var.NAME"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Plan without providing a vault (planner creates its own)
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: nil, // Planner creates vault internally
+	})
+	if err != nil {
+		t.Fatalf("Plan 1 failed: %v", err)
+	}
+
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+		Vault: nil, // Planner creates vault internally
+	})
+	if err != nil {
+		t.Fatalf("Plan 2 failed: %v", err)
+	}
+
+	// ASSERT: Each plan should have a PlanSalt
+	if len(plan1.PlanSalt) == 0 {
+		t.Error("Plan1.PlanSalt is empty")
+	}
+	if len(plan2.PlanSalt) == 0 {
+		t.Error("Plan2.PlanSalt is empty")
+	}
+
+	// ASSERT: PlanSalts should be different (random)
+	if bytes.Equal(plan1.PlanSalt, plan2.PlanSalt) {
+		t.Errorf("Two independent plans have same PlanSalt (should be random):\n"+
+			"  Plan1: %x\n"+
+			"  Plan2: %x",
+			plan1.PlanSalt, plan2.PlanSalt)
+	}
+
+	t.Logf("✓ Random PlanSalt generation works")
+	t.Logf("  Plan1 PlanSalt: %x", plan1.PlanSalt)
+	t.Logf("  Plan2 PlanSalt: %x", plan2.PlanSalt)
+}
+
+func TestPlanSalt_VaultWithoutPlanKey_PreservesRandomSalt(t *testing.T) {
+	// Test that when vault has no plan key (GetPlanKey() returns nil),
+	// the planner preserves NewPlan()'s random 32-byte salt instead of overwriting with nil
+
+	source := `var NAME = "test"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Create vault WITHOUT plan key (like Mode 4 verification might do)
+	vlt := vault.New() // No plan key set
+
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+		Vault: vlt, // Provide vault without plan key
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	plan := result.Plan
+
+	// CRITICAL: PlanSalt must be 32 bytes (from NewPlan's random generation)
+	// NOT nil (from vault.GetPlanKey())
+	if len(plan.PlanSalt) != 32 {
+		t.Errorf("PlanSalt should be 32 bytes (random from NewPlan), got %d bytes", len(plan.PlanSalt))
+	}
+
+	if plan.PlanSalt == nil {
+		t.Error("PlanSalt should not be nil (should preserve NewPlan's random salt)")
+	}
+
+	// Verify it's actually random (not all zeros)
+	allZeros := true
+	for _, b := range plan.PlanSalt {
+		if b != 0 {
+			allZeros = false
+			break
+		}
+	}
+	if allZeros {
+		t.Error("PlanSalt should be random, not all zeros")
+	}
+
+	t.Logf("✓ Vault without plan key preserves random PlanSalt")
+	t.Logf("  PlanSalt: %x", plan.PlanSalt)
 }

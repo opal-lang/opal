@@ -37,7 +37,7 @@ type CanonicalStep struct {
 // Includes DisplayID and Site for contract verification.
 // SiteID is derived from Site, so it's redundant for hashing.
 type CanonicalSecretUse struct {
-	DisplayID string // Secret identifier (e.g., "opal:v:3J98t56A")
+	DisplayID string // Secret identifier (e.g., "opal:3J98t56A")
 	Site      string // Human-readable path (e.g., "root/step-1/params/command")
 }
 

@@ -216,7 +216,7 @@ func TestPlanSecretUses_RecordsUseSites(t *testing.T) {
 	plan := &planfmt.Plan{}
 
 	use := planfmt.SecretUse{
-		DisplayID: "opal:v:3J98t56A",
+		DisplayID: "opal:3J98t56A",
 		SiteID:    "Xj9K...",
 		Site:      "root/retry[0]/params/apiKey",
 	}
@@ -241,7 +241,7 @@ func TestPlanHash_IncludesSecretUses(t *testing.T) {
 	plan1 := planfmt.NewPlan()
 	plan1.Target = "test"
 	plan1.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:AAA",
+		DisplayID: "opal:AAA",
 		SiteID:    "site-X",
 		Site:      "root/retry[0]/params/apiKey",
 	})
@@ -250,7 +250,7 @@ func TestPlanHash_IncludesSecretUses(t *testing.T) {
 	plan2 := planfmt.NewPlan()
 	plan2.Target = "test"
 	plan2.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:BBB",
+		DisplayID: "opal:BBB",
 		SiteID:    "site-Y",
 		Site:      "root/timeout[0]/params/duration",
 	})
@@ -274,7 +274,7 @@ func TestPlanFreeze_PreventsMutation(t *testing.T) {
 	plan.Freeze()
 
 	err := plan.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:ATTACK",
+		DisplayID: "opal:ATTACK",
 		SiteID:    "malicious",
 		Site:      "root/evil[0]/params/stolen",
 	})
@@ -293,7 +293,7 @@ func TestPlanHash_DetectsTampering(t *testing.T) {
 	plan := planfmt.NewPlan()
 	plan.Target = "test"
 	plan.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:LEGIT",
+		DisplayID: "opal:LEGIT",
 		SiteID:    "site-1",
 		Site:      "root/retry[0]/params/apiKey",
 	})
@@ -303,7 +303,7 @@ func TestPlanHash_DetectsTampering(t *testing.T) {
 
 	// Simulate attacker tampering with frozen plan (bypassing AddSecretUse)
 	plan.SecretUses = append(plan.SecretUses, planfmt.SecretUse{
-		DisplayID: "opal:v:ATTACK",
+		DisplayID: "opal:ATTACK",
 		SiteID:    "malicious-site",
 		Site:      "root/evil[0]/params/stolen",
 	})
@@ -344,7 +344,7 @@ func TestPlanHash_ChangesWhenSecretUsesChange(t *testing.T) {
 
 	// Add one SecretUse
 	plan.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:AAA",
+		DisplayID: "opal:AAA",
 		SiteID:    "site-1",
 		Site:      "root/retry[0]/params/apiKey",
 	})
@@ -352,7 +352,7 @@ func TestPlanHash_ChangesWhenSecretUsesChange(t *testing.T) {
 
 	// Add another SecretUse
 	plan.AddSecretUse(planfmt.SecretUse{
-		DisplayID: "opal:v:BBB",
+		DisplayID: "opal:BBB",
 		SiteID:    "site-2",
 		Site:      "root/timeout[0]/params/duration",
 	})
@@ -394,7 +394,7 @@ func TestContractVerification_SaltReuse(t *testing.T) {
 		},
 	}
 	plan1.SecretUses = []planfmt.SecretUse{
-		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+		{DisplayID: "opal:ABC", SiteID: "site1", Site: "root/shell[0]"},
 	}
 	plan1.Freeze()
 	hash1 := plan1.Hash
@@ -422,7 +422,7 @@ func TestContractVerification_SaltReuse(t *testing.T) {
 		PlanSalt: salt1, // REUSE salt from contract
 	}
 	plan2.SecretUses = []planfmt.SecretUse{
-		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+		{DisplayID: "opal:ABC", SiteID: "site1", Site: "root/shell[0]"},
 	}
 	plan2.Freeze()
 	hash2 := plan2.Hash
@@ -437,7 +437,7 @@ func TestContractVerification_SaltReuse(t *testing.T) {
 	plan3.Target = "deploy"
 	plan3.Steps = plan1.Steps
 	plan3.SecretUses = []planfmt.SecretUse{
-		{DisplayID: "opal:v:ABC", SiteID: "site1", Site: "root/shell[0]"},
+		{DisplayID: "opal:ABC", SiteID: "site1", Site: "root/shell[0]"},
 	}
 	plan3.Freeze()
 	hash3 := plan3.Hash
@@ -455,7 +455,7 @@ func TestContractVerification_DetectsEnvironmentDrift(t *testing.T) {
 	plan1 := planfmt.NewPlan()
 	plan1.Target = "deploy"
 	plan1.SecretUses = []planfmt.SecretUse{
-		{DisplayID: "opal:v:DB_URL", SiteID: "site1", Site: "root/shell[0]/params/env"},
+		{DisplayID: "opal:DB_URL", SiteID: "site1", Site: "root/shell[0]/params/env"},
 	}
 	plan1.Freeze()
 	hash1 := plan1.Hash
@@ -467,7 +467,7 @@ func TestContractVerification_DetectsEnvironmentDrift(t *testing.T) {
 		PlanSalt: salt1, // Same salt
 	}
 	plan2.SecretUses = []planfmt.SecretUse{
-		{DisplayID: "opal:v:DB_URL", SiteID: "site2", Site: "root/retry[0]/params/env"}, // Different site!
+		{DisplayID: "opal:DB_URL", SiteID: "site2", Site: "root/retry[0]/params/env"}, // Different site!
 	}
 	plan2.Freeze()
 	hash2 := plan2.Hash

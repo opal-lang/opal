@@ -70,7 +70,7 @@ type Plan struct {
 // Each SecretUse grants permission for one decorator parameter to unwrap one secret.
 // Site-based authority: secrets accessible ONLY at declared sites, no propagation.
 type SecretUse struct {
-	DisplayID string // Secret identifier (e.g., "opal:v:3J98t56A")
+	DisplayID string // Secret identifier (e.g., "opal:3J98t56A")
 	SiteID    string // Canonical site ID (HMAC-based, unforgeable)
 	Site      string // Human-readable path (e.g., "root/retry[0]/params/apiKey")
 }

@@ -221,7 +221,7 @@ func TestCanonicalHashIncludesSecretUses(t *testing.T) {
 			},
 		},
 		SecretUses: []planfmt.SecretUse{
-			{DisplayID: "opal:v:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "opal:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
 		},
 	}
 
@@ -240,7 +240,7 @@ func TestCanonicalHashIncludesSecretUses(t *testing.T) {
 			},
 		},
 		SecretUses: []planfmt.SecretUse{
-			{DisplayID: "opal:v:def456", SiteID: "site1", Site: "root/step-1/params/command"}, // Different DisplayID
+			{DisplayID: "opal:def456", SiteID: "site1", Site: "root/step-1/params/command"}, // Different DisplayID
 		},
 	}
 

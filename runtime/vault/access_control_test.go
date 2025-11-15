@@ -412,7 +412,7 @@ func TestBuildSecretUses_EmptyStringSecret_IsIncluded(t *testing.T) {
 	exprID := v.DeclareVariable("EMPTY_VAR", "@env.EMPTY")
 	v.expressions[exprID].Value = ""
 	v.expressions[exprID].Resolved = true
-	v.expressions[exprID].DisplayID = "opal:v:EMPTY"
+	v.expressions[exprID].DisplayID = "opal:EMPTY"
 
 	// AND: Has reference and is touched
 	v.Push("step-1")
@@ -427,8 +427,8 @@ func TestBuildSecretUses_EmptyStringSecret_IsIncluded(t *testing.T) {
 	if len(uses) != 1 {
 		t.Fatalf("Expected 1 SecretUse for empty string secret, got %d", len(uses))
 	}
-	if uses[0].DisplayID != "opal:v:EMPTY" {
-		t.Errorf("SecretUse.DisplayID = %q, want %q", uses[0].DisplayID, "opal:v:EMPTY")
+	if uses[0].DisplayID != "opal:EMPTY" {
+		t.Errorf("SecretUse.DisplayID = %q, want %q", uses[0].DisplayID, "opal:EMPTY")
 	}
 }
 
@@ -439,7 +439,7 @@ func TestBuildSecretUses_UnresolvedExpression_IsExcluded(t *testing.T) {
 	exprID := v.DeclareVariable("UNRESOLVED", "@env.FOO")
 	v.expressions[exprID].Value = "some-value"
 	v.expressions[exprID].Resolved = false // Explicitly not resolved
-	v.expressions[exprID].DisplayID = "opal:v:UNRES"
+	v.expressions[exprID].DisplayID = "opal:UNRES"
 
 	// AND: Has reference and is touched
 	v.Push("step-1")

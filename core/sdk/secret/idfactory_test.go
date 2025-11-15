@@ -190,7 +190,7 @@ func TestDisplayIDFormat(t *testing.T) {
 		want string
 	}{
 		{"secret", "s", "opal:s:"},
-		{"value", "v", "opal:v:"},
+		{"value", "v", "opal:"},
 		{"step", "st", "opal:st:"},
 		{"plan", "pl", "opal:pl:"},
 	}

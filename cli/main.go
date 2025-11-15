@@ -28,31 +28,6 @@ func main() {
 	// This ensures even lexer/parser/planner cannot leak secrets
 	var outputBuf bytes.Buffer
 
-	// Create Vault early (before scrubber) with random planKey for security
-	// Vault provides patterns for scrubbing resolved values
-	planKey := make([]byte, 32)
-	_, err := rand.Read(planKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fatal: failed to generate plan key: %v\n", err)
-		os.Exit(1)
-	}
-	vlt := vault.NewWithPlanKey(planKey)
-
-	// Create Opal-specific placeholder generator (format: opal:s:hash)
-	opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fatal: failed to create placeholder generator: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Create scrubber with Opal placeholders and Vault's secret provider
-	scrubber := streamscrub.New(&outputBuf,
-		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
-		streamscrub.WithSecretProvider(vlt.SecretProvider()))
-
-	// Redirect all stdout/stderr through scrubber
-	restore := scrubber.LockdownStreams()
-
 	var (
 		file     string
 		planFile string
@@ -69,11 +44,42 @@ func main() {
 		Args:          cobra.MaximumNArgs(1), // 0 args if --plan, 1 arg otherwise
 		SilenceErrors: true,                  // We handle error printing ourselves
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Create Opal-specific placeholder generator
+			opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
+			if err != nil {
+				return fmt.Errorf("failed to create placeholder generator: %w", err)
+			}
+
 			// Mode 4: Execute from plan file (contract verification)
 			if planFile != "" {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot specify command name with --plan flag")
 				}
+
+				// Load contract to get PlanSalt
+				f, err := os.Open(planFile)
+				if err != nil {
+					return fmt.Errorf("failed to open plan file: %w", err)
+				}
+				_, _, contractPlan, err := planfmt.ReadContract(f)
+				_ = f.Close()
+				if err != nil {
+					return fmt.Errorf("failed to read contract: %w", err)
+				}
+
+				// Create vault with contract's PlanSalt for deterministic DisplayIDs
+				// CRITICAL: Reusing PlanSalt ensures same DisplayIDs during verification
+				vlt := vault.NewWithPlanKey(contractPlan.PlanSalt)
+
+				// Create scrubber with vault's secret provider
+				scrubber := streamscrub.New(&outputBuf,
+					streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+					streamscrub.WithSecretProvider(vlt.SecretProvider()))
+
+				// Redirect stdout/stderr through scrubber
+				restore := scrubber.LockdownStreams()
+				defer restore()
+
 				exitCode, err := runFromPlan(planFile, file, debug, noColor, vlt, scrubber, &outputBuf)
 				if err != nil {
 					cmd.SilenceUsage = true // We've already printed detailed error
@@ -86,6 +92,23 @@ func main() {
 			}
 
 			// Modes 1-3: Execute from source
+			// Create vault with random planKey for security
+			planKey := make([]byte, 32)
+			_, err = rand.Read(planKey)
+			if err != nil {
+				return fmt.Errorf("failed to generate plan key: %w", err)
+			}
+			vlt := vault.NewWithPlanKey(planKey)
+
+			// Create scrubber with vault's secret provider
+			scrubber := streamscrub.New(&outputBuf,
+				streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+				streamscrub.WithSecretProvider(vlt.SecretProvider()))
+
+			// Redirect stdout/stderr through scrubber
+			restore := scrubber.LockdownStreams()
+			defer restore()
+
 			// 0 args = script mode (execute all top-level commands)
 			// 1 arg = command mode (execute specific function)
 			var commandName string
@@ -125,10 +148,7 @@ func main() {
 		exitCode = 1
 	}
 
-	// CRITICAL: Restore streams BEFORE writing to real stdout
-	restore()
-
-	// Now write captured (and scrubbed) output to real stdout
+	// Write captured (and scrubbed) output to real stdout
 	_, _ = os.Stdout.Write(outputBuf.Bytes())
 
 	// Exit with proper code (after all cleanup)
