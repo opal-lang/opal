@@ -1369,60 +1369,81 @@ Both must pass for `Access()` to succeed.
 
 ### Three-Pass Planning Model
 
-**Pass 1: Scan** - Build complete graph, declare all expressions, record references
+**Pass 1: Scan** - Build complete graph with temporal binding
+
+Commands are tokenised into IR with captured exprIDs (not stored as raw strings).
+This preserves temporal binding for correct shadowing behavior.
 
 ```go
 // Declare variable in current scope
 exprID := vault.DeclareVariable("API_KEY", "@env.API_KEY")
+vault.StoreUnresolvedValue(exprID, parsedValue)  // Store but don't resolve
 
-// Record where it's used (builds site path from pathStack)
+// Build CommandIR (tokenised representation)
+// When parsing: echo "@var.API_KEY"
+exprID := vault.LookupVariable("API_KEY")  // Captures exprID at this point in time
 vault.RecordReference(exprID, "params/command")
-// Records: site="root/step-1/@shell[0]/params/command"
-//          siteID=HMAC(planKey, site)
+vault.MarkTouched(exprID)
+
+// Store as CommandIR (not raw string):
+CommandIR{
+  Parts: [
+    {Kind: Literal, Text: "echo \""},
+    {Kind: VarRef,  ExprID: exprID},  // Temporal binding preserved!
+    {Kind: Literal, Text: "\""},
+  ]
+}
 ```
 
-**Result:** Vault has complete registry of all expressions and their use-sites. Nothing resolved yet.
+**Result:** Complete execution graph with temporal bindings. Nothing resolved yet.
 
-**Pass 2: Resolve** - Wave-based resolution (traverse → mark touched → resolve → repeat)
+**Pass 2: Resolve** - Wave-based resolution
 
-**A wave is:** "Traverse as far as possible → resolve everything touched → evaluate blockers → repeat"
+**A wave is:** "Traverse until blockers → resolve touched → evaluate blockers → repeat"
+
+**Why waves:**
+1. **Meta-programming** - Can't resolve all upfront; must know which branch to take
+2. **Batching** - Within wave, batch API calls by decorator type (e.g., multiple @aws.secret → one API request)
+3. **Pruning** - Only resolve touched; prune untouched (don't waste API calls on untaken branches)
 
 **Touched vs Untouched:**
-- **Touched:** Expression is referenced in the execution path
+- **Touched:** Expression referenced in execution path
 - **Untouched:** Declared but never referenced
-- **Only touched expressions are resolved** - saves API calls, reduces secrets in plan
+- **Only touched expressions are resolved**
 
 ```go
-// Planner traverses and marks expressions as touched
+// Current (no meta-programming): Single wave
+vault.ResolveAllTouched()
+// Marks all touched as resolved, generates DisplayIDs
+
+// Future (with @if, @for): Multiple waves
+// Wave 1: Resolve expressions needed for blockers
 vault.MarkTouched("ENV")
-vault.MarkTouched("NAME")
+vault.ResolveAllTouched()
 
-// Planner hits blocker: @if(@var.ENV == "prod")
-// Resolve all touched-but-unresolved (Wave 1)
-vault.ResolveTouchedBatch(ctx)
-// Groups by decorator type for efficiency (1 API call vs N)
+// Evaluate blocker: @if(@var.ENV == "prod")
+value, _ := vault.Access("ENV", "condition")
 
-// Planner evaluates meta-programming
-value, _ := vault.Access("ENV", "condition")  // "prod"
-// Checks: Transport boundary + Site authorization
-
-// Planner enters branch, marks new expressions
+// Wave 2: Resolve expressions in taken branch
 vault.MarkTouched("PROD_KEY")
-
-// Resolve next wave (Wave 2)
-vault.ResolveTouchedBatch(ctx)
+vault.ResolveAllTouched()
 ```
 
-**Current (no meta-programming):** Single wave - traverse entire script, resolve all touched.
+**Pass 3: Interpolate** - Convert CommandIR to final strings
 
-**Future (with `@if`, `@for`):** Multiple waves - traverse until blockers, resolve, evaluate, repeat.
-
-**Pass 3: Interpolate** - Replace decorator syntax with DisplayIDs, prune untouched
+No variable lookup needed! Uses captured exprIDs from Pass 1.
 
 ```go
+// Interpolate CommandIR
+for each part in commandIR.Parts:
+  if part.Kind == Literal:
+    result += part.Text
+  else if part.Kind == VarRef:
+    displayID := vault.GetDisplayID(part.ExprID)  // Uses captured exprID
+    result += displayID
+
 vault.PruneUntouched()  // Remove unreachable expressions
 uses := vault.BuildSecretUses()
-// Returns: []SecretUse with only resolved + touched expressions
 ```
 
 **Example:**
@@ -1434,9 +1455,9 @@ echo "Hello, @var.NAME"             # NAME is touched
 echo "Home: @env.HOME"              # Direct usage - also touched
 ```
 
-**Pass 1:** Declare SECRET, NAME, `@env.HOME`; record references  
+**Pass 1:** Declare SECRET, NAME, `@env.HOME`; build CommandIRs with captured exprIDs  
 **Pass 2:** Mark NAME and `@env.HOME` as touched; resolve only those (SECRET untouched)  
-**Pass 3:** Prune SECRET; build SecretUses for NAME and `@env.HOME` only
+**Pass 3:** Interpolate CommandIRs using captured exprIDs; prune SECRET
 
 ### Variable Usage Modes
 

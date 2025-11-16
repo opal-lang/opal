@@ -137,7 +137,7 @@ func TestOperatorsEndToEnd(t *testing.T) {
 
 			// Execute
 			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := executor.Execute(context.Background(), steps, executor.Config{})
+			result, err := executor.Execute(context.Background(), steps, executor.Config{}, nil)
 			require.NoError(t, err, "execute error")
 
 			// Verify

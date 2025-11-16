@@ -69,7 +69,9 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 	// Create Vault and declare variables
 	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	nameID := v.DeclareVariable("name", "literal:Alice")
-	v.MarkResolved(nameID, "Alice")
+	v.StoreUnresolvedValue(nameID, "Alice")
+	v.MarkTouched(nameID)
+	v.ResolveAllTouched()
 	v.RecordReference(nameID, "value") // Authorize access at root/params/value
 
 	// Create context with Vault
@@ -107,7 +109,9 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 
 	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	countID := v.DeclareVariable("count", "literal:42")
-	v.MarkResolved(countID, "42")
+	v.StoreUnresolvedValue(countID, "42")
+	v.MarkTouched(countID)
+	v.ResolveAllTouched()
 	v.RecordReference(countID, "value") // Authorize access
 
 	ctx := decorator.ValueEvalContext{
@@ -138,7 +142,9 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 
 	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	flagID := v.DeclareVariable("flag", "literal:true")
-	v.MarkResolved(flagID, "true")
+	v.StoreUnresolvedValue(flagID, "true")
+	v.MarkTouched(flagID)
+	v.ResolveAllTouched()
 	v.RecordReference(flagID, "value") // Authorize access
 
 	ctx := decorator.ValueEvalContext{
@@ -169,7 +175,9 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 
 	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	nameID := v.DeclareVariable("name", "literal:Alice")
-	v.MarkResolved(nameID, "Alice")
+	v.StoreUnresolvedValue(nameID, "Alice")
+	v.MarkTouched(nameID)
+	v.ResolveAllTouched()
 
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
@@ -241,7 +249,9 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 
 	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	valueID := v.DeclareVariable("value", "literal:local")
-	v.MarkResolved(valueID, "local")
+	v.StoreUnresolvedValue(valueID, "local")
+	v.MarkTouched(valueID)
+	v.ResolveAllTouched()
 	v.RecordReference(valueID, "value") // Authorize access
 
 	// Test with LocalSession

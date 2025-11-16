@@ -17,7 +17,9 @@ func TestPluginSecurity_CrossDecoratorAccess_Fails(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@var")
@@ -53,7 +55,9 @@ func TestPluginSecurity_MissingRecordReference_Fails(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@malicious")
@@ -78,7 +82,9 @@ func TestPluginSecurity_ParamNameMismatch_Fails(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -105,7 +111,9 @@ func TestPluginSecurity_PathStackManipulation_AffectsSite(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -163,7 +171,9 @@ func TestPluginSecurity_MultipleDecorators_IndependentAuthorization(t *testing.T
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -215,7 +225,9 @@ func TestPluginSecurity_SameDecorator_MultipleInstances_DifferentSites(t *testin
 
 	// GIVEN: Variable resolved
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// First @shell instance (index 0)
 	v.Push("step-1")
@@ -282,7 +294,9 @@ func TestMetaProgramming_IfCondition_IndependentAuthorization(t *testing.T) {
 
 	// GIVEN: Variable resolved (used in @if condition)
 	exprID := v.DeclareVariable("ENV", "prod")
-	v.MarkResolved(exprID, "prod")
+	v.StoreUnresolvedValue(exprID, "prod")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// AND: Planner evaluates @if condition
 	v.Push("@if")
@@ -327,7 +341,9 @@ func TestMetaProgramming_NestedIf_DifferentSites(t *testing.T) {
 
 	// GIVEN: Variable resolved
 	exprID := v.DeclareVariable("ENV", "prod")
-	v.MarkResolved(exprID, "prod")
+	v.StoreUnresolvedValue(exprID, "prod")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// First @if (outer)
 	v.Push("@if") // Instance 0
@@ -382,7 +398,9 @@ func TestMetaProgramming_ForLoop_IndependentAuthorization(t *testing.T) {
 
 	// GIVEN: Variable resolved (used in @for items)
 	exprID := v.DeclareVariable("ITEMS", "item1,item2,item3")
-	v.MarkResolved(exprID, "item1,item2,item3")
+	v.StoreUnresolvedValue(exprID, "item1,item2,item3")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// AND: Planner evaluates @for items
 	v.Push("@for")

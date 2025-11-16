@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/aledsdavies/opal/core/invariant"
 	"github.com/aledsdavies/opal/core/sdk"
 	"github.com/aledsdavies/opal/core/types"
+	"github.com/aledsdavies/opal/runtime/vault"
 )
 
 // Config configures the executor
@@ -74,6 +76,7 @@ type DebugEvent struct {
 // executor holds execution state
 type executor struct {
 	config Config
+	vault  *vault.Vault // For DisplayID resolution (nil if no secrets)
 
 	// Execution state
 	stepsRun int
@@ -86,16 +89,20 @@ type executor struct {
 }
 
 // Execute runs SDK steps and returns the result.
-// The executor only sees SDK types - it has no knowledge of planfmt.
-// Secret scrubbing is handled by the CLI (stdout/stderr already locked down).
-// Context is used for cancellation and timeout propagation.
-func Execute(ctx context.Context, steps []sdk.Step, config Config) (*ExecutionResult, error) {
+//
+// The executor resolves DisplayIDs to actual values during execution when vault is provided.
+// Without vault, commands execute as-is (useful for testing or non-secret workflows).
+//
+// Context enables cancellation and timeout propagation through the execution chain.
+// The CLI handles secret scrubbing by redirecting stdout/stderr through the scrubber.
+func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Vault) (*ExecutionResult, error) {
 	// INPUT CONTRACT (preconditions)
 	invariant.NotNil(ctx, "ctx")
 	invariant.NotNil(steps, "steps")
 
 	e := &executor{
 		config:    config,
+		vault:     vlt,
 		startTime: time.Now(),
 	}
 
@@ -183,11 +190,24 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config) (*ExecutionRe
 	}, nil
 }
 
-// executeStep executes a single step by executing its tree
+// executeStep executes a single step by executing its tree.
+//
+// Site context matching: During planning, the planner records variable references
+// at site paths like "root/step-1/params/command". During execution, we must push
+// the same step context so AccessByDisplayID() can verify authorization at the
+// matching site. Without this, all authorization checks would fail.
 func (e *executor) executeStep(execCtx sdk.ExecutionContext, step sdk.Step) int {
 	// INPUT CONTRACT
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
+
+	// Push step context to vault for site path matching
+	if e.vault != nil {
+		stepName := fmt.Sprintf("step-%d", step.ID)
+		e.vault.ResetCounts() // Reset decorator indices for new step
+		e.vault.Push(stepName)
+		defer e.vault.Pop()
+	}
 
 	return e.executeTree(execCtx, step.Tree)
 }
@@ -432,6 +452,57 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	return exitCode
 }
 
+// resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
+//
+// DisplayIDs are content-addressed placeholders (format: opal:<base64url-hash>) that appear
+// in the plan instead of actual secret values. This enables:
+//   - Plan contracts to be stored/transmitted without exposing secrets
+//   - Contract verification without re-resolving secrets
+//   - Deterministic hashing for contract stability
+//
+// During execution, we resolve DisplayIDs back to actual values just before passing
+// params to decorators. The vault enforces site-based authorization to prevent
+// unauthorized access.
+func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string) (map[string]any, error) {
+	// Import regexp here since we need it
+	displayIDPattern := regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
+	resolved := make(map[string]any)
+
+	for key, val := range params {
+		strVal, ok := val.(string)
+		if !ok {
+			// Not a string, keep as-is
+			resolved[key] = val
+			continue
+		}
+
+		// Find all DisplayIDs in the string
+		matches := displayIDPattern.FindAllString(strVal, -1)
+		if len(matches) == 0 {
+			// No DisplayIDs, keep as-is
+			resolved[key] = val
+			continue
+		}
+
+		// Resolve each DisplayID
+		result := strVal
+		for _, displayID := range matches {
+			// Call vault.AccessByDisplayID with site info
+			actualValue, err := e.vault.AccessByDisplayID(displayID, key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve %s in %s.%s: %w", displayID, decoratorName, key, err)
+			}
+
+			// Replace DisplayID with actual value
+			result = strings.ReplaceAll(result, displayID, fmt.Sprint(actualValue))
+		}
+
+		resolved[key] = result
+	}
+
+	return resolved, nil
+}
+
 // executeNewDecorator executes a decorator from the new registry.
 // Converts ExecutionContext to decorator ExecContext and executes via Exec interface.
 func (e *executor) executeNewDecorator(
@@ -445,6 +516,16 @@ func (e *executor) executeNewDecorator(
 	params := make(map[string]any)
 	for k, v := range cmd.Args {
 		params[k] = v
+	}
+
+	// Resolve DisplayIDs to actual values if vault is available
+	if e.vault != nil {
+		var err error
+		params, err = e.resolveDisplayIDs(params, cmd.Name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving secrets: %v\n", err)
+			return 1
+		}
 	}
 
 	// Create execution node

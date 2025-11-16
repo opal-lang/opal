@@ -33,7 +33,7 @@ func TestContextCancellationStopsExecution(t *testing.T) {
 	}()
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop quickly (< 1s), not wait for full 10s
@@ -70,7 +70,7 @@ func TestTimeoutPropagatesThroughRedirects(t *testing.T) {
 	}}
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should timeout after ~100ms
@@ -118,7 +118,7 @@ func TestPipelineCancellationStopsAllCommands(t *testing.T) {
 	}()
 
 	start := time.Now()
-	Execute(ctx, steps, Config{})
+	Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// All commands should stop quickly (< 1s total, not 30s)
@@ -154,7 +154,7 @@ func TestNestedDecoratorCancellation(t *testing.T) {
 	}}
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should respect outer timeout, not retry 5 times
@@ -195,7 +195,7 @@ func TestCancellationDuringExecuteBlock(t *testing.T) {
 	}()
 
 	start := time.Now()
-	Execute(ctx, steps, Config{})
+	Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop quickly
@@ -226,7 +226,7 @@ func TestMultipleCancellations(t *testing.T) {
 	}()
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	assert.Less(t, duration, 1*time.Second)
@@ -273,7 +273,7 @@ func TestCancellationWithSequenceOperator(t *testing.T) {
 	}()
 
 	start := time.Now()
-	Execute(ctx, steps, Config{})
+	Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop quickly, not run all 3 commands
@@ -311,7 +311,7 @@ func TestCancellationWithAndOperator(t *testing.T) {
 	}()
 
 	start := time.Now()
-	Execute(ctx, steps, Config{})
+	Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop quickly
@@ -349,7 +349,7 @@ func TestCancellationWithOrOperator(t *testing.T) {
 	}()
 
 	start := time.Now()
-	Execute(ctx, steps, Config{})
+	Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop quickly
@@ -372,7 +372,7 @@ func TestDeadlineExceeded(t *testing.T) {
 	}}
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should stop after deadline
@@ -401,7 +401,7 @@ func TestAlreadyCancelledContext(t *testing.T) {
 	}}
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{})
+	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should return immediately

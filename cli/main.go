@@ -1,3 +1,14 @@
+// Package main implements the Opal CLI.
+//
+// The CLI supports four execution modes:
+//  1. Script mode: Execute .opl files directly
+//  2. Command mode: Execute specific functions from .opl files
+//  3. Dry-run mode: Generate and display execution plan without executing
+//  4. Contract mode: Verify plan contract before execution
+//
+// Secret scrubbing: All output is automatically scrubbed to replace secret values
+// with DisplayID placeholders (opal:<hash>). The scrubber intercepts stdout/stderr
+// before any output reaches the terminal.
 package main
 
 import (
@@ -39,8 +50,17 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:           "opal [command]",
-		Short:         "Execute commands defined in opal files",
+		Use:   "opal [command]",
+		Short: "Plan-first execution platform for deployments and operations",
+		Long: `Opal converts operational workflows into verifiable execution contracts.
+
+Scripts are planned before execution, generating a deterministic contract that can be:
+  - Verified before execution (contract mode)
+  - Inspected without execution (dry-run mode)
+  - Stored for audit trails
+
+All secrets are automatically scrubbed from output, replaced with content-addressed
+DisplayID placeholders for security.`,
 		Args:          cobra.MaximumNArgs(1), // 0 args if --plan, 1 arg otherwise
 		SilenceErrors: true,                  // We handle error printing ourselves
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -353,7 +373,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 	result, err := executor.Execute(ctx, steps, executor.Config{
 		Debug:     execDebug,
 		Telemetry: telemetryLevel,
-	})
+	}, vlt)
 	if err != nil {
 		return 1, fmt.Errorf("execution failed: %w", err)
 	}
@@ -591,7 +611,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 	result, err := executor.Execute(ctx, steps, executor.Config{
 		Debug:     execDebug,
 		Telemetry: executor.TelemetryBasic,
-	})
+	}, vlt)
 	if err != nil {
 		return 1, fmt.Errorf("execution failed: %w", err)
 	}

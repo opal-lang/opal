@@ -20,7 +20,9 @@ func TestAccess_AuthorizedSite_SameTransport_Succeeds(t *testing.T) {
 
 	// GIVEN: Expression resolved in local transport
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site recorded
 	v.Push("step-1")
@@ -38,6 +40,16 @@ func TestAccess_AuthorizedSite_SameTransport_Succeeds(t *testing.T) {
 	}
 }
 
+// Helper function
+func containsString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // ========== Edge Case: Transport Boundary Violation ==========
 
 func TestAccess_AuthorizedSite_DifferentTransport_FailsWithTransportError(t *testing.T) {
@@ -45,7 +57,9 @@ func TestAccess_AuthorizedSite_DifferentTransport_FailsWithTransportError(t *tes
 
 	// GIVEN: @env expression resolved in local transport
 	exprID := v.DeclareVariable("LOCAL_TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site recorded in local transport
 	v.Push("step-1")
@@ -78,7 +92,9 @@ func TestAccess_UnauthorizedSite_SameTransport_FailsWithAuthorityError(t *testin
 
 	// GIVEN: Expression with one authorized site
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site: root/step-1/@shell[0]/params/command
 	v.Push("step-1")
@@ -109,7 +125,9 @@ func TestAccess_UnauthorizedSite_DifferentTransport_Fails(t *testing.T) {
 
 	// GIVEN: Expression resolved in local transport
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site in local transport
 	v.Push("step-1")
@@ -146,7 +164,9 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 
 	// GIVEN: Expression authorized at two different sites
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	// Site 1: root/step-1/@shell[0]/params/command
 	v.Push("step-1")
@@ -211,7 +231,7 @@ func TestAccess_UnresolvedExpression_FailsWithResolvedError(t *testing.T) {
 
 	// GIVEN: Expression declared but not resolved (no Value set)
 	exprID := v.DeclareVariable("UNRESOLVED", "@env.FOO")
-	// Note: Value is empty string (not resolved)
+	// Note: Value is not set (not resolved)
 
 	// AND: Authorized site recorded
 	v.Push("step-1")
@@ -262,7 +282,9 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 
 	// GIVEN: @env.HOME in local transport
 	localID := v.TrackExpression("@env.HOME")
-	v.MarkResolved(localID, "/home/local")
+	v.MarkTouched(localID)
+	v.StoreUnresolvedValue(localID, "/home/local")
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -273,7 +295,9 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 	// AND: @env.HOME in ssh:server1 transport (different expression!)
 	v.EnterTransport("ssh:server1")
 	sshID := v.TrackExpression("@env.HOME")
-	v.MarkResolved(sshID, "/home/server1")
+	v.MarkTouched(sshID)
+	v.StoreUnresolvedValue(sshID, "/home/server1")
+	v.ResolveAllTouched()
 
 	v.ResetCounts() // Reset for new step
 	v.Push("step-2")
@@ -334,7 +358,9 @@ func TestAccess_NoPlanKey_PanicsForSecurity(t *testing.T) {
 	v := New() // No plan key - DANGEROUS!
 
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -367,7 +393,9 @@ func TestAccess_NonEnvDecorator_CrossesTransportBoundary(t *testing.T) {
 
 	// GIVEN: Non-@env expression (e.g., @var) resolved in local transport
 	exprID := v.DeclareVariable("API_KEY", "sk-secret-123")
-	v.MarkResolved(exprID, "sk-secret-123")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "sk-secret-123")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site in local transport
 	v.Push("step-1")
@@ -396,7 +424,9 @@ func TestAccess_EmptyStringSecret_IsValid(t *testing.T) {
 
 	// GIVEN: Expression resolved to empty string (valid secret)
 	exprID := v.DeclareVariable("EMPTY_VAR", "@env.EMPTY")
-	v.MarkResolved(exprID, "")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "")
+	v.ResolveAllTouched()
 
 	// AND: Authorized site recorded
 	v.Push("step-1")

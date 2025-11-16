@@ -25,7 +25,9 @@ func TestBug1_DuplicateTransportCheck_RedundantValidation(t *testing.T) {
 
 	// GIVEN: Expression resolved in local transport
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// AND: Authorized site in local transport
 	v.Push("step-1")
@@ -58,7 +60,9 @@ func TestBug2_LazyInit_CapturesTransportAtFirstReference(t *testing.T) {
 	// GIVEN: Expression declared and resolved in LOCAL transport
 	// (Simulating @env.HOME resolved in local context)
 	exprID := v.DeclareVariable("HOME", "@env.HOME")
-	v.MarkResolved(exprID, "/home/local-user")
+	v.StoreUnresolvedValue(exprID, "/home/local-user")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 	// NOTE: MarkResolved() captures transport as "local" at resolution time
 
 	// AND: First reference happens in REMOTE SSH transport
@@ -92,7 +96,9 @@ func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 
 	// GIVEN: Expression resolved in LOCAL transport
 	exprID := v.DeclareVariable("HOME", "@env.HOME")
-	v.MarkResolved(exprID, "/home/local-user")
+	v.StoreUnresolvedValue(exprID, "/home/local-user")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 	// NOTE: MarkResolved() captures transport as "local" at resolution time
 
 	// AND: First reference in SSH transport
@@ -151,7 +157,9 @@ func TestBug3_MissingMarkResolved_NoAPIToSetTransportAtResolution(t *testing.T) 
 	exprID := v.DeclareVariable("HOME", "@env.HOME")
 
 	// WHEN: We use the MarkResolved() API
-	v.MarkResolved(exprID, "/home/local-user")
+	v.StoreUnresolvedValue(exprID, "/home/local-user")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// THEN: Expression should be properly resolved with transport captured
 	if !v.expressions[exprID].Resolved {
@@ -186,7 +194,9 @@ func TestBug_FullScenario_LocalEnvLeaksToSSH(t *testing.T) {
 	// GIVEN: Local environment variable (sensitive secret)
 	// In real code, this would be resolved by @env decorator in local context
 	exprID := v.DeclareVariable("AWS_SECRET_KEY", "@env.AWS_SECRET_KEY")
-	v.MarkResolved(exprID, "AKIAIOSFODNN7EXAMPLE") // Resolved in local transport
+	v.StoreUnresolvedValue(exprID, "AKIAIOSFODNN7EXAMPLE")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched() // Resolved in local transport
 
 	// AND: Code enters SSH transport (remote server)
 	v.EnterTransport("ssh:production-server")
@@ -231,7 +241,9 @@ func TestAfterFix_ExistingBehaviorStillWorks(t *testing.T) {
 
 	// GIVEN: Expression properly resolved with transport set at resolution
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// AND: Authorized site in same transport
 	v.Push("step-1")

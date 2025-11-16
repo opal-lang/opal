@@ -20,7 +20,9 @@ func TestAdversarial_EmptyPlanKey_PanicsOnAccess(t *testing.T) {
 	v := New() // No plan key!
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Authorize at one site
 	v.Push("step-1")
@@ -89,7 +91,9 @@ func TestAdversarial_ResetCounts_DoesNotAllowCrossDecoratorAccess(t *testing.T) 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Authorize @shell[0]
 	v.Push("step-1")
@@ -169,7 +173,9 @@ func TestAdversarial_ParamName_EnforcedInAccess(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -198,13 +204,15 @@ func TestAdversarial_ConcurrentAccess_ThreadSafe(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Authorize a specific site
 	v.Push("step-1")
 	v.Push("@shell") // Instance 0
 	v.RecordReference(exprID, "command")
-	authorizedSite := v.buildSitePathLocked("command")
+	authorizedSite := v.BuildSitePath("command")
 	v.Pop()
 	v.Pop()
 
@@ -259,7 +267,9 @@ func TestAdversarial_PathStackManipulation_BetweenRecordAndAccess(t *testing.T) 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	v.Push("step-1")
 	v.Push("@shell")
@@ -287,7 +297,9 @@ func TestAdversarial_ReferenceListPollution_PerformanceDegradation(t *testing.T)
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Add 1000 references (pollution attack)
 	v.Push("step-1")
@@ -333,7 +345,9 @@ func TestAdversarial_MarkResolved_CapturesCurrentTransport(t *testing.T) {
 
 	// Attacker changes transport before MarkResolved
 	v.EnterTransport("ssh:server")
-	v.MarkResolved(exprID, "secret-value") // Should capture "ssh:server"
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched() // Should capture "ssh:server"
 
 	// Check which transport was captured
 	capturedTransport := v.exprTransport[exprID]
@@ -357,7 +371,9 @@ func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
 	// Resolve in local transport
 	v.EnterTransport("local")
 	exprID := v.DeclareVariable("SECRET", "secret-value")
-	v.MarkResolved(exprID, "secret-value")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Authorize in local transport
 	v.Push("step-1")
@@ -390,11 +406,15 @@ func TestAdversarial_DisplayID_RequiresPlanKey(t *testing.T) {
 
 	// Same value, same planKey → same DisplayID (deterministic)
 	exprID1 := v1.DeclareVariable("SECRET", "secret-value")
-	v1.MarkResolved(exprID1, "secret-value")
+	v1.StoreUnresolvedValue(exprID1, "secret-value")
+	v1.MarkTouched(exprID1)
+	v1.ResolveAllTouched()
 	displayID1 := v1.GetDisplayID(exprID1)
 
 	exprID2 := v2.DeclareVariable("SECRET", "secret-value")
-	v2.MarkResolved(exprID2, "secret-value")
+	v2.StoreUnresolvedValue(exprID2, "secret-value")
+	v2.MarkTouched(exprID2)
+	v2.ResolveAllTouched()
 	displayID2 := v2.GetDisplayID(exprID2)
 
 	if displayID1 != displayID2 {
@@ -406,7 +426,9 @@ func TestAdversarial_DisplayID_RequiresPlanKey(t *testing.T) {
 	// Different planKey → different DisplayID (unpredictable without key)
 	v3 := NewWithPlanKey([]byte("different-key-32-bytes-long!"))
 	exprID3 := v3.DeclareVariable("SECRET", "secret-value")
-	v3.MarkResolved(exprID3, "secret-value")
+	v3.StoreUnresolvedValue(exprID3, "secret-value")
+	v3.MarkTouched(exprID3)
+	v3.ResolveAllTouched()
 	displayID3 := v3.GetDisplayID(exprID3)
 
 	if displayID1 == displayID3 {

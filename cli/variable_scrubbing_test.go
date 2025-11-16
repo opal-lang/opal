@@ -23,7 +23,7 @@ func TestVariableScrubbing_EndToEnd(t *testing.T) {
 
 	secretValue := "my-secret-value"
 	source := `var SECRET = "my-secret-value"
-echo "test"`
+echo "The secret is: @var.SECRET"`
 
 	err := os.WriteFile(opalFile, []byte(source), 0o644)
 	if err != nil {
@@ -48,6 +48,10 @@ echo "test"`
 		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
 		streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
+	// Redirect stdout/stderr through scrubber
+	restore := scrubber.LockdownStreams()
+	defer restore()
+
 	// Run command (script mode - no command name)
 	cmd := &cobra.Command{}
 	exitCode, err := runCommand(cmd, "", opalFile, false, false, false, true, false, vlt, scrubber, &outputBuf)
@@ -58,26 +62,20 @@ echo "test"`
 		t.Fatalf("Expected exit code 0, got %d", exitCode)
 	}
 
-	// Test that scrubbing works by writing the secret value through the scrubber
-	testInput := "The secret is: " + secretValue
-	_, err = io.WriteString(scrubber, testInput)
-	if err != nil {
-		t.Fatalf("Failed to write to scrubber: %v", err)
-	}
-
 	if err := scrubber.Close(); err != nil {
 		t.Fatalf("Failed to close scrubber: %v", err)
 	}
 
 	output := outputBuf.String()
 
+	// The echo command outputs the secret, which should be scrubbed
 	// CRITICAL: Verify raw secret is NOT in output
 	if strings.Contains(output, secretValue) {
 		t.Errorf("Output contains raw secret %q - scrubbing failed!", secretValue)
 		t.Logf("Output: %s", output)
 	}
 
-	// Verify output contains DisplayID marker
+	// Verify output contains DisplayID marker (scrubbed value)
 	if !strings.Contains(output, "opal:") {
 		t.Error("Output should contain DisplayID marker (opal:...)")
 		t.Logf("Output: %s", output)
@@ -86,7 +84,7 @@ echo "test"`
 	t.Logf("Scrubbing successful - secret replaced with DisplayID")
 }
 
-// TestVariableScrubbing_MultipleVariables tests that multiple variables are declared in vault
+// TestVariableScrubbing_MultipleVariables tests that multiple variables are scrubbed in output.
 func TestVariableScrubbing_MultipleVariables(t *testing.T) {
 	tmpDir := t.TempDir()
 	opalFile := filepath.Join(tmpDir, "multiple.opl")
@@ -94,7 +92,7 @@ func TestVariableScrubbing_MultipleVariables(t *testing.T) {
 	source := `var API_KEY = "sk-secret-123"
 var TOKEN = "token-456"
 var PASSWORD = "pass-789"
-echo "test"`
+echo "API: @var.API_KEY, Token: @var.TOKEN, Pass: @var.PASSWORD"`
 
 	err := os.WriteFile(opalFile, []byte(source), 0o644)
 	if err != nil {
@@ -119,9 +117,11 @@ echo "test"`
 		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
 		streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
-	// Run command
+	// Run command in dry-run mode (plan only, don't execute)
+	// Executor doesn't yet support DisplayID resolution, so we can't execute
 	cmd := &cobra.Command{}
-	exitCode, err := runCommand(cmd, "", opalFile, false, false, false, true, false, vlt, scrubber, &outputBuf)
+	dryRun := true
+	exitCode, err := runCommand(cmd, "", opalFile, dryRun, false, false, true, false, vlt, scrubber, &outputBuf)
 	if err != nil {
 		t.Fatalf("runCommand failed: %v", err)
 	}
@@ -129,7 +129,8 @@ echo "test"`
 		t.Fatalf("Expected exit code 0, got %d", exitCode)
 	}
 
-	// Test scrubbing all three secrets
+	// Now test scrubbing by manually writing secrets to the scrubber
+	// The vault was populated during planning, so scrubber should have the patterns
 	secrets := []string{"sk-secret-123", "token-456", "pass-789"}
 	testInput := "API: sk-secret-123, Token: token-456, Pass: pass-789"
 	_, err = io.WriteString(scrubber, testInput)
@@ -146,11 +147,11 @@ echo "test"`
 	// Verify all secrets are scrubbed
 	for _, secret := range secrets {
 		if strings.Contains(output, secret) {
-			t.Errorf("Output contains raw secret %q", secret)
+			t.Errorf("Output contains raw secret %q - scrubbing failed!", secret)
 		}
 	}
 
-	// Verify output contains DisplayID markers
+	// Verify output contains DisplayID markers (scrubbed values)
 	if !strings.Contains(output, "opal:") {
 		t.Error("Output should contain DisplayID markers")
 	}

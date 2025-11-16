@@ -16,7 +16,9 @@ func TestSecretProvider_VariableDeclaration(t *testing.T) {
 
 	// Declare and resolve a variable (simulating what planner does)
 	exprID := v.DeclareVariable("API_KEY", "literal:sk-secret-123")
-	v.MarkResolved(exprID, "sk-secret-123")
+	v.StoreUnresolvedValue(exprID, "sk-secret-123")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Get the SecretProvider
 	provider := v.SecretProvider()
@@ -65,13 +67,19 @@ func TestSecretProvider_MultipleVariables(t *testing.T) {
 
 	// Declare multiple variables
 	exprID1 := v.DeclareVariable("API_KEY", "literal:sk-secret-123")
-	v.MarkResolved(exprID1, "sk-secret-123")
+	v.StoreUnresolvedValue(exprID1, "sk-secret-123")
+	v.MarkTouched(exprID1)
+	v.ResolveAllTouched()
 
 	exprID2 := v.DeclareVariable("TOKEN", "literal:token-456")
-	v.MarkResolved(exprID2, "token-456")
+	v.StoreUnresolvedValue(exprID2, "token-456")
+	v.MarkTouched(exprID2)
+	v.ResolveAllTouched()
 
 	exprID3 := v.DeclareVariable("PASSWORD", "literal:pass-789")
-	v.MarkResolved(exprID3, "pass-789")
+	v.StoreUnresolvedValue(exprID3, "pass-789")
+	v.MarkTouched(exprID3)
+	v.ResolveAllTouched()
 
 	// Get the SecretProvider
 	provider := v.SecretProvider()
@@ -156,7 +164,9 @@ func TestSecretProvider_EmptyValue(t *testing.T) {
 
 	// Declare and resolve with empty string
 	exprID := v.DeclareVariable("EMPTY", "literal:")
-	v.MarkResolved(exprID, "")
+	v.StoreUnresolvedValue(exprID, "")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Get the SecretProvider
 	provider := v.SecretProvider()
@@ -195,10 +205,14 @@ func TestSecretProvider_LongestFirst(t *testing.T) {
 
 	// Declare secrets where one is a prefix of another
 	exprID1 := v.DeclareVariable("SHORT", "literal:secret")
-	v.MarkResolved(exprID1, "secret")
+	v.StoreUnresolvedValue(exprID1, "secret")
+	v.MarkTouched(exprID1)
+	v.ResolveAllTouched()
 
 	exprID2 := v.DeclareVariable("LONG", "literal:secret-key-123")
-	v.MarkResolved(exprID2, "secret-key-123")
+	v.StoreUnresolvedValue(exprID2, "secret-key-123")
+	v.MarkTouched(exprID2)
+	v.ResolveAllTouched()
 
 	// Get the SecretProvider
 	provider := v.SecretProvider()

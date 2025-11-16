@@ -193,7 +193,9 @@ func TestVault_TransportBoundaryViolation(t *testing.T) {
 
 	// GIVEN: Expression resolved in local transport
 	exprID := v.DeclareVariable("LOCAL_TOKEN", "@env.TOKEN")
-	v.MarkResolved(exprID, "secret")
+	v.StoreUnresolvedValue(exprID, "secret")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 	v.MarkTouched(exprID)
 
 	// AND: Record reference in local transport (allowed)
@@ -226,7 +228,9 @@ func TestVault_SameTransportAllowed(t *testing.T) {
 
 	// GIVEN: Expression resolved in local transport
 	exprID := v.DeclareVariable("LOCAL_VAR", "@env.HOME")
-	v.MarkResolved(exprID, "value") // MarkResolved captures transport automatically
+	v.StoreUnresolvedValue(exprID, "value")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched() // MarkResolved captures transport automatically
 	v.MarkTouched(exprID)
 
 	// WHEN: We use it in same transport
@@ -486,7 +490,9 @@ func TestVault_Access_ChecksSiteID(t *testing.T) {
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
 
 	// Resolve expression (sets Value, Resolved, and transport)
-	v.MarkResolved(exprID, "sk-secret-123")
+	v.StoreUnresolvedValue(exprID, "sk-secret-123")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Record authorized site
 	v.Push("step-1")
@@ -510,7 +516,9 @@ func TestVault_Access_RejectsUnauthorizedSite(t *testing.T) {
 
 	// GIVEN: Variable with resolved value
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
-	v.MarkResolved(exprID, "sk-secret-123")
+	v.StoreUnresolvedValue(exprID, "sk-secret-123")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	// Record authorized site
 	v.Push("step-1")
@@ -823,16 +831,6 @@ func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
 	}
 }
 
-// Helper function
-func containsString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // ============================================================================
 // SecretProvider Tests
 // ============================================================================
@@ -880,7 +878,9 @@ func TestVault_SecretProvider_ResolvedExpression(t *testing.T) {
 
 	// Declare and resolve
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
-	v.MarkResolved(exprID, "secret123")
+	v.StoreUnresolvedValue(exprID, "secret123")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 	chunk := []byte("The key is: secret123")
@@ -906,10 +906,14 @@ func TestVault_SecretProvider_MultipleSecrets(t *testing.T) {
 
 	// Declare and resolve multiple secrets
 	id1 := v.DeclareVariable("KEY1", "@env.KEY1")
-	v.MarkResolved(id1, "secret1")
+	v.StoreUnresolvedValue(id1, "secret1")
+	v.MarkTouched(id1)
+	v.ResolveAllTouched()
 
 	id2 := v.DeclareVariable("KEY2", "@env.KEY2")
-	v.MarkResolved(id2, "secret2")
+	v.StoreUnresolvedValue(id2, "secret2")
+	v.MarkTouched(id2)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 	chunk := []byte("First: secret1, Second: secret2")
@@ -938,10 +942,14 @@ func TestVault_SecretProvider_LongestFirst(t *testing.T) {
 
 	// Declare overlapping secrets (use different raw expressions)
 	id1 := v.DeclareVariable("SHORT", "@env.SHORT")
-	v.MarkResolved(id1, "SECRET")
+	v.StoreUnresolvedValue(id1, "SECRET")
+	v.MarkTouched(id1)
+	v.ResolveAllTouched()
 
 	id2 := v.DeclareVariable("LONG", "@env.LONG")
-	v.MarkResolved(id2, "SECRET_EXTENDED")
+	v.StoreUnresolvedValue(id2, "SECRET_EXTENDED")
+	v.MarkTouched(id2)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 	chunk := []byte("Value: SECRET_EXTENDED")
@@ -968,7 +976,9 @@ func TestVault_SecretProvider_EmptyValue(t *testing.T) {
 
 	// Resolve to empty string
 	id := v.DeclareVariable("EMPTY", "@env.EMPTY")
-	v.MarkResolved(id, "")
+	v.StoreUnresolvedValue(id, "")
+	v.MarkTouched(id)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 	chunk := []byte("No secrets here")
@@ -989,7 +999,9 @@ func TestVault_SecretProvider_ThreadSafety(t *testing.T) {
 
 	// Declare and resolve
 	id := v.DeclareVariable("KEY", "@env.KEY")
-	v.MarkResolved(id, "secret")
+	v.StoreUnresolvedValue(id, "secret")
+	v.MarkTouched(id)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 
@@ -1018,7 +1030,9 @@ func TestVault_SecretProvider_DynamicPatterns(t *testing.T) {
 
 	// Declare and resolve first secret
 	id1 := v.DeclareVariable("KEY1", "@env.KEY1")
-	v.MarkResolved(id1, "secret1")
+	v.StoreUnresolvedValue(id1, "secret1")
+	v.MarkTouched(id1)
+	v.ResolveAllTouched()
 
 	provider := v.SecretProvider()
 
@@ -1034,7 +1048,9 @@ func TestVault_SecretProvider_DynamicPatterns(t *testing.T) {
 
 	// Add second secret
 	id2 := v.DeclareVariable("KEY2", "@env.KEY2")
-	v.MarkResolved(id2, "secret2")
+	v.StoreUnresolvedValue(id2, "secret2")
+	v.MarkTouched(id2)
+	v.ResolveAllTouched()
 
 	// Second call - should replace both secrets
 	chunk2 := []byte("Value: secret1 and secret2")
@@ -1063,7 +1079,9 @@ func TestVault_SecretProvider_MaxSecretLength(t *testing.T) {
 
 	// Add short secret
 	id1 := v.DeclareVariable("SHORT", "@env.SHORT")
-	v.MarkResolved(id1, "short")
+	v.StoreUnresolvedValue(id1, "short")
+	v.MarkTouched(id1)
+	v.ResolveAllTouched()
 
 	// With variants, max length includes encoded forms (hex, base64, percent-encoding, separators)
 	// "short" (5 bytes) -> percent-encoded "%73%68%6F%72%74" (15 bytes) is longest
@@ -1073,7 +1091,9 @@ func TestVault_SecretProvider_MaxSecretLength(t *testing.T) {
 
 	// Add longer secret
 	id2 := v.DeclareVariable("LONG", "@env.LONG")
-	v.MarkResolved(id2, "this_is_a_much_longer_secret")
+	v.StoreUnresolvedValue(id2, "this_is_a_much_longer_secret")
+	v.MarkTouched(id2)
+	v.ResolveAllTouched()
 
 	// "this_is_a_much_longer_secret" (28 bytes) -> percent-encoded (84 bytes) is longest
 	if got := provider.MaxSecretLength(); got != 84 {
@@ -1106,10 +1126,14 @@ func TestVault_DisplayID_Unlinkability(t *testing.T) {
 
 	// WHEN: We declare and resolve the SAME secret value in both vaults
 	exprID1 := vault1.DeclareVariable("API_KEY", "literal:sk-secret-api-key-123")
-	vault1.MarkResolved(exprID1, secretValue)
+	vault1.StoreUnresolvedValue(exprID1, secretValue)
+	vault1.MarkTouched(exprID1)
+	vault1.ResolveAllTouched()
 
 	exprID2 := vault2.DeclareVariable("API_KEY", "literal:sk-secret-api-key-123")
-	vault2.MarkResolved(exprID2, secretValue)
+	vault2.StoreUnresolvedValue(exprID2, secretValue)
+	vault2.MarkTouched(exprID2)
+	vault2.ResolveAllTouched()
 
 	// THEN: DisplayIDs should be DIFFERENT (unlinkability)
 	displayID1 := vault1.GetDisplayID(exprID1)
@@ -1153,10 +1177,14 @@ func TestVault_DisplayID_Deterministic(t *testing.T) {
 
 	// WHEN: We declare and resolve the same secret in both vaults
 	exprID1 := vault1.DeclareVariable("API_KEY", "literal:sk-secret-api-key-123")
-	vault1.MarkResolved(exprID1, secretValue)
+	vault1.StoreUnresolvedValue(exprID1, secretValue)
+	vault1.MarkTouched(exprID1)
+	vault1.ResolveAllTouched()
 
 	exprID2 := vault2.DeclareVariable("API_KEY", "literal:sk-secret-api-key-123")
-	vault2.MarkResolved(exprID2, secretValue)
+	vault2.StoreUnresolvedValue(exprID2, secretValue)
+	vault2.MarkTouched(exprID2)
+	vault2.ResolveAllTouched()
 
 	// THEN: DisplayIDs should be IDENTICAL (determinism)
 	displayID1 := vault1.GetDisplayID(exprID1)
@@ -1206,11 +1234,15 @@ func TestVault_DisplayID_MapDeterminism(t *testing.T) {
 
 	// Resolve in both vaults
 	exprID1 := v1.DeclareVariable("CONFIG", "map-value")
-	v1.MarkResolved(exprID1, map1)
+	v1.StoreUnresolvedValue(exprID1, map1)
+	v1.MarkTouched(exprID1)
+	v1.ResolveAllTouched()
 	displayID1 := v1.GetDisplayID(exprID1)
 
 	exprID2 := v2.DeclareVariable("CONFIG", "map-value")
-	v2.MarkResolved(exprID2, map2)
+	v2.StoreUnresolvedValue(exprID2, map2)
+	v2.MarkTouched(exprID2)
+	v2.ResolveAllTouched()
 	displayID2 := v2.GetDisplayID(exprID2)
 
 	// Same logical map should produce same DisplayID (determinism)
@@ -1237,7 +1269,9 @@ func TestVault_DisplayID_ByteSliceConsistency(t *testing.T) {
 	// Resolve a []byte value
 	byteValue := []byte("secret-bytes")
 	exprID := v.DeclareVariable("BYTES", "byte-value")
-	v.MarkResolved(exprID, byteValue)
+	v.StoreUnresolvedValue(exprID, byteValue)
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
 	v.MarkTouched(exprID)
 
 	// Get scrubbing patterns

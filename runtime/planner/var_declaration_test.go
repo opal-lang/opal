@@ -420,3 +420,83 @@ echo "Goodbye, @var.NAME"`
 
 	t.Logf("✓ Plan.SecretUses populated correctly with %d entries", len(result.Plan.SecretUses))
 }
+
+// TestVarPruning_UntouchedVariablesNotInPlan tests that variables declared but never used
+// are pruned from the plan's SecretUses.
+//
+// This verifies the PruneUntouched() call in the planner:
+// - Declared but unused variables should NOT appear in SecretUses
+// - Only touched (referenced) variables should appear in SecretUses
+// - Saves API calls and reduces secrets in plan
+func TestVarPruning_UntouchedVariablesNotInPlan(t *testing.T) {
+	source := `var USED = "used-value"
+var UNUSED = "unused-value"
+echo "Hello, @var.USED"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	// Should have 1 step (the echo command)
+	if len(result.Plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(result.Plan.Steps))
+	}
+
+	// Should have exactly 1 SecretUse (only USED variable)
+	if len(result.Plan.SecretUses) != 1 {
+		t.Errorf("Expected 1 SecretUse (USED only), got %d", len(result.Plan.SecretUses))
+		for i, use := range result.Plan.SecretUses {
+			t.Logf("  SecretUse[%d]: DisplayID=%s, Site=%s", i, use.DisplayID, use.Site)
+		}
+	}
+
+	// Verify the plan command contains the USED variable's DisplayID
+	step := result.Plan.Steps[0]
+	cmd, ok := step.Tree.(*planfmt.CommandNode)
+	if !ok {
+		t.Fatalf("Expected CommandNode, got %T", step.Tree)
+	}
+
+	// Get the command argument
+	var commandVal planfmt.Value
+	var found bool
+	for _, arg := range cmd.Args {
+		if arg.Key == "command" {
+			commandVal = arg.Val
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("Command argument not found")
+	}
+
+	if commandVal.Kind != planfmt.ValueString {
+		t.Fatalf("Expected ValueString, got kind=%v", commandVal.Kind)
+	}
+
+	commandStr := commandVal.Str
+
+	if !strings.Contains(commandStr, "opal:") {
+		t.Errorf("Command should contain DisplayID placeholder, got: %s", commandStr)
+	}
+
+	// Verify the command does NOT contain the literal values
+	if strings.Contains(commandStr, "used-value") {
+		t.Errorf("Command should NOT contain literal value 'used-value', got: %s", commandStr)
+	}
+	if strings.Contains(commandStr, "unused-value") {
+		t.Errorf("Command should NOT contain literal value 'unused-value', got: %s", commandStr)
+	}
+
+	t.Logf("✓ Unused variable pruned successfully")
+	t.Logf("  Command: %s", commandStr)
+	t.Logf("  SecretUses count: %d (expected 1)", len(result.Plan.SecretUses))
+}

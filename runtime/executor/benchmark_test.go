@@ -6,7 +6,17 @@ import (
 
 	"github.com/aledsdavies/opal/core/sdk"
 	"github.com/aledsdavies/opal/runtime/executor"
+	"github.com/aledsdavies/opal/runtime/vault"
 )
+
+// Helper to create a vault for testing
+func testVault() *vault.Vault {
+	planKey := make([]byte, 32)
+	for i := range planKey {
+		planKey[i] = byte(i)
+	}
+	return vault.NewWithPlanKey(planKey)
+}
 
 // BenchmarkExecutorCore measures step execution performance.
 // Target: <100µs per simple shell command, linear scaling with step count.
@@ -26,7 +36,7 @@ func BenchmarkExecutorCore(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: executor.TelemetryOff, // Zero overhead
-				})
+				}, testVault())
 				if err != nil {
 					b.Fatalf("Execute failed: %v", err)
 				}
@@ -57,7 +67,7 @@ func BenchmarkExecutorTelemetryModes(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: mode,
-				})
+				}, testVault())
 				if err != nil {
 					b.Fatalf("Execute failed: %v", err)
 				}
@@ -84,7 +94,7 @@ func BenchmarkExecutorScaling(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				result, err := executor.Execute(context.Background(), steps, executor.Config{
 					Telemetry: executor.TelemetryOff,
-				})
+				}, testVault())
 				if err != nil {
 					b.Fatalf("Execute failed: %v", err)
 				}
