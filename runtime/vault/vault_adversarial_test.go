@@ -208,6 +208,9 @@ func TestAdversarial_ConcurrentAccess_ThreadSafe(t *testing.T) {
 	v.Pop()
 	v.Pop()
 
+	// Reset decorator counts so first goroutine gets instance 0
+	v.ResetCounts()
+
 	// Concurrent access from multiple goroutines to the SAME site
 	var wg sync.WaitGroup
 	successes := make(chan bool, 50)
@@ -242,12 +245,11 @@ func TestAdversarial_ConcurrentAccess_ThreadSafe(t *testing.T) {
 
 	// Only the first goroutine should succeed (instance 0)
 	// All others get different instance indices and should fail
+	t.Logf("Concurrent access: %d/50 succeeded", successCount)
+	t.Logf("Authorized site: %s", authorizedSite)
+
 	if successCount != 1 {
-		t.Logf("✓ Concurrent access properly isolated: %d/50 succeeded (only instance 0)", successCount)
-		t.Logf("  Authorized site: %s", authorizedSite)
-		t.Logf("  This demonstrates that instance indices prevent cross-goroutine access")
-	} else {
-		t.Logf("✓ Thread safety verified: mutex protects concurrent access")
+		t.Fatalf("Expected exactly 1 success (instance 0), got %d", successCount)
 	}
 }
 
