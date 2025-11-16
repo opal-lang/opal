@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -324,29 +325,37 @@ func TestAccess_SameDecorator_DifferentTransports_IndependentExpressions(t *test
 	}
 }
 
-// ========== Edge Case: No Plan Key (Testing Mode) ==========
+// ========== Security Requirement: Plan Key Required ==========
 
-func TestAccess_NoPlanKey_SkipsSiteIDCheck(t *testing.T) {
-	v := New() // No plan key
+func TestAccess_NoPlanKey_PanicsForSecurity(t *testing.T) {
+	// Without planKey, all sites have SiteID="" which bypasses authorization.
+	// Access() enforces planKey requirement to prevent this security vulnerability.
 
-	// GIVEN: Expression without plan key
+	v := New() // No plan key - DANGEROUS!
+
 	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
 	v.MarkResolved(exprID, "secret-value")
 
-	// AND: Reference recorded (SiteID will be empty without plan key)
 	v.Push("step-1")
 	v.Push("@shell")
 	v.RecordReference(exprID, "command")
 
-	// WHEN: Access without plan key
-	value, err := v.Access(exprID, "command")
-	// THEN: Should succeed (no SiteID enforcement in test mode)
-	if err != nil {
-		t.Errorf("Access() without plan key should succeed, got: %v", err)
-	}
-	if value != "secret-value" {
-		t.Errorf("Access() = %q, want %q", value, "secret-value")
-	}
+	// Access() should panic to prevent security bypass
+	defer func() {
+		if r := recover(); r != nil {
+			panicMsg := fmt.Sprintf("%v", r)
+			if !containsString(panicMsg, "planKey") {
+				t.Errorf("Panic should mention planKey, got: %v", r)
+			}
+			t.Logf("✓ Security enforced: Access() requires planKey")
+		} else {
+			t.Error("🚨 SECURITY ISSUE: Access() should panic without planKey")
+			t.Error("  Without planKey, all sites have SiteID=\"\" which bypasses authorization")
+			t.Error("  Production code MUST use NewWithPlanKey()")
+		}
+	}()
+
+	v.Access(exprID, "command") // Should panic
 }
 
 // ========== Future Feature: Decorator-Specific Transport Isolation ==========

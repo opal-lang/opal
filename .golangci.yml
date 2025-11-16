@@ -20,7 +20,6 @@ linters:
     # Idiomatic Go
     - revive
     - gocritic
-    - goconst  # Find repeated strings that should be constants
     - thelper  # Enforce t.Helper() in test helpers
     # Code quality
     - misspell

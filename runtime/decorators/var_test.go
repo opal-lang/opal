@@ -67,7 +67,7 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 	d := &VarDecorator{}
 
 	// Create Vault and declare variables
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	nameID := v.DeclareVariable("name", "literal:Alice")
 	v.MarkResolved(nameID, "Alice")
 	v.RecordReference(nameID, "value") // Authorize access at root/params/value
@@ -105,7 +105,7 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 func TestVarDecoratorResolveInt(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	countID := v.DeclareVariable("count", "literal:42")
 	v.MarkResolved(countID, "42")
 	v.RecordReference(countID, "value") // Authorize access
@@ -136,7 +136,7 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 func TestVarDecoratorResolveBool(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	flagID := v.DeclareVariable("flag", "literal:true")
 	v.MarkResolved(flagID, "true")
 	v.RecordReference(flagID, "value") // Authorize access
@@ -167,7 +167,7 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 func TestVarDecoratorResolveNotFound(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	nameID := v.DeclareVariable("name", "literal:Alice")
 	v.MarkResolved(nameID, "Alice")
 
@@ -205,7 +205,7 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),
 		Vault:   v,
@@ -239,7 +239,7 @@ func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 func TestVarDecoratorTransportAgnostic(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New()
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 	valueID := v.DeclareVariable("value", "literal:local")
 	v.MarkResolved(valueID, "local")
 	v.RecordReference(valueID, "value") // Authorize access
@@ -274,7 +274,7 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 func TestVarDecoratorEmptyVars(t *testing.T) {
 	d := &VarDecorator{}
 
-	v := vault.New() // Empty vault
+	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!")) // Empty vault
 
 	ctx := decorator.ValueEvalContext{
 		Session: decorator.NewLocalSession(),

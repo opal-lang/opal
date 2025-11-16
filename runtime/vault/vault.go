@@ -715,6 +715,11 @@ func (v *Vault) Access(exprID, paramName string) (any, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	// 0. Security: Require planKey for authorization checks
+	// Without planKey, all sites have SiteID="" which bypasses authorization
+	invariant.Precondition(len(v.planKey) > 0,
+		"Access() requires planKey for security - use NewWithPlanKey() instead of New()")
+
 	// 1. Get expression
 	expr, exists := v.expressions[exprID]
 	if !exists {
