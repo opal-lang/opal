@@ -337,8 +337,8 @@ func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error
 ```
 
 **Safe operations (always available):**
-- `handle.ID()` - Opaque display ID: `opal:s:3J98t56A`
-- `handle.IDWithEmoji()` - Display with emoji: `🔒 opal:s:3J98t56A`
+- `handle.ID()` - Opaque display ID: `opal:3J98t56A`
+- `handle.IDWithEmoji()` - Display with emoji: `🔒 opal:3J98t56A`
 - `handle.Mask(3)` - Masked display: `abc***xyz`
 - `handle.Len()` - Length without exposing value
 - `handle.Equal(other)` - Constant-time comparison
@@ -771,7 +771,7 @@ Even though "Fast" completes first, final output is reordered by step ID for det
 **Logical order** (outside to inside):
 1. **Time constraints**: `@timeout`
 2. **Error handling**: `@retry`
-3. **Control flow**: `@parallel`, `@when`
+3. **Control flow**: `@parallel`
 4. **Logging/monitoring**: `@log`
 5. **Execution**: shell commands, `@cmd`
 
@@ -1032,7 +1032,7 @@ type ExecutionContext interface {
 
 Decorators have **no direct access to I/O streams**. All output flows through the executor which:
 1. Maintains a registry of secret values from value decorator resolutions
-2. Automatically replaces secret values with plan placeholders: `opal:s:ID`
+2. Automatically replaces secret values with plan placeholders: `opal:ID`
 3. Ensures audit trail shows which secrets were used without exposing values
 
 This prevents decorators from accidentally (or maliciously) leaking secrets.

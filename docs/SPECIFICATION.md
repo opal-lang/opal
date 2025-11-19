@@ -1023,7 +1023,7 @@ opal deploy --dry-run
 deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=¹@aws.secret("api-token")
-└─ @if(ENV == "production")
+└─ if ENV == "production" -> true
    └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 
 Deferred Values:
@@ -1050,7 +1050,7 @@ opal deploy --dry-run --resolve > prod.plan
 deploy:
 ├─ kubectl apply -f k8s/
 ├─ kubectl create secret --token=🔒 opal:3J98t56A
-└─ @if(ENV == "production")
+└─ if ENV == "production" -> true
    └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 
 Contract Hash: sha256:abc123...
@@ -1058,7 +1058,7 @@ Contract Hash: sha256:abc123...
 
 **Key principles**:
 - All resolved values use `opal:ID` format (security by default)
-- Metaprogramming constructs (`@if`, `@for`, `@when`) show which path was taken
+- Metaprogramming constructs (`if`, `for`, `when`) are shown with `@` prefix in plan output to indicate internal representation
 - Original constructs are preserved for audit trails while showing expanded results
 
 ### Execution Plans (always happens)
@@ -1197,49 +1197,228 @@ Plans show the execution path after metaprogramming expansion using a consistent
 
 ### Metaprogramming Expansion Patterns
 
-**For loops** expand into sequential steps:
+**Control flow visualization**: Meta-programming constructs use "Logic Node" format - they show the evaluation result and only the taken branch. Untaken branches are pruned during planning (variables in them are never resolved).
+
+**Parsing rules for Logic Nodes:**
+- Lines starting with control flow keywords (`if`, `for`, `when`, `try`, `catch`, `finally`) are Logic Nodes
+- Logic Nodes show evaluation results (e.g., `-> true`, `-> matched "production"`)
+- Only taken branches appear in the plan (untaken branches are pruned)
+- Children of Logic Nodes are indented underneath
+
+---
+
+#### If Statements
+
+**Simple if (condition true):**
 ```opal
-// Source: for service in ["api", "worker"] { kubectl apply -f k8s/@var.service/ }
+// Source:
+if @env.ENV == "production" {
+    kubectl scale --replicas=3 deployment/app
+}
 
 // Plan shows:
 deploy:
-└─ @for(service in ["api", "worker"])
-   ├─ kubectl apply -f k8s/api/
-   └─ kubectl apply -f k8s/worker/
-```
-
-**If statements** show the taken branch:
-```opal
-// Source: if ENV == "production" { kubectl scale --replicas=3 }
-
-// Plan shows:
-deploy:
-└─ @if(ENV == "production")
+└─ if ENV == "production" -> true
    └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 ```
 
-**When patterns** show the matched pattern:
+**If/else (condition true):**
 ```opal
-// Source: when ENV { "production" -> kubectl scale --replicas=3; else -> kubectl scale --replicas=1 }
+// Source:
+if @env.ENV == "production" {
+    kubectl scale --replicas=3 deployment/app
+} else {
+    kubectl scale --replicas=1 deployment/app
+}
 
 // Plan shows:
 deploy:
-└─ @when(ENV == "production")
+└─ if ENV == "production" -> true
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+
+// Note: else branch is pruned (not shown)
+```
+
+**If/else (condition false):**
+```opal
+// Source: (same as above, but ENV is "staging")
+
+// Plan shows:
+deploy:
+└─ if ENV == "production" -> false
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+
+// Note: The "then" branch is pruned, "else" branch is shown
+```
+
+**Nested if statements:**
+```opal
+// Source:
+if @env.ENV == "production" {
+    if @env.REGION == "us-east-1" {
+        kubectl scale --replicas=5 deployment/app
+    }
+}
+
+// Plan shows:
+deploy:
+└─ if ENV == "production" -> true
+   └─ if REGION == "us-east-1" -> true
+      └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+```
+
+---
+
+#### For Loops
+
+**Simple for loop:**
+```opal
+// Source:
+for service in ["api", "worker"] {
+    kubectl apply -f k8s/@var.service/
+}
+
+// Plan shows:
+deploy:
+└─ for service in ["api", "worker"]
+   ├─ [i=0] service="api"
+   │  └─ kubectl apply -f k8s/api/
+   └─ [i=1] service="worker"
+      └─ kubectl apply -f k8s/worker/
+```
+
+**For loop with nested if:**
+```opal
+// Source:
+for service in ["api", "worker", "db"] {
+    if @var.service != "db" {
+        kubectl apply -f k8s/@var.service/
+    }
+}
+
+// Plan shows:
+deploy:
+└─ for service in ["api", "worker", "db"]
+   ├─ [i=0] service="api"
+   │  └─ if service != "db" -> true
+   │     └─ kubectl apply -f k8s/api/
+   ├─ [i=1] service="worker"
+   │  └─ if service != "db" -> true
+   │     └─ kubectl apply -f k8s/worker/
+   └─ [i=2] service="db"
+      └─ if service != "db" -> false
+         (no commands - branch pruned)
+```
+
+---
+
+#### When Statements (Pattern Matching)
+
+**When with matched pattern:**
+```opal
+// Source:
+when @env.ENV {
+    "production" -> kubectl scale --replicas=5 deployment/app
+    "staging" -> kubectl scale --replicas=2 deployment/app
+    else -> kubectl scale --replicas=1 deployment/app
+}
+
+// Plan shows (when ENV is "production"):
+deploy:
+└─ when ENV -> matched "production"
+   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+
+// Note: "staging" and "else" branches are pruned
+```
+
+**When with OR patterns:**
+```opal
+// Source:
+when @env.ENV {
+    "production" | "prod" -> kubectl scale --replicas=5 deployment/app
+    "staging" | "stage" -> kubectl scale --replicas=2 deployment/app
+    else -> kubectl scale --replicas=1 deployment/app
+}
+
+// Plan shows (when ENV is "prod"):
+deploy:
+└─ when ENV -> matched "production" | "prod"
    └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 ```
 
-**Try/catch blocks** show all possible paths:
+**When with regex patterns:**
 ```opal
-// Source: try { kubectl apply } catch { kubectl rollout undo } finally { kubectl clean }
+// Source:
+when @env.BRANCH {
+    r"^release/.*" -> kubectl apply -f k8s/prod/
+    r"^feature/.*" -> kubectl apply -f k8s/dev/
+    else -> echo "Unknown branch type"
+}
+
+// Plan shows (when BRANCH is "release/v1.2.3"):
+deploy:
+└─ when BRANCH -> matched r"^release/.*"
+   └─ kubectl apply -f k8s/prod/
+```
+
+---
+
+#### Try/Catch/Finally
+
+**Try/catch blocks are special**: All branches must be planned because exceptions are runtime events (not plan-time).
+
+```opal
+// Source:
+try {
+    kubectl apply -f k8s/deployment.yaml
+    kubectl rollout status deployment/app
+} catch {
+    kubectl rollout undo deployment/app
+    echo "Rollback completed"
+} finally {
+    kubectl delete pod -l job=temp
+}
 
 // Plan shows:
 deploy:
-└─ @try
-   ├─ kubectl apply -f k8s/
-   ├─ @catch
-   │  └─ kubectl rollout undo deployment/app
-   └─ @finally
+└─ try
+   ├─ kubectl apply -f k8s/deployment.yaml
+   ├─ kubectl rollout status deployment/app
+   ├─ catch
+   │  ├─ kubectl rollout undo deployment/app
+   │  └─ echo "Rollback completed"
+   └─ finally
       └─ kubectl delete pod -l job=temp
+
+// Note: All branches shown because exceptions happen at runtime
+```
+
+---
+
+#### Complex Nested Example
+
+```opal
+// Source:
+for env in ["staging", "production"] {
+    if @var.env == "production" {
+        when @env.REGION {
+            "us-east-1" -> kubectl scale --replicas=5 deployment/app
+            "eu-west-1" -> kubectl scale --replicas=3 deployment/app
+            else -> kubectl scale --replicas=1 deployment/app
+        }
+    }
+}
+
+// Plan shows (when REGION is "us-east-1"):
+deploy:
+└─ for env in ["staging", "production"]
+   ├─ [i=0] env="staging"
+   │  └─ if env == "production" -> false
+   │     (no commands - branch pruned)
+   └─ [i=1] env="production"
+      └─ if env == "production" -> true
+         └─ when REGION -> matched "us-east-1"
+            └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
 ```
 
 ### Security and Hash Format

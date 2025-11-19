@@ -149,7 +149,7 @@ kubectl create secret --from-literal=key=@var.API_KEY
 
 **Planner-driven model:**
 - Planner traverses execution graph, marking expressions as touched
-- When planner hits meta-programming blockers (e.g., `@if`), it identifies ALL blockers at same depth
+- When planner hits meta-programming blockers (e.g., `if` statements), it identifies ALL blockers at same depth
 - Planner requests resolution: "I've found all blockers, resolve now"
 - Vault resolves all touched-but-unresolved expressions (batched by decorator)
 - Planner evaluates meta-programming and continues traversing
@@ -1416,12 +1416,12 @@ CommandIR{
 vault.ResolveAllTouched()
 // Marks all touched as resolved, generates DisplayIDs
 
-// Future (with @if, @for): Multiple waves
+// Future (with if, for): Multiple waves
 // Wave 1: Resolve expressions needed for blockers
 vault.MarkTouched("ENV")
 vault.ResolveAllTouched()
 
-// Evaluate blocker: @if(@var.ENV == "prod")
+// Evaluate blocker: if @var.ENV == "prod"
 value, _ := vault.Access("ENV", "condition")
 
 // Wave 2: Resolve expressions in taken branch
@@ -1476,7 +1476,7 @@ echo "Hello, @var.NAME"  # Variable in shell command string
 
 ```opal
 var ENV = "prod"
-@if(@var.ENV == "prod") {  # Variable in condition
+if @var.ENV == "prod" {  # Variable in condition
     echo "Production"
 }
 ```
