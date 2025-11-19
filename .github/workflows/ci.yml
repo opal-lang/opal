@@ -28,9 +28,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v8
+        uses: cachix/install-nix-action@v30
         with:
-          logger: pretty
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1073741824
 
       - name: Check Nix formatting
         run: |
@@ -44,7 +53,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: go.work.sum
 
       - name: Install gofumpt
         run: go install mvdan.cc/gofumpt@latest
@@ -78,7 +87,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: go.work.sum
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
@@ -108,7 +117,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: go.work.sum
 
       - name: Build binary
         env:
@@ -149,7 +158,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1073741824
 
       - name: Test development shell
         run: |
@@ -182,7 +202,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1073741824
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -194,21 +225,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Snapshot fuzz corpus (runtime only)
-        if: matrix.module == 'runtime'
-        run: |
-          set -euo pipefail
-          echo "==> Fuzz corpus snapshot"
-          CORPUS_COUNT=$(find testdata/fuzz -type f 2>/dev/null | wc -l || echo 0)
-          CORPUS_BYTES=$(du -sb testdata/fuzz 2>/dev/null | cut -f1 || echo 0)
-          CORPUS_SIZE=$(du -sh testdata/fuzz 2>/dev/null | cut -f1 || echo "0")
-          echo "Corpus files: $CORPUS_COUNT"
-          echo "Corpus size: $CORPUS_SIZE ($CORPUS_BYTES bytes)"
-          echo "corpus_count=$CORPUS_COUNT" >> $GITHUB_OUTPUT
-          echo "corpus_size=$CORPUS_SIZE" >> $GITHUB_OUTPUT
-          echo "corpus_bytes=$CORPUS_BYTES" >> $GITHUB_OUTPUT
-        id: corpus_snapshot
-
       - name: Run module tests
         run: |
           set -euo pipefail
@@ -217,11 +233,6 @@ jobs:
             cd ${{ matrix.module }}
             go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./...
           '
-          if [ "${{ matrix.module }}" = "runtime" ]; then
-            echo ""
-            echo "==> Corpus replay complete"
-            echo "All fuzz corpus files validated (count: ${{ steps.corpus_snapshot.outputs.corpus_count }})"
-          fi
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -253,9 +264,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
 
       - name: Download all coverage reports
         uses: actions/download-artifact@v4
@@ -377,14 +385,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: go.work.sum
 
       - name: Get version from tag
         id: version
