@@ -45,7 +45,7 @@ func validateUint16(value int, fieldName string) error {
 }
 
 // Write writes a plan to w and returns the 32-byte file hash (BLAKE2b-256).
-// The plan is canonicalized before writing to ensure deterministic output.
+// Sorts args and SecretUses before writing to ensure deterministic output.
 func Write(w io.Writer, p *Plan) ([32]byte, error) {
 	wr := &Writer{w: w}
 	return wr.WritePlan(p)
@@ -60,45 +60,35 @@ type Writer struct {
 // Format: MAGIC(4) | VERSION(2) | FLAGS(2) | HEADER_LEN(4) | BODY_LEN(8) | HEADER | BODY
 //
 // Returns the BLAKE2b-256 hash of target + body (execution semantics only).
-// Header metadata (SchemaID, CreatedAt, Compiler) is NOT included in the hash
-// to ensure contract stability. Only execution semantics affect the hash:
-//   - Target: which function to execute
-//   - Body: the steps to execute
-//
-// This means you can set CreatedAt timestamps, compiler versions, etc. without
-// invalidating contracts.
+// Metadata (SchemaID, CreatedAt, Compiler) excluded from hash to allow
+// timestamp/version updates without invalidating contracts.
 func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
-	// Sort args for deterministic encoding (preserves command order)
+	// Sort for deterministic encoding (defense in depth - protects against manual Plan construction)
 	p.sortArgs()
+	p.sortSecretUses()
 
-	// Use buffer-then-write pattern: build header and body first, then write preamble with correct lengths
+	// Buffer first to compute lengths for preamble
 	var headerBuf, bodyBuf bytes.Buffer
 
-	// Build header in buffer
 	if err := wr.writeHeader(&headerBuf, p); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Build body in buffer
 	if err := wr.writeBody(&bodyBuf, p); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Compute hash of target + body (execution semantics only, not metadata)
-	// Target is part of execution semantics (which function to run)
-	// Metadata (SchemaID, CreatedAt, Compiler) is excluded from hash
+	// Hash target + body only (metadata excluded to allow timestamp/version changes)
 	hasher, err := blake2b.New256(nil)
 	if err != nil {
 		return [32]byte{}, err
 	}
 
-	// Hash target (execution semantic)
 	targetBytes := []byte(p.Target)
 	if _, err := hasher.Write(targetBytes); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Hash body (execution semantics)
 	if _, err := hasher.Write(bodyBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
@@ -106,7 +96,6 @@ func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 	var digest [32]byte
 	copy(digest[:], hasher.Sum(nil))
 
-	// Write preamble
 	var preambleBuf bytes.Buffer
 	if err := wr.writePreambleToBuffer(&preambleBuf, uint32(headerBuf.Len()), uint64(bodyBuf.Len())); err != nil {
 		return [32]byte{}, err
@@ -115,12 +104,10 @@ func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 		return [32]byte{}, err
 	}
 
-	// Write header (metadata only, not in hash)
 	if _, err := wr.w.Write(headerBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
 
-	// Write body (this is what was hashed)
 	if _, err := wr.w.Write(bodyBuf.Bytes()); err != nil {
 		return [32]byte{}, err
 	}
@@ -140,18 +127,15 @@ func (wr *Writer) writePreambleToBuffer(buf *bytes.Buffer, headerLen uint32, bod
 		return err
 	}
 
-	// Flags (2 bytes, little-endian)
 	flags := Flags(0) // No compression, no signature
 	if err := binary.Write(buf, binary.LittleEndian, uint16(flags)); err != nil {
 		return err
 	}
 
-	// Header length (4 bytes, uint32, little-endian)
 	if err := binary.Write(buf, binary.LittleEndian, headerLen); err != nil {
 		return err
 	}
 
-	// Body length (8 bytes, uint64, little-endian)
 	return binary.Write(buf, binary.LittleEndian, bodyLen)
 }
 
@@ -216,19 +200,17 @@ func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
 		}
 	}
 
-	// Write PlanSalt (32 bytes, fixed size, or all zeros if not set)
+	// PlanSalt: 32 bytes fixed (zeros if unset for backward compatibility)
 	var salt [32]byte
 	if len(p.PlanSalt) == 32 {
 		copy(salt[:], p.PlanSalt)
 	} else if len(p.PlanSalt) != 0 {
 		return fmt.Errorf("PlanSalt must be 32 bytes or empty, got %d", len(p.PlanSalt))
 	}
-	// Write 32 bytes (zeros if PlanSalt not set, for backward compatibility)
 	if _, err := buf.Write(salt[:]); err != nil {
 		return err
 	}
 
-	// Write SecretUses count (2 bytes, uint16)
 	if err := validateUint16(len(p.SecretUses), "secret uses count"); err != nil {
 		return err
 	}
@@ -237,7 +219,6 @@ func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
 		return err
 	}
 
-	// Write each SecretUse
 	for i := range p.SecretUses {
 		if err := wr.writeSecretUse(buf, &p.SecretUses[i]); err != nil {
 			return err

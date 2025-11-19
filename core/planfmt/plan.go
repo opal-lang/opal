@@ -168,6 +168,19 @@ func (p *Plan) sortArgs() {
 	}
 }
 
+// sortSecretUses sorts SecretUses by (DisplayID, Site) for deterministic binary encoding.
+// Ensures contract hashes are stable regardless of how SecretUses were added to the plan.
+func (p *Plan) sortSecretUses() {
+	if len(p.SecretUses) > 1 {
+		sort.Slice(p.SecretUses, func(i, j int) bool {
+			if p.SecretUses[i].DisplayID != p.SecretUses[j].DisplayID {
+				return p.SecretUses[i].DisplayID < p.SecretUses[j].DisplayID
+			}
+			return p.SecretUses[i].Site < p.SecretUses[j].Site
+		})
+	}
+}
+
 // validate checks step invariants recursively
 func (s *Step) validate(seen map[uint64]bool) error {
 	// Check ID uniqueness

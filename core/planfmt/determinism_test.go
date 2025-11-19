@@ -285,3 +285,86 @@ func TestCanonicalCommandOrder(t *testing.T) {
 	// 	t.Errorf("Child order not preserved: different child orders produced identical hashes")
 	// }
 }
+
+// TestSecretUsesOrderDeterministic verifies that SecretUses are always sorted
+// in the same order regardless of declaration order (critical for contract verification).
+// This test ensures block scoping doesn't introduce non-determinism.
+func TestSecretUsesOrderDeterministic(t *testing.T) {
+	// Plan with SecretUses in order A, B, C
+	p1 := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+					},
+				},
+			},
+		},
+		SecretUses: []planfmt.SecretUse{
+			{DisplayID: "opal:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "opal:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
+			{DisplayID: "opal:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
+		},
+		PlanSalt: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+	}
+
+	// Same plan with SecretUses in order C, A, B (should produce identical bytes after canonicalization)
+	p2 := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo test"}},
+					},
+				},
+			},
+		},
+		SecretUses: []planfmt.SecretUse{
+			{DisplayID: "opal:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
+			{DisplayID: "opal:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "opal:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
+		},
+		PlanSalt: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+	}
+
+	// Write both plans
+	var buf1, buf2 bytes.Buffer
+	hash1, err1 := planfmt.Write(&buf1, p1)
+	hash2, err2 := planfmt.Write(&buf2, p2)
+
+	if err1 != nil {
+		t.Fatalf("Write p1 failed: %v", err1)
+	}
+	if err2 != nil {
+		t.Fatalf("Write p2 failed: %v", err2)
+	}
+
+	// Verify bytes are identical (SecretUses sorted during canonicalization)
+	bytes1 := buf1.Bytes()
+	bytes2 := buf2.Bytes()
+
+	if !bytes.Equal(bytes1, bytes2) {
+		t.Errorf("Non-deterministic SecretUses encoding: different orders produced different bytes\n"+
+			"  p1 length: %d bytes\n"+
+			"  p2 length: %d bytes\n"+
+			"  This means SecretUses are not being sorted before encoding!",
+			len(bytes1), len(bytes2))
+	}
+
+	// Verify hashes match
+	if hash1 != hash2 {
+		t.Errorf("Non-deterministic hashes: different SecretUses orders produced different hashes\n"+
+			"  p1 hash: %x\n"+
+			"  p2 hash: %x",
+			hash1, hash2)
+	}
+
+	t.Logf("✓ SecretUses order is deterministic (sorted during canonicalization)")
+}
