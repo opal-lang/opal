@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/core/sdk/executor"
+	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/sdk/executor"
 )
 
 // TestExecutionContext is a realistic test implementation of sdk.ExecutionContext.

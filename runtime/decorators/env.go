@@ -3,9 +3,9 @@ package decorators
 import (
 	"fmt"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/types"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/types"
 )
 
 // EnvDecorator implements the @env value decorator.

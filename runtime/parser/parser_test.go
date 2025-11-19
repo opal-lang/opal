@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/types"
-	"github.com/aledsdavies/opal/runtime/lexer"
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 func init() {

@@ -93,7 +93,7 @@ import (
 	"io/fs"
 	"time"
 
-	"github.com/aledsdavies/opal/core/sdk/executor"
+	"github.com/opal-lang/opal/core/sdk/executor"
 )
 
 // Step represents a unit of work to execute (runtime execution model).

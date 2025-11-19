@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/runtime/executor"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/runtime/executor"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // Helper to create a vault for testing

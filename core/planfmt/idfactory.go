@@ -7,7 +7,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
 
-	"github.com/aledsdavies/opal/core/sdk/secret"
+	"github.com/opal-lang/opal/core/sdk/secret"
 )
 
 // NewPlanIDFactory creates an IDFactory for deterministic DisplayIDs in resolved plans.

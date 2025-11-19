@@ -3,7 +3,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/types"
+	"github.com/opal-lang/opal/core/types"
 )
 
 func init() {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // Format returns a human-readable text representation of the plan.

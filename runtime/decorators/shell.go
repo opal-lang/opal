@@ -7,9 +7,9 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/core/types"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/types"
 )
 
 // ShellDecorator implements the @shell decorator using the new decorator architecture.

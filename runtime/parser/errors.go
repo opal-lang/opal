@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aledsdavies/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // ErrorFormatter formats parse errors for user-friendly output

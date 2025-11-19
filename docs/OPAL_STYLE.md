@@ -233,7 +233,7 @@ if step.ID == 0 {
 ### Use the Invariant Package
 
 ```go
-import "github.com/aledsdavies/opal/runtime/invariant"
+import "github.com/opal-lang/opal/runtime/invariant"
 
 func Process(data []byte) error {
     // Preconditions: what we require from caller

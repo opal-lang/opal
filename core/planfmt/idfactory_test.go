@@ -3,7 +3,7 @@ package planfmt
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/sdk/secret"
+	"github.com/opal-lang/opal/core/sdk/secret"
 	"github.com/stretchr/testify/assert"
 )
 

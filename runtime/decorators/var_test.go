@@ -3,8 +3,8 @@ package decorators
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // resolveSingle is a test helper that calls Resolve with a single call and returns the result.

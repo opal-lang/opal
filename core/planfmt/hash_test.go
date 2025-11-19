@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // TestHashDeterminism verifies that same plan produces same hash

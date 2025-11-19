@@ -3,8 +3,8 @@ package decorator
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/types"
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/types"
 )
 
 // TestParamString_Basic tests basic string parameter creation

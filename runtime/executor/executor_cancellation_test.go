@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aledsdavies/opal/core/sdk"
-	_ "github.com/aledsdavies/opal/runtime/decorators"
+	"github.com/opal-lang/opal/core/sdk"
+	_ "github.com/opal-lang/opal/runtime/decorators"
 	"github.com/stretchr/testify/assert"
 )
 

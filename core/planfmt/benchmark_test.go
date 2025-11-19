@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // Benchmark helpers to generate plans of various sizes

@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/types"
-	"github.com/aledsdavies/opal/runtime/lexer"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // ParseTree represents the result of parsing

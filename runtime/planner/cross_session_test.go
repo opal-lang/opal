@@ -3,8 +3,8 @@ package planner
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/runtime/parser"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/runtime/parser"
 )
 
 // TestLiteralVariablesAreSessionAgnostic verifies that literal values

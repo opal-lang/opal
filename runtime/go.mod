@@ -1,9 +1,9 @@
-module github.com/aledsdavies/opal/runtime
+module github.com/opal-lang/opal/runtime
 
 go 1.25.0
 
 require (
-	github.com/aledsdavies/opal/core v0.0.0-20251105223424-05107dc292f1
+	github.com/opal-lang/opal/core v0.0.0-20251105223424-05107dc292f1
 	github.com/google/go-cmp v0.7.0
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/stretchr/testify v1.11.1

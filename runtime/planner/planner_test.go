@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	"github.com/aledsdavies/opal/runtime/lexer"
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/planner"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/planner"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // Helper: Extract command argument from tree (assumes tree is a CommandNode)

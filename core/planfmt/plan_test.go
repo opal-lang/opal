@@ -3,8 +3,8 @@ package planfmt_test
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // TestPlanValidation verifies plan invariants are checked

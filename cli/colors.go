@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/aledsdavies/opal/core/planfmt/formatter"
+	"github.com/opal-lang/opal/core/planfmt/formatter"
 )
 
 // Re-export color constants from formatter package for convenience

@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	"github.com/aledsdavies/opal/core/planfmt/formatter"
-	"github.com/aledsdavies/opal/runtime/planner"
+	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/planfmt/formatter"
+	"github.com/opal-lang/opal/runtime/planner"
 )
 
 // CLIError represents a formatted CLI error with context

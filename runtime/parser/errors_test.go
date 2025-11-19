@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 func TestErrorFormatterCompact(t *testing.T) {

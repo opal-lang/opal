@@ -3,7 +3,7 @@ package sdk_test
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/sdk"
+	"github.com/opal-lang/opal/core/sdk"
 )
 
 // TestStep_Construction verifies Step can be constructed with a tree

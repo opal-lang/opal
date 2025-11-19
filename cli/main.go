@@ -22,15 +22,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	"github.com/aledsdavies/opal/core/sdk/secret"
-	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
-	"github.com/aledsdavies/opal/runtime/executor"
-	"github.com/aledsdavies/opal/runtime/lexer"
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/planner"
-	"github.com/aledsdavies/opal/runtime/streamscrub"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/sdk/secret"
+	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
+	"github.com/opal-lang/opal/runtime/executor"
+	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/planner"
+	"github.com/opal-lang/opal/runtime/streamscrub"
+	"github.com/opal-lang/opal/runtime/vault"
 	"github.com/spf13/cobra"
 )
 

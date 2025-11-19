@@ -3,7 +3,7 @@ package decorators
 import (
 	"fmt"
 
-	"github.com/aledsdavies/opal/core/decorator"
+	"github.com/opal-lang/opal/core/decorator"
 )
 
 // TimeoutDecorator implements the @timeout execution decorator.

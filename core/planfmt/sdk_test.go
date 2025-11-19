@@ -3,8 +3,8 @@ package planfmt
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/sdk"
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/sdk"
 )
 
 // TestToSDKArgs tests argument conversion

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/aledsdavies/opal/core/invariant"
+	"github.com/opal-lang/opal/core/invariant"
 )
 
 // MockTransport is a test transport that records all operations and allows

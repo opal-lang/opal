@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/runtime/streamscrub"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/runtime/streamscrub"
+	"github.com/opal-lang/opal/runtime/vault"
 	"github.com/spf13/cobra"
 )
 

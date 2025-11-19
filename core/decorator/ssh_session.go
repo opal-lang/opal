@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/aledsdavies/opal/core/invariant"
+	"github.com/opal-lang/opal/core/invariant"
 )
 
 // SSHSession implements Session for remote command execution over SSH.

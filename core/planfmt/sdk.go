@@ -5,9 +5,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/core/types"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/types"
 )
 
 // ToSDKSteps converts planfmt.Step slice to sdk.Step slice.

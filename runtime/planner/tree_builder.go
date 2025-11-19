@@ -1,8 +1,8 @@
 package planner
 
 import (
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // buildStepTree converts flat command list to operator precedence tree.

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aledsdavies/opal/core/sdk"
-	sdktesting "github.com/aledsdavies/opal/core/sdk/testing"
+	"github.com/opal-lang/opal/core/sdk"
+	sdktesting "github.com/opal-lang/opal/core/sdk/testing"
 )
 
 // TestNewTestContext verifies realistic defaults

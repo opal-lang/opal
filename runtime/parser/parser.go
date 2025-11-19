@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/types"
-	"github.com/aledsdavies/opal/runtime/lexer"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // Parse parses the input bytes and returns a parse tree

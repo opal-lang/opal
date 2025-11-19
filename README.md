@@ -84,7 +84,7 @@ fun migrate = {
 
 ### With Go
 ```bash
-go install github.com/aledsdavies/opal/cli@latest
+go install github.com/opal-lang/opal/cli@latest
 ```
 
 ### With Nix

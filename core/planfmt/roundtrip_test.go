@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // TestRoundTrip verifies that plan → write → read → write produces identical bytes

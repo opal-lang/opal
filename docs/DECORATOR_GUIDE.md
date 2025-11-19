@@ -327,7 +327,7 @@ Opal provides a secure-by-default SDK for building decorators safely.
 All value decorators return `secret.Handle` for automatic scrubbing:
 
 ```go
-import "github.com/aledsdavies/opal/core/sdk/secret"
+import "github.com/opal-lang/opal/core/sdk/secret"
 
 func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error) {
     secretName := ctx.ArgString("secretName")
@@ -355,7 +355,7 @@ func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error
 Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
 
 ```go
-import "github.com/aledsdavies/opal/core/sdk/executor"
+import "github.com/opal-lang/opal/core/sdk/executor"
 
 cmd := executor.Command("kubectl", "get", "pods")
 cmd.AppendEnv(map[string]string{

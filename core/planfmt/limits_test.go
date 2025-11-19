@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // TestDepthLimit verifies that deeply nested plans are rejected

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // ========== Same-Level Shadowing Tests ==========

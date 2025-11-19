@@ -1,6 +1,0 @@
-github.com/aledsdavies/opal/core v0.0.0-20251014231121-eaec6549a855 h1:pOoamS9rLcxJTmDDSdrmPaJ/dNEg/D3ZKIhSkCGxM9U=
-github.com/aledsdavies/opal/core v0.0.0-20251014231121-eaec6549a855/go.mod h1:qu3+J8a1bV3cRvDVaNsFb4nIzqoKitmQcKEbXreiukY=
-github.com/aledsdavies/opal/runtime v0.0.0-20251014231121-eaec6549a855 h1:jAEp2bY2/CIB/NbXlZw+1Pr+ul+ndMLdIoVcUb0/acc=
-github.com/aledsdavies/opal/runtime v0.0.0-20251014231121-eaec6549a855/go.mod h1:Z7NXui2Fqe/WzYfNfuQHUHanLskCdP7HszsGZWpfwcQ=
-github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
-github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=

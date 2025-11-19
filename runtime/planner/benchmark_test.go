@@ -3,8 +3,8 @@ package planner_test
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/planner"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/planner"
 )
 
 // BenchmarkPlannerCore measures plan generation performance across complexity levels.

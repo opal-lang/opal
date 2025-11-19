@@ -40,7 +40,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/aledsdavies/opal/core/invariant"
+	"github.com/opal-lang/opal/core/invariant"
 )
 
 // Exit Code Conventions (POSIX-compatible)

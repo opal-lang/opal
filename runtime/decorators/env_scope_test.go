@@ -3,7 +3,7 @@ package decorators
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/decorator"
+	"github.com/opal-lang/opal/core/decorator"
 )
 
 func TestEnvDecoratorTransportScope(t *testing.T) {

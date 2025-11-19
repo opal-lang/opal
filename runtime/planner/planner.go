@@ -8,7 +8,7 @@
 //
 // Import in your main package or test files:
 //
-//	import _ "github.com/aledsdavies/opal/runtime/decorators"
+//	import _ "github.com/opal-lang/opal/runtime/decorators"
 //
 // # Contract Stability
 //
@@ -37,14 +37,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/planfmt"
-	"github.com/aledsdavies/opal/core/sdk/secret"
-	"github.com/aledsdavies/opal/runtime/lexer"
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/vault"
 	"github.com/lithammer/fuzzysearch/fuzzy"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/opal-lang/opal/core/sdk/secret"
+	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // Command represents a single decorator invocation during planning (internal type).

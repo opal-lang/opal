@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/planfmt"
+	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
+	"github.com/opal-lang/opal/runtime/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

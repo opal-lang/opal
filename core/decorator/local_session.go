@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/aledsdavies/opal/core/invariant"
+	"github.com/opal-lang/opal/core/invariant"
 )
 
 const osWindows = "windows"

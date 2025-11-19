@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/aledsdavies/opal/runtime/streamscrub"
+	"github.com/opal-lang/opal/runtime/streamscrub"
 )
 
 // TestSecretProvider_VariableDeclaration tests that variables declared in Vault

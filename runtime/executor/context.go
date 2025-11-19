@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/sdk"
-	sdkexec "github.com/aledsdavies/opal/core/sdk/executor"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/sdk"
+	sdkexec "github.com/opal-lang/opal/core/sdk/executor"
 )
 
 // executionContext implements sdk.ExecutionContext

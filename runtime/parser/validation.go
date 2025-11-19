@@ -3,8 +3,8 @@ package parser
 import (
 	"fmt"
 
-	"github.com/aledsdavies/opal/core/types"
-	"github.com/aledsdavies/opal/runtime/lexer"
+	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // ExecutionMode represents the context in which Opal code is executed

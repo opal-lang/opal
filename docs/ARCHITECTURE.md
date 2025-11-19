@@ -3301,7 +3301,7 @@ value, err := vault.Access(exprID, paramName)
 Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
 
 ```go
-import "github.com/aledsdavies/opal/core/sdk/executor"
+import "github.com/opal-lang/opal/core/sdk/executor"
 
 cmd := executor.Command("kubectl", "get", "pods")
 cmd.AppendEnv(map[string]string{

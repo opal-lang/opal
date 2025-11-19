@@ -3,10 +3,10 @@ package parser
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/types"
-	_ "github.com/aledsdavies/opal/runtime/decorators" // Register built-in decorators
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
+	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
 )
 
 // Test decorator implementations for parser tests

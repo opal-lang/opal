@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
-	_ "github.com/aledsdavies/opal/runtime/decorators"
-	"github.com/aledsdavies/opal/runtime/executor"
-	"github.com/aledsdavies/opal/runtime/lexer"
-	"github.com/aledsdavies/opal/runtime/parser"
-	"github.com/aledsdavies/opal/runtime/planner"
+	"github.com/opal-lang/opal/core/planfmt"
+	_ "github.com/opal-lang/opal/runtime/decorators"
+	"github.com/opal-lang/opal/runtime/executor"
+	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/opal-lang/opal/runtime/planner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

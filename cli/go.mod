@@ -1,10 +1,10 @@
-module github.com/aledsdavies/opal/cli
+module github.com/opal-lang/opal/cli
 
 go 1.25.0
 
 require (
-	github.com/aledsdavies/opal/core v0.0.0-20251105223424-05107dc292f1
-	github.com/aledsdavies/opal/runtime v0.0.0-00010101000000-000000000000
+	github.com/opal-lang/opal/core v0.0.0-20251105223424-05107dc292f1
+	github.com/opal-lang/opal/runtime v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 )
@@ -25,6 +25,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/aledsdavies/opal/runtime => ../runtime
+replace github.com/opal-lang/opal/runtime => ../runtime
 
-replace github.com/aledsdavies/opal/core => ../core
+replace github.com/opal-lang/opal/core => ../core

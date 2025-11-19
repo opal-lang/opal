@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/runtime/streamscrub"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/runtime/streamscrub"
 )
 
 // Vault manages variable scoping and secret tracking with site-based access control.

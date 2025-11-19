@@ -45,8 +45,8 @@ The runtime provides a unified decorator system where:
 ## Usage
 
 ```go
-import "github.com/aledsdavies/opal/runtime/execution"
-import "github.com/aledsdavies/opal/runtime/decorators"
+import "github.com/opal-lang/opal/runtime/execution"
+import "github.com/opal-lang/opal/runtime/decorators"
 
 // Register a new decorator
 decorators.RegisterFunction(&MyDecorator{})

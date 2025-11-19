@@ -3,9 +3,9 @@ package planner
 import (
 	"testing"
 
-	"github.com/aledsdavies/opal/core/planfmt"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // TestBuildStepTree tests tree building from flat command lists

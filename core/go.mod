@@ -1,4 +1,4 @@
-module github.com/aledsdavies/opal/core
+module github.com/opal-lang/opal/core
 
 go 1.25.0
 

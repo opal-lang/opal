@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aledsdavies/opal/core/decorator"
+	"github.com/opal-lang/opal/core/decorator"
 )
 
 // TestShellDecorator_NewArch_SimpleCommand tests basic command execution with new architecture

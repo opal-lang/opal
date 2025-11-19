@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aledsdavies/opal/core/decorator"
-	"github.com/aledsdavies/opal/core/invariant"
-	"github.com/aledsdavies/opal/core/sdk"
-	"github.com/aledsdavies/opal/core/types"
-	"github.com/aledsdavies/opal/runtime/vault"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/invariant"
+	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // Config configures the executor

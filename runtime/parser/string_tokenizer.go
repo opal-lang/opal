@@ -1,6 +1,6 @@
 package parser
 
-import "github.com/aledsdavies/opal/core/decorator"
+import "github.com/opal-lang/opal/core/decorator"
 
 // StringPart represents a part of an interpolated string using byte offsets (zero allocation)
 type StringPart struct {
