@@ -159,3 +159,119 @@ func (m *MonitoredTransport) Open(parent Session, params map[string]any) (Sessio
 func (m *MonitoredTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return m.wrapped.Wrap(next, params)
 }
+
+// ========== TestTransport ==========
+
+// TestTransport is a mock transport decorator for testing transport boundaries.
+// It creates a transport boundary without actually connecting to anything.
+// The transport scope is derived from the name prefix (ssh:, docker:, etc.).
+type TestTransport struct {
+	name string // e.g., "ssh:test-server", "docker:container1"
+}
+
+// NewTestTransport creates a new test transport with the given name.
+// The name determines the transport scope:
+//   - "ssh:*" → TransportScopeSSH
+//   - "docker:*", "k8s:*" → TransportScopeRemote
+//   - "local" → TransportScopeLocal
+//   - anything else → TransportScopeRemote
+func NewTestTransport(name string) *TestTransport {
+	return &TestTransport{name: name}
+}
+
+// Descriptor returns the decorator metadata.
+func (t *TestTransport) Descriptor() Descriptor {
+	return NewDescriptor("test.transport").
+		Summary("Test transport for boundary testing").
+		Roles(RoleBoundary).
+		Block(BlockRequired).
+		Build()
+}
+
+// Open creates a new session with the transport's scope.
+// The session delegates all operations to the parent but reports
+// a different TransportScope and ID.
+func (t *TestTransport) Open(parent Session, params map[string]any) (Session, error) {
+	return &testTransportSession{
+		parent: parent,
+		name:   t.name,
+		scope:  t.deriveScope(),
+	}, nil
+}
+
+// Wrap implements the Exec interface for transport decorators.
+// For TestTransport, this is a no-op that just passes through.
+func (t *TestTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
+	return next
+}
+
+// deriveScope determines the TransportScope from the transport name.
+func (t *TestTransport) deriveScope() TransportScope {
+	switch {
+	case t.name == "local":
+		return TransportScopeLocal
+	case len(t.name) >= 4 && t.name[:4] == "ssh:":
+		return TransportScopeSSH
+	default:
+		// docker:, k8s:, or anything else is remote
+		return TransportScopeRemote
+	}
+}
+
+// testTransportSession wraps a parent session with a different transport scope.
+// All operations delegate to the parent, but TransportScope() and ID() return
+// the transport's values.
+type testTransportSession struct {
+	parent Session
+	name   string
+	scope  TransportScope
+}
+
+func (s *testTransportSession) Run(ctx context.Context, argv []string, opts RunOpts) (Result, error) {
+	return s.parent.Run(ctx, argv, opts)
+}
+
+func (s *testTransportSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.parent.Put(ctx, data, path, mode)
+}
+
+func (s *testTransportSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.parent.Get(ctx, path)
+}
+
+func (s *testTransportSession) Env() map[string]string {
+	return s.parent.Env()
+}
+
+func (s *testTransportSession) WithEnv(delta map[string]string) Session {
+	return &testTransportSession{
+		parent: s.parent.WithEnv(delta),
+		name:   s.name,
+		scope:  s.scope,
+	}
+}
+
+func (s *testTransportSession) WithWorkdir(dir string) Session {
+	return &testTransportSession{
+		parent: s.parent.WithWorkdir(dir),
+		name:   s.name,
+		scope:  s.scope,
+	}
+}
+
+func (s *testTransportSession) Cwd() string {
+	return s.parent.Cwd()
+}
+
+func (s *testTransportSession) ID() string {
+	return s.name
+}
+
+func (s *testTransportSession) TransportScope() TransportScope {
+	return s.scope
+}
+
+func (s *testTransportSession) Close() error {
+	// Don't close parent - we don't own it
+	return nil
+}

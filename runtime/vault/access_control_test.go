@@ -55,8 +55,8 @@ func containsString(s, substr string) bool {
 func TestAccess_AuthorizedSite_DifferentTransport_FailsWithTransportError(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// GIVEN: @env expression resolved in local transport
-	exprID := v.DeclareVariable("LOCAL_TOKEN", "@env.TOKEN")
+	// GIVEN: @env expression resolved in local transport (transport-sensitive)
+	exprID := v.DeclareVariableTransportSensitive("LOCAL_TOKEN", "@env.TOKEN")
 	v.MarkTouched(exprID)
 	v.StoreUnresolvedValue(exprID, "secret-value")
 	v.ResolveAllTouched()
@@ -384,15 +384,14 @@ func TestAccess_NoPlanKey_PanicsForSecurity(t *testing.T) {
 	v.Access(exprID, "command") // Should panic
 }
 
-// ========== Future Feature: Decorator-Specific Transport Isolation ==========
+// ========== Transport-Agnostic Expressions Can Cross Boundaries ==========
 
-func TestAccess_NonEnvDecorator_CrossesTransportBoundary(t *testing.T) {
-	t.Skip("TODO: Implement decorator-level transport isolation capability")
-
+func TestAccess_TransportAgnostic_CrossesTransportBoundary(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// GIVEN: Non-@env expression (e.g., @var) resolved in local transport
-	exprID := v.DeclareVariable("API_KEY", "sk-secret-123")
+	// GIVEN: Transport-agnostic expression (e.g., @var) resolved in local transport
+	// Note: DeclareVariable() defaults to TransportSensitive: false
+	exprID := v.DeclareVariable("API_KEY", "@var.API_KEY")
 	v.MarkTouched(exprID)
 	v.StoreUnresolvedValue(exprID, "sk-secret-123")
 	v.ResolveAllTouched()
@@ -406,11 +405,9 @@ func TestAccess_NonEnvDecorator_CrossesTransportBoundary(t *testing.T) {
 	v.EnterTransport("ssh:remote")
 
 	value, err := v.Access(exprID, "command")
-	// THEN: Should succeed (non-@env can cross transport boundaries)
-	// This will fail with current implementation - transport isolation is global
-	// Need to implement decorator-level capability system
+	// THEN: Should succeed (transport-agnostic expressions can cross boundaries)
 	if err != nil {
-		t.Errorf("Access() for non-@env should succeed across transports, got: %v", err)
+		t.Errorf("Access() for transport-agnostic expression should succeed across transports, got: %v", err)
 	}
 	if value != "sk-secret-123" {
 		t.Errorf("Access() = %q, want %q", value, "sk-secret-123")
