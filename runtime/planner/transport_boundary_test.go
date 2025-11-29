@@ -31,12 +31,9 @@ func planSource(t *testing.T, source string) *planfmt.Plan {
 // - Transport-sensitive decorators (@env) cannot cross boundaries
 // - Transport-agnostic decorators (@var) can cross boundaries
 // - Transport decorators create boundaries via EnterTransport/ExitTransport
-
-func init() {
-	// Register TestTransport for testing
-	transport := decorator.NewTestTransport("ssh:test-server")
-	_ = decorator.Register("test.transport", transport)
-}
+//
+// NOTE: @test.transport is registered in runtime/decorators/test_transport.go
+// which is imported via the blank import of runtime/decorators above.
 
 // TestTransportBoundary_IsTransportDecorator verifies the helper function
 func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
@@ -66,13 +63,14 @@ func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
 	}
 }
 
-// TestTransportBoundary_VaultEnterExitCalled verifies that transport decorators
-// trigger EnterTransport/ExitTransport calls on the vault.
-func TestTransportBoundary_VaultEnterExitCalled(t *testing.T) {
-	// This test verifies the planner correctly calls vault transport methods.
-	// We can't easily test this without a mock vault, but we can verify
-	// the isTransportDecorator logic works correctly.
-
+// TestTransportBoundary_DecoratorRecognition verifies that isTransportDecorator
+// correctly identifies transport decorators vs non-transport decorators.
+//
+// NOTE: This only tests decorator recognition logic, not actual vault calls.
+// The vault EnterTransport/ExitTransport calls are tested indirectly via
+// TestTransportBoundary_EnvBlockedAcrossBoundary which fails if boundaries
+// aren't enforced.
+func TestTransportBoundary_DecoratorRecognition(t *testing.T) {
 	p := &planner{}
 
 	// Verify test.transport is recognized as a transport decorator
@@ -150,22 +148,33 @@ func TestTransportBoundary_EnvInCommandIsTransportSensitive(t *testing.T) {
 
 	plan := planSource(t, source)
 
-	// The plan should have SecretUses for @env.HOME
-	if len(plan.SecretUses) == 0 {
-		t.Fatal("Expected SecretUses for @env.HOME, got none")
+	// Must have exactly one SecretUse for @env.HOME
+	if len(plan.SecretUses) != 1 {
+		t.Fatalf("Expected exactly 1 SecretUse for @env.HOME, got %d", len(plan.SecretUses))
 	}
 
-	// Verify the expression is tracked (we can't directly check TransportSensitive
-	// from outside the vault, but we can verify the planner processed @env)
-	found := false
-	for _, use := range plan.SecretUses {
-		if use.Site != "" {
-			found = true
-			break
-		}
+	use := plan.SecretUses[0]
+
+	// Verify the Site is non-empty (proves expression was tracked)
+	if use.Site == "" {
+		t.Error("SecretUse.Site should not be empty")
 	}
-	if !found {
-		t.Error("Expected @env.HOME to be tracked in SecretUses")
+
+	// Verify the Site contains the expected path components
+	// Site format: "root/step-N/params/command" or similar
+	if !strings.Contains(use.Site, "step-") {
+		t.Errorf("SecretUse.Site should contain step path, got: %s", use.Site)
+	}
+	if !strings.Contains(use.Site, "command") {
+		t.Errorf("SecretUse.Site should contain 'command' param, got: %s", use.Site)
+	}
+
+	// Verify DisplayID is set (proves expression was resolved)
+	if use.DisplayID == "" {
+		t.Error("SecretUse.DisplayID should not be empty")
+	}
+	if !strings.HasPrefix(use.DisplayID, "opal:") {
+		t.Errorf("SecretUse.DisplayID should have opal: prefix, got: %s", use.DisplayID)
 	}
 }
 

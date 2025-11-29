@@ -390,12 +390,12 @@ func (v *Vault) declareVariableAt(name, raw, scopePath string, transportSensitiv
 		}
 	} else {
 		// Expression already exists - this can happen with expression deduplication.
-		// If we're trying to set TransportSensitive=true but it's currently false,
-		// that's a bug: the expression was created elsewhere without proper sensitivity.
+		// TransportSensitive must match exactly: conflicting declarations indicate a bug
+		// where the same expression is being tracked with different sensitivity settings.
 		invariant.Invariant(
-			!transportSensitive || existingExpr.TransportSensitive,
-			"expression %q already exists with TransportSensitive=%v, cannot set to %v",
-			exprID, existingExpr.TransportSensitive, transportSensitive,
+			transportSensitive == existingExpr.TransportSensitive,
+			"expression %q (exprID=%s) already exists with TransportSensitive=%v, conflicting declaration has TransportSensitive=%v",
+			raw, exprID, existingExpr.TransportSensitive, transportSensitive,
 		)
 	}
 
@@ -426,7 +426,7 @@ func (v *Vault) trackExpressionInternal(raw string, transportSensitive bool) str
 	exprID := v.generateExprID(raw)
 
 	// Store expression if not already tracked
-	if _, exists := v.expressions[exprID]; !exists {
+	if existingExpr, exists := v.expressions[exprID]; !exists {
 		// DisplayID will be generated in ResolveAllTouched() when we have the actual value
 		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
 		// DeclaredTransport captures the transport context NOW (at declaration time)
@@ -436,6 +436,13 @@ func (v *Vault) trackExpressionInternal(raw string, transportSensitive bool) str
 			TransportSensitive: transportSensitive,
 			DeclaredTransport:  v.currentTransport,
 		}
+	} else {
+		// Expression already exists - TransportSensitive must match exactly
+		invariant.Invariant(
+			transportSensitive == existingExpr.TransportSensitive,
+			"expression %q (exprID=%s) already exists with TransportSensitive=%v, conflicting declaration has TransportSensitive=%v",
+			raw, exprID, existingExpr.TransportSensitive, transportSensitive,
+		)
 	}
 
 	return exprID

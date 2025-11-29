@@ -2086,9 +2086,9 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 
 		fullPattern := command[decoratorStart:decoratorEnd]
 
-		// Split into decorator name and property (e.g., "var.NAME" -> "var", "NAME")
-		parts := strings.SplitN(fullPattern, ".", 2)
-		if len(parts) != 2 {
+		// Split into parts (e.g., "aws.secret.API_KEY" -> ["aws", "secret", "API_KEY"])
+		allParts := strings.Split(fullPattern, ".")
+		if len(allParts) < 2 {
 			// No dot - not a valid decorator pattern, treat as literal
 			ir.Parts = append(ir.Parts, CommandPart{
 				Kind: PartLiteral,
@@ -2098,11 +2098,32 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 			continue
 		}
 
-		decoratorName := parts[0]
-		propertyName := parts[1]
+		// Find the decorator by trying progressively shorter paths (most specific first).
+		// For @aws.secret.API_KEY, try:
+		//   1. "aws.secret.API_KEY" (full path)
+		//   2. "aws.secret" with primary="API_KEY" ✓
+		//   3. "aws" with primary="secret" (if aws.secret not found)
+		var decoratorName string
+		var propertyName string
+		for splitPoint := len(allParts); splitPoint > 0; splitPoint-- {
+			candidatePath := strings.Join(allParts[:splitPoint], ".")
+			_, found := decorator.Global().Lookup(candidatePath)
+			if found {
+				remainingSegments := len(allParts) - splitPoint
+				if remainingSegments > 1 {
+					// Too many segments after decorator name - not a valid pattern
+					break
+				}
+				decoratorName = candidatePath
+				if remainingSegments == 1 {
+					propertyName = allParts[splitPoint]
+				}
+				break
+			}
+		}
 
-		if propertyName == "" {
-			// Empty property name - treat as literal
+		if decoratorName == "" || propertyName == "" {
+			// No matching decorator found or no property - treat as literal
 			ir.Parts = append(ir.Parts, CommandPart{
 				Kind: PartLiteral,
 				Text: command[pos:decoratorEnd],
