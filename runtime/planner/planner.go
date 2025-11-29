@@ -1910,6 +1910,11 @@ func (p *planner) parseDecoratorValue(varName string) (any, error) {
 // CommandIR preserves temporal binding: each @var.COUNT captures the exprID that was
 // in scope when that specific command was parsed.
 //
+// Handles all decorator patterns:
+//   - @var.X - variable reference, looks up existing variable in vault
+//   - @env.X - direct decorator call, tracks as transport-sensitive expression
+//   - @decorator.X - any other decorator, checks TransportSensitive capability
+//
 // This is Pass 2 - builds IR, captures exprIDs, validates (hoisting check), marks touched.
 func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 	if p.config.Debug >= DebugDetailed {
@@ -1920,13 +1925,13 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 		Parts: make([]CommandPart, 0),
 	}
 
-	// Parse command into parts (literals and variable references)
+	// Parse command into parts (literals and decorator references)
 	i := 0
 	for i < len(command) {
-		// Find next @var.
-		idx := strings.Index(command[i:], "@var.")
+		// Find next @ (start of any decorator pattern)
+		idx := strings.Index(command[i:], "@")
 		if idx == -1 {
-			// No more @var patterns - rest is literal
+			// No more @ patterns - rest is literal
 			if i < len(command) {
 				ir.Parts = append(ir.Parts, CommandPart{
 					Kind: PartLiteral,
@@ -1939,7 +1944,7 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 		// Absolute position in command
 		pos := i + idx
 
-		// Add literal part before @var (if any)
+		// Add literal part before @ (if any)
 		if pos > i {
 			ir.Parts = append(ir.Parts, CommandPart{
 				Kind: PartLiteral,
@@ -1947,32 +1952,87 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 			})
 		}
 
-		// Extract variable name after @var.
-		varStart := pos + 5 // len("@var.")
-		varEnd := varStart
-		for varEnd < len(command) && (isAlphaNumeric(command[varEnd]) || command[varEnd] == '_') {
-			varEnd++
+		// Extract decorator name after @
+		decoratorStart := pos + 1 // Skip @
+		decoratorEnd := decoratorStart
+
+		// Decorator name can contain dots (e.g., @aws.secret)
+		for decoratorEnd < len(command) && (isAlphaNumeric(command[decoratorEnd]) || command[decoratorEnd] == '_' || command[decoratorEnd] == '.') {
+			decoratorEnd++
 		}
 
-		if varEnd == varStart {
-			return nil, &PlanError{
-				Message: "invalid variable name in decorator",
-				Context: fmt.Sprintf("parsing @var at position %d", pos),
+		if decoratorEnd == decoratorStart {
+			// Lone @ - treat as literal
+			ir.Parts = append(ir.Parts, CommandPart{
+				Kind: PartLiteral,
+				Text: "@",
+			})
+			i = pos + 1
+			continue
+		}
+
+		fullPattern := command[decoratorStart:decoratorEnd]
+
+		// Split into decorator name and property (e.g., "var.NAME" -> "var", "NAME")
+		parts := strings.SplitN(fullPattern, ".", 2)
+		if len(parts) != 2 {
+			// No dot - not a valid decorator pattern, treat as literal
+			ir.Parts = append(ir.Parts, CommandPart{
+				Kind: PartLiteral,
+				Text: command[pos:decoratorEnd],
+			})
+			i = decoratorEnd
+			continue
+		}
+
+		decoratorName := parts[0]
+		propertyName := parts[1]
+
+		if propertyName == "" {
+			// Empty property name - treat as literal
+			ir.Parts = append(ir.Parts, CommandPart{
+				Kind: PartLiteral,
+				Text: command[pos:decoratorEnd],
+			})
+			i = decoratorEnd
+			continue
+		}
+
+		// Handle based on decorator type
+		var exprID string
+		var err error
+
+		if decoratorName == "var" {
+			// @var.X - variable reference, look up in vault
+			exprID, err = p.vault.LookupVariable(propertyName)
+			if err != nil {
+				return nil, fmt.Errorf("variable %q not found: %w", propertyName, err)
 			}
-		}
+		} else {
+			// Other decorators (@env.X, @aws.secret.X, etc.) - resolve and track
+			raw := fmt.Sprintf("@%s.%s", decoratorName, propertyName)
+			transportSensitive := p.isDecoratorTransportSensitive(decoratorName)
 
-		varName := command[varStart:varEnd]
+			// Track expression in vault with correct transport sensitivity
+			if transportSensitive {
+				exprID = p.vault.TrackExpressionTransportSensitive(raw)
+			} else {
+				exprID = p.vault.TrackExpression(raw)
+			}
 
-		// Lookup variable in Vault (captures exprID at this point in time)
-		// This is where hoisting validation happens - if variable not declared yet, error
-		exprID, err := p.vault.LookupVariable(varName)
-		if err != nil {
-			return nil, fmt.Errorf("variable %q not found: %w", varName, err)
+			// Resolve decorator to get actual value
+			value, resolveErr := p.resolveDecoratorInCommand(decoratorName, propertyName)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+
+			// Store resolved value for later interpolation
+			p.vault.StoreUnresolvedValue(exprID, value)
 		}
 
 		// DEBUG: Log captured exprID
 		if p.config.Debug >= DebugDetailed {
-			p.recordDebugEvent("buildCommandIR", fmt.Sprintf("captured exprID=%s for var=%s in command=%s", exprID, varName, command))
+			p.recordDebugEvent("buildCommandIR", fmt.Sprintf("captured exprID=%s for @%s.%s in command=%s", exprID, decoratorName, propertyName, command))
 		}
 
 		// Record reference (authorize this site)
@@ -1983,17 +2043,58 @@ func (p *planner) buildCommandIR(command string) (*CommandIR, error) {
 		// Mark as touched (in execution path)
 		p.vault.MarkTouched(exprID)
 
-		// Add variable reference part with CAPTURED exprID
+		// Add decorator reference part with CAPTURED exprID
 		ir.Parts = append(ir.Parts, CommandPart{
 			Kind:   PartVarRef,
 			ExprID: exprID, // Temporal binding preserved!
 		})
 
-		// Move past this @var
-		i = varEnd
+		// Move past this decorator pattern
+		i = decoratorEnd
 	}
 
 	return ir, nil
+}
+
+// isDecoratorTransportSensitive checks if a decorator has the TransportSensitive capability.
+// Returns true if the decorator is registered and has TransportSensitive=true.
+func (p *planner) isDecoratorTransportSensitive(name string) bool {
+	entry, ok := decorator.Global().Lookup(name)
+	if !ok {
+		return false
+	}
+	return entry.Impl.Descriptor().Capabilities.TransportSensitive
+}
+
+// resolveDecoratorInCommand resolves a decorator used directly in a command.
+// For example: echo "@env.HOME" needs to resolve @env with primary="HOME".
+func (p *planner) resolveDecoratorInCommand(decoratorName, propertyName string) (any, error) {
+	// Build ValueCall for decorator resolution
+	call := decorator.ValueCall{
+		Path:    decoratorName,
+		Primary: &propertyName,
+		Params:  make(map[string]any),
+	}
+
+	// Create evaluation context
+	ctx := decorator.ValueEvalContext{
+		Session: p.session,
+		Vault:   p.vault,
+	}
+
+	// Get transport scope from current session
+	currentScope := p.session.TransportScope()
+
+	// Resolve decorator using global registry
+	result, err := decorator.ResolveValue(ctx, call, currentScope)
+	if err != nil {
+		return nil, &PlanError{
+			Message: fmt.Sprintf("failed to resolve @%s.%s: %v", decoratorName, propertyName, err),
+			Context: "resolving decorator in command",
+		}
+	}
+
+	return result.Value, nil
 }
 
 // interpolateCommandIR converts CommandIR to final string with DisplayIDs.
