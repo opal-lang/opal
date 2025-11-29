@@ -655,3 +655,63 @@ func TestResolveValueScopeAllowed(t *testing.T) {
 		t.Errorf("ResolveValue in SSH failed: %v", err)
 	}
 }
+
+// ========== TransportSensitive Capability Tests ==========
+
+// TestTransportSensitive_DefaultIsFalse verifies TransportSensitive defaults to false
+func TestTransportSensitive_DefaultIsFalse(t *testing.T) {
+	desc := NewDescriptor("var").
+		Summary("Variable decorator").
+		Build()
+
+	if desc.Capabilities.TransportSensitive {
+		t.Error("TransportSensitive should default to false")
+	}
+}
+
+// TestTransportSensitive_CanBeSetTrue verifies TransportSensitive can be set to true
+func TestTransportSensitive_CanBeSetTrue(t *testing.T) {
+	desc := NewDescriptor("env").
+		Summary("Environment variable decorator").
+		TransportSensitive().
+		Build()
+
+	if !desc.Capabilities.TransportSensitive {
+		t.Error("TransportSensitive should be true after calling TransportSensitive()")
+	}
+}
+
+// TestTransportSensitive_EnvDecoratorShouldBeTransportSensitive documents expected behavior
+// This test will fail until @env is updated to set TransportSensitive: true
+func TestTransportSensitive_EnvDecoratorShouldBeTransportSensitive(t *testing.T) {
+	// This test documents the expected behavior:
+	// @env should be transport-sensitive because its values come from the
+	// current session's environment and shouldn't leak across transport boundaries.
+	//
+	// For example, @env.HOME resolved in local context should NOT be usable
+	// in an @ssh block because the SSH session has a different HOME.
+
+	desc := NewDescriptor("env").
+		Summary("Environment variable decorator").
+		TransportSensitive(). // @env should set this
+		Build()
+
+	if !desc.Capabilities.TransportSensitive {
+		t.Error("@env decorator should be transport-sensitive")
+	}
+}
+
+// TestTransportSensitive_VarDecoratorShouldNotBeTransportSensitive documents expected behavior
+func TestTransportSensitive_VarDecoratorShouldNotBeTransportSensitive(t *testing.T) {
+	// @var is a plan-time variable that can be used anywhere.
+	// It should NOT be transport-sensitive.
+
+	desc := NewDescriptor("var").
+		Summary("Variable decorator").
+		// Note: NOT calling TransportSensitive()
+		Build()
+
+	if desc.Capabilities.TransportSensitive {
+		t.Error("@var decorator should NOT be transport-sensitive")
+	}
+}

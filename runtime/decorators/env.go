@@ -25,6 +25,7 @@ func (d *EnvDecorator) Descriptor() decorator.Descriptor {
 		Done().
 		Returns(types.TypeString, "Value of the environment variable").
 		TransportScope(decorator.TransportScopeAny).
+		TransportSensitive(). // Values are tied to the session where they were resolved
 		Idempotent().
 		Block(decorator.BlockForbidden).
 		Build()

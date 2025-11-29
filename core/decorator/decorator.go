@@ -110,6 +110,11 @@ type Capabilities struct {
 	// TransportScope defines where this decorator can be used
 	TransportScope TransportScope
 
+	// TransportSensitive marks values as tied to the transport where they were resolved.
+	// When true, values cannot cross transport boundaries (e.g., local to SSH).
+	// Default: false
+	TransportSensitive bool
+
 	// Purity indicates if the decorator is deterministic (can be cached/constant-folded)
 	// Default: false (safe default - assume side effects)
 	Purity bool
@@ -191,6 +196,12 @@ func (b *DescriptorBuilder) Returns(typ types.ParamType, description string) *De
 // TransportScope sets where the decorator can be used.
 func (b *DescriptorBuilder) TransportScope(scope TransportScope) *DescriptorBuilder {
 	b.desc.Capabilities.TransportScope = scope
+	return b
+}
+
+// TransportSensitive marks values as tied to the transport where they were resolved.
+func (b *DescriptorBuilder) TransportSensitive() *DescriptorBuilder {
+	b.desc.Capabilities.TransportSensitive = true
 	return b
 }
 
