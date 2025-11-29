@@ -325,6 +325,21 @@ func (p *planner) getOrCreateMetrics(decoratorName string) *DecoratorResolutionM
 	return p.telemetry.DecoratorResolutions[decoratorName]
 }
 
+// isTransportDecorator checks if a decorator implements the Transport interface.
+// Transport decorators create transport boundaries (e.g., @ssh, @docker).
+func (p *planner) isTransportDecorator(decoratorName string) bool {
+	// Strip @ prefix if present
+	name := strings.TrimPrefix(decoratorName, "@")
+
+	entry, ok := decorator.Global().Lookup(name)
+	if !ok {
+		return false
+	}
+
+	_, isTransport := entry.Impl.(decorator.Transport)
+	return isTransport
+}
+
 // checkDecoratorBlock peeks ahead to determine if current position is a decorator with a block.
 // Returns (hasBlock, decoratorName) without advancing position.
 // Used to decide whether to enter isolated scope for execution decorators.
@@ -412,16 +427,25 @@ func (p *planner) processDecoratorBlock(decoratorName string) (planfmt.Step, err
 		}
 	}
 
-	// Enter scope for variable isolation
+	// Enter scope for variable isolation (all decorator blocks)
 	p.vault.Push(decoratorName)
 	p.decoratorStack = append(p.decoratorStack, decoratorBlockContext{
 		name: decoratorName,
 	})
 
-	// Ensure scope is popped on all exit paths (normal return or error)
+	// Enter transport boundary (only transport decorators like @ssh, @docker)
+	isTransport := p.isTransportDecorator(decoratorName)
+	if isTransport {
+		p.vault.EnterTransport(decoratorName)
+	}
+
+	// Ensure scope and transport are cleaned up on all exit paths
 	closed := false
 	defer func() {
 		if !closed {
+			if isTransport {
+				p.vault.ExitTransport()
+			}
 			p.vault.Pop()
 			p.decoratorStack = p.decoratorStack[:len(p.decoratorStack)-1]
 		}
@@ -455,6 +479,11 @@ func (p *planner) processDecoratorBlock(decoratorName string) (planfmt.Step, err
 		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeBlock {
 			// Exit block
 			p.pos++
+
+			// Exit transport boundary (only transport decorators)
+			if isTransport {
+				p.vault.ExitTransport()
+			}
 
 			// Pop scope
 			p.vault.Pop()
