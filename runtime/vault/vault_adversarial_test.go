@@ -383,13 +383,13 @@ func TestAdversarial_MarkResolved_CapturesCurrentTransport(t *testing.T) {
 }
 
 func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
-	// Verify that Access enforces transport boundaries
+	// Verify that Access enforces transport boundaries for transport-sensitive expressions
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// Resolve in local transport
+	// Resolve in local transport (transport-sensitive, like @env)
 	v.EnterTransport("local")
-	exprID := v.DeclareVariable("SECRET", "secret-value")
+	exprID := v.DeclareVariableTransportSensitive("SECRET", "@env.SECRET")
 	v.StoreUnresolvedValue(exprID, "secret-value")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
@@ -404,10 +404,10 @@ func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
 	value, err := v.Access(exprID, "command")
 
 	if err == nil {
-		t.Errorf("⚠️  SECURITY ISSUE: Transport boundary not enforced!")
-		t.Errorf("  Resolved in: local")
-		t.Errorf("  Accessed in: ssh:server")
-		t.Errorf("  Got value: %q (should have been denied)", value)
+		t.Fatalf("⚠️  SECURITY ISSUE: Transport boundary not enforced!\n"+
+			"  Resolved in: local\n"+
+			"  Accessed in: ssh:server\n"+
+			"  Got value: %q (should have been denied)", value)
 	}
 	if !containsString(err.Error(), "transport boundary violation") {
 		t.Errorf("Error should mention 'transport boundary violation', got: %v", err)

@@ -100,10 +100,11 @@ type Vault struct {
 // Expression represents a secret-producing expression.
 // In our security model: ALL expressions are secrets.
 type Expression struct {
-	Raw       string // Original source: "@var.X", "@aws.secret('key')", etc.
-	Value     any    // Resolved value (preserves original type: string, int, bool, map, slice)
-	DisplayID string // Placeholder ID for plan (e.g., "opal:3J98t56A")
-	Resolved  bool   // True if expression has been resolved (even if Value is nil)
+	Raw                string // Original source: "@var.X", "@env.HOME", etc.
+	Value              any    // Resolved value (preserves original type: string, int, bool, map, slice)
+	DisplayID          string // Placeholder ID for plan (e.g., "opal:3J98t56A")
+	Resolved           bool   // True if expression has been resolved (even if Value is nil)
+	TransportSensitive bool   // True if value cannot cross transport boundaries
 }
 
 // Note: No ExprType, no IsSecret - everything is a secret.
@@ -348,11 +349,17 @@ func (v *Vault) LookupVariable(varName string) (string, error) {
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
 func (v *Vault) DeclareVariable(name, raw string) string {
-	return v.declareVariableAt(name, raw, v.currentVariableScopePath())
+	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), false)
+}
+
+// DeclareVariableTransportSensitive registers a transport-sensitive variable.
+// Transport-sensitive values cannot cross transport boundaries.
+func (v *Vault) DeclareVariableTransportSensitive(name, raw string) string {
+	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), true)
 }
 
 // declareVariableAt is the internal implementation for declaring variables at a specific scope.
-func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
+func (v *Vault) declareVariableAt(name, raw, scopePath string, transportSensitive bool) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -362,8 +369,9 @@ func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
 		// DisplayID will be generated in ResolveAllTouched() when we have the actual value
 		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
 		v.expressions[exprID] = &Expression{
-			Raw:       raw,
-			DisplayID: "", // Empty until resolved
+			Raw:                raw,
+			DisplayID:          "", // Empty until resolved
+			TransportSensitive: transportSensitive,
 		}
 	}
 
@@ -377,6 +385,16 @@ func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
 // Returns a deterministic hash-based ID that includes transport context.
 // Format: "transport:hash"
 func (v *Vault) TrackExpression(raw string) string {
+	return v.trackExpressionInternal(raw, false)
+}
+
+// TrackExpressionTransportSensitive registers a transport-sensitive expression.
+// Transport-sensitive values cannot cross transport boundaries.
+func (v *Vault) TrackExpressionTransportSensitive(raw string) string {
+	return v.trackExpressionInternal(raw, true)
+}
+
+func (v *Vault) trackExpressionInternal(raw string, transportSensitive bool) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -388,8 +406,9 @@ func (v *Vault) TrackExpression(raw string) string {
 		// DisplayID will be generated in ResolveAllTouched() when we have the actual value
 		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
 		v.expressions[exprID] = &Expression{
-			Raw:       raw,
-			DisplayID: "", // Empty until resolved
+			Raw:                raw,
+			DisplayID:          "", // Empty until resolved
+			TransportSensitive: transportSensitive,
 		}
 	}
 
@@ -695,7 +714,17 @@ func (v *Vault) GetPlanKey() []byte {
 }
 
 // checkTransportBoundary checks if expression can be used in current transport.
+// Only enforces boundary for transport-sensitive expressions (e.g., @env).
+// Transport-agnostic expressions (e.g., @var) can cross boundaries freely.
 func (v *Vault) checkTransportBoundary(exprID string) error {
+	expr, exists := v.expressions[exprID]
+	invariant.Invariant(exists, "expression %q not found in checkTransportBoundary", exprID)
+
+	// Transport-agnostic expressions can cross boundaries
+	if !expr.TransportSensitive {
+		return nil
+	}
+
 	// Get transport where expression was resolved
 	exprTransport, exists := v.exprTransport[exprID]
 
