@@ -2212,13 +2212,13 @@ func (p *planner) validateTransportBoundaries() error {
 				continue
 			}
 
-			// Check if this expression can be used in the transport where it was captured
-			// The vault's CheckTransportBoundary compares the expression's resolution transport
-			// with the current transport, but we need to compare with the capture transport.
-			// So we temporarily set the vault's current transport to the capture transport.
+			// Check if this expression can be used in the transport where it was captured.
+			// The vault's CheckTransportBoundary compares the expression's DeclaredTransport
+			// with the current transport, so we temporarily set the vault's current transport
+			// to the capture transport for the check.
 
 			// Save current transport
-			currentTransport := p.vault.CurrentTransport()
+			savedTransport := p.vault.CurrentTransport()
 
 			// Set to capture transport for the check
 			p.vault.EnterTransport(part.CaptureTransport)
@@ -2226,12 +2226,8 @@ func (p *planner) validateTransportBoundaries() error {
 			// Check boundary
 			err := p.vault.CheckTransportBoundary(part.ExprID)
 
-			// Restore transport
-			if currentTransport == "local" {
-				p.vault.ExitTransport()
-			} else {
-				p.vault.EnterTransport(currentTransport)
-			}
+			// Restore transport (EnterTransport just sets the value, not a stack)
+			p.vault.EnterTransport(savedTransport)
 
 			if err != nil {
 				return err
