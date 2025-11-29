@@ -87,8 +87,7 @@ type Vault struct {
 	scopes map[string]*VaultScope // scopePath → scope
 
 	// Transport boundary tracking
-	currentTransport string            // Current transport scope
-	exprTransport    map[string]string // exprID → transport where resolved
+	currentTransport string // Current transport scope
 
 	// Security
 	planKey []byte // For HMAC-based SiteIDs
@@ -100,10 +99,12 @@ type Vault struct {
 // Expression represents a secret-producing expression.
 // In our security model: ALL expressions are secrets.
 type Expression struct {
-	Raw       string // Original source: "@var.X", "@aws.secret('key')", etc.
-	Value     any    // Resolved value (preserves original type: string, int, bool, map, slice)
-	DisplayID string // Placeholder ID for plan (e.g., "opal:3J98t56A")
-	Resolved  bool   // True if expression has been resolved (even if Value is nil)
+	Raw                string // Original source: "@var.X", "@env.HOME", etc.
+	Value              any    // Resolved value (preserves original type: string, int, bool, map, slice)
+	DisplayID          string // Placeholder ID for plan (e.g., "opal:3J98t56A")
+	Resolved           bool   // True if expression has been resolved (even if Value is nil)
+	TransportSensitive bool   // True if value cannot cross transport boundaries
+	DeclaredTransport  string // Transport context where expression was declared (for boundary checks)
 }
 
 // Note: No ExprType, no IsSecret - everything is a secret.
@@ -146,7 +147,6 @@ func New() *Vault {
 		touched:          make(map[string]bool),
 		scopes:           make(map[string]*VaultScope),
 		currentTransport: "local",
-		exprTransport:    make(map[string]string),
 	}
 
 	// Initialize root scope
@@ -339,6 +339,19 @@ func (v *Vault) LookupVariable(varName string) (string, error) {
 	return "", fmt.Errorf("variable %q not found in any scope", varName)
 }
 
+// CheckTransportBoundary checks if an expression can be used in the current transport context.
+// Returns an error if the expression is transport-sensitive and was resolved in a different
+// transport context than the current one.
+//
+// Use this during planning to catch transport boundary violations early, before execution.
+// For transport-agnostic expressions, this always returns nil.
+func (v *Vault) CheckTransportBoundary(exprID string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return v.checkTransportBoundary(exprID)
+}
+
 // ========== Expression Tracking ==========
 
 // DeclareVariable registers a variable in the current variable scope.
@@ -348,23 +361,42 @@ func (v *Vault) LookupVariable(varName string) (string, error) {
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
 func (v *Vault) DeclareVariable(name, raw string) string {
-	return v.declareVariableAt(name, raw, v.currentVariableScopePath())
+	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), false)
+}
+
+// DeclareVariableTransportSensitive registers a transport-sensitive variable.
+// Transport-sensitive values cannot cross transport boundaries.
+func (v *Vault) DeclareVariableTransportSensitive(name, raw string) string {
+	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), true)
 }
 
 // declareVariableAt is the internal implementation for declaring variables at a specific scope.
-func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
+func (v *Vault) declareVariableAt(name, raw, scopePath string, transportSensitive bool) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	exprID := v.generateExprID(raw)
 
-	if _, exists := v.expressions[exprID]; !exists {
+	if existingExpr, exists := v.expressions[exprID]; !exists {
 		// DisplayID will be generated in ResolveAllTouched() when we have the actual value
 		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
+		// DeclaredTransport captures the transport context NOW (at declaration time)
+		// so boundary checks work correctly even if resolution happens later
 		v.expressions[exprID] = &Expression{
-			Raw:       raw,
-			DisplayID: "", // Empty until resolved
+			Raw:                raw,
+			DisplayID:          "", // Empty until resolved
+			TransportSensitive: transportSensitive,
+			DeclaredTransport:  v.currentTransport,
 		}
+	} else {
+		// Expression already exists - this can happen with expression deduplication.
+		// TransportSensitive must match exactly: conflicting declarations indicate a bug
+		// where the same expression is being tracked with different sensitivity settings.
+		invariant.Invariant(
+			transportSensitive == existingExpr.TransportSensitive,
+			"expression %q (exprID=%s) already exists with TransportSensitive=%v, conflicting declaration has TransportSensitive=%v",
+			raw, exprID, existingExpr.TransportSensitive, transportSensitive,
+		)
 	}
 
 	scope := v.getOrCreateScope(scopePath)
@@ -377,6 +409,16 @@ func (v *Vault) declareVariableAt(name, raw, scopePath string) string {
 // Returns a deterministic hash-based ID that includes transport context.
 // Format: "transport:hash"
 func (v *Vault) TrackExpression(raw string) string {
+	return v.trackExpressionInternal(raw, false)
+}
+
+// TrackExpressionTransportSensitive registers a transport-sensitive expression.
+// Transport-sensitive values cannot cross transport boundaries.
+func (v *Vault) TrackExpressionTransportSensitive(raw string) string {
+	return v.trackExpressionInternal(raw, true)
+}
+
+func (v *Vault) trackExpressionInternal(raw string, transportSensitive bool) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -384,13 +426,23 @@ func (v *Vault) TrackExpression(raw string) string {
 	exprID := v.generateExprID(raw)
 
 	// Store expression if not already tracked
-	if _, exists := v.expressions[exprID]; !exists {
+	if existingExpr, exists := v.expressions[exprID]; !exists {
 		// DisplayID will be generated in ResolveAllTouched() when we have the actual value
 		// This ensures DisplayID = HMAC(planKey, value) for unlinkability
+		// DeclaredTransport captures the transport context NOW (at declaration time)
 		v.expressions[exprID] = &Expression{
-			Raw:       raw,
-			DisplayID: "", // Empty until resolved
+			Raw:                raw,
+			DisplayID:          "", // Empty until resolved
+			TransportSensitive: transportSensitive,
+			DeclaredTransport:  v.currentTransport,
 		}
+	} else {
+		// Expression already exists - TransportSensitive must match exactly
+		invariant.Invariant(
+			transportSensitive == existingExpr.TransportSensitive,
+			"expression %q (exprID=%s) already exists with TransportSensitive=%v, conflicting declaration has TransportSensitive=%v",
+			raw, exprID, existingExpr.TransportSensitive, transportSensitive,
+		)
 	}
 
 	return exprID
@@ -489,7 +541,6 @@ func (v *Vault) PruneUnused() {
 			delete(v.expressions, id)
 			delete(v.references, id)
 			delete(v.touched, id)
-			delete(v.exprTransport, id)
 		}
 	}
 }
@@ -585,7 +636,6 @@ func (v *Vault) PruneUntouched() {
 			delete(v.expressions, id)
 			delete(v.references, id)
 			delete(v.touched, id)
-			delete(v.exprTransport, id)
 		}
 	}
 }
@@ -603,6 +653,34 @@ func (v *Vault) ExitTransport() {
 // CurrentTransport returns the current transport scope.
 func (v *Vault) CurrentTransport() string {
 	return v.currentTransport
+}
+
+// IsExpressionTransportSensitive checks if an expression is transport-sensitive.
+// Returns false for unknown expressions (safe default).
+// Used by planner to propagate transport sensitivity through variable chaining.
+func (v *Vault) IsExpressionTransportSensitive(exprID string) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	expr, exists := v.expressions[exprID]
+	if !exists {
+		return false
+	}
+	return expr.TransportSensitive
+}
+
+// GetUnresolvedValue returns the stored value for an expression before resolution.
+// Returns (value, true) if value exists, (nil, false) otherwise.
+// Used by planner for variable chaining (var B = @var.A).
+func (v *Vault) GetUnresolvedValue(exprID string) (any, bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	expr, exists := v.expressions[exprID]
+	if !exists || expr.Value == nil {
+		return nil, false
+	}
+	return expr.Value, true
 }
 
 // ResolveAllTouched marks all touched expressions as resolved and generates DisplayIDs.
@@ -624,9 +702,8 @@ func (v *Vault) ResolveAllTouched() {
 		invariant.Invariant(expr.Value != nil,
 			"ResolveAllTouched: expression %q is touched but has no value stored", exprID)
 
-		// Mark as resolved and capture transport context
+		// Mark as resolved (transport was already captured in DeclaredTransport at declaration time)
 		expr.Resolved = true
-		v.exprTransport[exprID] = v.currentTransport
 
 		// Generate DisplayID from value using HMAC for unlinkability
 		hash := v.computeDisplayID(expr.Value)
@@ -695,21 +772,27 @@ func (v *Vault) GetPlanKey() []byte {
 }
 
 // checkTransportBoundary checks if expression can be used in current transport.
+// Only enforces boundary for transport-sensitive expressions (e.g., @env).
+// Transport-agnostic expressions (e.g., @var) can cross boundaries freely.
+//
+// Uses DeclaredTransport (set at declaration time) instead of resolution-time transport.
+// This ensures variables inherit transport sensitivity correctly from their source.
 func (v *Vault) checkTransportBoundary(exprID string) error {
-	// Get transport where expression was resolved
-	exprTransport, exists := v.exprTransport[exprID]
+	expr, exists := v.expressions[exprID]
+	invariant.Invariant(exists, "expression %q not found in checkTransportBoundary", exprID)
 
-	// CRITICAL: This should NEVER happen in production!
-	// If it does, it means ResolveAllTouched() wasn't called (programmer error).
-	invariant.Invariant(exists,
-		"expression %q has no transport recorded (ResolveAllTouched not called?)",
-		exprID)
+	// Transport-agnostic expressions can cross boundaries
+	if !expr.TransportSensitive {
+		return nil
+	}
 
-	// Check if crossing transport boundary (legitimate security check - return error)
-	if exprTransport != v.currentTransport {
+	// Check if crossing transport boundary using DeclaredTransport
+	// DeclaredTransport is set when the expression is created, capturing the
+	// transport context at declaration time (not resolution time)
+	if expr.DeclaredTransport != v.currentTransport {
 		return fmt.Errorf(
-			"transport boundary violation: expression %q resolved in %q, cannot use in %q",
-			exprID, exprTransport, v.currentTransport,
+			"transport boundary violation: expression %q declared in %q, cannot use in %q",
+			exprID, expr.DeclaredTransport, v.currentTransport,
 		)
 	}
 

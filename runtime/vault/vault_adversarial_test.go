@@ -353,43 +353,45 @@ func TestAdversarial_ReferenceListPollution_PerformanceDegradation(t *testing.T)
 
 // ========== Attack Vector 7: Transport Boundary Bypass ==========
 
-func TestAdversarial_MarkResolved_CapturesCurrentTransport(t *testing.T) {
-	// Verify that MarkResolved captures transport at call time, not resolution time
+func TestAdversarial_DeclaredTransport_CapturedAtDeclarationTime(t *testing.T) {
+	// Verify that DeclaredTransport is captured at declaration time, not resolution time
+	// This prevents attackers from changing transport context after declaration
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// Resolve in local transport
+	// Declare in local transport
 	v.EnterTransport("local")
-	exprID := v.DeclareVariable("SECRET", "secret-value")
+	exprID := v.DeclareVariableTransportSensitive("SECRET", "secret-value")
 
-	// Attacker changes transport before MarkResolved
+	// Attacker changes transport before resolution
 	v.EnterTransport("ssh:server")
 	v.StoreUnresolvedValue(exprID, "secret-value")
 	v.MarkTouched(exprID)
-	v.ResolveAllTouched() // Should capture "ssh:server"
+	v.ResolveAllTouched()
 
-	// Check which transport was captured
-	capturedTransport := v.exprTransport[exprID]
-	if capturedTransport != "ssh:server" {
-		t.Errorf("MarkResolved should capture current transport\n"+
-			"  Expected: ssh:server\n"+
-			"  Got:      %s", capturedTransport)
+	// DeclaredTransport should be "local" (captured at declaration), not "ssh:server"
+	v.mu.Lock()
+	declaredTransport := v.expressions[exprID].DeclaredTransport
+	v.mu.Unlock()
+
+	if declaredTransport != "local" {
+		t.Errorf("DeclaredTransport should be captured at declaration time\n"+
+			"  Expected: local\n"+
+			"  Got:      %s", declaredTransport)
 	}
 
-	// This is actually CORRECT behavior - MarkResolved captures current transport
-	// The CALLER must ensure they call MarkResolved in the correct transport
-	t.Logf("✓ MarkResolved correctly captures transport at call time: %s", capturedTransport)
-	t.Logf("  Note: Caller must call MarkResolved immediately after resolution")
+	t.Logf("✓ DeclaredTransport correctly captured at declaration time: %s", declaredTransport)
+	t.Logf("  Attacker cannot bypass by changing transport before resolution")
 }
 
 func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
-	// Verify that Access enforces transport boundaries
+	// Verify that Access enforces transport boundaries for transport-sensitive expressions
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// Resolve in local transport
+	// Resolve in local transport (transport-sensitive, like @env)
 	v.EnterTransport("local")
-	exprID := v.DeclareVariable("SECRET", "secret-value")
+	exprID := v.DeclareVariableTransportSensitive("SECRET", "@env.SECRET")
 	v.StoreUnresolvedValue(exprID, "secret-value")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
@@ -404,10 +406,10 @@ func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
 	value, err := v.Access(exprID, "command")
 
 	if err == nil {
-		t.Errorf("⚠️  SECURITY ISSUE: Transport boundary not enforced!")
-		t.Errorf("  Resolved in: local")
-		t.Errorf("  Accessed in: ssh:server")
-		t.Errorf("  Got value: %q (should have been denied)", value)
+		t.Fatalf("⚠️  SECURITY ISSUE: Transport boundary not enforced!\n"+
+			"  Resolved in: local\n"+
+			"  Accessed in: ssh:server\n"+
+			"  Got value: %q (should have been denied)", value)
 	}
 	if !containsString(err.Error(), "transport boundary violation") {
 		t.Errorf("Error should mention 'transport boundary violation', got: %v", err)

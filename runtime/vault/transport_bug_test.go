@@ -58,8 +58,8 @@ func TestBug2_LazyInit_CapturesTransportAtFirstReference(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	// GIVEN: Expression declared and resolved in LOCAL transport
-	// (Simulating @env.HOME resolved in local context)
-	exprID := v.DeclareVariable("HOME", "@env.HOME")
+	// (Simulating @env.HOME resolved in local context - transport-sensitive)
+	exprID := v.DeclareVariableTransportSensitive("HOME", "@env.HOME")
 	v.StoreUnresolvedValue(exprID, "/home/local-user")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
@@ -94,8 +94,8 @@ func TestBug2_LazyInit_CapturesTransportAtFirstReference(t *testing.T) {
 func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// GIVEN: Expression resolved in LOCAL transport
-	exprID := v.DeclareVariable("HOME", "@env.HOME")
+	// GIVEN: Expression resolved in LOCAL transport (transport-sensitive)
+	exprID := v.DeclareVariableTransportSensitive("HOME", "@env.HOME")
 	v.StoreUnresolvedValue(exprID, "/home/local-user")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
@@ -168,13 +168,12 @@ func TestBug3_MissingMarkResolved_NoAPIToSetTransportAtResolution(t *testing.T) 
 	if v.expressions[exprID].Value != "/home/local-user" {
 		t.Errorf("Expression value = %q, want %q", v.expressions[exprID].Value, "/home/local-user")
 	}
-	if v.exprTransport[exprID] != "local" {
-		t.Errorf("Expression transport = %q, want %q", v.exprTransport[exprID], "local")
+	if v.expressions[exprID].DeclaredTransport != "local" {
+		t.Errorf("Expression DeclaredTransport = %q, want %q", v.expressions[exprID].DeclaredTransport, "local")
 	}
 
 	t.Log("✅ MarkResolved() API implemented successfully")
-	t.Log("✅ Lazy initialization removed from checkTransportBoundary")
-	t.Log("✅ checkTransportBoundary panics if exprTransport missing")
+	t.Log("✅ DeclaredTransport captured at declaration time")
 }
 
 // ========== Integration Test: Full Bug Scenario ==========
@@ -191,9 +190,9 @@ func TestBug3_MissingMarkResolved_NoAPIToSetTransportAtResolution(t *testing.T) 
 func TestBug_FullScenario_LocalEnvLeaksToSSH(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// GIVEN: Local environment variable (sensitive secret)
+	// GIVEN: Local environment variable (sensitive secret, transport-sensitive)
 	// In real code, this would be resolved by @env decorator in local context
-	exprID := v.DeclareVariable("AWS_SECRET_KEY", "@env.AWS_SECRET_KEY")
+	exprID := v.DeclareVariableTransportSensitive("AWS_SECRET_KEY", "@env.AWS_SECRET_KEY")
 	v.StoreUnresolvedValue(exprID, "AKIAIOSFODNN7EXAMPLE")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched() // Resolved in local transport

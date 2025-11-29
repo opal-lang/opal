@@ -187,12 +187,12 @@ func TestVault_EnterExitTransport(t *testing.T) {
 	}
 }
 
-// TestVault_TransportBoundaryViolation tests that crossing boundaries is blocked.
+// TestVault_TransportBoundaryViolation tests that crossing boundaries is blocked for transport-sensitive expressions.
 func TestVault_TransportBoundaryViolation(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	// GIVEN: Expression resolved in local transport
-	exprID := v.DeclareVariable("LOCAL_TOKEN", "@env.TOKEN")
+	// GIVEN: Transport-sensitive expression resolved in local transport
+	exprID := v.DeclareVariableTransportSensitive("LOCAL_TOKEN", "@env.TOKEN")
 	v.StoreUnresolvedValue(exprID, "secret")
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()

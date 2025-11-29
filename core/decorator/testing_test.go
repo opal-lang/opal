@@ -181,3 +181,147 @@ func TestMonitoredSessionIsolation(t *testing.T) {
 		t.Errorf("EnvCalls: got %d, want 2", stats.EnvCalls)
 	}
 }
+
+// ========== TestTransport Tests ==========
+
+// TestTestTransport_ImplementsTransportInterface verifies TestTransport implements Transport
+func TestTestTransport_ImplementsTransportInterface(t *testing.T) {
+	transport := NewTestTransport("ssh:test-server")
+
+	// Verify it implements Transport interface
+	var _ Transport = transport
+
+	// Verify descriptor
+	desc := transport.Descriptor()
+	if desc.Path != "test.transport" {
+		t.Errorf("Path: got %q, want %q", desc.Path, "test.transport")
+	}
+
+	// Verify it has RoleBoundary
+	hasRole := false
+	for _, role := range desc.Roles {
+		if role == RoleBoundary {
+			hasRole = true
+			break
+		}
+	}
+	if !hasRole {
+		t.Error("TestTransport should have RoleBoundary role")
+	}
+}
+
+// TestTestTransport_OpenCreatesTransportSession verifies Open returns a session with correct transport scope
+func TestTestTransport_OpenCreatesTransportSession(t *testing.T) {
+	transport := NewTestTransport("ssh:prod-server")
+	parent := NewLocalSession()
+
+	// Open should create a new session
+	session, err := transport.Open(parent, nil)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer session.Close()
+
+	// Session should have SSH transport scope
+	if session.TransportScope() != TransportScopeSSH {
+		t.Errorf("TransportScope: got %v, want %v", session.TransportScope(), TransportScopeSSH)
+	}
+
+	// Session ID should reflect the transport name
+	if session.ID() != "ssh:prod-server" {
+		t.Errorf("ID: got %q, want %q", session.ID(), "ssh:prod-server")
+	}
+}
+
+// TestTestTransport_SessionDelegatesToParent verifies transport session delegates to parent
+func TestTestTransport_SessionDelegatesToParent(t *testing.T) {
+	transport := NewTestTransport("ssh:test")
+	parent := NewLocalSession().WithEnv(map[string]string{"PARENT_VAR": "parent-value"})
+
+	session, err := transport.Open(parent, nil)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer session.Close()
+
+	// Should delegate Env() to parent
+	env := session.Env()
+	if env["PARENT_VAR"] != "parent-value" {
+		t.Errorf("PARENT_VAR: got %q, want %q", env["PARENT_VAR"], "parent-value")
+	}
+
+	// Should delegate Cwd() to parent
+	if session.Cwd() != parent.Cwd() {
+		t.Errorf("Cwd: got %q, want %q", session.Cwd(), parent.Cwd())
+	}
+}
+
+// TestTestTransport_CanBeRegistered verifies TestTransport can be registered in the registry
+func TestTestTransport_CanBeRegistered(t *testing.T) {
+	registry := NewRegistry()
+	transport := NewTestTransport("ssh:test")
+
+	err := registry.register("test.transport", transport)
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+
+	// Should be able to look it up
+	entry, ok := registry.Lookup("test.transport")
+	if !ok {
+		t.Fatal("TestTransport not found in registry")
+	}
+
+	// Should have RoleBoundary inferred
+	hasRole := false
+	for _, role := range entry.Roles {
+		if role == RoleBoundary {
+			hasRole = true
+			break
+		}
+	}
+	if !hasRole {
+		t.Error("Registry should infer RoleBoundary for TestTransport")
+	}
+
+	// Should be castable to Transport
+	_, ok = entry.Impl.(Transport)
+	if !ok {
+		t.Error("Entry.Impl should be castable to Transport")
+	}
+}
+
+// TestTestTransport_DifferentScopesForDifferentNames verifies transport scope is derived from name
+func TestTestTransport_DifferentScopesForDifferentNames(t *testing.T) {
+	tests := []struct {
+		name          string
+		expectedScope TransportScope
+		expectedID    string
+	}{
+		{"ssh:server1", TransportScopeSSH, "ssh:server1"},
+		{"docker:container1", TransportScopeRemote, "docker:container1"},
+		{"local", TransportScopeLocal, "local"},
+		{"k8s:pod-name", TransportScopeRemote, "k8s:pod-name"},
+	}
+
+	parent := NewLocalSession()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport := NewTestTransport(tt.name)
+			session, err := transport.Open(parent, nil)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+			defer session.Close()
+
+			if session.TransportScope() != tt.expectedScope {
+				t.Errorf("TransportScope: got %v, want %v", session.TransportScope(), tt.expectedScope)
+			}
+
+			if session.ID() != tt.expectedID {
+				t.Errorf("ID: got %q, want %q", session.ID(), tt.expectedID)
+			}
+		})
+	}
+}
