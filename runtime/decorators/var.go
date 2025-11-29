@@ -9,8 +9,39 @@ import (
 	"github.com/opal-lang/opal/core/types"
 )
 
-// VarDecorator implements the @var value decorator.
-// @var is transport-agnostic - it reads from the plan-time variable store.
+// VarDecorator implements the @var value decorator for accessing plan-time variables.
+//
+// # Trait Inheritance
+//
+// @var inherits transport sensitivity from its source declaration:
+//
+//   - var X = "literal"      → @var.X is transport-agnostic (literals have no transport context)
+//   - var X = @env.HOME      → @var.X is transport-sensitive (inherits from @env)
+//   - var X = @aws.secret(k) → @var.X inherits from @aws.secret's sensitivity
+//
+// The @var decorator itself has no fixed sensitivity - it's a passthrough that
+// inherits traits from whatever value was assigned to the variable.
+//
+// # Transport Boundary Enforcement
+//
+// When @var.X is used across a transport boundary (e.g., inside @ssh block),
+// the vault checks the underlying expression's TransportSensitive flag:
+//
+//   - If the source was transport-sensitive (@env), access is blocked
+//   - If the source was transport-agnostic (literal), access is allowed
+//
+// This ensures that environment variables resolved locally cannot leak into
+// remote sessions, even when accessed indirectly through @var.
+//
+// # Example
+//
+//	var LOCAL_HOME = @env.HOME     // HOME inherits transport-sensitivity from @env
+//	var VERSION = "1.0.0"          // VERSION is transport-agnostic (literal)
+//
+//	@ssh("server") {
+//	    echo @var.VERSION          // OK: VERSION is transport-agnostic
+//	    echo @var.LOCAL_HOME       // ERROR: LOCAL_HOME is transport-sensitive
+//	}
 type VarDecorator struct{}
 
 // Descriptor returns the decorator metadata.

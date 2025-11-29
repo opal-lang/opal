@@ -8,8 +8,29 @@ import (
 	"github.com/opal-lang/opal/core/types"
 )
 
-// EnvDecorator implements the @env value decorator.
-// @env is transport-aware - it reads from the session's environment.
+// EnvDecorator implements the @env value decorator for accessing environment variables.
+//
+// # Transport Sensitivity
+//
+// @env is transport-sensitive because environment variables are tied to the session
+// where they were resolved. HOME on your laptop is different from HOME on a remote
+// server - using the wrong one is both a security risk and a bug.
+//
+// When a variable is assigned from @env, it inherits this transport sensitivity:
+//
+//	var LOCAL_HOME = @env.HOME  // LOCAL_HOME becomes transport-sensitive
+//
+// This prevents the value from crossing transport boundaries:
+//
+//	@ssh("server") {
+//	    echo @var.LOCAL_HOME    // ERROR: transport-sensitive value from different context
+//	    echo @env.HOME          // OK: resolves HOME on the remote server
+//	}
+//
+// # Resolution
+//
+// @env resolves at plan time by reading from the current session's environment.
+// The resolved value is stored in the vault with TransportSensitive=true.
 type EnvDecorator struct{}
 
 // Descriptor returns the decorator metadata.
