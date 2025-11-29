@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/opal-lang/opal/core/decorator"
@@ -174,25 +175,30 @@ func TestTransportBoundary_EnvInCommandIsTransportSensitive(t *testing.T) {
 // This is the core security property: @env.HOME from local machine should NOT
 // be usable inside @ssh block (different machine, different HOME).
 func TestTransportBoundary_EnvBlockedAcrossBoundary(t *testing.T) {
-	// This test requires @env to be tracked as transport-sensitive AND
-	// the vault to enforce transport boundaries during Access().
-	//
-	// Currently this test documents expected behavior - it will fail until
-	// the planner correctly tracks @env as transport-sensitive.
-
 	source := `
 var LOCAL_HOME = @env.HOME
 @test.transport {
     echo "Home: @var.LOCAL_HOME"
 }
 `
-	// Planning should succeed (we're just building the plan)
-	_ = planSource(t, source)
+	// Planning MUST fail because @env.HOME is transport-sensitive and
+	// cannot cross the transport boundary into @test.transport.
+	tree := parser.Parse([]byte(source))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
 
-	// For now, we expect this to succeed during planning.
-	// The transport boundary check happens during execution (Access()).
-	// This test verifies the planner doesn't crash - the actual security
-	// enforcement is tested in vault_test.go.
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
+
+	if err == nil {
+		t.Fatal("Expected transport boundary error: @env.HOME should not be usable inside @test.transport")
+	}
+
+	// Verify it's the right kind of error
+	errStr := err.Error()
+	if !strings.Contains(errStr, "transport") {
+		t.Errorf("Expected transport boundary error, got: %v", err)
+	}
 }
 
 // TestTransportBoundary_VarInheritsTransportSensitivity verifies that when
@@ -201,12 +207,6 @@ var LOCAL_HOME = @env.HOME
 //
 // var HOME = @env.HOME  ← HOME should be transport-sensitive because @env is
 func TestTransportBoundary_VarInheritsTransportSensitivity(t *testing.T) {
-	// This test exposes a bug: variables assigned from @env are NOT marked
-	// as transport-sensitive, so they can cross transport boundaries.
-	//
-	// Expected: var HOME = @env.HOME should make HOME transport-sensitive
-	// Actual: HOME is transport-agnostic (DeclareVariable defaults to false)
-
 	source := `
 var HOME = @env.HOME
 @test.transport {
@@ -215,8 +215,6 @@ var HOME = @env.HOME
 `
 	// This SHOULD fail during planning because @var.HOME references a
 	// transport-sensitive value that was resolved in a different transport context.
-	//
-	// Currently it succeeds because the variable is not marked transport-sensitive.
 	tree := parser.Parse([]byte(source))
 	if len(tree.Errors) > 0 {
 		t.Fatalf("Parse errors: %v", tree.Errors)
@@ -224,15 +222,62 @@ var HOME = @env.HOME
 
 	_, err := Plan(tree.Events, tree.Tokens, Config{})
 
-	// TODO: Once fixed, this should return an error about transport boundary violation
-	// For now, we document the current (buggy) behavior
-	if err != nil {
-		// This is the CORRECT behavior - transport boundary violation detected
-		t.Logf("✓ Transport boundary violation correctly detected: %v", err)
-	} else {
-		// This is the BUGGY behavior - should have failed
-		t.Log("⚠ BUG: Variable assigned from @env should be transport-sensitive")
-		t.Log("  var HOME = @env.HOME should make HOME transport-sensitive")
-		t.Log("  Using @var.HOME inside @test.transport should fail")
+	// MUST fail - using transport-sensitive value across boundary
+	if err == nil {
+		t.Fatal("Expected transport boundary error: var HOME = @env.HOME should make HOME transport-sensitive, but @var.HOME was allowed inside @test.transport")
+	}
+
+	// Verify it's the right kind of error (transport boundary violation)
+	errStr := err.Error()
+	if !strings.Contains(errStr, "transport") {
+		t.Errorf("Expected transport boundary error, got: %v", err)
+	}
+}
+
+// TestTransportBoundary_VarFromLiteralAllowedAcrossBoundary verifies that
+// variables assigned from literals CAN cross transport boundaries.
+//
+// var VERSION = "1.0.0"  ← VERSION is transport-agnostic (literal has no transport context)
+func TestTransportBoundary_VarFromLiteralAllowedAcrossBoundary(t *testing.T) {
+	source := `
+var VERSION = "1.0.0"
+@test.transport {
+    echo "Version: @var.VERSION"
+}
+`
+	// This SHOULD succeed - literals are transport-agnostic
+	plan := planSource(t, source)
+
+	// Verify plan was created
+	if plan == nil {
+		t.Fatal("Expected plan to be created")
+	}
+
+	// Verify SecretUses contains the variable
+	if len(plan.SecretUses) == 0 {
+		t.Error("Expected SecretUses for @var.VERSION")
+	}
+}
+
+// TestTransportBoundary_DirectEnvInTransportBlockWorks verifies that @env
+// used directly inside a transport block resolves from that transport's context.
+//
+// @ssh("server") { echo @env.HOME }  ← resolves HOME on the remote server
+func TestTransportBoundary_DirectEnvInTransportBlockWorks(t *testing.T) {
+	source := `
+@test.transport {
+    echo "Home: @env.HOME"
+}
+`
+	// This SHOULD succeed - @env.HOME resolves in the transport's context
+	plan := planSource(t, source)
+
+	if plan == nil {
+		t.Fatal("Expected plan to be created")
+	}
+
+	// Verify SecretUses contains the @env expression
+	if len(plan.SecretUses) == 0 {
+		t.Error("Expected SecretUses for @env.HOME")
 	}
 }

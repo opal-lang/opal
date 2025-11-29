@@ -168,13 +168,12 @@ func TestBug3_MissingMarkResolved_NoAPIToSetTransportAtResolution(t *testing.T) 
 	if v.expressions[exprID].Value != "/home/local-user" {
 		t.Errorf("Expression value = %q, want %q", v.expressions[exprID].Value, "/home/local-user")
 	}
-	if v.exprTransport[exprID] != "local" {
-		t.Errorf("Expression transport = %q, want %q", v.exprTransport[exprID], "local")
+	if v.expressions[exprID].DeclaredTransport != "local" {
+		t.Errorf("Expression DeclaredTransport = %q, want %q", v.expressions[exprID].DeclaredTransport, "local")
 	}
 
 	t.Log("✅ MarkResolved() API implemented successfully")
-	t.Log("✅ Lazy initialization removed from checkTransportBoundary")
-	t.Log("✅ checkTransportBoundary panics if exprTransport missing")
+	t.Log("✅ DeclaredTransport captured at declaration time")
 }
 
 // ========== Integration Test: Full Bug Scenario ==========
