@@ -659,42 +659,8 @@ func (p *parser) ifStmt() {
 		})
 		// Continue parsing the block despite the error
 	} else if !p.at(lexer.EOF) {
-		// Parse condition - must be boolean or expression that evaluates to boolean
-		conditionToken := p.current()
-
-		// Type check: only allow boolean literals, identifiers, or decorators
-		// String and integer literals are not allowed
-		if conditionToken.Type == lexer.STRING || conditionToken.Type == lexer.INTEGER {
-			p.errors = append(p.errors, ParseError{
-				Position:   conditionToken.Position,
-				Message:    "if condition must be a boolean expression",
-				Context:    "if statement",
-				Got:        conditionToken.Type,
-				Expected:   []lexer.TokenType{lexer.BOOLEAN, lexer.IDENTIFIER},
-				Suggestion: "Use a boolean value (true/false), identifier, or comparison expression",
-				Example:    "if @var.enabled { ... } or if count > 0 { ... }",
-			})
-			p.token() // Consume invalid token
-		} else if p.at(lexer.AT) {
-			// Decorator expression: @var.enabled, @env.DEBUG, etc.
-			// Parse decorator reference without block
-			kind := p.start(NodeDecorator)
-			p.token() // @
-			if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
-				p.token() // decorator name
-			}
-			if p.at(lexer.DOT) {
-				p.token() // .
-				if p.at(lexer.IDENTIFIER) {
-					p.token() // property name
-				}
-			}
-			// Note: We don't parse parameters or blocks in condition context
-			p.finish(kind)
-		} else {
-			// Boolean, identifier, or other valid expression token
-			p.token()
-		}
+		// Parse condition expression (supports comparisons like @var.X == "value")
+		p.expression()
 	}
 
 	// Parse then block
@@ -1590,7 +1556,8 @@ func (p *parser) primary() {
 
 	case p.at(lexer.AT):
 		// Decorator: @var.name, @env.HOME
-		p.decorator()
+		// In expression context, don't check for blocks (the { might be part of if/for/etc.)
+		p.decoratorInExpressionContext()
 
 	case p.at(lexer.IDENTIFIER):
 		// Identifier
@@ -1922,6 +1889,132 @@ func (p *parser) decorator() {
 
 	if p.config.debug >= DebugPaths {
 		p.recordDebugEvent("exit_decorator", "decorator complete")
+	}
+}
+
+// decoratorInExpressionContext parses a decorator in expression context (e.g., if condition).
+// Unlike decorator(), this does NOT check for or consume blocks, because in expression
+// context a following { is likely part of the enclosing statement (if/for/etc.), not a decorator block.
+func (p *parser) decoratorInExpressionContext() {
+	if p.config.debug >= DebugPaths {
+		p.recordDebugEvent("enter_decorator_expr", "parsing decorator in expression context")
+	}
+
+	// Look ahead to check if this is a registered decorator
+	atPos := p.pos
+	p.advance() // Move past @
+
+	// Check if next token is an identifier or VAR keyword
+	if !p.at(lexer.IDENTIFIER) && !p.at(lexer.VAR) {
+		return
+	}
+
+	// Build the decorator path by trying progressively longer dot-separated names
+	decoratorName := string(p.current().Text)
+	tempPos := p.pos
+
+	var longestMatch string
+	var longestMatchPos int
+	currentName := decoratorName
+	currentPos := tempPos
+
+	if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+		longestMatch = currentName
+		longestMatchPos = currentPos
+	}
+
+	for {
+		p.advance()
+		if !p.at(lexer.DOT) {
+			break
+		}
+		p.advance()
+		if !p.at(lexer.IDENTIFIER) {
+			break
+		}
+		currentName = currentName + "." + string(p.current().Text)
+		currentPos = p.pos
+
+		if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+			longestMatch = currentName
+			longestMatchPos = currentPos
+		}
+	}
+
+	if longestMatch == "" {
+		p.pos = tempPos
+		return
+	}
+
+	decoratorName = longestMatch
+	p.pos = longestMatchPos
+
+	// Reset position to @ and start the node
+	p.pos = atPos
+	kind := p.start(NodeDecorator)
+
+	// Consume @ token
+	p.token()
+
+	// Count dots in decorator name
+	dotCount := 0
+	for _, ch := range decoratorName {
+		if ch == '.' {
+			dotCount++
+		}
+	}
+
+	// Consume first identifier
+	p.token()
+
+	// Consume remaining dot + identifier pairs
+	for i := 0; i < dotCount; i++ {
+		p.token() // DOT
+		p.token() // IDENTIFIER
+	}
+
+	// Get schema for validation (needed for primary parameter tracking)
+	var schema types.DecoratorSchema
+	var hasSchema bool
+	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
+	if hasNewEntry {
+		desc := entry.Impl.Descriptor()
+		schema = desc.Schema
+		hasSchema = true
+	} else {
+		schema, hasSchema = types.Global().GetSchema(decoratorName)
+	}
+
+	// Track if primary parameter was provided via dot syntax
+	hasPrimaryViaDot := false
+
+	// Parse primary parameter via dot syntax
+	if p.at(lexer.DOT) {
+		p.token() // DOT
+		if p.at(lexer.IDENTIFIER) {
+			p.token() // property name
+			hasPrimaryViaDot = true
+		}
+	}
+
+	// Track provided parameters for validation
+	providedParams := make(map[string]bool)
+	if hasPrimaryViaDot && hasSchema && schema.PrimaryParameter != "" {
+		providedParams[schema.PrimaryParameter] = true
+	}
+
+	// Parse parameters if present
+	if p.at(lexer.LPAREN) {
+		p.decoratorParamsWithValidation(decoratorName, schema, providedParams)
+	}
+
+	// NOTE: We intentionally do NOT check for blocks here.
+	// In expression context, a following { is part of the enclosing statement.
+
+	p.finish(kind)
+
+	if p.config.debug >= DebugPaths {
+		p.recordDebugEvent("exit_decorator_expr", "decorator in expression context complete")
 	}
 }
 

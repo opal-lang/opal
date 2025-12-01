@@ -25,7 +25,9 @@ func TestIfStatement(t *testing.T) {
 				{EventToken, 2},     // {
 				{EventOpen, 10},     // If
 				{EventToken, 3},     // if
-				{EventToken, 4},     // true (condition)
+				{EventOpen, 13},     // Literal (condition wrapped by expression())
+				{EventToken, 4},     // true
+				{EventClose, 13},    // Literal
 				{EventOpen, 3},      // Block
 				{EventToken, 5},     // {
 				{EventStepEnter, 0}, // Step boundary
@@ -82,7 +84,9 @@ func TestIfElseStatement(t *testing.T) {
 				{EventToken, 2},     // {
 				{EventOpen, 10},     // If
 				{EventToken, 3},     // if
+				{EventOpen, 13},     // Literal (condition)
 				{EventToken, 4},     // true
+				{EventClose, 13},    // Literal
 				{EventOpen, 3},      // Block
 				{EventToken, 5},     // {
 				{EventStepEnter, 0}, // Step boundary
@@ -156,7 +160,9 @@ func TestIfElseIfChain(t *testing.T) {
 				{EventToken, 2},     // {
 				{EventOpen, 10},     // If
 				{EventToken, 3},     // if
+				{EventOpen, 13},     // Literal (condition)
 				{EventToken, 4},     // true
+				{EventClose, 13},    // Literal
 				{EventOpen, 3},      // Block
 				{EventToken, 5},     // {
 				{EventStepEnter, 0}, // Step boundary
@@ -175,7 +181,9 @@ func TestIfElseIfChain(t *testing.T) {
 				{EventToken, 9},     // else
 				{EventOpen, 10},     // If (nested)
 				{EventToken, 10},    // if
+				{EventOpen, 13},     // Literal (condition)
 				{EventToken, 11},    // false
+				{EventClose, 13},    // Literal
 				{EventOpen, 3},      // Block
 				{EventToken, 12},    // {
 				{EventStepEnter, 0}, // Step boundary
@@ -362,20 +370,20 @@ func TestIfStatementErrorRecovery(t *testing.T) {
 		{
 			name:          "orphaned else with type error",
 			input:         "fun test { else if 42 { } }",
-			minErrorCount: 2,
+			minErrorCount: 1, // Only orphaned else error (type checking moved to plan time)
 			containsError: "else without matching if",
 		},
 		{
-			name:          "type error and missing block",
+			name:          "missing block after string condition",
 			input:         "fun test { if \"string\" }",
-			minErrorCount: 2,
-			containsError: "if condition must be a boolean expression",
+			minErrorCount: 1, // Missing block error (type checking moved to plan time)
+			containsError: "missing '{'",
 		},
 		{
-			name:          "multiple if statements with errors",
+			name:          "multiple if statements valid",
 			input:         "fun test { if true { } if 42 { } }",
-			minErrorCount: 1,
-			containsError: "if condition must be a boolean expression",
+			minErrorCount: 0, // No errors (type checking moved to plan time)
+			containsError: "",
 		},
 		{
 			name:          "if with statement instead of block",
@@ -401,18 +409,20 @@ func TestIfStatementErrorRecovery(t *testing.T) {
 				return
 			}
 
-			// Check that at least one error contains the expected message
-			found := false
-			for _, err := range tree.Errors {
-				if containsSubstring(err.Message, tt.containsError) {
-					found = true
-					break
+			// Check that at least one error contains the expected message (if we expect errors)
+			if tt.minErrorCount > 0 && tt.containsError != "" {
+				found := false
+				for _, err := range tree.Errors {
+					if containsSubstring(err.Message, tt.containsError) {
+						found = true
+						break
+					}
 				}
-			}
 
-			if !found {
-				t.Errorf("Expected error containing '%s', got errors: %v",
-					tt.containsError, tree.Errors)
+				if !found {
+					t.Errorf("Expected error containing '%s', got errors: %v",
+						tt.containsError, tree.Errors)
+				}
 			}
 
 			// Verify parser didn't panic and produced some events
@@ -447,14 +457,12 @@ func TestIfConditionTypeChecking(t *testing.T) {
 		{
 			name:      "string literal condition",
 			input:     `fun test { if "hello" { echo "yes" } }`,
-			expectErr: true,
-			errMsg:    "if condition must be a boolean expression",
+			expectErr: false, // String literals are valid expressions (evaluated at plan time)
 		},
 		{
 			name:      "integer literal condition",
 			input:     `fun test { if 42 { echo "yes" } }`,
-			expectErr: true,
-			errMsg:    "if condition must be a boolean expression",
+			expectErr: false, // Integer literals are valid expressions (evaluated at plan time)
 		},
 		{
 			name:      "boolean true",
