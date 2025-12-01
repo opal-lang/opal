@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2025-11-30
+- Added `if`/`else if`/`else` control flow to planner with plan-time condition evaluation
+- Planner now supports comparison operators (`==`, `!=`) in conditions
+- Branch pruning: untaken branches are not planned, variables in them never resolved
+- Parser enhanced to parse decorator expressions in condition context
+
+### 2025-11-29
+- Added transport boundary enforcement for decorator isolation (`@env` blocked at boundaries, `@var` can cross)
+- Added `TransportSensitive` capability for decorators to opt-in to boundary enforcement
+- Planner now calls `EnterTransport()`/`ExitTransport()` when entering transport decorator blocks
+
+### 2025-11-19
+- Changed Go module import paths from `github.com/aledsdavies/opal` to `github.com/opal-lang/opal`
+- Added block scoping for execution decorators (`@retry`, `@timeout`, `@parallel`)
+- Variables declared inside decorator blocks no longer leak to outer scope
+
+### 2025-11-16
+- Executor now resolves DisplayIDs to actual values during execution
+- Added CommandIR to preserve temporal binding of variables (fixes shadowing bugs)
+- Fixed empty planKey authorization bypass (now panics if planKey missing)
+
+### 2025-11-15
+- Commands now support multiple variable interpolations (e.g., `echo "@var.A and @var.B"`)
+- Implemented three-pass interpolation: raw strings → record refs → replace with DisplayIDs
+
+### 2025-11-13
+- DisplayIDs now embedded directly in plan commands (not placeholder references)
+- Removed plan.Secrets field; RuntimeValue never leaves Vault
+- Added plan.SecretUses with authorization entries (DisplayID + SiteID + Site)
+- Changed Vault API from domain-specific methods to generic Push/Pop/ResetCounts
+
+### 2025-11-12
+- Fixed variable scrubbing: CLI and planner now share same Vault instance
+
+### 2025-11-11
+- Fixed contract verification: verifier now reuses PlanSalt from original contract
+- Wired Vault to scrubber in CLI for output scrubbing
+
 ### 2025-11-09
 - Added scope-aware variable storage to Vault using pathStack as scope trie
 - Variables now properly scoped with parent-to-child flow and shadowing support

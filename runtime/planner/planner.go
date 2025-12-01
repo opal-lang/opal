@@ -928,6 +928,18 @@ func (p *planner) planFunctionBody() ([]planfmt.Step, error) {
 			}
 			continue
 		} else if evt.Kind == parser.EventOpen {
+			nodeKind := parser.NodeKind(evt.Data)
+
+			// Handle if statements inside function body
+			if nodeKind == parser.NodeIf {
+				ifSteps, err := p.planIfStmt()
+				if err != nil {
+					return nil, err
+				}
+				steps = append(steps, ifSteps...)
+				continue
+			}
+
 			depth++
 		} else if evt.Kind == parser.EventClose {
 			depth--
@@ -965,7 +977,7 @@ func (p *planner) planSource() ([]planfmt.Step, error) {
 
 	var steps []planfmt.Step
 
-	// Walk events looking for top-level step boundaries (EventStepEnter)
+	// Walk events looking for top-level step boundaries (EventStepEnter) and if statements
 	// Skip step boundaries inside functions (depth > 1)
 	depth := 0
 	for p.pos < len(p.events) {
@@ -973,6 +985,18 @@ func (p *planner) planSource() ([]planfmt.Step, error) {
 		evt := p.events[p.pos]
 
 		if evt.Kind == parser.EventOpen {
+			nodeKind := parser.NodeKind(evt.Data)
+
+			// Handle if statements at top level (depth == 1, inside Source)
+			if nodeKind == parser.NodeIf && depth == 1 {
+				ifSteps, err := p.planIfStmt()
+				if err != nil {
+					return nil, err
+				}
+				steps = append(steps, ifSteps...)
+				continue
+			}
+
 			depth++
 		} else if evt.Kind == parser.EventClose {
 			depth--
@@ -1132,6 +1156,715 @@ type varValueResult struct {
 	Value              any    // The resolved value
 	TransportSensitive bool   // True if value came from a transport-sensitive decorator
 	SourceDecorator    string // Name of source decorator (empty for literals)
+}
+
+// planIfStmt plans an if statement by evaluating the condition and planning the appropriate branch.
+// Event structure:
+//   - OPEN NodeIf
+//   - TOKEN(if)
+//   - TOKEN(condition) or OPEN NodeDecorator ... CLOSE NodeDecorator
+//   - OPEN NodeBlock (then block)
+//   - ... steps ...
+//   - CLOSE NodeBlock
+//   - [OPEN NodeElse ... CLOSE NodeElse] (optional)
+//   - CLOSE NodeIf
+//
+// Returns the steps from the taken branch (empty if condition is false and no else).
+func (p *planner) planIfStmt() ([]planfmt.Step, error) {
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("enter_planIfStmt", fmt.Sprintf("pos=%d", p.pos))
+	}
+
+	startPos := p.pos
+	p.pos++ // Move past OPEN NodeIf
+
+	// Skip 'if' keyword token
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+		p.pos++
+	}
+
+	// Extract and evaluate condition
+	conditionResult, err := p.evaluateIfCondition()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("if_condition_evaluated", fmt.Sprintf("result=%v", conditionResult))
+	}
+
+	var resultSteps []planfmt.Step
+
+	// Find and process the then block
+	// Skip to NodeBlock
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeBlock {
+			break
+		}
+		p.pos++
+	}
+
+	if conditionResult {
+		// Condition is true - plan the then block
+		thenSteps, err := p.planBlock()
+		if err != nil {
+			return nil, err
+		}
+		resultSteps = append(resultSteps, thenSteps...)
+
+		// Skip the else clause if present (don't plan it)
+		p.skipElseClause()
+	} else {
+		// Condition is false - skip the then block
+		p.skipBlock()
+
+		// Check for else clause
+		if p.pos < len(p.events) {
+			evt := p.events[p.pos]
+			if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeElse {
+				elseSteps, err := p.planElseClause()
+				if err != nil {
+					return nil, err
+				}
+				resultSteps = append(resultSteps, elseSteps...)
+			}
+		}
+	}
+
+	// Skip to CLOSE NodeIf
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeIf {
+			p.pos++ // Move past CLOSE NodeIf
+			break
+		}
+		p.pos++
+	}
+
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("exit_planIfStmt", fmt.Sprintf("steps=%d", len(resultSteps)))
+	}
+
+	// POSTCONDITION: position must advance
+	invariant.Postcondition(p.pos > startPos, "position must advance in planIfStmt")
+
+	return resultSteps, nil
+}
+
+// evaluateIfCondition extracts and evaluates the condition expression.
+// Supports:
+//   - Boolean literals: true, false
+//   - Decorator references: @var.ENABLED (evaluates to truthy/falsy)
+//   - Binary expressions: @var.X == "value", "a" != "b", @var.A == @var.B
+//   - Chained operators: true && false || true, @var.A == "x" && @var.B == "y"
+//
+// Returns true if condition is truthy, false otherwise.
+func (p *planner) evaluateIfCondition() (bool, error) {
+	// First, evaluate the primary expression (left side of any binary op)
+	left, err := p.evaluatePrimaryExpression()
+	if err != nil {
+		return false, err
+	}
+
+	// Continue evaluating binary expressions as long as they exist
+	// This handles chained operators like: false || true && false
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind != parser.EventOpen || parser.NodeKind(evt.Data) != parser.NodeBinaryExpr {
+			break
+		}
+		result, err := p.evaluateBinaryExpressionWithLeft(left)
+		if err != nil {
+			return false, err
+		}
+		left = result // Use result as left operand for next binary expression
+	}
+
+	return p.isTruthy(left), nil
+}
+
+// evaluatePrimaryExpression evaluates a primary expression (not binary).
+// Handles: literals, decorators, tokens
+func (p *planner) evaluatePrimaryExpression() (any, error) {
+	if p.pos >= len(p.events) {
+		return nil, &PlanError{
+			Message:     "unexpected end of input in expression",
+			Context:     "evaluating expression",
+			EventPos:    p.pos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	evt := p.events[p.pos]
+
+	// Case 1: Simple token (boolean literal, string, number, identifier)
+	if evt.Kind == parser.EventToken {
+		tokenIdx := evt.Data
+		token := p.tokens[tokenIdx]
+		tokenText := string(token.Text)
+		p.pos++ // Consume the token
+
+		switch token.Type {
+		case lexer.BOOLEAN:
+			return tokenText == "true", nil
+		case lexer.STRING:
+			// Remove quotes
+			if len(tokenText) >= 2 {
+				return tokenText[1 : len(tokenText)-1], nil
+			}
+			return tokenText, nil
+		case lexer.INTEGER:
+			var intVal int64
+			if _, err := fmt.Sscanf(tokenText, "%d", &intVal); err != nil {
+				return nil, fmt.Errorf("invalid integer: %s", tokenText)
+			}
+			return intVal, nil
+		default:
+			// Identifier or other - return as string
+			return tokenText, nil
+		}
+	}
+
+	// Case 2: Decorator reference (@var.X, @env.Y)
+	if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeDecorator {
+		return p.evaluateDecoratorExpression()
+	}
+
+	// Case 3: Literal node
+	if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeLiteral {
+		return p.evaluateLiteralNode()
+	}
+
+	// Unknown - skip and return nil
+	p.pos++
+	return nil, nil
+}
+
+// evaluateDecoratorExpression evaluates a decorator reference and returns its value.
+// For @var.X, looks up the variable value.
+// For other decorators (@env.X, etc.), resolves via the decorator registry.
+func (p *planner) evaluateDecoratorExpression() (any, error) {
+	startPos := p.pos
+	p.pos++ // Move past OPEN NodeDecorator
+
+	// Extract decorator parts: @, decorator name, ., property
+	var decoratorParts []string
+
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeDecorator {
+			p.pos++ // Move past CLOSE NodeDecorator
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tokenIdx := evt.Data
+			token := p.tokens[tokenIdx]
+
+			switch token.Type {
+			case lexer.AT:
+				// Skip @
+			case lexer.IDENTIFIER, lexer.VAR:
+				decoratorParts = append(decoratorParts, string(token.Text))
+			case lexer.DOT:
+				// Skip dots
+			}
+		}
+
+		p.pos++
+	}
+
+	if len(decoratorParts) < 2 {
+		return false, &PlanError{
+			Message:     "invalid decorator in if condition",
+			Context:     "evaluating decorator condition",
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	decoratorName := decoratorParts[0]
+	propertyName := decoratorParts[1]
+
+	// Handle @var.X - look up variable value
+	if decoratorName == "var" {
+		exprID, err := p.vault.LookupVariable(propertyName)
+		if err != nil {
+			return false, &PlanError{
+				Message:     fmt.Sprintf("variable %q not found", propertyName),
+				Context:     "evaluating if condition",
+				EventPos:    startPos,
+				TotalEvents: len(p.events),
+				Suggestion:  fmt.Sprintf("Declare the variable before using it: var %s = ...", propertyName),
+			}
+		}
+
+		// Get the stored value
+		value, exists := p.vault.GetUnresolvedValue(exprID)
+		if !exists {
+			// Mark as touched and resolve
+			p.vault.MarkTouched(exprID)
+			p.vault.ResolveAllTouched()
+			value, _ = p.vault.GetUnresolvedValue(exprID)
+		}
+
+		return value, nil
+	}
+
+	// Other decorators (@env, @aws.secret, etc.) - resolve via decorator registry
+	// Find the decorator by trying progressively shorter paths (most specific first)
+	var resolvedDecoratorName string
+	var primary *string
+
+	for splitPoint := len(decoratorParts); splitPoint > 0; splitPoint-- {
+		candidatePath := strings.Join(decoratorParts[:splitPoint], ".")
+		_, found := decorator.Global().Lookup(candidatePath)
+		if found {
+			remainingSegments := len(decoratorParts) - splitPoint
+			if remainingSegments > 1 {
+				// Too many segments after decorator name
+				return nil, &PlanError{
+					Message: fmt.Sprintf("decorator @%s: found registered decorator %q but %d segments remain; only 1 primary parameter allowed",
+						strings.Join(decoratorParts, "."), candidatePath, remainingSegments),
+					Context:     "evaluating if condition",
+					EventPos:    startPos,
+					TotalEvents: len(p.events),
+				}
+			}
+			resolvedDecoratorName = candidatePath
+			if remainingSegments == 1 {
+				lastPart := decoratorParts[splitPoint]
+				primary = &lastPart
+			}
+			break
+		}
+	}
+
+	if resolvedDecoratorName == "" {
+		return nil, &PlanError{
+			Message:     fmt.Sprintf("decorator @%s not found in registry", strings.Join(decoratorParts, ".")),
+			Context:     "evaluating if condition",
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	// Build ValueCall for decorator resolution
+	call := decorator.ValueCall{
+		Path:    resolvedDecoratorName,
+		Primary: primary,
+		Params:  make(map[string]any),
+	}
+
+	// Create evaluation context
+	ctx := decorator.ValueEvalContext{
+		Session: p.session,
+		Vault:   p.vault,
+	}
+
+	// Get transport scope from current session
+	currentScope := p.session.TransportScope()
+
+	// Resolve decorator using global registry
+	result, err := decorator.ResolveValue(ctx, call, currentScope)
+	if err != nil {
+		return nil, &PlanError{
+			Message:     fmt.Sprintf("failed to resolve @%s: %v", strings.Join(decoratorParts, "."), err),
+			Context:     "evaluating if condition",
+			EventPos:    startPos,
+			TotalEvents: len(p.events),
+		}
+	}
+
+	return result.Value, nil
+}
+
+// evaluateLiteralNode evaluates a literal node and returns its value.
+func (p *planner) evaluateLiteralNode() (any, error) {
+	p.pos++ // Move past OPEN NodeLiteral
+
+	var value any
+
+	// Get the literal token
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+		tokenIdx := p.events[p.pos].Data
+		token := p.tokens[tokenIdx]
+		tokenText := string(token.Text)
+		p.pos++ // Consume token
+
+		switch token.Type {
+		case lexer.BOOLEAN:
+			value = tokenText == "true"
+		case lexer.STRING:
+			// Remove quotes
+			if len(tokenText) >= 2 {
+				value = tokenText[1 : len(tokenText)-1]
+			} else {
+				value = tokenText
+			}
+		case lexer.INTEGER:
+			var intVal int64
+			if _, err := fmt.Sscanf(tokenText, "%d", &intVal); err == nil {
+				value = intVal
+			} else {
+				value = tokenText // Fall back to string if parse fails
+			}
+		default:
+			value = tokenText
+		}
+	}
+
+	// Skip to CLOSE NodeLiteral
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeLiteral {
+			p.pos++
+			break
+		}
+		p.pos++
+	}
+
+	return value, nil
+}
+
+// evaluateBinaryExpressionWithLeft evaluates a binary expression given the left operand.
+// The event structure can be nested for chained operators:
+//
+//	OPEN BinaryExpr (||)
+//	  Literal (false)
+//	  TOKEN (||)
+//	  Literal (true)
+//	  OPEN BinaryExpr (&&)    <- nested binary expression
+//	    TOKEN (&&)
+//	    Literal (false)
+//	  CLOSE BinaryExpr
+//	CLOSE BinaryExpr
+//
+// The left side was already evaluated before this method is called.
+func (p *planner) evaluateBinaryExpressionWithLeft(left any) (any, error) {
+	p.pos++ // Move past OPEN NodeBinaryExpr
+
+	// Get the operator token
+	var operator string
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+		tokenIdx := p.events[p.pos].Data
+		token := p.tokens[tokenIdx]
+		switch token.Type {
+		case lexer.EQ_EQ:
+			operator = "=="
+		case lexer.NOT_EQ:
+			operator = "!="
+		case lexer.LT:
+			operator = "<"
+		case lexer.LT_EQ:
+			operator = "<="
+		case lexer.GT:
+			operator = ">"
+		case lexer.GT_EQ:
+			operator = ">="
+		case lexer.AND_AND:
+			operator = "&&"
+		case lexer.OR_OR:
+			operator = "||"
+		default:
+			operator = string(token.Text)
+		}
+		p.pos++ // Consume operator token
+	}
+
+	// Evaluate right side
+	right, err := p.evaluatePrimaryExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for nested binary expression (chained operators like && after ||)
+	// The parser nests lower-precedence operators, so we need to recursively evaluate
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeBinaryExpr {
+			// There's a nested binary expression - evaluate it with 'right' as the left operand
+			right, err = p.evaluateBinaryExpressionWithLeft(right)
+			if err != nil {
+				return nil, err
+			}
+		} else if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeBinaryExpr {
+			p.pos++ // Move past CLOSE NodeBinaryExpr
+			break
+		} else {
+			p.pos++
+		}
+	}
+
+	// Perform the comparison
+	return p.evaluateBinaryOp(left, operator, right), nil
+}
+
+// evaluateBinaryOp performs a binary operation on two values.
+func (p *planner) evaluateBinaryOp(left any, op string, right any) any {
+	// Convert both to strings for comparison (simplification)
+	leftStr := fmt.Sprintf("%v", left)
+	rightStr := fmt.Sprintf("%v", right)
+
+	switch op {
+	case "==":
+		return leftStr == rightStr
+	case "!=":
+		return leftStr != rightStr
+	case "&&":
+		return p.isTruthy(left) && p.isTruthy(right)
+	case "||":
+		return p.isTruthy(left) || p.isTruthy(right)
+	case "<", "<=", ">", ">=":
+		// Try numeric comparison first
+		var leftNum, rightNum float64
+		_, errL := fmt.Sscanf(leftStr, "%f", &leftNum)
+		_, errR := fmt.Sscanf(rightStr, "%f", &rightNum)
+		if errL == nil && errR == nil {
+			switch op {
+			case "<":
+				return leftNum < rightNum
+			case "<=":
+				return leftNum <= rightNum
+			case ">":
+				return leftNum > rightNum
+			case ">=":
+				return leftNum >= rightNum
+			}
+		}
+		// Fall back to string comparison
+		switch op {
+		case "<":
+			return leftStr < rightStr
+		case "<=":
+			return leftStr <= rightStr
+		case ">":
+			return leftStr > rightStr
+		case ">=":
+			return leftStr >= rightStr
+		}
+	}
+
+	return false
+}
+
+// isTruthy evaluates the truthiness of a value.
+// - nil, false, "", "false", 0 are falsy
+// - Everything else is truthy
+func (p *planner) isTruthy(value any) bool {
+	if value == nil {
+		return false
+	}
+
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return v != "" && v != "false"
+	case int, int64, int32:
+		return v != 0
+	case float64, float32:
+		return v != 0.0
+	default:
+		return true
+	}
+}
+
+// planBlock plans all steps within a block.
+// Expects to be positioned at OPEN NodeBlock.
+func (p *planner) planBlock() ([]planfmt.Step, error) {
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("enter_planBlock", fmt.Sprintf("pos=%d", p.pos))
+	}
+
+	p.pos++ // Move past OPEN NodeBlock
+
+	// Skip opening brace token
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+		p.pos++
+	}
+
+	var steps []planfmt.Step
+
+	for p.pos < len(p.events) {
+		prevPos := p.pos
+		evt := p.events[p.pos]
+
+		// End of block
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeBlock {
+			p.pos++ // Move past CLOSE NodeBlock
+			break
+		}
+
+		// Nested if statement
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeIf {
+			ifSteps, err := p.planIfStmt()
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, ifSteps...)
+			continue
+		}
+
+		// Step boundary
+		if evt.Kind == parser.EventStepEnter {
+			// Check for decorator block
+			savedPos := p.pos
+			p.pos++
+
+			hasDecoratorBlock := false
+			decoratorName := ""
+
+			if p.pos < len(p.events) {
+				nextEvt := p.events[p.pos]
+				if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeDecorator {
+					hasDecoratorBlock, decoratorName = p.checkDecoratorBlock()
+				}
+			}
+
+			p.pos = savedPos
+
+			if hasDecoratorBlock {
+				step, err := p.processDecoratorBlock(decoratorName)
+				if err != nil {
+					return nil, err
+				}
+				if step.ID != 0 {
+					steps = append(steps, step)
+				}
+				continue
+			}
+
+			// Normal step
+			step, err := p.planStep()
+			if err != nil {
+				return nil, err
+			}
+			if step.ID != 0 {
+				steps = append(steps, step)
+			}
+			continue
+		}
+
+		p.pos++
+		invariant.Invariant(p.pos > prevPos, "planBlock stuck at pos %d", prevPos)
+	}
+
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("exit_planBlock", fmt.Sprintf("steps=%d", len(steps)))
+	}
+
+	return steps, nil
+}
+
+// skipBlock skips over a block without planning it.
+// Expects to be positioned at OPEN NodeBlock.
+func (p *planner) skipBlock() {
+	if p.pos >= len(p.events) {
+		return
+	}
+
+	depth := 0
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeBlock {
+			depth++
+		} else if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeBlock {
+			depth--
+			if depth == 0 {
+				p.pos++ // Move past CLOSE NodeBlock
+				return
+			}
+		}
+
+		p.pos++
+	}
+}
+
+// planElseClause plans an else clause (else { ... } or else if { ... }).
+// Expects to be positioned at OPEN NodeElse.
+func (p *planner) planElseClause() ([]planfmt.Step, error) {
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("enter_planElseClause", fmt.Sprintf("pos=%d", p.pos))
+	}
+
+	p.pos++ // Move past OPEN NodeElse
+
+	// Skip 'else' keyword token
+	if p.pos < len(p.events) && p.events[p.pos].Kind == parser.EventToken {
+		p.pos++
+	}
+
+	var steps []planfmt.Step
+
+	// Check what follows: NodeIf (else if) or NodeBlock (else)
+	if p.pos < len(p.events) {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeIf {
+			// else if - recursive
+			ifSteps, err := p.planIfStmt()
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, ifSteps...)
+		} else if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeBlock {
+			// else block
+			blockSteps, err := p.planBlock()
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, blockSteps...)
+		}
+	}
+
+	// Skip to CLOSE NodeElse
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeElse {
+			p.pos++ // Move past CLOSE NodeElse
+			break
+		}
+		p.pos++
+	}
+
+	if p.config.Debug >= DebugDetailed {
+		p.recordDebugEvent("exit_planElseClause", fmt.Sprintf("steps=%d", len(steps)))
+	}
+
+	return steps, nil
+}
+
+// skipElseClause skips over an else clause without planning it.
+func (p *planner) skipElseClause() {
+	if p.pos >= len(p.events) {
+		return
+	}
+
+	evt := p.events[p.pos]
+	if evt.Kind != parser.EventOpen || parser.NodeKind(evt.Data) != parser.NodeElse {
+		return // No else clause
+	}
+
+	depth := 0
+	for p.pos < len(p.events) {
+		evt := p.events[p.pos]
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeElse {
+			depth++
+		} else if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeElse {
+			depth--
+			if depth == 0 {
+				p.pos++ // Move past CLOSE NodeElse
+				return
+			}
+		}
+
+		p.pos++
+	}
 }
 
 // planVarDecl processes a variable declaration and stores the value

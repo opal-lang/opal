@@ -93,3 +93,23 @@ type RedirectNode struct {
 }
 
 func (*RedirectNode) isExecutionNode() {}
+
+// LogicNode represents a plan-time conditional (if/else).
+// Conditions are evaluated during planning, and only the taken branch appears in the plan.
+// Untaken branches are pruned entirely (variables never declared, no API calls).
+//
+// Example:
+//
+//	if @var.ENV == "prod" { deploy --prod }
+//	else { deploy --staging }
+//
+// If ENV="prod", the plan contains only the deploy --prod step.
+// The else branch is pruned and never appears in the plan.
+type LogicNode struct {
+	Kind      string // "if" (future: "when", "for")
+	Condition string // Original condition text: "@var.ENV == \"prod\""
+	Result    string // Evaluation result: "true" or "false"
+	Block     []Step // Steps from the taken branch (empty if pruned)
+}
+
+func (*LogicNode) isExecutionNode() {}
