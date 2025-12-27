@@ -1,5 +1,7 @@
 package planner
 
+import "strconv"
+
 // ExprKind identifies the type of expression.
 type ExprKind int
 
@@ -330,55 +332,14 @@ func literalToString(v any) string {
 	case string:
 		return val
 	case int:
-		return intToString(val)
+		return strconv.Itoa(val)
 	case int64:
-		return int64ToString(val)
+		return strconv.FormatInt(val, 10)
 	case float64:
-		return float64ToString(val)
+		return strconv.FormatFloat(val, 'g', -1, 64)
 	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
+		return strconv.FormatBool(val)
 	default:
 		return "<unknown>"
 	}
-}
-
-// intToString converts an int to string without importing strconv.
-func intToString(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	if negative {
-		digits = append([]byte{'-'}, digits...)
-	}
-	return string(digits)
-}
-
-// int64ToString converts an int64 to string.
-func int64ToString(n int64) string {
-	return intToString(int(n))
-}
-
-// float64ToString converts a float64 to string.
-// Simple implementation - for more precision, use strconv.
-func float64ToString(f float64) string {
-	// Handle special cases
-	if f == 0 {
-		return "0"
-	}
-
-	// For now, just convert the integer part
-	// A full implementation would handle decimals
-	return intToString(int(f))
 }
