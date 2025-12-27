@@ -1302,3 +1302,196 @@ func TestVault_DisplayID_ByteSliceConsistency(t *testing.T) {
 	t.Logf("  Pattern value: %q", string(pattern.Value))
 	t.Logf("  Uses raw byte representation (not JSON-marshaled)")
 }
+
+// ========== Resolve Tests ==========
+
+// TestVault_Resolve_SingleDisplayID tests resolving a single DisplayID in text.
+func TestVault_Resolve_SingleDisplayID(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: A resolved expression with a DisplayID
+	v.Push("step-1")
+	v.Push("@shell")
+	exprID := v.TrackExpression("@env.HOME")
+	v.RecordReference(exprID, "command")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "/home/user")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+	if displayID == "" {
+		t.Fatal("DisplayID should not be empty after resolution")
+	}
+
+	// WHEN: We resolve text containing the DisplayID
+	text := "echo Hello from " + displayID
+	site := "root/step-1/@shell[0]/params/command"
+	transport := "local"
+
+	resolved, err := v.Resolve(text, transport, site)
+	// THEN: The DisplayID should be replaced with the actual value
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	expected := "echo Hello from /home/user"
+	if resolved != expected {
+		t.Errorf("Resolve() = %q, want %q", resolved, expected)
+	}
+}
+
+// TestVault_Resolve_MultipleDisplayIDs tests resolving multiple DisplayIDs in text.
+func TestVault_Resolve_MultipleDisplayIDs(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: Two resolved expressions
+	v.Push("step-1")
+	v.Push("@shell")
+
+	exprID1 := v.TrackExpression("@env.HOME")
+	v.RecordReference(exprID1, "command")
+	v.MarkTouched(exprID1)
+	v.StoreUnresolvedValue(exprID1, "/home/user")
+
+	exprID2 := v.TrackExpression("@env.USER")
+	v.RecordReference(exprID2, "command")
+	v.MarkTouched(exprID2)
+	v.StoreUnresolvedValue(exprID2, "alice")
+
+	v.ResolveAllTouched()
+
+	displayID1 := v.GetDisplayID(exprID1)
+	displayID2 := v.GetDisplayID(exprID2)
+
+	// WHEN: We resolve text containing both DisplayIDs
+	text := "echo " + displayID2 + " lives at " + displayID1
+	site := "root/step-1/@shell[0]/params/command"
+	transport := "local"
+
+	resolved, err := v.Resolve(text, transport, site)
+	// THEN: Both DisplayIDs should be replaced
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	expected := "echo alice lives at /home/user"
+	if resolved != expected {
+		t.Errorf("Resolve() = %q, want %q", resolved, expected)
+	}
+}
+
+// TestVault_Resolve_NoDisplayIDs tests that text without DisplayIDs is returned unchanged.
+func TestVault_Resolve_NoDisplayIDs(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// WHEN: We resolve text with no DisplayIDs
+	text := "echo Hello World"
+	resolved, err := v.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
+	// THEN: Text should be returned unchanged
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if resolved != text {
+		t.Errorf("Resolve() = %q, want %q", resolved, text)
+	}
+}
+
+// TestVault_Resolve_UnknownDisplayID tests that unknown DisplayIDs return an error.
+func TestVault_Resolve_UnknownDisplayID(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// WHEN: We try to resolve an unknown DisplayID
+	text := "echo opal:AAAAAAAAAAAAAAAAAAAAAA"
+	_, err := v.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
+
+	// THEN: Should return an error
+	if err == nil {
+		t.Error("Resolve() should return error for unknown DisplayID")
+	}
+}
+
+// TestVault_Resolve_TransportBoundaryViolation tests that transport boundary is enforced.
+func TestVault_Resolve_TransportBoundaryViolation(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: A transport-sensitive expression declared in "local" transport
+	v.Push("step-1")
+	v.Push("@shell")
+	exprID := v.TrackExpressionTransportSensitive("@env.HOME")
+	v.RecordReference(exprID, "command")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "/home/user")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+	text := "echo " + displayID
+	site := "root/step-1/@shell[0]/params/command"
+
+	// WHEN: We try to resolve in a different transport
+	_, err := v.Resolve(text, "ssh://remote", site)
+
+	// THEN: Should return a transport boundary error
+	if err == nil {
+		t.Error("Resolve() should return error for transport boundary violation")
+	}
+}
+
+// TestVault_Resolve_SiteAuthorizationFailure tests that site authorization is enforced.
+func TestVault_Resolve_SiteAuthorizationFailure(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: An expression authorized for a specific site
+	v.Push("step-1")
+	v.Push("@shell")
+	exprID := v.TrackExpression("@env.HOME")
+	v.RecordReference(exprID, "command") // Authorized for "command" param
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "/home/user")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+	text := "echo " + displayID
+
+	// WHEN: We try to resolve at a different site
+	wrongSite := "root/step-2/@shell[0]/params/command" // Different step!
+
+	_, err := v.Resolve(text, "local", wrongSite)
+
+	// THEN: Should return a site authorization error
+	if err == nil {
+		t.Error("Resolve() should return error for unauthorized site")
+	}
+}
+
+// TestVault_Resolve_DuplicateDisplayIDs tests that duplicate DisplayIDs are only resolved once.
+func TestVault_Resolve_DuplicateDisplayIDs(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: One expression used multiple times
+	v.Push("step-1")
+	v.Push("@shell")
+	exprID := v.TrackExpression("@env.HOME")
+	v.RecordReference(exprID, "command")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "/home/user")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// WHEN: We resolve text with the same DisplayID appearing multiple times
+	text := "echo " + displayID + " and " + displayID
+	site := "root/step-1/@shell[0]/params/command"
+	transport := "local"
+
+	resolved, err := v.Resolve(text, transport, site)
+	// THEN: Both occurrences should be replaced
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	expected := "echo /home/user and /home/user"
+	if resolved != expected {
+		t.Errorf("Resolve() = %q, want %q", resolved, expected)
+	}
+}

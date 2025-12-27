@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -169,6 +170,11 @@ func NewWithPlanKey(planKey []byte) *Vault {
 // Push adds a segment to the path stack.
 // The caller (planner) decides what the segment represents: "step-1", "@retry", etc.
 // Returns the index for this segment name at the current level.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// manage their own position tracking and provide context explicitly to methods
+// like Resolve(). This is part of the planner rewrite to decouple Vault from
+// scope management.
 func (v *Vault) Push(name string) int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -187,6 +193,8 @@ func (v *Vault) Push(name string) int {
 
 // Pop removes the top segment from the path stack.
 // Panics if attempting to pop root (programmer error).
+//
+// Deprecated: This method will be removed in a future version. See Push() deprecation.
 func (v *Vault) Pop() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -198,6 +206,8 @@ func (v *Vault) Pop() {
 // ResetCounts resets the decorator instance counters.
 // Used when entering a new step to reset decorator indices to 0.
 // The caller (planner) decides when to reset - typically when starting a new step.
+//
+// Deprecated: This method will be removed in a future version. See Push() deprecation.
 func (v *Vault) ResetCounts() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -208,6 +218,9 @@ func (v *Vault) ResetCounts() {
 // BuildSitePath constructs the canonical site path for a parameter.
 // Format: root/step-N/@decorator[index]/params/paramName
 // Thread-safe: Acquires read lock.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// build site paths themselves and pass them to methods like Resolve().
 func (v *Vault) BuildSitePath(paramName string) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -312,6 +325,10 @@ func (v *Vault) parentScopePath(scopePath string) string {
 // LookupVariable resolves a variable name to its expression ID.
 // Walks up the scope trie from current scope to root, enabling parent → child flow.
 // Handles missing scopes by computing parent path directly (scopes created lazily).
+//
+// Deprecated: This method will be removed in a future version. Variable name
+// resolution will move to the IR Builder component, which will track scopes
+// and provide exprIDs directly to Vault methods.
 func (v *Vault) LookupVariable(varName string) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -360,12 +377,18 @@ func (v *Vault) CheckTransportBoundary(exprID string) error {
 // - Same variable name with different values in different scopes (shadowing)
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
+//
+// Deprecated: This method will be removed in a future version. The IR Builder
+// will generate exprIDs and manage variable scopes, then call simpler Vault
+// methods that receive exprID and context explicitly.
 func (v *Vault) DeclareVariable(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), false)
 }
 
 // DeclareVariableTransportSensitive registers a transport-sensitive variable.
 // Transport-sensitive values cannot cross transport boundaries.
+//
+// Deprecated: See DeclareVariable() deprecation.
 func (v *Vault) DeclareVariableTransportSensitive(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), true)
 }
@@ -641,16 +664,24 @@ func (v *Vault) PruneUntouched() {
 }
 
 // EnterTransport enters a new transport scope.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// track transport context themselves and pass it explicitly to methods like
+// Resolve().
 func (v *Vault) EnterTransport(scope string) {
 	v.currentTransport = scope
 }
 
 // ExitTransport exits current transport scope (returns to local).
+//
+// Deprecated: See EnterTransport() deprecation.
 func (v *Vault) ExitTransport() {
 	v.currentTransport = "local"
 }
 
 // CurrentTransport returns the current transport scope.
+//
+// Deprecated: See EnterTransport() deprecation.
 func (v *Vault) CurrentTransport() string {
 	return v.currentTransport
 }
@@ -877,6 +908,113 @@ func (v *Vault) AccessByDisplayID(displayID, paramName string) (any, error) {
 
 	// Use existing Access method for full authorization checks
 	return v.Access(exprID, paramName)
+}
+
+// displayIDPattern matches DisplayIDs in text (e.g., "opal:abc123...").
+// DisplayIDs are 22 characters of base64url encoding (16 bytes = 22 chars).
+var displayIDPattern = regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
+
+// Resolve replaces all DisplayID placeholders in text with their actual values.
+// This is the primary method for execution-time secret resolution.
+//
+// Unlike AccessByDisplayID which uses internal state for authorization,
+// Resolve receives the transport and site context explicitly, making it
+// suitable for use by components that manage their own position tracking.
+//
+// Parameters:
+//   - text: String potentially containing DisplayID placeholders (e.g., "echo opal:abc123")
+//   - transport: Current transport context (e.g., "local", "ssh://host")
+//   - site: Current site path for authorization (e.g., "root/step-1/@shell[0]/params/command")
+//
+// Returns:
+//   - Resolved text with all DisplayIDs replaced by actual values
+//   - Error if any DisplayID is unknown, unauthorized, or violates transport boundary
+//
+// Example:
+//
+//	text := "echo Hello opal:abc123def456..."
+//	resolved, err := vault.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
+//	// resolved = "echo Hello secret_value"
+func (v *Vault) Resolve(text, transport, site string) (string, error) {
+	// Find all DisplayIDs in the text
+	matches := displayIDPattern.FindAllString(text, -1)
+	if len(matches) == 0 {
+		// No DisplayIDs, return text unchanged
+		return text, nil
+	}
+
+	// Resolve each DisplayID and collect replacements
+	// Use a map to deduplicate and avoid resolving the same DisplayID multiple times
+	replacements := make(map[string]string)
+	for _, displayID := range matches {
+		if _, exists := replacements[displayID]; exists {
+			continue // Already resolved this DisplayID
+		}
+		value, err := v.resolveDisplayID(displayID, transport, site)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve %s: %w", displayID, err)
+		}
+		replacements[displayID] = fmt.Sprint(value)
+	}
+
+	// Replace all DisplayIDs in a single pass to avoid cascading replacements
+	// (e.g., if a secret value contains another DisplayID)
+	result := text
+	for displayID, value := range replacements {
+		result = strings.ReplaceAll(result, displayID, value)
+	}
+
+	return result, nil
+}
+
+// resolveDisplayID resolves a single DisplayID with explicit transport and site context.
+// This is the internal implementation that performs authorization checks.
+func (v *Vault) resolveDisplayID(displayID, transport, site string) (any, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// 1. Look up exprID from DisplayID
+	exprID, found := v.displayIDIndex[displayID]
+	if !found {
+		return nil, fmt.Errorf("DisplayID %q not found in vault", displayID)
+	}
+
+	// 2. Get expression
+	expr, exists := v.expressions[exprID]
+	if !exists {
+		return nil, fmt.Errorf("expression %q not found", exprID)
+	}
+	if !expr.Resolved {
+		return nil, fmt.Errorf("expression %q not resolved yet", exprID)
+	}
+
+	// 3. Check transport boundary
+	if expr.TransportSensitive && expr.DeclaredTransport != transport {
+		return nil, fmt.Errorf(
+			"transport boundary violation: expression declared in %q, cannot use in %q",
+			expr.DeclaredTransport, transport,
+		)
+	}
+
+	// 4. Check site authorization
+	// Security: Require planKey for authorization checks
+	invariant.Precondition(len(v.planKey) > 0,
+		"Resolve() requires planKey for security - use NewWithPlanKey() instead of New()")
+
+	siteID := v.computeSiteID(site)
+	authorized := false
+	for _, ref := range v.references[exprID] {
+		if ref.SiteID == siteID {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		return nil, fmt.Errorf("no authority to unwrap %q at site %q", displayID, site)
+	}
+
+	// 5. Return value
+	return expr.Value, nil
 }
 
 // ============================================================================
