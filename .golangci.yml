@@ -52,6 +52,10 @@ linters:
       - text: "but such constant .* already exists"
         linters:
           - goconst
+      # Temporarily allow deprecated Vault methods until planner rewrite (MR #3)
+      - text: "SA1019.*deprecated"
+        linters:
+          - staticcheck
   settings:
     errcheck:
       # Don't require checking these ubiquitous funcs
