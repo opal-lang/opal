@@ -1463,3 +1463,35 @@ func TestVault_Resolve_SiteAuthorizationFailure(t *testing.T) {
 		t.Error("Resolve() should return error for unauthorized site")
 	}
 }
+
+// TestVault_Resolve_DuplicateDisplayIDs tests that duplicate DisplayIDs are only resolved once.
+func TestVault_Resolve_DuplicateDisplayIDs(t *testing.T) {
+	v := NewWithPlanKey(testKey)
+
+	// GIVEN: One expression used multiple times
+	v.Push("step-1")
+	v.Push("@shell")
+	exprID := v.TrackExpression("@env.HOME")
+	v.RecordReference(exprID, "command")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "/home/user")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// WHEN: We resolve text with the same DisplayID appearing multiple times
+	text := "echo " + displayID + " and " + displayID
+	site := "root/step-1/@shell[0]/params/command"
+	transport := "local"
+
+	resolved, err := v.Resolve(text, transport, site)
+	// THEN: Both occurrences should be replaced
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	expected := "echo /home/user and /home/user"
+	if resolved != expected {
+		t.Errorf("Resolve() = %q, want %q", resolved, expected)
+	}
+}

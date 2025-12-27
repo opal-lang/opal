@@ -943,16 +943,25 @@ func (v *Vault) Resolve(text, transport, site string) (string, error) {
 		return text, nil
 	}
 
-	// Resolve each DisplayID
-	result := text
+	// Resolve each DisplayID and collect replacements
+	// Use a map to deduplicate and avoid resolving the same DisplayID multiple times
+	replacements := make(map[string]string)
 	for _, displayID := range matches {
+		if _, exists := replacements[displayID]; exists {
+			continue // Already resolved this DisplayID
+		}
 		value, err := v.resolveDisplayID(displayID, transport, site)
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve %s: %w", displayID, err)
 		}
+		replacements[displayID] = fmt.Sprint(value)
+	}
 
-		// Replace DisplayID with actual value
-		result = strings.ReplaceAll(result, displayID, fmt.Sprint(value))
+	// Replace all DisplayIDs in a single pass to avoid cascading replacements
+	// (e.g., if a secret value contains another DisplayID)
+	result := text
+	for displayID, value := range replacements {
+		result = strings.ReplaceAll(result, displayID, value)
 	}
 
 	return result, nil
