@@ -170,6 +170,11 @@ func NewWithPlanKey(planKey []byte) *Vault {
 // Push adds a segment to the path stack.
 // The caller (planner) decides what the segment represents: "step-1", "@retry", etc.
 // Returns the index for this segment name at the current level.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// manage their own position tracking and provide context explicitly to methods
+// like Resolve(). This is part of the planner rewrite to decouple Vault from
+// scope management.
 func (v *Vault) Push(name string) int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -188,6 +193,8 @@ func (v *Vault) Push(name string) int {
 
 // Pop removes the top segment from the path stack.
 // Panics if attempting to pop root (programmer error).
+//
+// Deprecated: This method will be removed in a future version. See Push() deprecation.
 func (v *Vault) Pop() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -199,6 +206,8 @@ func (v *Vault) Pop() {
 // ResetCounts resets the decorator instance counters.
 // Used when entering a new step to reset decorator indices to 0.
 // The caller (planner) decides when to reset - typically when starting a new step.
+//
+// Deprecated: This method will be removed in a future version. See Push() deprecation.
 func (v *Vault) ResetCounts() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -209,6 +218,9 @@ func (v *Vault) ResetCounts() {
 // BuildSitePath constructs the canonical site path for a parameter.
 // Format: root/step-N/@decorator[index]/params/paramName
 // Thread-safe: Acquires read lock.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// build site paths themselves and pass them to methods like Resolve().
 func (v *Vault) BuildSitePath(paramName string) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -313,6 +325,10 @@ func (v *Vault) parentScopePath(scopePath string) string {
 // LookupVariable resolves a variable name to its expression ID.
 // Walks up the scope trie from current scope to root, enabling parent → child flow.
 // Handles missing scopes by computing parent path directly (scopes created lazily).
+//
+// Deprecated: This method will be removed in a future version. Variable name
+// resolution will move to the IR Builder component, which will track scopes
+// and provide exprIDs directly to Vault methods.
 func (v *Vault) LookupVariable(varName string) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -361,12 +377,18 @@ func (v *Vault) CheckTransportBoundary(exprID string) error {
 // - Same variable name with different values in different scopes (shadowing)
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
+//
+// Deprecated: This method will be removed in a future version. The IR Builder
+// will generate exprIDs and manage variable scopes, then call simpler Vault
+// methods that receive exprID and context explicitly.
 func (v *Vault) DeclareVariable(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), false)
 }
 
 // DeclareVariableTransportSensitive registers a transport-sensitive variable.
 // Transport-sensitive values cannot cross transport boundaries.
+//
+// Deprecated: See DeclareVariable() deprecation.
 func (v *Vault) DeclareVariableTransportSensitive(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), true)
 }
@@ -642,16 +664,24 @@ func (v *Vault) PruneUntouched() {
 }
 
 // EnterTransport enters a new transport scope.
+//
+// Deprecated: This method will be removed in a future version. Callers should
+// track transport context themselves and pass it explicitly to methods like
+// Resolve().
 func (v *Vault) EnterTransport(scope string) {
 	v.currentTransport = scope
 }
 
 // ExitTransport exits current transport scope (returns to local).
+//
+// Deprecated: See EnterTransport() deprecation.
 func (v *Vault) ExitTransport() {
 	v.currentTransport = "local"
 }
 
 // CurrentTransport returns the current transport scope.
+//
+// Deprecated: See EnterTransport() deprecation.
 func (v *Vault) CurrentTransport() string {
 	return v.currentTransport
 }
