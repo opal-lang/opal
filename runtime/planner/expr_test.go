@@ -577,6 +577,29 @@ func TestEvaluateExpr_Truthiness_Nil(t *testing.T) {
 	}
 }
 
+func TestEvaluateExpr_BinaryOp_LargeInt64Precision(t *testing.T) {
+	// Values beyond 2^53 lose precision when converted to float64
+	// 9007199254740993 and 9007199254740992 would be equal as float64
+	expr := &ExprIR{
+		Kind:  ExprBinaryOp,
+		Op:    "==",
+		Left:  &ExprIR{Kind: ExprVarRef, VarName: "A"},
+		Right: &ExprIR{Kind: ExprVarRef, VarName: "B"},
+	}
+	values := map[string]any{
+		"A": int64(9007199254740993),
+		"B": int64(9007199254740992),
+	}
+
+	result, err := EvaluateExpr(expr, values)
+	if err != nil {
+		t.Fatalf("EvaluateExpr() error = %v", err)
+	}
+	if result != false {
+		t.Errorf("EvaluateExpr() = %v, want false (large int64 values should not be equal)", result)
+	}
+}
+
 func TestEvaluateExpr_NestedBinaryOp(t *testing.T) {
 	// (@var.A == "x") && (@var.B == "y")
 	expr := &ExprIR{

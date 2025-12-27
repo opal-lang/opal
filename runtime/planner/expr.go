@@ -203,42 +203,67 @@ func IsTruthy(v any) bool {
 }
 
 // compareEqual compares two values for equality.
-// Handles type coercion for common cases.
 func compareEqual(a, b any) bool {
-	// Direct comparison first
 	if a == b {
 		return true
 	}
 
-	// Handle numeric comparisons across types
-	aNum, aIsNum := toFloat64(a)
-	bNum, bIsNum := toFloat64(b)
-	if aIsNum && bIsNum {
-		return aNum == bNum
+	// Try integer comparison first (preserves precision)
+	if aInt, bInt, ok := toInt64Pair(a, b); ok {
+		return aInt == bInt
 	}
 
-	// String comparison
-	aStr, aIsStr := a.(string)
-	bStr, bIsStr := b.(string)
-	if aIsStr && bIsStr {
-		return aStr == bStr
+	// Fall back to float64 for mixed int/float
+	if aFloat, bFloat, ok := toFloat64Pair(a, b); ok {
+		return aFloat == bFloat
 	}
 
 	return false
 }
 
 // compareLess compares two values for less-than.
-// Only works for numeric types.
 func compareLess(a, b any) (bool, error) {
-	aNum, aIsNum := toFloat64(a)
-	bNum, bIsNum := toFloat64(b)
-	if aIsNum && bIsNum {
-		return aNum < bNum, nil
+	if aInt, bInt, ok := toInt64Pair(a, b); ok {
+		return aInt < bInt, nil
 	}
 
-	return false, &EvalError{
-		Message: "cannot compare non-numeric values with <",
+	if aFloat, bFloat, ok := toFloat64Pair(a, b); ok {
+		return aFloat < bFloat, nil
 	}
+
+	return false, &EvalError{Message: "cannot compare non-numeric values with <"}
+}
+
+// toInt64Pair converts both values to int64 if both are integer types.
+func toInt64Pair(a, b any) (int64, int64, bool) {
+	var aInt, bInt int64
+	switch v := a.(type) {
+	case int:
+		aInt = int64(v)
+	case int64:
+		aInt = v
+	default:
+		return 0, 0, false
+	}
+	switch v := b.(type) {
+	case int:
+		bInt = int64(v)
+	case int64:
+		bInt = v
+	default:
+		return 0, 0, false
+	}
+	return aInt, bInt, true
+}
+
+// toFloat64Pair converts both values to float64 if both are numeric.
+func toFloat64Pair(a, b any) (float64, float64, bool) {
+	aFloat, aOk := toFloat64(a)
+	bFloat, bOk := toFloat64(b)
+	if aOk && bOk {
+		return aFloat, bFloat, true
+	}
+	return 0, 0, false
 }
 
 // toFloat64 converts a value to float64 if possible.
