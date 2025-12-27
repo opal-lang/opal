@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -877,6 +878,104 @@ func (v *Vault) AccessByDisplayID(displayID, paramName string) (any, error) {
 
 	// Use existing Access method for full authorization checks
 	return v.Access(exprID, paramName)
+}
+
+// displayIDPattern matches DisplayIDs in text (e.g., "opal:abc123...").
+// DisplayIDs are 22 characters of base64url encoding (16 bytes = 22 chars).
+var displayIDPattern = regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
+
+// Resolve replaces all DisplayID placeholders in text with their actual values.
+// This is the primary method for execution-time secret resolution.
+//
+// Unlike AccessByDisplayID which uses internal state for authorization,
+// Resolve receives the transport and site context explicitly, making it
+// suitable for use by components that manage their own position tracking.
+//
+// Parameters:
+//   - text: String potentially containing DisplayID placeholders (e.g., "echo opal:abc123")
+//   - transport: Current transport context (e.g., "local", "ssh://host")
+//   - site: Current site path for authorization (e.g., "root/step-1/@shell[0]/params/command")
+//
+// Returns:
+//   - Resolved text with all DisplayIDs replaced by actual values
+//   - Error if any DisplayID is unknown, unauthorized, or violates transport boundary
+//
+// Example:
+//
+//	text := "echo Hello opal:abc123def456..."
+//	resolved, err := vault.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
+//	// resolved = "echo Hello secret_value"
+func (v *Vault) Resolve(text, transport, site string) (string, error) {
+	// Find all DisplayIDs in the text
+	matches := displayIDPattern.FindAllString(text, -1)
+	if len(matches) == 0 {
+		// No DisplayIDs, return text unchanged
+		return text, nil
+	}
+
+	// Resolve each DisplayID
+	result := text
+	for _, displayID := range matches {
+		value, err := v.resolveDisplayID(displayID, transport, site)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve %s: %w", displayID, err)
+		}
+
+		// Replace DisplayID with actual value
+		result = strings.ReplaceAll(result, displayID, fmt.Sprint(value))
+	}
+
+	return result, nil
+}
+
+// resolveDisplayID resolves a single DisplayID with explicit transport and site context.
+// This is the internal implementation that performs authorization checks.
+func (v *Vault) resolveDisplayID(displayID, transport, site string) (any, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// 1. Look up exprID from DisplayID
+	exprID, found := v.displayIDIndex[displayID]
+	if !found {
+		return nil, fmt.Errorf("DisplayID %q not found in vault", displayID)
+	}
+
+	// 2. Get expression
+	expr, exists := v.expressions[exprID]
+	if !exists {
+		return nil, fmt.Errorf("expression %q not found", exprID)
+	}
+	if !expr.Resolved {
+		return nil, fmt.Errorf("expression %q not resolved yet", exprID)
+	}
+
+	// 3. Check transport boundary
+	if expr.TransportSensitive && expr.DeclaredTransport != transport {
+		return nil, fmt.Errorf(
+			"transport boundary violation: expression declared in %q, cannot use in %q",
+			expr.DeclaredTransport, transport,
+		)
+	}
+
+	// 4. Check site authorization
+	// Security: Require planKey for authorization checks
+	invariant.Precondition(len(v.planKey) > 0,
+		"Resolve() requires planKey for security - use NewWithPlanKey() instead of New()")
+
+	siteID := v.computeSiteID(site)
+	authorized := false
+	for _, ref := range v.references[exprID] {
+		if ref.SiteID == siteID {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		return nil, fmt.Errorf("no authority to unwrap %q at site %q", displayID, site)
+	}
+
+	// 5. Return value
+	return expr.Value, nil
 }
 
 // ============================================================================
