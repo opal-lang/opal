@@ -1078,6 +1078,7 @@ func (b *irBuilder) buildPatternRange() *ExprIR {
 	b.pos++ // Move past OPEN NodePatternRange
 
 	var start, end int64
+	var hasStart bool
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -1091,8 +1092,9 @@ func (b *irBuilder) buildPatternRange() *ExprIR {
 			tok := b.tokens[evt.Data]
 			if tok.Type == lexer.INTEGER {
 				val, _ := strconv.ParseInt(string(tok.Text), 10, 64)
-				if start == 0 {
+				if !hasStart {
 					start = val
+					hasStart = true
 				} else {
 					end = val
 				}
