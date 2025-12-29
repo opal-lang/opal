@@ -597,6 +597,20 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 					condition = primaryExpr
 				}
 				continue
+			case parser.NodeIdentifier:
+				primaryExpr = b.buildIdentifierExpr()
+				// Check if followed by binary expression
+				if b.pos < len(b.events) {
+					nextEvt := b.events[b.pos]
+					if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeBinaryExpr {
+						condition = b.buildBinaryExprWithLeft(primaryExpr)
+					} else {
+						condition = primaryExpr
+					}
+				} else {
+					condition = primaryExpr
+				}
+				continue
 			case parser.NodeBlock:
 				if thenBranch == nil {
 					stmts, err := b.buildBlock()

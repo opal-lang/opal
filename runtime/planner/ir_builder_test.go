@@ -310,6 +310,36 @@ func TestBuildIR_IfElse(t *testing.T) {
 	}
 }
 
+func TestBuildIR_IfWithIdentifierCondition(t *testing.T) {
+	graph := buildIR(t, `var isReady = true
+if isReady { echo "ready" }`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[1]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+
+	// Check condition is an identifier (VarRef)
+	if stmt.Blocker.Condition == nil {
+		t.Fatal("Condition is nil")
+	}
+	if stmt.Blocker.Condition.Kind != ExprVarRef {
+		t.Errorf("Condition.Kind = %v, want ExprVarRef", stmt.Blocker.Condition.Kind)
+	}
+	if stmt.Blocker.Condition.VarName != "isReady" {
+		t.Errorf("Condition.VarName = %q, want %q", stmt.Blocker.Condition.VarName, "isReady")
+	}
+
+	// Check then branch
+	if len(stmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+}
+
 func TestBuildIR_ElseIf(t *testing.T) {
 	graph := buildIR(t, `var X = 2
 if @var.X == 1 { 
