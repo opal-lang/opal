@@ -60,6 +60,43 @@ func TestBuildIR_SimpleCommand(t *testing.T) {
 	}
 }
 
+func TestBuildIR_CommandWithSpaces(t *testing.T) {
+	graph := buildIR(t, `echo hello world`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Command == nil || stmt.Command.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := stmt.Command.Command.Parts
+
+	// Should have: echo, space, hello, space, world
+	if len(parts) != 5 {
+		t.Fatalf("len(Parts) = %d, want 5", len(parts))
+	}
+
+	// Check parts
+	if parts[0].Kind != ExprLiteral || parts[0].Value != "echo" {
+		t.Errorf("parts[0] = %v %q, want literal 'echo'", parts[0].Kind, parts[0].Value)
+	}
+	if parts[1].Kind != ExprLiteral || parts[1].Value != " " {
+		t.Errorf("parts[1] = %v %q, want literal ' '", parts[1].Kind, parts[1].Value)
+	}
+	if parts[2].Kind != ExprLiteral || parts[2].Value != "hello" {
+		t.Errorf("parts[2] = %v %q, want literal 'hello'", parts[2].Kind, parts[2].Value)
+	}
+	if parts[3].Kind != ExprLiteral || parts[3].Value != " " {
+		t.Errorf("parts[3] = %v %q, want literal ' '", parts[3].Kind, parts[3].Value)
+	}
+	if parts[4].Kind != ExprLiteral || parts[4].Value != "world" {
+		t.Errorf("parts[4] = %v %q, want literal 'world'", parts[4].Kind, parts[4].Value)
+	}
+}
+
 func TestBuildIR_VarDecl_Literal(t *testing.T) {
 	graph := buildIR(t, `var ENV = "production"`)
 
@@ -337,6 +374,185 @@ if isReady { echo "ready" }`)
 	// Check then branch
 	if len(stmt.Blocker.ThenBranch) != 1 {
 		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+}
+
+// ========== For Loop Tests ==========
+
+func TestBuildIR_ForLoop(t *testing.T) {
+	graph := buildIR(t, `for item in items { echo item }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+	if stmt.Blocker.Kind != BlockerFor {
+		t.Errorf("Blocker.Kind = %v, want BlockerFor", stmt.Blocker.Kind)
+	}
+
+	// Check loop variable
+	if stmt.Blocker.LoopVar != "item" {
+		t.Errorf("LoopVar = %q, want %q", stmt.Blocker.LoopVar, "item")
+	}
+
+	// Check collection
+	if stmt.Blocker.Collection == nil {
+		t.Fatal("Collection is nil")
+	}
+	if stmt.Blocker.Collection.Kind != ExprVarRef {
+		t.Errorf("Collection.Kind = %v, want ExprVarRef", stmt.Blocker.Collection.Kind)
+	}
+	if stmt.Blocker.Collection.VarName != "items" {
+		t.Errorf("Collection.VarName = %q, want %q", stmt.Blocker.Collection.VarName, "items")
+	}
+
+	// Check body
+	if len(stmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+}
+
+func TestBuildIR_ForLoopWithDecorator(t *testing.T) {
+	graph := buildIR(t, `for item in @var.LIST { echo item }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Blocker.Collection == nil {
+		t.Fatal("Collection is nil")
+	}
+	if stmt.Blocker.Collection.Kind != ExprVarRef {
+		t.Errorf("Collection.Kind = %v, want ExprVarRef", stmt.Blocker.Collection.Kind)
+	}
+	if stmt.Blocker.Collection.VarName != "LIST" {
+		t.Errorf("Collection.VarName = %q, want %q", stmt.Blocker.Collection.VarName, "LIST")
+	}
+}
+
+// ========== Try/Catch Tests ==========
+
+func TestBuildIR_TryCatch(t *testing.T) {
+	graph := buildIR(t, `try { echo "risky" } catch { echo "error" }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtTry {
+		t.Errorf("stmt.Kind = %v, want StmtTry", stmt.Kind)
+	}
+	if stmt.Try == nil {
+		t.Fatal("Try is nil")
+	}
+
+	// Check try block
+	if len(stmt.Try.TryBlock) != 1 {
+		t.Errorf("len(TryBlock) = %d, want 1", len(stmt.Try.TryBlock))
+	}
+
+	// Check catch block
+	if len(stmt.Try.CatchBlock) != 1 {
+		t.Errorf("len(CatchBlock) = %d, want 1", len(stmt.Try.CatchBlock))
+	}
+}
+
+func TestBuildIR_TryCatchFinally(t *testing.T) {
+	graph := buildIR(t, `try { echo "risky" } catch { echo "error" } finally { echo "cleanup" }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Try == nil {
+		t.Fatal("Try is nil")
+	}
+
+	// Check all blocks
+	if len(stmt.Try.TryBlock) != 1 {
+		t.Errorf("len(TryBlock) = %d, want 1", len(stmt.Try.TryBlock))
+	}
+	if len(stmt.Try.CatchBlock) != 1 {
+		t.Errorf("len(CatchBlock) = %d, want 1", len(stmt.Try.CatchBlock))
+	}
+	if len(stmt.Try.FinallyBlock) != 1 {
+		t.Errorf("len(FinallyBlock) = %d, want 1", len(stmt.Try.FinallyBlock))
+	}
+}
+
+// ========== When Statement Tests ==========
+
+func TestBuildIR_When(t *testing.T) {
+	graph := buildIR(t, `when @var.X { "a" -> echo "got a" }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+	if stmt.Blocker.Kind != BlockerWhen {
+		t.Errorf("Blocker.Kind = %v, want BlockerWhen", stmt.Blocker.Kind)
+	}
+
+	// Check condition
+	if stmt.Blocker.Condition == nil {
+		t.Fatal("Condition is nil")
+	}
+	if stmt.Blocker.Condition.Kind != ExprVarRef {
+		t.Errorf("Condition.Kind = %v, want ExprVarRef", stmt.Blocker.Condition.Kind)
+	}
+
+	// Check arms
+	if len(stmt.Blocker.Arms) != 1 {
+		t.Fatalf("len(Arms) = %d, want 1", len(stmt.Blocker.Arms))
+	}
+
+	arm := stmt.Blocker.Arms[0]
+	if arm.Pattern == nil {
+		t.Fatal("Pattern is nil")
+	}
+	if arm.Pattern.Kind != ExprLiteral {
+		t.Errorf("Pattern.Kind = %v, want ExprLiteral", arm.Pattern.Kind)
+	}
+	if len(arm.Body) != 1 {
+		t.Errorf("len(Body) = %d, want 1", len(arm.Body))
+	}
+}
+
+func TestBuildIR_WhenMultipleArms(t *testing.T) {
+	graph := buildIR(t, `when @var.X { 
+		"a" -> echo "got a"
+		"b" -> echo "got b"
+	}`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+
+	// Check arms
+	if len(stmt.Blocker.Arms) != 2 {
+		t.Fatalf("len(Arms) = %d, want 2", len(stmt.Blocker.Arms))
 	}
 }
 

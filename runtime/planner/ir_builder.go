@@ -72,6 +72,30 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 				}
 				stmts = append(stmts, stmt)
 				continue
+
+			case parser.NodeFor:
+				stmt, err := b.buildForStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeWhen:
+				stmt, err := b.buildWhenStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeTry:
+				stmt, err := b.buildTryStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
 			}
 
 		case parser.EventClose:
@@ -139,6 +163,30 @@ func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 
 			case parser.NodeIf:
 				stmt, err := b.buildIfStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeFor:
+				stmt, err := b.buildForStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeWhen:
+				stmt, err := b.buildWhenStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeTry:
+				stmt, err := b.buildTryStmt()
 				if err != nil {
 					return nil, err
 				}
@@ -233,6 +281,14 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 
 			switch node {
 			case parser.NodeShellArg:
+				// Check if this arg needs a space before it
+				needsSpace := b.shellArgNeedsSpace()
+				if needsSpace {
+					parts = append(parts, &ExprIR{
+						Kind:  ExprLiteral,
+						Value: " ",
+					})
+				}
 				argParts := b.buildShellArg()
 				parts = append(parts, argParts...)
 				continue
@@ -271,6 +327,27 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 			},
 		},
 	}, nil
+}
+
+// shellArgNeedsSpace checks if the upcoming shell arg needs a space before it.
+// This looks ahead to find the first token in the NodeShellArg and checks HasSpaceBefore.
+func (b *irBuilder) shellArgNeedsSpace() bool {
+	// Look ahead from current position (which is at OPEN NodeShellArg)
+	for i := b.pos + 1; i < len(b.events); i++ {
+		evt := b.events[i]
+
+		// If we hit the close of the shell arg, no token found
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeShellArg {
+			return false
+		}
+
+		// First token in the arg
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			return tok.HasSpaceBefore
+		}
+	}
+	return false
 }
 
 // buildShellArg processes a shell argument node.
@@ -704,6 +781,484 @@ func (b *irBuilder) buildElseClause() ([]*StatementIR, error) {
 					return nil, err
 				}
 				stmts = append(stmts, ifStmt)
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return stmts, nil
+}
+
+// buildForStmt processes a for loop statement.
+func (b *irBuilder) buildForStmt() (*StatementIR, error) {
+	b.pos++ // Move past OPEN NodeFor
+
+	var loopVar string
+	var collection *ExprIR
+	var body []*StatementIR
+
+	// Skip FOR token
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			break
+		}
+		b.pos++
+	}
+
+	// Parse: loopVar in collection { body }
+	// Tokens: FOR, IDENTIFIER (loopVar), IN, IDENTIFIER (collection)
+	seenIn := false
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeFor {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IN {
+				seenIn = true
+				b.pos++
+				continue
+			}
+			if tok.Type == lexer.IDENTIFIER {
+				if !seenIn && loopVar == "" {
+					loopVar = string(tok.Text)
+				} else if seenIn && collection == nil {
+					collection = &ExprIR{
+						Kind:    ExprVarRef,
+						VarName: string(tok.Text),
+					}
+				}
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			switch node {
+			case parser.NodeDecorator:
+				collection = b.buildDecoratorExpr()
+				continue
+			case parser.NodeIdentifier:
+				collection = b.buildIdentifierExpr()
+				continue
+			case parser.NodeLiteral:
+				collection = b.buildLiteralExpr()
+				continue
+			case parser.NodeBlock:
+				stmts, err := b.buildBlock()
+				if err != nil {
+					return nil, err
+				}
+				body = stmts
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return &StatementIR{
+		Kind: StmtBlocker,
+		Blocker: &BlockerIR{
+			Kind:       BlockerFor,
+			LoopVar:    loopVar,
+			Collection: collection,
+			ThenBranch: body,
+		},
+	}, nil
+}
+
+// buildWhenStmt processes a when statement (pattern matching).
+func (b *irBuilder) buildWhenStmt() (*StatementIR, error) {
+	b.pos++ // Move past OPEN NodeWhen
+
+	var condition *ExprIR
+	var arms []*WhenArmIR
+
+	// Skip WHEN token
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			break
+		}
+		b.pos++
+	}
+
+	// Parse condition expression and arms
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeWhen {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			switch node {
+			case parser.NodeDecorator:
+				condition = b.buildDecoratorExpr()
+				continue
+			case parser.NodeLiteral:
+				condition = b.buildLiteralExpr()
+				continue
+			case parser.NodeIdentifier:
+				condition = b.buildIdentifierExpr()
+				continue
+			case parser.NodeWhenArm:
+				arm, err := b.buildWhenArm()
+				if err != nil {
+					return nil, err
+				}
+				arms = append(arms, arm)
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return &StatementIR{
+		Kind: StmtBlocker,
+		Blocker: &BlockerIR{
+			Kind:      BlockerWhen,
+			Condition: condition,
+			Arms:      arms,
+		},
+	}, nil
+}
+
+// buildWhenArm processes a single when arm (pattern -> body).
+func (b *irBuilder) buildWhenArm() (*WhenArmIR, error) {
+	b.pos++ // Move past OPEN NodeWhenArm
+
+	var pattern *ExprIR
+	var body []*StatementIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeWhenArm {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			switch node {
+			case parser.NodePatternLiteral:
+				pattern = b.buildPatternLiteral()
+				continue
+			case parser.NodePatternElse:
+				pattern = b.buildPatternElse()
+				continue
+			case parser.NodePatternRegex:
+				pattern = b.buildPatternRegex()
+				continue
+			case parser.NodePatternRange:
+				pattern = b.buildPatternRange()
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventStepEnter {
+			stmts, err := b.buildStep()
+			if err != nil {
+				return nil, err
+			}
+			body = append(body, stmts...)
+			continue
+		}
+
+		b.pos++
+	}
+
+	return &WhenArmIR{
+		Pattern: pattern,
+		Body:    body,
+	}, nil
+}
+
+// buildPatternLiteral processes a literal pattern in a when arm.
+func (b *irBuilder) buildPatternLiteral() *ExprIR {
+	b.pos++ // Move past OPEN NodePatternLiteral
+
+	var value any
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodePatternLiteral {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			value = tokenToValue(tok)
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprLiteral,
+		Value: value,
+	}
+}
+
+// buildPatternElse processes an else pattern (catch-all) in a when arm.
+func (b *irBuilder) buildPatternElse() *ExprIR {
+	b.pos++ // Move past OPEN NodePatternElse
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodePatternElse {
+			b.pos++
+			break
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprLiteral,
+		Value: "_", // Special marker for else pattern
+	}
+}
+
+// buildPatternRegex processes a regex pattern in a when arm.
+func (b *irBuilder) buildPatternRegex() *ExprIR {
+	b.pos++ // Move past OPEN NodePatternRegex
+
+	var pattern string
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodePatternRegex {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			pattern = string(tok.Text)
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprLiteral,
+		Value: pattern,
+	}
+}
+
+// buildPatternRange processes a range pattern in a when arm.
+func (b *irBuilder) buildPatternRange() *ExprIR {
+	b.pos++ // Move past OPEN NodePatternRange
+
+	var start, end int64
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodePatternRange {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.INTEGER {
+				val, _ := strconv.ParseInt(string(tok.Text), 10, 64)
+				if start == 0 {
+					start = val
+				} else {
+					end = val
+				}
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	// Return as a binary expression representing the range
+	return &ExprIR{
+		Kind: ExprBinaryOp,
+		Op:   "...",
+		Left: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: start,
+		},
+		Right: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: end,
+		},
+	}
+}
+
+// buildTryStmt processes a try/catch/finally statement.
+func (b *irBuilder) buildTryStmt() (*StatementIR, error) {
+	b.pos++ // Move past OPEN NodeTry
+
+	var tryBlock []*StatementIR
+	var catchBlock []*StatementIR
+	var finallyBlock []*StatementIR
+	var errorVar string
+
+	// Skip TRY token
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			break
+		}
+		b.pos++
+	}
+
+	// Parse try/catch/finally blocks
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeTry {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			switch node {
+			case parser.NodeBlock:
+				if tryBlock == nil {
+					stmts, err := b.buildBlock()
+					if err != nil {
+						return nil, err
+					}
+					tryBlock = stmts
+				}
+				continue
+			case parser.NodeCatch:
+				catchStmts, errVar, err := b.buildCatchClause()
+				if err != nil {
+					return nil, err
+				}
+				catchBlock = catchStmts
+				errorVar = errVar
+				continue
+			case parser.NodeFinally:
+				finallyStmts, err := b.buildFinallyClause()
+				if err != nil {
+					return nil, err
+				}
+				finallyBlock = finallyStmts
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return &StatementIR{
+		Kind:         StmtTry,
+		CreatesScope: true, // Try/catch creates a scope for error variable
+		Try: &TryIR{
+			TryBlock:     tryBlock,
+			CatchBlock:   catchBlock,
+			FinallyBlock: finallyBlock,
+			ErrorVar:     errorVar,
+		},
+	}, nil
+}
+
+// buildCatchClause processes a catch clause.
+func (b *irBuilder) buildCatchClause() ([]*StatementIR, string, error) {
+	b.pos++ // Move past OPEN NodeCatch
+
+	var stmts []*StatementIR
+	var errorVar string
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeCatch {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER && errorVar == "" {
+				errorVar = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			if node == parser.NodeBlock {
+				blockStmts, err := b.buildBlock()
+				if err != nil {
+					return nil, "", err
+				}
+				stmts = append(stmts, blockStmts...)
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return stmts, errorVar, nil
+}
+
+// buildFinallyClause processes a finally clause.
+func (b *irBuilder) buildFinallyClause() ([]*StatementIR, error) {
+	b.pos++ // Move past OPEN NodeFinally
+
+	var stmts []*StatementIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeFinally {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			if node == parser.NodeBlock {
+				blockStmts, err := b.buildBlock()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, blockStmts...)
 				continue
 			}
 		}
