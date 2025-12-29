@@ -30,6 +30,7 @@ const (
 	StmtCommand StatementKind = iota // Shell command or decorator invocation
 	StmtVarDecl                      // Variable declaration
 	StmtBlocker                      // Control flow (if/when/for)
+	StmtTry                          // Try/catch/finally error handling
 )
 
 // StatementIR represents a statement in the execution graph.
@@ -42,6 +43,7 @@ type StatementIR struct {
 	Command *CommandStmtIR // For StmtCommand
 	VarDecl *VarDeclIR     // For StmtVarDecl
 	Blocker *BlockerIR     // For StmtBlocker
+	Try     *TryIR         // For StmtTry
 }
 
 // CommandStmtIR represents a command statement.
@@ -84,6 +86,23 @@ type BlockerIR struct {
 	// For-loop specific
 	LoopVar    string  // Loop variable name (for "for x in ...")
 	Collection *ExprIR // Collection expression (for "for x in collection")
+
+	// When-specific (pattern matching)
+	Arms []*WhenArmIR // Pattern arms (for "when expr { pattern -> ... }")
+}
+
+// WhenArmIR represents a single arm in a when statement.
+type WhenArmIR struct {
+	Pattern *ExprIR        // Pattern to match (literal, regex, range, else)
+	Body    []*StatementIR // Statements to execute if pattern matches
+}
+
+// TryIR represents try/catch/finally error handling.
+type TryIR struct {
+	TryBlock     []*StatementIR // Statements in try block
+	CatchBlock   []*StatementIR // Statements in catch block (optional)
+	FinallyBlock []*StatementIR // Statements in finally block (optional)
+	ErrorVar     string         // Variable name for caught error (optional)
 }
 
 // ScopeStack tracks variable scopes during IR building.
