@@ -309,3 +309,62 @@ func TestBuildIR_IfElse(t *testing.T) {
 		t.Errorf("ElseBranch[0].Kind = %v, want StmtCommand", stmt.Blocker.ElseBranch[0].Kind)
 	}
 }
+
+func TestBuildIR_ElseIf(t *testing.T) {
+	graph := buildIR(t, `var X = 2
+if @var.X == 1 { 
+    echo "one" 
+} else if @var.X == 2 { 
+    echo "two" 
+} else { 
+    echo "other" 
+}`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[1]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+
+	// Check first if
+	if stmt.Blocker.Condition == nil {
+		t.Fatal("Condition is nil")
+	}
+	if len(stmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+
+	// Check else-if (should be nested if in else branch)
+	if len(stmt.Blocker.ElseBranch) != 1 {
+		t.Fatalf("len(ElseBranch) = %d, want 1", len(stmt.Blocker.ElseBranch))
+	}
+
+	elseIfStmt := stmt.Blocker.ElseBranch[0]
+	if elseIfStmt.Kind != StmtBlocker {
+		t.Errorf("elseIfStmt.Kind = %v, want StmtBlocker", elseIfStmt.Kind)
+	}
+	if elseIfStmt.Blocker == nil {
+		t.Fatal("elseIfStmt.Blocker is nil")
+	}
+
+	// Check else-if condition
+	if elseIfStmt.Blocker.Condition == nil {
+		t.Fatal("elseIfStmt.Condition is nil")
+	}
+	if elseIfStmt.Blocker.Condition.Kind != ExprBinaryOp {
+		t.Errorf("elseIfStmt.Condition.Kind = %v, want ExprBinaryOp", elseIfStmt.Blocker.Condition.Kind)
+	}
+
+	// Check else-if then branch
+	if len(elseIfStmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(elseIfStmt.ThenBranch) = %d, want 1", len(elseIfStmt.Blocker.ThenBranch))
+	}
+
+	// Check final else branch
+	if len(elseIfStmt.Blocker.ElseBranch) != 1 {
+		t.Errorf("len(elseIfStmt.ElseBranch) = %d, want 1", len(elseIfStmt.Blocker.ElseBranch))
+	}
+}
