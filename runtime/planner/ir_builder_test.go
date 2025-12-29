@@ -199,3 +199,113 @@ func TestBuildIR_ScopeTracking(t *testing.T) {
 		t.Error("ExprID for X is empty")
 	}
 }
+
+// ========== If Statement Tests ==========
+
+func TestBuildIR_IfWithLiteralCondition(t *testing.T) {
+	graph := buildIR(t, `if true { echo "yes" }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+	if stmt.Blocker == nil {
+		t.Fatal("stmt.Blocker is nil")
+	}
+	if stmt.Blocker.Kind != BlockerIf {
+		t.Errorf("Blocker.Kind = %v, want BlockerIf", stmt.Blocker.Kind)
+	}
+
+	// Check condition
+	if stmt.Blocker.Condition == nil {
+		t.Fatal("Condition is nil")
+	}
+	if stmt.Blocker.Condition.Kind != ExprLiteral {
+		t.Errorf("Condition.Kind = %v, want ExprLiteral", stmt.Blocker.Condition.Kind)
+	}
+	if stmt.Blocker.Condition.Value != true {
+		t.Errorf("Condition.Value = %v, want true", stmt.Blocker.Condition.Value)
+	}
+
+	// Check then branch
+	if len(stmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+	if stmt.Blocker.ThenBranch[0].Kind != StmtCommand {
+		t.Errorf("ThenBranch[0].Kind = %v, want StmtCommand", stmt.Blocker.ThenBranch[0].Kind)
+	}
+}
+
+func TestBuildIR_IfWithVarCondition(t *testing.T) {
+	graph := buildIR(t, `var ENV = "prod"
+if @var.ENV == "prod" { echo "production" }`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[1]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+
+	// Check condition is a binary expression
+	if stmt.Blocker.Condition == nil {
+		t.Fatal("Condition is nil")
+	}
+	if stmt.Blocker.Condition.Kind != ExprBinaryOp {
+		t.Errorf("Condition.Kind = %v, want ExprBinaryOp", stmt.Blocker.Condition.Kind)
+	}
+	if stmt.Blocker.Condition.Op != "==" {
+		t.Errorf("Condition.Op = %q, want %q", stmt.Blocker.Condition.Op, "==")
+	}
+
+	// Check left side is @var.ENV
+	if stmt.Blocker.Condition.Left == nil {
+		t.Fatal("Condition.Left is nil")
+	}
+	if stmt.Blocker.Condition.Left.Kind != ExprVarRef {
+		t.Errorf("Condition.Left.Kind = %v, want ExprVarRef", stmt.Blocker.Condition.Left.Kind)
+	}
+	if stmt.Blocker.Condition.Left.VarName != "ENV" {
+		t.Errorf("Condition.Left.VarName = %q, want %q", stmt.Blocker.Condition.Left.VarName, "ENV")
+	}
+
+	// Check right side is "prod"
+	if stmt.Blocker.Condition.Right == nil {
+		t.Fatal("Condition.Right is nil")
+	}
+	if stmt.Blocker.Condition.Right.Kind != ExprLiteral {
+		t.Errorf("Condition.Right.Kind = %v, want ExprLiteral", stmt.Blocker.Condition.Right.Kind)
+	}
+}
+
+func TestBuildIR_IfElse(t *testing.T) {
+	graph := buildIR(t, `if false { echo "yes" } else { echo "no" }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+
+	// Check then branch
+	if len(stmt.Blocker.ThenBranch) != 1 {
+		t.Errorf("len(ThenBranch) = %d, want 1", len(stmt.Blocker.ThenBranch))
+	}
+
+	// Check else branch
+	if len(stmt.Blocker.ElseBranch) != 1 {
+		t.Errorf("len(ElseBranch) = %d, want 1", len(stmt.Blocker.ElseBranch))
+	}
+	if stmt.Blocker.ElseBranch[0].Kind != StmtCommand {
+		t.Errorf("ElseBranch[0].Kind = %v, want StmtCommand", stmt.Blocker.ElseBranch[0].Kind)
+	}
+}

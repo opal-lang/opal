@@ -51,8 +51,26 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 		switch evt.Kind {
 		case parser.EventOpen:
 			node := parser.NodeKind(evt.Data)
-			if node == parser.NodeSource {
+
+			switch node {
+			case parser.NodeSource:
 				b.pos++
+				continue
+
+			case parser.NodeVarDecl:
+				stmt, err := b.buildVarDecl()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeIf:
+				stmt, err := b.buildIfStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, stmt)
 				continue
 			}
 
@@ -521,6 +539,20 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 	var thenBranch []*StatementIR
 	var elseBranch []*StatementIR
 
+	// Skip IF token
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			break
+		}
+		b.pos++
+	}
+
+	// Parse condition expression
+	// Pattern: primary expression followed by optional binary expression
+	var primaryExpr *ExprIR
+
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
 
@@ -534,13 +566,36 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 
 			switch node {
 			case parser.NodeDecorator:
-				condition = b.buildDecoratorExpr()
+				primaryExpr = b.buildDecoratorExpr()
+				// Check if followed by binary expression
+				if b.pos < len(b.events) {
+					nextEvt := b.events[b.pos]
+					if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeBinaryExpr {
+						condition = b.buildBinaryExprWithLeft(primaryExpr)
+					} else {
+						condition = primaryExpr
+					}
+				} else {
+					condition = primaryExpr
+				}
 				continue
 			case parser.NodeBinaryExpr:
+				// Binary expression without explicit left side (shouldn't happen)
 				condition = b.buildBinaryExpr()
 				continue
 			case parser.NodeLiteral:
-				condition = b.buildLiteralExpr()
+				primaryExpr = b.buildLiteralExpr()
+				// Check if followed by binary expression
+				if b.pos < len(b.events) {
+					nextEvt := b.events[b.pos]
+					if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeBinaryExpr {
+						condition = b.buildBinaryExprWithLeft(primaryExpr)
+					} else {
+						condition = primaryExpr
+					}
+				} else {
+					condition = primaryExpr
+				}
 				continue
 			case parser.NodeBlock:
 				if thenBranch == nil {
@@ -689,10 +744,93 @@ func (b *irBuilder) buildBinaryExpr() *ExprIR {
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
 			switch tok.Type {
-			case lexer.EQ_EQ, lexer.NOT_EQ, lexer.LT, lexer.LT_EQ, lexer.GT, lexer.GT_EQ, lexer.AND_AND, lexer.OR_OR:
-				op = string(tok.Text)
+			case lexer.EQ_EQ:
+				op = "=="
+			case lexer.NOT_EQ:
+				op = "!="
+			case lexer.LT:
+				op = "<"
+			case lexer.LT_EQ:
+				op = "<="
+			case lexer.GT:
+				op = ">"
+			case lexer.GT_EQ:
+				op = ">="
+			case lexer.AND_AND:
+				op = "&&"
+			case lexer.OR_OR:
+				op = "||"
 			}
 			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprBinaryOp,
+		Op:    op,
+		Left:  left,
+		Right: right,
+	}
+}
+
+// buildBinaryExprWithLeft processes a binary expression with a known left side.
+// This is used when the left expression was already parsed (e.g., in if conditions).
+func (b *irBuilder) buildBinaryExprWithLeft(left *ExprIR) *ExprIR {
+	b.pos++ // Move past OPEN NodeBinaryExpr
+
+	var right *ExprIR
+	var op string
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeBinaryExpr {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			switch tok.Type {
+			case lexer.EQ_EQ:
+				op = "=="
+			case lexer.NOT_EQ:
+				op = "!="
+			case lexer.LT:
+				op = "<"
+			case lexer.LT_EQ:
+				op = "<="
+			case lexer.GT:
+				op = ">"
+			case lexer.GT_EQ:
+				op = ">="
+			case lexer.AND_AND:
+				op = "&&"
+			case lexer.OR_OR:
+				op = "||"
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+
+			switch node {
+			case parser.NodeDecorator:
+				right = b.buildDecoratorExpr()
+			case parser.NodeLiteral:
+				right = b.buildLiteralExpr()
+			case parser.NodeIdentifier:
+				right = b.buildIdentifierExpr()
+			case parser.NodeBinaryExpr:
+				right = b.buildBinaryExpr()
+			default:
+				b.pos++
+			}
 			continue
 		}
 
