@@ -1482,3 +1482,870 @@ func containsStr(s, substr string) bool {
 }
 
 var _ = cmp.Diff // Ensure cmp is imported (will use in future tests)
+
+// =============================================================================
+// Bug reproduction tests - these expose issues in the current implementation
+// =============================================================================
+
+// TestBug_ErrorsFromCollectExprAreSilentlyIgnored verifies that errors from
+// collectExpr (like undefined variables) are properly returned, not silently ignored.
+//
+// BUG: collectExpr appends to r.errors but resolve() never checks r.errors
+// after traverseAndCollect, so errors are silently swallowed.
+func TestBug_ErrorsFromCollectExprAreSilentlyIgnored(t *testing.T) {
+	// Create vault
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Build IR with a command that references an undefined variable
+	// This should fail with "undefined variable" error
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "UNDEFINED_VAR"}, // Not defined!
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	// Resolve
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+
+	// BUG: Currently this returns nil because errors are silently ignored
+	// EXPECTED: Should return error about undefined variable
+	if err == nil {
+		t.Fatalf("BUG CONFIRMED: Expected error for undefined variable, got nil (errors silently ignored)")
+	}
+
+	if !containsStr(err.Error(), "undefined variable") {
+		t.Errorf("Error should mention 'undefined variable', got: %v", err)
+	}
+}
+
+// TestBug_ForLoopVariableNotInScope verifies that for-loop variables are
+// properly added to scope so they can be referenced in the loop body.
+//
+// BUG: evaluateForBlocker creates VarDecl statements but doesn't update
+// r.graph.Scopes, so ExprVarRef lookups for the loop variable fail.
+// Combined with Bug 1 (errors silently ignored), this appears to pass but
+// the loop variable is never actually resolved.
+func TestBug_ForLoopVariableNotInScope(t *testing.T) {
+	// Create vault
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Build IR:
+	//   for item in ["a", "b"] {
+	//     echo @var.item   # References loop variable
+	//   }
+	scopes := NewScopeStack()
+
+	forBlocker := &BlockerIR{
+		Kind:    BlockerFor,
+		LoopVar: "item",
+		Collection: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: []string{"a", "b"},
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "item"}, // Loop variable
+						},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: forBlocker},
+		},
+		Scopes: scopes,
+	}
+
+	// Resolve
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+
+	// Should succeed - loop variable should be accessible in body
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// BUG CHECK: The loop variable should have been declared in vault for each iteration.
+	// If the scoping is working correctly, we should be able to look up "item" in scopes
+	// after resolution completes.
+	//
+	// Since for-loops leak variables (per spec), "item" should be defined in scopes
+	// with the value from the last iteration.
+	itemExprID, ok := scopes.Lookup("item")
+	if !ok {
+		t.Fatalf("BUG CONFIRMED: Loop variable 'item' not found in scopes after resolution")
+	}
+
+	// The exprID should be touched (used in command)
+	if !v.IsTouched(itemExprID) {
+		t.Errorf("Loop variable 'item' should be touched (used in echo command)")
+	}
+}
+
+// TestBug_VarDeclInTakenBranchNotVisibleAfter verifies that variables declared
+// inside taken branches are visible to statements after the branch.
+//
+// This tests that collectVarDecl properly updates r.graph.Scopes so that
+// variables declared in branches are visible to later statements in the same branch.
+//
+// Note: The IR builder pre-populates scopes with all visible variables at parse time.
+// The resolver's job is to update scopes when processing VarDecl statements during
+// resolution (e.g., for loop variables injected during unrolling).
+func TestBug_VarDeclInTakenBranchNotVisibleAfter(t *testing.T) {
+	// Create vault
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare condition variable
+	condExprID := v.DeclareVariable("COND", "literal:true")
+
+	// Build IR:
+	//   var COND = true
+	//   if @var.COND {
+	//     var INNER = "set-inside"
+	//     echo @var.INNER   # Uses INNER declared above
+	//   }
+	scopes := NewScopeStack()
+	scopes.Define("COND", condExprID)
+	// Note: INNER is NOT pre-defined in scopes - it's declared inside the if block
+	// The resolver should add it to scopes when processing the VarDecl
+
+	// Declare INNER in vault but NOT in scopes initially
+	innerExprID := v.DeclareVariable("INNER", "literal:set-inside")
+
+	blocker := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "COND",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "INNER",
+					ExprID: innerExprID,
+					Value: &ExprIR{
+						Kind:  ExprLiteral,
+						Value: "set-inside",
+					},
+				},
+			},
+			// Command INSIDE the if block that references INNER
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "INNER"}, // Declared above in same block
+						},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COND",
+					ExprID: condExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{Kind: StmtBlocker, Blocker: blocker},
+		},
+		Scopes: scopes,
+	}
+
+	// Resolve
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+
+	// Should succeed - INNER should be visible to the echo command in the same block
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// INNER should be in scopes after the if block is processed
+	// (per spec: "Language control blocks - mutations leak to outer scope")
+	innerLookupExprID, ok := scopes.Lookup("INNER")
+	if !ok {
+		t.Fatalf("Variable 'INNER' declared in if block not found in scopes after resolution")
+	}
+
+	// The exprID should match what we declared
+	if innerLookupExprID != innerExprID {
+		t.Errorf("INNER exprID mismatch: got %q, want %q", innerLookupExprID, innerExprID)
+	}
+
+	// Verify INNER was touched (used in echo command)
+	if !v.IsTouched(innerExprID) {
+		t.Errorf("INNER should be touched (declared in if block, used in echo)")
+	}
+}
+
+// =============================================================================
+// Wave model tests - verify batch resolution and flattening semantics
+// =============================================================================
+
+// TestResolve_MultipleBlockersSameLevel verifies that multiple blockers at the
+// same level are collected and their conditions resolved. Statements between
+// blockers wait for the first blocker's taken branch to be processed.
+//
+// This tests the scenario:
+//
+//	var COND1 = true
+//	var COND2 = true
+//	if @var.COND1 { var B = 2 }
+//	var C = 3                      # Between blockers - waits for wave 2
+//	if @var.COND2 { var D = 4 }
+//
+// Wave 1: Collect COND1, COND2, blocker1 condition, blocker2 condition
+// Wave 2: Process blocker1's taken branch (var B), then C, then blocker2
+// Wave 3: Process blocker2's taken branch (var D)
+func TestResolve_MultipleBlockersSameLevel(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare variables - conditions BEFORE blockers
+	cond1ExprID := v.DeclareVariable("COND1", "literal:true")
+	cond2ExprID := v.DeclareVariable("COND2", "literal:true")
+	bExprID := v.DeclareVariable("B", "literal:2")
+	cExprID := v.DeclareVariable("C", "literal:3")
+	dExprID := v.DeclareVariable("D", "literal:4")
+
+	scopes := NewScopeStack()
+	scopes.Define("COND1", cond1ExprID)
+	scopes.Define("COND2", cond2ExprID)
+
+	blocker1 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "COND1",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "B",
+					ExprID: bExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: 2},
+				},
+			},
+		},
+	}
+
+	blocker2 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "COND2",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "D",
+					ExprID: dExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: 4},
+				},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			// var COND1 = true (before any blocker)
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COND1",
+					ExprID: cond1ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			// var COND2 = true (before any blocker)
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COND2",
+					ExprID: cond2ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			// if @var.COND1 { var B = 2 }
+			{Kind: StmtBlocker, Blocker: blocker1},
+			// var C = 3 (between blockers - processed in wave 2)
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "C",
+					ExprID: cExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: 3},
+				},
+			},
+			// if @var.COND2 { var D = 4 }
+			{Kind: StmtBlocker, Blocker: blocker2},
+		},
+		Scopes: scopes,
+	}
+
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// Both blockers should be taken
+	if blocker1.Taken == nil || !*blocker1.Taken {
+		t.Errorf("blocker1 should be taken (COND1=true)")
+	}
+	if blocker2.Taken == nil || !*blocker2.Taken {
+		t.Errorf("blocker2 should be taken (COND2=true)")
+	}
+
+	// All variables should be touched
+	for name, exprID := range map[string]string{
+		"B": bExprID, "C": cExprID, "D": dExprID,
+		"COND1": cond1ExprID, "COND2": cond2ExprID,
+	} {
+		if !v.IsTouched(exprID) {
+			t.Errorf("%s should be touched", name)
+		}
+	}
+
+	// B, C, and D should be in scopes
+	if _, ok := scopes.Lookup("B"); !ok {
+		t.Errorf("B should be in scopes (leaked from blocker1)")
+	}
+	if _, ok := scopes.Lookup("C"); !ok {
+		t.Errorf("C should be in scopes (processed between blockers)")
+	}
+	if _, ok := scopes.Lookup("D"); !ok {
+		t.Errorf("D should be in scopes (leaked from blocker2)")
+	}
+}
+
+// TestResolve_SequentialBlockers_ConditionAfterFirstBlocker tests the scenario where
+// the second blocker's condition is defined AFTER the first blocker. This requires
+// multiple waves because statements after a blocker wait for its taken branch.
+//
+//	var COND1 = true
+//	if @var.COND1 { var B = 2 }     # Wave 1: blocker1
+//	var COND2 = true                 # Wave 2: processed after blocker1's branch
+//	if @var.COND2 { var D = 4 }     # Wave 2: blocker2 (becomes blocker in wave 2)
+//	echo done                        # Wave 3: after blocker2's branch
+//
+// This verifies that:
+// 1. Blocker conditions defined after earlier blockers still work
+// 2. The wave model correctly sequences dependent statements
+func TestResolve_SequentialBlockers_ConditionAfterFirstBlocker(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare variables
+	cond1ExprID := v.DeclareVariable("COND1", "literal:true")
+	bExprID := v.DeclareVariable("B", "literal:2")
+	cond2ExprID := v.DeclareVariable("COND2", "literal:true")
+	dExprID := v.DeclareVariable("D", "literal:4")
+
+	scopes := NewScopeStack()
+	scopes.Define("COND1", cond1ExprID)
+	// Note: COND2 is NOT pre-defined in scopes - it's declared after blocker1
+
+	blocker1 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "COND1",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "B",
+					ExprID: bExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: 2},
+				},
+			},
+		},
+	}
+
+	blocker2 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "COND2",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "D",
+					ExprID: dExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: 4},
+				},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			// var COND1 = true
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COND1",
+					ExprID: cond1ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			// if @var.COND1 { var B = 2 }
+			{Kind: StmtBlocker, Blocker: blocker1},
+			// var COND2 = true (AFTER blocker1 - processed in wave 2)
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COND2",
+					ExprID: cond2ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			// if @var.COND2 { var D = 4 }
+			{Kind: StmtBlocker, Blocker: blocker2},
+		},
+		Scopes: scopes,
+	}
+
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// Both blockers should be taken
+	if blocker1.Taken == nil || !*blocker1.Taken {
+		t.Errorf("blocker1 should be taken (COND1=true)")
+	}
+	if blocker2.Taken == nil || !*blocker2.Taken {
+		t.Errorf("blocker2 should be taken (COND2=true)")
+	}
+
+	// All variables should be touched
+	if !v.IsTouched(cond1ExprID) {
+		t.Errorf("COND1 should be touched")
+	}
+	if !v.IsTouched(bExprID) {
+		t.Errorf("B should be touched (in blocker1's taken branch)")
+	}
+	if !v.IsTouched(cond2ExprID) {
+		t.Errorf("COND2 should be touched (processed in wave 2)")
+	}
+	if !v.IsTouched(dExprID) {
+		t.Errorf("D should be touched (in blocker2's taken branch)")
+	}
+
+	// All variables should be in scopes
+	if _, ok := scopes.Lookup("COND2"); !ok {
+		t.Errorf("COND2 should be in scopes (declared after blocker1)")
+	}
+	if _, ok := scopes.Lookup("B"); !ok {
+		t.Errorf("B should be in scopes (leaked from blocker1)")
+	}
+	if _, ok := scopes.Lookup("D"); !ok {
+		t.Errorf("D should be in scopes (leaked from blocker2)")
+	}
+}
+
+// TestResolve_ThreeLevelNestedIfs_AllTrue tests 3 levels of nested if statements
+// where all conditions are true. This requires 3 waves of resolution.
+//
+//	if @var.L1 {           # Wave 1: resolve L1
+//	    if @var.L2 {       # Wave 2: resolve L2
+//	        if @var.L3 {   # Wave 3: resolve L3
+//	            var DEEP = "found"
+//	        }
+//	    }
+//	}
+func TestResolve_ThreeLevelNestedIfs_AllTrue(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare condition variables
+	l1ExprID := v.DeclareVariable("L1", "literal:true")
+	l2ExprID := v.DeclareVariable("L2", "literal:true")
+	l3ExprID := v.DeclareVariable("L3", "literal:true")
+	deepExprID := v.DeclareVariable("DEEP", "literal:found")
+
+	scopes := NewScopeStack()
+	scopes.Define("L1", l1ExprID)
+	scopes.Define("L2", l2ExprID)
+	scopes.Define("L3", l3ExprID)
+
+	// Build nested structure from inside out
+	blocker3 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L3",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "DEEP",
+					ExprID: deepExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "found"},
+				},
+			},
+		},
+	}
+
+	blocker2 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L2",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker3},
+		},
+	}
+
+	blocker1 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L1",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker2},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L1",
+					ExprID: l1ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L2",
+					ExprID: l2ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L3",
+					ExprID: l3ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{Kind: StmtBlocker, Blocker: blocker1},
+		},
+		Scopes: scopes,
+	}
+
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// All blockers should be taken
+	if blocker1.Taken == nil || !*blocker1.Taken {
+		t.Errorf("blocker1 (L1) should be taken")
+	}
+	if blocker2.Taken == nil || !*blocker2.Taken {
+		t.Errorf("blocker2 (L2) should be taken")
+	}
+	if blocker3.Taken == nil || !*blocker3.Taken {
+		t.Errorf("blocker3 (L3) should be taken")
+	}
+
+	// DEEP should be touched and in scopes
+	if !v.IsTouched(deepExprID) {
+		t.Errorf("DEEP should be touched (all conditions true)")
+	}
+	if _, ok := scopes.Lookup("DEEP"); !ok {
+		t.Errorf("DEEP should be in scopes (leaked from innermost block)")
+	}
+}
+
+// TestResolve_ThreeLevelNestedIfs_ThirdFalse tests 3 levels of nested if statements
+// where the third (innermost) condition is false. The deepest variable should NOT
+// be touched (branch pruning).
+//
+//	if @var.L1 {           # true
+//	    if @var.L2 {       # true
+//	        if @var.L3 {   # FALSE - this branch not taken
+//	            var DEEP = "found"  # Should NOT be touched
+//	        }
+//	    }
+//	}
+func TestResolve_ThreeLevelNestedIfs_ThirdFalse(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare condition variables - L3 is false
+	l1ExprID := v.DeclareVariable("L1", "literal:true")
+	l2ExprID := v.DeclareVariable("L2", "literal:true")
+	l3ExprID := v.DeclareVariable("L3", "literal:false")
+	deepExprID := v.DeclareVariable("DEEP", "literal:found")
+
+	scopes := NewScopeStack()
+	scopes.Define("L1", l1ExprID)
+	scopes.Define("L2", l2ExprID)
+	scopes.Define("L3", l3ExprID)
+
+	// Build nested structure from inside out
+	blocker3 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L3",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "DEEP",
+					ExprID: deepExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "found"},
+				},
+			},
+		},
+	}
+
+	blocker2 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L2",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker3},
+		},
+	}
+
+	blocker1 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L1",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker2},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L1",
+					ExprID: l1ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L2",
+					ExprID: l2ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L3",
+					ExprID: l3ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: false},
+				},
+			},
+			{Kind: StmtBlocker, Blocker: blocker1},
+		},
+		Scopes: scopes,
+	}
+
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// First two blockers should be taken, third should NOT
+	if blocker1.Taken == nil || !*blocker1.Taken {
+		t.Errorf("blocker1 (L1) should be taken")
+	}
+	if blocker2.Taken == nil || !*blocker2.Taken {
+		t.Errorf("blocker2 (L2) should be taken")
+	}
+	if blocker3.Taken == nil || *blocker3.Taken {
+		t.Errorf("blocker3 (L3) should NOT be taken (L3=false)")
+	}
+
+	// DEEP should NOT be touched (branch pruning)
+	if v.IsTouched(deepExprID) {
+		t.Errorf("DEEP should NOT be touched (L3 condition is false, branch pruned)")
+	}
+
+	// DEEP should NOT be in scopes (never processed)
+	if _, ok := scopes.Lookup("DEEP"); ok {
+		t.Errorf("DEEP should NOT be in scopes (branch was pruned)")
+	}
+}
+
+// TestResolve_ThreeLevelNestedIfs_SecondFalse tests 3 levels of nested if statements
+// where the second condition is false. Neither the second nor third level should
+// be processed (early branch pruning).
+func TestResolve_ThreeLevelNestedIfs_SecondFalse(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Declare condition variables - L2 is false
+	l1ExprID := v.DeclareVariable("L1", "literal:true")
+	l2ExprID := v.DeclareVariable("L2", "literal:false")
+	l3ExprID := v.DeclareVariable("L3", "literal:true")
+	deepExprID := v.DeclareVariable("DEEP", "literal:found")
+
+	scopes := NewScopeStack()
+	scopes.Define("L1", l1ExprID)
+	scopes.Define("L2", l2ExprID)
+	scopes.Define("L3", l3ExprID)
+
+	// Build nested structure from inside out
+	blocker3 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L3",
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "DEEP",
+					ExprID: deepExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "found"},
+				},
+			},
+		},
+	}
+
+	blocker2 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L2",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker3},
+		},
+	}
+
+	blocker1 := &BlockerIR{
+		Kind: BlockerIf,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "L1",
+		},
+		ThenBranch: []*StatementIR{
+			{Kind: StmtBlocker, Blocker: blocker2},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L1",
+					ExprID: l1ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L2",
+					ExprID: l2ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: false},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "L3",
+					ExprID: l3ExprID,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: true},
+				},
+			},
+			{Kind: StmtBlocker, Blocker: blocker1},
+		},
+		Scopes: scopes,
+	}
+
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// First blocker taken, second NOT taken, third never evaluated
+	if blocker1.Taken == nil || !*blocker1.Taken {
+		t.Errorf("blocker1 (L1) should be taken")
+	}
+	if blocker2.Taken == nil || *blocker2.Taken {
+		t.Errorf("blocker2 (L2) should NOT be taken (L2=false)")
+	}
+	// blocker3 should never be evaluated (parent branch not taken)
+	if blocker3.Taken != nil {
+		t.Errorf("blocker3 (L3) should NOT be evaluated (parent branch pruned)")
+	}
+
+	// DEEP should NOT be touched
+	if v.IsTouched(deepExprID) {
+		t.Errorf("DEEP should NOT be touched (L2 is false, entire subtree pruned)")
+	}
+}
