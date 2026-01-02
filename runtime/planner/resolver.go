@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/opal-lang/opal/core/decorator"
@@ -214,7 +215,7 @@ func (r *Resolver) resolve() error {
 		// Phase 4: Queue next wave
 		if len(blockers) > 0 {
 			// Taken branches come FIRST, then statements after the last blocker
-			stmts = append(r.nextWaveStmts, afterBlockers...)
+			stmts = slices.Concat(r.nextWaveStmts, afterBlockers)
 			r.nextWaveStmts = nil
 		} else {
 			// No blockers - we're done

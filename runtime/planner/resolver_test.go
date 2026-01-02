@@ -1583,7 +1583,6 @@ func TestBug_ForLoopVariableNotInScope(t *testing.T) {
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
 	err := Resolve(graph, v, session, config)
-
 	// Should succeed - loop variable should be accessible in body
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
@@ -1689,7 +1688,6 @@ func TestBug_VarDeclInTakenBranchNotVisibleAfter(t *testing.T) {
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
 	err := Resolve(graph, v, session, config)
-
 	// Should succeed - INNER should be visible to the echo command in the same block
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
