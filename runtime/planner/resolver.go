@@ -10,21 +10,53 @@ import (
 )
 
 // Resolver processes an ExecutionGraph, resolving all expressions and determining
-// which branches are taken. Uses a wave-based resolution model where:
+// which branches are taken. Uses a wave-based resolution model.
 //
-// 1. Traverse the IR graph, collecting expressions that need resolution
-// 2. Identify blockers (if/when/for with unresolved conditions)
-// 3. Mark touched all expressions up to the blockers
-// 4. Batch resolve all touched expressions in one wave (grouped by decorator type)
-// 5. Evaluate blockers with resolved values, set Taken flags
-// 6. Branch pruning - untaken branches are never resolved (efficiency + security)
-// 7. Continue into taken branches
-// 8. Repeat until no more blockers
+// # Blockers
 //
-// Key principles:
-// - Batch-first: Collect ALL expressions up to blockers, THEN batch resolve
-// - Wave-based: Multiple passes through the graph as branches open
-// - Branch pruning: Untaken branches are never traversed or resolved
+// A "blocker" is a control flow construct (if/when/for) that cannot be evaluated
+// until its condition or collection expression is resolved. We can't know which
+// branch to take (if/when) or how many iterations to unroll (for) until the
+// controlling expression has a concrete value.
+//
+// Example blockers:
+//   - `if @var.ENV == "prod"` - blocked until ENV is resolved
+//   - `for item in @var.ITEMS` - blocked until ITEMS collection is resolved
+//   - `when @env.REGION` - blocked until REGION is resolved
+//
+// # Wave-Based Resolution
+//
+// Resolution proceeds in waves. Each wave:
+//  1. Traverse the IR graph, collecting expressions that need resolution
+//  2. Identify blockers (control flow with unresolved conditions)
+//  3. Mark touched all expressions up to the blockers
+//  4. Batch resolve all touched expressions (grouped by decorator type for efficiency)
+//  5. Evaluate blockers with resolved values, set Taken flags
+//  6. Queue taken branches for next wave (branch pruning: untaken branches ignored)
+//  7. Repeat until no more blockers
+//
+// # For-Loop Unrolling
+//
+// For-loops are blockers because we can't unroll until the collection is resolved.
+// Once resolved, unrolling produces flat statements with VarDecl injections:
+//
+//	for item in ["a", "b"] { echo @var.item }
+//
+// Unrolls to (in nextWaveStmts):
+//
+//	VarDecl: item = "a"
+//	echo @var.item
+//	VarDecl: item = "b"
+//	echo @var.item
+//
+// Each VarDecl rebinds the loop variable before its iteration's body statements.
+// This ensures nested blockers (like `if @var.item == "b"`) see the correct value.
+//
+// # Key Principles
+//
+//   - Batch-first: Collect ALL expressions up to blockers, THEN batch resolve
+//   - Wave-based: Multiple passes through the graph as branches open
+//   - Branch pruning: Untaken branches are never traversed or resolved (security + efficiency)
 type Resolver struct {
 	graph   *ExecutionGraph
 	vault   *vault.Vault
@@ -376,6 +408,8 @@ func (r *Resolver) evaluateIfBlocker(blocker *BlockerIR) error {
 }
 
 // evaluateForBlocker evaluates a for-loop and unrolls it.
+// Unrolling injects VarDecl statements before each iteration's body so the
+// loop variable is properly bound when those statements are processed in wave 2.
 func (r *Resolver) evaluateForBlocker(blocker *BlockerIR) error {
 	// Evaluate collection
 	collection, err := r.evaluateCollection(blocker.Collection)
@@ -383,21 +417,25 @@ func (r *Resolver) evaluateForBlocker(blocker *BlockerIR) error {
 		return fmt.Errorf("failed to evaluate for collection: %w", err)
 	}
 
-	// Unroll loop - each iteration becomes statements in next wave
+	// Unroll loop - inject VarDecl + body statements for each iteration
 	for _, item := range collection {
-		// Bind loop variable in Vault
+		// Create exprID for this iteration's loop variable
 		loopVarRaw := fmt.Sprintf("literal:%v", item)
 		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-		r.vault.StoreUnresolvedValue(loopVarExprID, item)
-		r.vault.MarkTouched(loopVarExprID)
 
-		// Store by variable name for condition evaluation (not just exprID)
-		r.values[blocker.LoopVar] = item
+		// Inject a VarDecl statement that binds the loop variable for this iteration
+		// This ensures the variable is properly bound when wave 2 processes these statements
+		iterVarDecl := &StatementIR{
+			Kind: StmtVarDecl,
+			VarDecl: &VarDeclIR{
+				Name:   blocker.LoopVar,
+				ExprID: loopVarExprID,
+				Value:  &ExprIR{Kind: ExprLiteral, Value: item},
+			},
+		}
 
-		// Define in scope so variable lookups work
-		r.graph.Scopes.Define(blocker.LoopVar, loopVarExprID)
-
-		// Add body statements for this iteration
+		// Add: VarDecl (rebinds loop var) + body statements
+		r.nextWaveStmts = append(r.nextWaveStmts, iterVarDecl)
 		r.nextWaveStmts = append(r.nextWaveStmts, blocker.ThenBranch...)
 	}
 
