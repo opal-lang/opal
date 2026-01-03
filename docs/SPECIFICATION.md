@@ -642,6 +642,66 @@ Every `{ ... }` block in opal represents a **phase** - a unit of execution with 
 
 Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel` work within this framework. They define how blocks expand (unrolling loops, selecting branches) or add constraints (parallel independence), but they all inherit the same phase execution guarantees.
 
+### Metaprogramming Flattening
+
+Language control blocks (`if`, `for`, `when`, `fun`) are **metaprogramming constructs** - they exist only at plan-time and "disappear" in the final execution plan. The planner evaluates these constructs and flattens them into a linear sequence of commands.
+
+**Example: if block flattening**
+
+```opal
+var ENV = "prod"
+if @var.ENV == "prod" {
+    var REPLICAS = 3
+}
+kubectl scale --replicas=@var.REPLICAS deployment/app
+```
+
+After planning, this becomes a flat sequence:
+```
+var ENV = "prod"
+var REPLICAS = 3
+kubectl scale --replicas=3 deployment/app
+```
+
+The `if` block is gone - its contents are flattened into the parent scope. This is why variables declared inside `if` blocks are visible after the block: there IS no block in the final plan.
+
+**Example: for loop unrolling**
+
+```opal
+for env in ["staging", "prod"] {
+    kubectl apply -f k8s/@var.env/
+}
+```
+
+After planning, this unrolls to:
+```
+kubectl apply -f k8s/staging/
+kubectl apply -f k8s/prod/
+```
+
+The loop is gone - each iteration becomes a separate command in sequence.
+
+**Why this matters for scoping:**
+
+Because metaprogramming blocks are flattened away, variables declared inside them naturally become part of the outer scope:
+
+```opal
+var result = "unknown"
+if @var.CONDITION {
+    var result = "success"    // Redeclares in flattened scope
+}
+echo @var.result              // "success" if CONDITION was true
+```
+
+This is fundamentally different from execution blocks (`try/catch`, `@retry`, etc.) which remain in the plan and execute at runtime. See [Scope Isolation](#scope-isolation) for details on execution block scoping.
+
+**The two types of blocks:**
+
+| Block Type | Examples | When Evaluated | Scoping |
+|------------|----------|----------------|---------|
+| **Metaprogramming** | `if`, `for`, `when`, `fun` | Plan-time (disappears) | Variables leak to outer scope |
+| **Execution** | `try/catch`, `@retry`, `@timeout` | Runtime (remains in plan) | Variables isolated (no leak) |
+
 ### @parallel Output Determinism
 
 **Output merge contract**: Stdout/stderr from parallel branches are buffered per-step and emitted in **plan order** (by step ID), not completion order.
@@ -789,7 +849,11 @@ The plan records all possible execution paths through try/catch blocks. At runti
 
 ## Scope Isolation
 
-The rule is simple: **values can flow in from the outer scope, but mutations never flow back out**.
+> **Note:** This section applies only to **execution blocks** (`try/catch`, `@retry`, `@timeout`, etc.). 
+> Metaprogramming blocks (`if`, `for`, `when`, `fun`) use flattening semantics where variables leak to the outer scope.
+> See [Metaprogramming Flattening](#metaprogramming-flattening) for details.
+
+For execution blocks, the rule is simple: **values can flow in from the outer scope, but mutations never flow back out**.
 
 ```opal
 var counter = 0
