@@ -108,7 +108,7 @@ func inferRoles(decorator Decorator) []Role {
 	if _, ok := decorator.(Transport); ok {
 		roles = append(roles, RoleBoundary)
 	}
-	if _, ok := decorator.(Endpoint); ok {
+	if _, ok := decorator.(IO); ok {
 		roles = append(roles, RoleEndpoint)
 	}
 

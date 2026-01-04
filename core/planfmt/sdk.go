@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 	"github.com/opal-lang/opal/core/sdk"
 	"github.com/opal-lang/opal/core/types"
@@ -116,27 +117,72 @@ func ToSDKArgs(planArgs []Arg) map[string]interface{} {
 }
 
 // commandNodeToSink converts a CommandNode (redirect target) to a Sink.
-// Looks up the decorator in the registry and calls AsSink() if it implements SinkProvider.
-func commandNodeToSink(target *CommandNode, registry *types.Registry) sdk.Sink {
+// Looks up the decorator in the registry and wraps it as a Sink if it implements IO.
+func commandNodeToSink(target *CommandNode, _ *types.Registry) sdk.Sink {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := target.Decorator
 	if decoratorName != "" && decoratorName[0] == '@' {
 		decoratorName = decoratorName[1:]
 	}
 
-	// Get decorator handler from registry
-	handler, _, exists := registry.GetSDKHandler(decoratorName)
+	// Get decorator from new registry
+	entry, exists := decorator.Global().Lookup(decoratorName)
 	invariant.Invariant(exists, "decorator %s not registered (parser should have rejected this)", target.Decorator)
 
-	// Check if decorator implements SinkProvider
-	sinkProvider, ok := handler.(sdk.SinkProvider)
-	invariant.Invariant(ok, "decorator %s does not implement SinkProvider (parser should have rejected this)", target.Decorator)
+	// Check if decorator implements IO
+	ioDecorator, ok := entry.Impl.(decorator.IO)
+	invariant.Invariant(ok, "decorator %s does not implement IO (parser should have rejected this)", target.Decorator)
 
-	// Create minimal execution context with args
-	ctx := &minimalContext{args: ToSDKArgs(target.Args)}
+	args := ToSDKArgs(target.Args)
 
-	// Call AsSink() on the decorator instance
-	return sinkProvider.AsSink(ctx)
+	// If decorator implements IOFactory, create a new instance with params
+	if factory, ok := ioDecorator.(decorator.IOFactory); ok {
+		ioDecorator = factory.WithParams(args)
+	}
+
+	// Return an adapter that wraps the IO decorator as a Sink
+	return &ioSinkAdapter{
+		io:   ioDecorator,
+		args: args,
+	}
+}
+
+// ioSinkAdapter wraps a decorator.IO as an sdk.Sink.
+// This bridges the new decorator IO interface to the SDK sink interface.
+type ioSinkAdapter struct {
+	io   decorator.IO
+	args map[string]interface{}
+}
+
+func (a *ioSinkAdapter) Caps() sdk.SinkCaps {
+	caps := a.io.IOCaps()
+	return sdk.SinkCaps{
+		Overwrite:      caps.Write,
+		Append:         caps.Append,
+		Atomic:         caps.Atomic,
+		ConcurrentSafe: false,
+	}
+}
+
+func (a *ioSinkAdapter) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
+	// Create minimal ExecContext for the IO decorator
+	execCtx := decorator.ExecContext{
+		Context: ctx.Context(),
+	}
+
+	// Determine append mode from redirect mode
+	appendMode := mode == sdk.RedirectAppend
+
+	// Open for writing
+	return a.io.OpenWrite(execCtx, appendMode)
+}
+
+func (a *ioSinkAdapter) Identity() (string, string) {
+	// Get path from args if available
+	if path, ok := a.args["command"].(string); ok {
+		return "io", path
+	}
+	return "io", ""
 }
 
 // minimalContext is a minimal ExecutionContext for evaluating redirect targets.
