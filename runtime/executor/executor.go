@@ -13,7 +13,6 @@ import (
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 	"github.com/opal-lang/opal/core/sdk"
-	"github.com/opal-lang/opal/core/types"
 	"github.com/opal-lang/opal/runtime/vault"
 )
 
@@ -79,8 +78,9 @@ type executor struct {
 	vault  *vault.Vault // For DisplayID resolution (nil if no secrets)
 
 	// Execution state
-	stepsRun int
-	exitCode int
+	stepsRun         int
+	exitCode         int
+	currentTransport string // Current transport context (e.g., "local", "transport:abc123")
 
 	// Observability
 	debugEvents []DebugEvent
@@ -101,9 +101,10 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Va
 	invariant.NotNil(steps, "steps")
 
 	e := &executor{
-		config:    config,
-		vault:     vlt,
-		startTime: time.Now(),
+		config:           config,
+		vault:            vlt,
+		currentTransport: "local", // Default to local transport
+		startTime:        time.Now(),
 	}
 
 	// Initialize telemetry if enabled
@@ -192,22 +193,13 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Va
 
 // executeStep executes a single step by executing its tree.
 //
-// Site context matching: During planning, the planner records variable references
-// at site paths like "root/step-1/params/command". During execution, we must push
-// the same step context so AccessByDisplayID() can verify authorization at the
-// matching site. Without this, all authorization checks would fail.
+// Transport context: The executor tracks the current transport (e.g., "local", "transport:abc123")
+// and passes it to Vault for transport boundary checks. Site-based authorization is handled
+// by contract verification (plan hash), not runtime checks.
 func (e *executor) executeStep(execCtx sdk.ExecutionContext, step sdk.Step) int {
 	// INPUT CONTRACT
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
-
-	// Push step context to vault for site path matching
-	if e.vault != nil {
-		stepName := fmt.Sprintf("step-%d", step.ID)
-		e.vault.ResetCounts() // Reset decorator indices for new step
-		e.vault.Push(stepName)
-		defer e.vault.Pop()
-	}
 
 	return e.executeTree(execCtx, step.Tree)
 }
@@ -400,56 +392,15 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
-	// Try new decorator registry first
-	if entry, exists := decorator.Global().Lookup(decoratorName); exists {
-		// Check if it's an Exec decorator
-		if execDec, ok := entry.Impl.(decorator.Exec); ok {
-			return e.executeNewDecorator(execCtx, cmd, execDec, stdin, stdout)
-		}
-	}
-
-	// Fall back to old SDK registry for decorators not yet migrated
-	handler, kind, exists := types.Global().GetSDKHandler(decoratorName)
+	// Lookup decorator in registry
+	entry, exists := decorator.Global().Lookup(decoratorName)
 	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
 
-	// Verify it's an execution decorator
-	invariant.Invariant(kind == types.DecoratorKindExecution, "%s is not an execution decorator", cmd.Name)
+	// Check if it's an Exec decorator
+	execDec, ok := entry.Impl.(decorator.Exec)
+	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
 
-	// Type assert to SDK handler (function or struct with Execute method)
-	var sdkHandler func(sdk.ExecutionContext, []sdk.Step) (int, error)
-
-	// Try function first
-	if fn, ok := handler.(func(sdk.ExecutionContext, []sdk.Step) (int, error)); ok {
-		sdkHandler = fn
-	} else {
-		// Try struct with Execute method
-		type ExecutionDecorator interface {
-			Execute(sdk.ExecutionContext, []sdk.Step) (int, error)
-		}
-		if execDecorator, ok := handler.(ExecutionDecorator); ok {
-			sdkHandler = execDecorator.Execute
-		} else {
-			invariant.Invariant(false, "invalid handler type for %s", cmd.Name)
-		}
-	}
-
-	// Clone execution context with command args and pipes if needed
-	// This preserves parent context's environ/workdir while adding command-specific args
-	var cmdExecCtx sdk.ExecutionContext
-	if stdin != nil || stdout != nil {
-		cmdExecCtx = execCtx.Clone(cmd.Args, stdin, stdout)
-	} else {
-		cmdExecCtx = execCtx.Clone(cmd.Args, nil, nil)
-	}
-
-	// Call handler with SDK block using cloned context
-	exitCode, err := sdkHandler(cmdExecCtx, cmd.Block)
-	if err != nil {
-		// Log error but return exit code
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	}
-
-	return exitCode
+	return e.executeDecorator(execCtx, cmd, execDec, stdin, stdout)
 }
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
@@ -461,10 +412,10 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 //   - Deterministic hashing for contract stability
 //
 // During execution, we resolve DisplayIDs back to actual values just before passing
-// params to decorators. The vault enforces site-based authorization to prevent
-// unauthorized access.
+// params to decorators. The vault enforces transport boundary checks to prevent
+// secrets from leaking across host boundaries. Site-based authorization is handled
+// by contract verification (plan hash), not runtime checks.
 func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string) (map[string]any, error) {
-	// Import regexp here since we need it
 	displayIDPattern := regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
 	resolved := make(map[string]any)
 
@@ -487,8 +438,8 @@ func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string
 		// Resolve each DisplayID
 		result := strVal
 		for _, displayID := range matches {
-			// Call vault.AccessByDisplayID with site info
-			actualValue, err := e.vault.AccessByDisplayID(displayID, key)
+			// Resolve DisplayID with transport boundary check
+			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, e.currentTransport)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve %s in %s.%s: %w", displayID, decoratorName, key, err)
 			}
@@ -503,9 +454,9 @@ func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string
 	return resolved, nil
 }
 
-// executeNewDecorator executes a decorator from the new registry.
-// Converts ExecutionContext to decorator ExecContext and executes via Exec interface.
-func (e *executor) executeNewDecorator(
+// executeDecorator executes a decorator via the Exec interface.
+// Converts ExecutionContext to decorator ExecContext and resolves DisplayIDs before execution.
+func (e *executor) executeDecorator(
 	execCtx sdk.ExecutionContext,
 	cmd *sdk.CommandNode,
 	execDec decorator.Exec,

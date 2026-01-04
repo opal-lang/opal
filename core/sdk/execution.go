@@ -190,26 +190,6 @@ type SinkCaps struct {
 	ConcurrentSafe bool // Multiple writers can safely write concurrently
 }
 
-// SinkProvider is an optional interface that decorators can implement
-// to support being used as redirect targets.
-//
-// When a decorator is used as a redirect target (echo "data" > @decorator),
-// the planner calls AsSink() to get a Sink implementation.
-//
-// Examples:
-//   - @shell("output.txt") → FsPathSink{Path: "output.txt"}
-//   - @aws.s3.object("bucket", "key") → S3Sink{Bucket: "bucket", Key: "key"}
-//   - @http.post("url") → HTTPSink{URL: "url"}
-//
-// Decorators declare redirect support in their schema with WithRedirect(),
-// and implement this interface to provide the actual sink.
-type SinkProvider interface {
-	// AsSink returns a Sink implementation for this decorator.
-	// Called when decorator is used as redirect target.
-	// Context provides access to decorator arguments.
-	AsSink(ctx ExecutionContext) Sink
-}
-
 // Sink represents a destination for redirected output.
 // Sinks are opened using the current execution context's transport,
 // so files open in the right place (local/SSH/Docker/etc).

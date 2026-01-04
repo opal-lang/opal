@@ -1,10 +1,9 @@
 package planfmt
 
 import (
-	"context"
 	"io"
-	"time"
 
+	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 	"github.com/opal-lang/opal/core/sdk"
 	"github.com/opal-lang/opal/core/types"
@@ -116,75 +115,70 @@ func ToSDKArgs(planArgs []Arg) map[string]interface{} {
 }
 
 // commandNodeToSink converts a CommandNode (redirect target) to a Sink.
-// Looks up the decorator in the registry and calls AsSink() if it implements SinkProvider.
-func commandNodeToSink(target *CommandNode, registry *types.Registry) sdk.Sink {
+// Looks up the decorator in the registry and wraps it as a Sink if it implements IO.
+func commandNodeToSink(target *CommandNode, _ *types.Registry) sdk.Sink {
 	// Strip @ prefix from decorator name for registry lookup
 	decoratorName := target.Decorator
 	if decoratorName != "" && decoratorName[0] == '@' {
 		decoratorName = decoratorName[1:]
 	}
 
-	// Get decorator handler from registry
-	handler, _, exists := registry.GetSDKHandler(decoratorName)
+	// Get decorator from new registry
+	entry, exists := decorator.Global().Lookup(decoratorName)
 	invariant.Invariant(exists, "decorator %s not registered (parser should have rejected this)", target.Decorator)
 
-	// Check if decorator implements SinkProvider
-	sinkProvider, ok := handler.(sdk.SinkProvider)
-	invariant.Invariant(ok, "decorator %s does not implement SinkProvider (parser should have rejected this)", target.Decorator)
+	// Check if decorator implements IO
+	ioDecorator, ok := entry.Impl.(decorator.IO)
+	invariant.Invariant(ok, "decorator %s does not implement IO (parser should have rejected this)", target.Decorator)
 
-	// Create minimal execution context with args
-	ctx := &minimalContext{args: ToSDKArgs(target.Args)}
+	args := ToSDKArgs(target.Args)
 
-	// Call AsSink() on the decorator instance
-	return sinkProvider.AsSink(ctx)
+	// If decorator implements IOFactory, create a new instance with params
+	if factory, ok := ioDecorator.(decorator.IOFactory); ok {
+		ioDecorator = factory.WithParams(args)
+	}
+
+	// Return an adapter that wraps the IO decorator as a Sink
+	return &ioSinkAdapter{
+		io:   ioDecorator,
+		args: args,
+	}
 }
 
-// minimalContext is a minimal ExecutionContext for evaluating redirect targets.
-// Redirect targets only need args - no stdin/stdout/environ/etc.
-type minimalContext struct {
+// ioSinkAdapter wraps a decorator.IO as an sdk.Sink.
+// This bridges the new decorator IO interface to the SDK sink interface.
+type ioSinkAdapter struct {
+	io   decorator.IO
 	args map[string]interface{}
 }
 
-func (m *minimalContext) ExecuteBlock(steps []sdk.Step) (int, error) {
-	invariant.Invariant(false, "redirect target tried to execute block")
-	return 0, nil // unreachable
-}
-func (m *minimalContext) Context() context.Context { return context.Background() }
-func (m *minimalContext) ArgString(key string) string {
-	if v, ok := m.args[key].(string); ok {
-		return v
+func (a *ioSinkAdapter) Caps() sdk.SinkCaps {
+	caps := a.io.IOCaps()
+	return sdk.SinkCaps{
+		Overwrite:      caps.Write,
+		Append:         caps.Append,
+		Atomic:         caps.Atomic,
+		ConcurrentSafe: false,
 	}
-	return ""
 }
 
-func (m *minimalContext) ArgInt(key string) int64 {
-	if v, ok := m.args[key].(int64); ok {
-		return v
+func (a *ioSinkAdapter) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
+	// Create minimal ExecContext for the IO decorator
+	execCtx := decorator.ExecContext{
+		Context: ctx.Context(),
 	}
-	return 0
+
+	// Determine append mode from redirect mode
+	appendMode := mode == sdk.RedirectAppend
+
+	// Open for writing
+	return a.io.OpenWrite(execCtx, appendMode)
 }
 
-func (m *minimalContext) ArgBool(key string) bool {
-	if v, ok := m.args[key].(bool); ok {
-		return v
+func (a *ioSinkAdapter) Identity() (string, string) {
+	// Get path from args if available
+	if path, ok := a.args["command"].(string); ok {
+		return "io", path
 	}
-	return false
+	return "io", ""
 }
-func (m *minimalContext) ArgDuration(key string) time.Duration { return 0 }
-func (m *minimalContext) Args() map[string]interface{}         { return m.args }
-func (m *minimalContext) Environ() map[string]string           { return nil }
-func (m *minimalContext) Workdir() string                      { return "" }
-func (m *minimalContext) WithContext(ctx context.Context) sdk.ExecutionContext {
-	return m
-}
-
-func (m *minimalContext) WithEnviron(env map[string]string) sdk.ExecutionContext {
-	return m
-}
-func (m *minimalContext) WithWorkdir(dir string) sdk.ExecutionContext { return m }
-func (m *minimalContext) Stdin() io.Reader                            { return nil }
-func (m *minimalContext) StdoutPipe() io.Writer                       { return nil }
-func (m *minimalContext) Clone(args map[string]interface{}, stdin io.Reader, stdoutPipe io.Writer) sdk.ExecutionContext {
-	return &minimalContext{args: args}
-}
-func (m *minimalContext) Transport() interface{} { return nil }
