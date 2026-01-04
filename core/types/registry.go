@@ -251,69 +251,6 @@ func (r *Registry) RegisterExecutionWithSchema(schema DecoratorSchema, handler E
 	return nil
 }
 
-// RegisterSDKHandler registers a decorator with an SDK-based handler.
-// This is the new style that uses sdk.ExecutionContext and sdk.Step.
-// The handler type depends on the decorator kind:
-// - Value decorators: sdk.ValueHandler
-// - Execution decorators: sdk.ExecutionHandler
-//
-// This avoids circular dependencies: core/types imports core/sdk (both in core).
-func (r *Registry) RegisterSDKHandler(path string, kind DecoratorKind, handler interface{}) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	kindStr := KindValue
-	if kind == DecoratorKindExecution {
-		kindStr = KindExecution
-	}
-
-	r.decorators[path] = DecoratorInfo{
-		Path:       path,
-		Kind:       kind,
-		Schema:     DecoratorSchema{Path: path, Kind: kindStr},
-		RawHandler: handler,
-	}
-}
-
-// RegisterSDKHandlerWithSchema registers a decorator with schema and SDK-based handler.
-func (r *Registry) RegisterSDKHandlerWithSchema(schema DecoratorSchema, handler interface{}) error {
-	// Validate schema
-	if err := ValidateSchema(schema); err != nil {
-		return fmt.Errorf("invalid schema for %s: %w", schema.Path, err)
-	}
-
-	kind := DecoratorKindValue
-	if schema.Kind == KindExecution {
-		kind = DecoratorKindExecution
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.decorators[schema.Path] = DecoratorInfo{
-		Path:       schema.Path,
-		Kind:       kind,
-		Schema:     schema,
-		RawHandler: handler,
-	}
-	return nil
-}
-
-// GetSDKHandler retrieves the SDK-based handler for a decorator.
-// Returns the handler, decorator kind, and whether it exists.
-// Caller must type-assert to the appropriate handler type:
-// - Value: sdk.ValueHandler
-// - Execution: sdk.ExecutionHandler
-func (r *Registry) GetSDKHandler(path string) (handler interface{}, kind DecoratorKind, exists bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	info, exists := r.decorators[path]
-	if !exists || info.RawHandler == nil {
-		return nil, 0, false
-	}
-	return info.RawHandler, info.Kind, true
-}
-
 // Global registry instance
 var globalRegistry = NewRegistry()
 
