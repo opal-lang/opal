@@ -1,9 +1,7 @@
 package planfmt
 
 import (
-	"context"
 	"io"
-	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
@@ -184,53 +182,3 @@ func (a *ioSinkAdapter) Identity() (string, string) {
 	}
 	return "io", ""
 }
-
-// minimalContext is a minimal ExecutionContext for evaluating redirect targets.
-// Redirect targets only need args - no stdin/stdout/environ/etc.
-type minimalContext struct {
-	args map[string]interface{}
-}
-
-func (m *minimalContext) ExecuteBlock(steps []sdk.Step) (int, error) {
-	invariant.Invariant(false, "redirect target tried to execute block")
-	return 0, nil // unreachable
-}
-func (m *minimalContext) Context() context.Context { return context.Background() }
-func (m *minimalContext) ArgString(key string) string {
-	if v, ok := m.args[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-func (m *minimalContext) ArgInt(key string) int64 {
-	if v, ok := m.args[key].(int64); ok {
-		return v
-	}
-	return 0
-}
-
-func (m *minimalContext) ArgBool(key string) bool {
-	if v, ok := m.args[key].(bool); ok {
-		return v
-	}
-	return false
-}
-func (m *minimalContext) ArgDuration(key string) time.Duration { return 0 }
-func (m *minimalContext) Args() map[string]interface{}         { return m.args }
-func (m *minimalContext) Environ() map[string]string           { return nil }
-func (m *minimalContext) Workdir() string                      { return "" }
-func (m *minimalContext) WithContext(ctx context.Context) sdk.ExecutionContext {
-	return m
-}
-
-func (m *minimalContext) WithEnviron(env map[string]string) sdk.ExecutionContext {
-	return m
-}
-func (m *minimalContext) WithWorkdir(dir string) sdk.ExecutionContext { return m }
-func (m *minimalContext) Stdin() io.Reader                            { return nil }
-func (m *minimalContext) StdoutPipe() io.Writer                       { return nil }
-func (m *minimalContext) Clone(args map[string]interface{}, stdin io.Reader, stdoutPipe io.Writer) sdk.ExecutionContext {
-	return &minimalContext{args: args}
-}
-func (m *minimalContext) Transport() interface{} { return nil }
