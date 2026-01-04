@@ -511,7 +511,6 @@ func TestResolveDisplayIDWithTransport_SameTransport_Succeeds(t *testing.T) {
 
 	// WHEN: Resolve in same transport
 	value, err := v.ResolveDisplayIDWithTransport(displayID, "local")
-
 	// THEN: Should succeed
 	if err != nil {
 		t.Errorf("ResolveDisplayIDWithTransport() should succeed in same transport, got: %v", err)
@@ -557,7 +556,6 @@ func TestResolveDisplayIDWithTransport_TransportAgnostic_CrossesBoundary(t *test
 
 	// WHEN: Resolve in different transport
 	value, err := v.ResolveDisplayIDWithTransport(displayID, "ssh://remote-host")
-
 	// THEN: Should succeed (transport-agnostic can cross boundaries)
 	if err != nil {
 		t.Errorf("ResolveDisplayIDWithTransport() should succeed for transport-agnostic, got: %v", err)
@@ -624,7 +622,6 @@ func TestResolveDisplayIDWithTransport_NoSiteAuthRequired(t *testing.T) {
 
 	// WHEN: Resolve with new method (no site auth)
 	value, err := v.ResolveDisplayIDWithTransport(displayID, "local")
-
 	// THEN: Should succeed (no site auth required)
 	if err != nil {
 		t.Errorf("ResolveDisplayIDWithTransport() should not require site auth, got: %v", err)
