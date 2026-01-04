@@ -120,10 +120,10 @@ type Resolver struct {
 	config  ResolveConfig
 
 	// Resolution state
-	values        map[string]any  // exprID → resolved value (for condition evaluation)
-	pendingCalls  []decoratorCall // Decorator calls to batch resolve
-	nextWaveStmts []*StatementIR  // Statements for next wave (taken branches)
-	errors        []error         // Collected errors
+	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
+	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
+	nextWaveStmts    []*StatementIR    // Statements for next wave (taken branches)
+	errors           []error           // Collected errors
 }
 
 // ResolveConfig configures the resolution process.
@@ -145,14 +145,32 @@ type decoratorCall struct {
 // Returns error if resolution fails (undefined variables, decorator failures, etc.).
 func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, config ResolveConfig) error {
 	r := &Resolver{
-		graph:   graph,
-		vault:   v,
-		session: session,
-		config:  config,
-		values:  make(map[string]any),
+		graph:            graph,
+		vault:            v,
+		session:          session,
+		config:           config,
+		decoratorExprIDs: make(map[string]string),
 	}
 
 	return r.resolve()
+}
+
+// getValue looks up a value by name from Vault.
+// This is the single source of truth for values - no duplicate storage.
+//
+// Lookup order:
+//  1. Variable name → exprID via ScopeStack → value via Vault
+//  2. Decorator key → exprID via decoratorExprIDs → value via Vault
+func (r *Resolver) getValue(name string) (any, bool) {
+	// Try variable lookup first (via scope)
+	if exprID, ok := r.graph.Scopes.Lookup(name); ok {
+		return r.vault.GetUnresolvedValue(exprID)
+	}
+	// Try decorator key lookup
+	if exprID, ok := r.decoratorExprIDs[name]; ok {
+		return r.vault.GetUnresolvedValue(exprID)
+	}
+	return nil, false
 }
 
 // resolve is the main wave loop.
@@ -356,12 +374,11 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Collect the value expression (may add pending decorator calls)
 	r.collectExprForVar(decl.Value, exprID, decl.Name)
 
-	// For literals, we can store the value immediately for condition evaluation
+	// For literals, store the value immediately in Vault
+	// getValue() will look it up via scope → exprID → Vault
 	if decl.Value.Kind == ExprLiteral {
 		r.vault.StoreUnresolvedValue(exprID, decl.Value.Value)
 		r.vault.MarkTouched(exprID)
-		// Store by variable name for EvaluateExpr
-		r.values[decl.Name] = decl.Value.Value
 	}
 	// For decorator refs, the value will be stored after batch resolution
 }
@@ -509,19 +526,17 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 		call := calls[i]
 		exprID := call.exprID
 
-		// Store value in Vault
+		// Store value in Vault (single source of truth)
 		r.vault.StoreUnresolvedValue(exprID, result.Value)
 		r.vault.MarkTouched(exprID)
 
-		// Store in values map for condition evaluation
-		// Store by decorator key (e.g., "env.HOME") for direct decorator refs in conditions
+		// Track decorator key → exprID for getValue() lookups
+		// This allows direct decorator refs in conditions (e.g., if @env.HOME == "/root")
 		decKey := decoratorKey(call.decorator)
-		r.values[decKey] = result.Value
+		r.decoratorExprIDs[decKey] = exprID
 
-		// If this decorator is part of a var decl, also store by variable name
-		if call.varName != "" {
-			r.values[call.varName] = result.Value
-		}
+		// Note: Variable name → exprID is already tracked in ScopeStack
+		// via collectVarDecl, so no need to duplicate here
 	}
 
 	return nil
@@ -543,8 +558,8 @@ func (r *Resolver) evaluateBlocker(blocker *BlockerIR) error {
 
 // evaluateIfBlocker evaluates an if statement and queues the taken branch.
 func (r *Resolver) evaluateIfBlocker(blocker *BlockerIR) error {
-	// Evaluate condition using resolved values
-	result, err := EvaluateExpr(blocker.Condition, r.values)
+	// Evaluate condition using getValue to look up values from Vault
+	result, err := EvaluateExpr(blocker.Condition, r.getValue)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate if condition: %w", err)
 	}
@@ -601,14 +616,14 @@ func (r *Resolver) evaluateForBlocker(blocker *BlockerIR) error {
 // evaluateWhenBlocker evaluates a when statement and queues the matching arm.
 func (r *Resolver) evaluateWhenBlocker(blocker *BlockerIR) error {
 	// Evaluate condition
-	value, err := EvaluateExpr(blocker.Condition, r.values)
+	value, err := EvaluateExpr(blocker.Condition, r.getValue)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate when condition: %w", err)
 	}
 
 	// Find first matching arm
 	for _, arm := range blocker.Arms {
-		if matchPattern(arm.Pattern, value, r.values) {
+		if matchPattern(arm.Pattern, value, r.getValue) {
 			r.nextWaveStmts = append(r.nextWaveStmts, arm.Body...)
 			return nil
 		}
@@ -620,7 +635,7 @@ func (r *Resolver) evaluateWhenBlocker(blocker *BlockerIR) error {
 
 // evaluateCollection evaluates a collection expression for a for-loop.
 func (r *Resolver) evaluateCollection(expr *ExprIR) ([]any, error) {
-	value, err := EvaluateExpr(expr, r.values)
+	value, err := EvaluateExpr(expr, r.getValue)
 	if err != nil {
 		return nil, err
 	}
@@ -647,9 +662,9 @@ func (r *Resolver) evaluateCollection(expr *ExprIR) ([]any, error) {
 }
 
 // matchPattern checks if a value matches a pattern.
-func matchPattern(pattern *ExprIR, value any, values map[string]any) bool {
+func matchPattern(pattern *ExprIR, value any, getValue ValueLookup) bool {
 	// Evaluate pattern expression
-	patternValue, err := EvaluateExpr(pattern, values)
+	patternValue, err := EvaluateExpr(pattern, getValue)
 	if err != nil {
 		return false
 	}

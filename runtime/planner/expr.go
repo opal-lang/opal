@@ -60,20 +60,26 @@ type CommandExpr struct {
 	Parts []*ExprIR // Sequence of literals and expression references
 }
 
-// EvaluateExpr evaluates an expression given a map of resolved values.
+// ValueLookup is a function that looks up a value by name.
+// Returns (value, true) if found, (nil, false) if not found.
+// Used by EvaluateExpr to look up variable and decorator values.
+type ValueLookup func(name string) (any, bool)
+
+// EvaluateExpr evaluates an expression using a lookup function for values.
 // Used during the resolution phase to evaluate conditions like `@var.ENV == "prod"`.
 //
-// The values map contains variable name → resolved value mappings.
-// For ExprVarRef, looks up the variable in values.
-// For ExprDecoratorRef, the caller must have already resolved and stored in values.
+// The getValue function looks up values by name:
+//   - For ExprVarRef, looks up by variable name (e.g., "ENV")
+//   - For ExprDecoratorRef, looks up by decorator key (e.g., "env.HOME")
+//
 // For ExprBinaryOp, recursively evaluates operands and applies the operator.
-func EvaluateExpr(expr *ExprIR, values map[string]any) (any, error) {
+func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
 	switch expr.Kind {
 	case ExprLiteral:
 		return expr.Value, nil
 
 	case ExprVarRef:
-		val, ok := values[expr.VarName]
+		val, ok := getValue(expr.VarName)
 		if !ok {
 			return nil, &EvalError{
 				Message: "undefined variable",
@@ -84,10 +90,10 @@ func EvaluateExpr(expr *ExprIR, values map[string]any) (any, error) {
 		return val, nil
 
 	case ExprDecoratorRef:
-		// Decorator refs should be resolved and stored in values before evaluation.
+		// Decorator refs should be resolved before evaluation.
 		// The key is the decorator path (e.g., "env.HOME").
 		key := decoratorKey(expr.Decorator)
-		val, ok := values[key]
+		val, ok := getValue(key)
 		if !ok {
 			return nil, &EvalError{
 				Message: "unresolved decorator",
@@ -98,7 +104,7 @@ func EvaluateExpr(expr *ExprIR, values map[string]any) (any, error) {
 		return val, nil
 
 	case ExprBinaryOp:
-		return evaluateBinaryOp(expr, values)
+		return evaluateBinaryOp(expr, getValue)
 
 	default:
 		return nil, &EvalError{
@@ -109,8 +115,8 @@ func EvaluateExpr(expr *ExprIR, values map[string]any) (any, error) {
 }
 
 // evaluateBinaryOp evaluates a binary operation.
-func evaluateBinaryOp(expr *ExprIR, values map[string]any) (any, error) {
-	left, err := EvaluateExpr(expr.Left, values)
+func evaluateBinaryOp(expr *ExprIR, getValue ValueLookup) (any, error) {
+	left, err := EvaluateExpr(expr.Left, getValue)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +127,7 @@ func evaluateBinaryOp(expr *ExprIR, values map[string]any) (any, error) {
 		if !IsTruthy(left) {
 			return false, nil
 		}
-		right, err := EvaluateExpr(expr.Right, values)
+		right, err := EvaluateExpr(expr.Right, getValue)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +137,7 @@ func evaluateBinaryOp(expr *ExprIR, values map[string]any) (any, error) {
 		if IsTruthy(left) {
 			return true, nil
 		}
-		right, err := EvaluateExpr(expr.Right, values)
+		right, err := EvaluateExpr(expr.Right, getValue)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +145,7 @@ func evaluateBinaryOp(expr *ExprIR, values map[string]any) (any, error) {
 	}
 
 	// Non-short-circuit operators need both operands
-	right, err := EvaluateExpr(expr.Right, values)
+	right, err := EvaluateExpr(expr.Right, getValue)
 	if err != nil {
 		return nil, err
 	}

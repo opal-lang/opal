@@ -6,6 +6,15 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+// mapLookup creates a ValueLookup function from a map.
+// Used in tests to provide values for EvaluateExpr.
+func mapLookup(values map[string]any) ValueLookup {
+	return func(name string) (any, bool) {
+		val, ok := values[name]
+		return val, ok
+	}
+}
+
 // ========== ExprIR Type Tests ==========
 
 func TestExprIR_Literal_String(t *testing.T) {
@@ -281,7 +290,7 @@ func TestEvaluateExpr_Literal_String(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: "hello"}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -294,7 +303,7 @@ func TestEvaluateExpr_Literal_Int(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: 42}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -307,7 +316,7 @@ func TestEvaluateExpr_Literal_Bool(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: true}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -320,7 +329,7 @@ func TestEvaluateExpr_VarRef_Found(t *testing.T) {
 	expr := &ExprIR{Kind: ExprVarRef, VarName: "ENV"}
 	values := map[string]any{"ENV": "production"}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -333,7 +342,7 @@ func TestEvaluateExpr_VarRef_NotFound(t *testing.T) {
 	expr := &ExprIR{Kind: ExprVarRef, VarName: "MISSING"}
 	values := map[string]any{}
 
-	_, err := EvaluateExpr(expr, values)
+	_, err := EvaluateExpr(expr, mapLookup(values))
 	if err == nil {
 		t.Fatal("EvaluateExpr() expected error for missing variable")
 	}
@@ -353,7 +362,7 @@ func TestEvaluateExpr_BinaryOp_Equals_True(t *testing.T) {
 	}
 	values := map[string]any{"ENV": "prod"}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -372,7 +381,7 @@ func TestEvaluateExpr_BinaryOp_Equals_False(t *testing.T) {
 	}
 	values := map[string]any{"ENV": "staging"}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -391,7 +400,7 @@ func TestEvaluateExpr_BinaryOp_NotEquals(t *testing.T) {
 	}
 	values := map[string]any{"ENV": "staging"}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -410,7 +419,7 @@ func TestEvaluateExpr_BinaryOp_And_True(t *testing.T) {
 	}
 	values := map[string]any{"A": true, "B": true}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -429,7 +438,7 @@ func TestEvaluateExpr_BinaryOp_And_False(t *testing.T) {
 	}
 	values := map[string]any{"A": true, "B": false}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -448,7 +457,7 @@ func TestEvaluateExpr_BinaryOp_Or_True(t *testing.T) {
 	}
 	values := map[string]any{"A": false, "B": true}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -467,7 +476,7 @@ func TestEvaluateExpr_BinaryOp_Or_False(t *testing.T) {
 	}
 	values := map[string]any{"A": false, "B": false}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -486,7 +495,7 @@ func TestEvaluateExpr_BinaryOp_LessThan(t *testing.T) {
 	}
 	values := map[string]any{"COUNT": 5}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -505,7 +514,7 @@ func TestEvaluateExpr_BinaryOp_GreaterThan(t *testing.T) {
 	}
 	values := map[string]any{"COUNT": 15}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -519,7 +528,7 @@ func TestEvaluateExpr_Truthiness_NonEmptyString(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: "hello"}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -533,7 +542,7 @@ func TestEvaluateExpr_Truthiness_EmptyString(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: ""}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -547,7 +556,7 @@ func TestEvaluateExpr_Truthiness_Zero(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: 0}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -561,7 +570,7 @@ func TestEvaluateExpr_Truthiness_NonZero(t *testing.T) {
 	expr := &ExprIR{Kind: ExprLiteral, Value: 42}
 	values := map[string]any{}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -591,7 +600,7 @@ func TestEvaluateExpr_BinaryOp_LargeInt64Precision(t *testing.T) {
 		"B": int64(9007199254740992),
 	}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
@@ -620,7 +629,7 @@ func TestEvaluateExpr_NestedBinaryOp(t *testing.T) {
 	}
 	values := map[string]any{"A": "x", "B": "y"}
 
-	result, err := EvaluateExpr(expr, values)
+	result, err := EvaluateExpr(expr, mapLookup(values))
 	if err != nil {
 		t.Fatalf("EvaluateExpr() error = %v", err)
 	}
