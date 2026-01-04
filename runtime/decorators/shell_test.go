@@ -375,8 +375,8 @@ func TestShellDecorator_NewArch_PipedStdinNoMatch(t *testing.T) {
 	}
 }
 
-// TestShellDecorator_NewArch_EndpointWrite tests @shell as file write endpoint
-func TestShellDecorator_NewArch_EndpointWrite(t *testing.T) {
+// TestShellDecorator_NewArch_IOWrite tests @shell as file write I/O
+func TestShellDecorator_NewArch_IOWrite(t *testing.T) {
 	// Create temp file path
 	tmpFile := t.TempDir() + "/test_output.txt"
 
@@ -396,10 +396,10 @@ func TestShellDecorator_NewArch_EndpointWrite(t *testing.T) {
 		Trace:   nil,
 	}
 
-	// Open as write endpoint
-	writer, err := shell.Open(ctx, decorator.IOWrite)
+	// Open for writing (overwrite mode)
+	writer, err := shell.OpenWrite(ctx, false)
 	if err != nil {
-		t.Fatalf("expected no error opening endpoint, got: %v", err)
+		t.Fatalf("expected no error opening for write, got: %v", err)
 	}
 	defer writer.Close()
 
@@ -428,8 +428,8 @@ func TestShellDecorator_NewArch_EndpointWrite(t *testing.T) {
 	}
 }
 
-// TestShellDecorator_NewArch_EndpointRead tests @shell as file read endpoint
-func TestShellDecorator_NewArch_EndpointRead(t *testing.T) {
+// TestShellDecorator_NewArch_IORead tests @shell as file read I/O
+func TestShellDecorator_NewArch_IORead(t *testing.T) {
 	// Create temp file with content
 	tmpFile := t.TempDir() + "/test_input.txt"
 	if err := os.WriteFile(tmpFile, []byte("input data\n"), 0o644); err != nil {
@@ -452,10 +452,10 @@ func TestShellDecorator_NewArch_EndpointRead(t *testing.T) {
 		Trace:   nil,
 	}
 
-	// Open as read endpoint
-	reader, err := shell.Open(ctx, decorator.IORead)
+	// Open for reading
+	reader, err := shell.OpenRead(ctx)
 	if err != nil {
-		t.Fatalf("expected no error opening endpoint, got: %v", err)
+		t.Fatalf("expected no error opening for read, got: %v", err)
 	}
 	defer reader.Close()
 
@@ -470,7 +470,7 @@ func TestShellDecorator_NewArch_EndpointRead(t *testing.T) {
 	}
 }
 
-// TestShellDecorator_NewArch_MultiRole tests that @shell implements both Exec and Endpoint
+// TestShellDecorator_NewArch_MultiRole tests that @shell implements both Exec and IO
 func TestShellDecorator_NewArch_MultiRole(t *testing.T) {
 	shell := &ShellDecorator{}
 
@@ -480,10 +480,10 @@ func TestShellDecorator_NewArch_MultiRole(t *testing.T) {
 		t.Error("@shell should implement Exec interface")
 	}
 
-	// Verify it implements Endpoint
-	_, ok = interface{}(shell).(decorator.Endpoint)
+	// Verify it implements IO
+	_, ok = interface{}(shell).(decorator.IO)
 	if !ok {
-		t.Error("@shell should implement Endpoint interface")
+		t.Error("@shell should implement IO interface")
 	}
 
 	// Verify descriptor shows both roles

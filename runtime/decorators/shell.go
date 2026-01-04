@@ -8,15 +8,13 @@ import (
 	"regexp"
 
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/sdk"
-	"github.com/opal-lang/opal/core/types"
 )
 
 // ShellDecorator implements the @shell decorator using the new decorator architecture.
 // It executes shell commands via Session.Run() with bash -c wrapper.
-// It also implements Endpoint for file I/O operations.
+// It also implements IO for file I/O operations (redirect sources and sinks).
 type ShellDecorator struct {
-	params map[string]any // Parameters for endpoint mode
+	params map[string]any // Parameters for I/O mode
 }
 
 // Descriptor returns the decorator metadata.
@@ -79,7 +77,7 @@ func (n *shellNode) Execute(ctx decorator.ExecContext) (decorator.Result, error)
 	opts := decorator.RunOpts{
 		Stdin:  ctx.Stdin,  // Piped input (nil if not piped)
 		Stdout: ctx.Stdout, // Piped output (nil if not piped)
-		Stderr: ctx.Stderr, // NEW: Forward stderr
+		Stderr: ctx.Stderr, // Forward stderr
 	}
 
 	result, err := ctx.Session.Run(execCtx, argv, opts)
@@ -87,98 +85,68 @@ func (n *shellNode) Execute(ctx decorator.ExecContext) (decorator.Result, error)
 	return result, err
 }
 
-// Open implements the Endpoint interface for file I/O.
-// When used as redirect target, @shell("file.txt") opens the file for reading or writing.
-func (d *ShellDecorator) Open(ctx decorator.ExecContext, mode decorator.IOType) (io.ReadWriteCloser, error) {
-	// Extract file path from params
+// IOCaps implements decorator.IO.
+// Returns the I/O capabilities for file operations.
+func (d *ShellDecorator) IOCaps() decorator.IOCaps {
+	return decorator.IOCaps{
+		Read:   true,  // < file.txt
+		Write:  true,  // > file.txt
+		Append: true,  // >> file.txt
+		Atomic: false, // TODO: implement atomic writes via temp + rename
+	}
+}
+
+// OpenRead implements decorator.IO.
+// Opens a file for reading (< source).
+func (d *ShellDecorator) OpenRead(ctx decorator.ExecContext, opts ...decorator.IOOpts) (io.ReadCloser, error) {
 	filePath, ok := d.params["command"].(string)
 	if !ok || filePath == "" {
-		return nil, fmt.Errorf("@shell endpoint requires command parameter (file path)")
+		return nil, fmt.Errorf("@shell I/O requires command parameter (file path)")
 	}
 
-	// Open file based on mode
-	switch mode {
-	case decorator.IORead:
-		// Open for reading
-		file, err := os.Open(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open file for reading: %w", err)
-		}
-		return file, nil
-
-	case decorator.IOWrite:
-		// Open for writing (create or truncate)
-		file, err := os.Create(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open file for writing: %w", err)
-		}
-		return file, nil
-
-	case decorator.IODuplex:
-		// Open for read/write
-		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o644)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open file for duplex: %w", err)
-		}
-		return file, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported I/O mode: %s", mode)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file for reading: %w", err)
 	}
+	return file, nil
 }
 
-// shellSDKAdapter adapts ShellDecorator to old SDK interfaces (SinkProvider)
-// This is a temporary bridge during migration to support redirect targets.
-type shellSDKAdapter struct{}
-
-// AsSink implements sdk.SinkProvider for redirect targets
-func (a *shellSDKAdapter) AsSink(ctx sdk.ExecutionContext) sdk.Sink {
-	// Extract file path from args
-	filePath, ok := ctx.Args()["command"].(string)
+// OpenWrite implements decorator.IO.
+// Opens a file for writing (> or >> sink).
+func (d *ShellDecorator) OpenWrite(ctx decorator.ExecContext, appendMode bool, opts ...decorator.IOOpts) (io.WriteCloser, error) {
+	filePath, ok := d.params["command"].(string)
 	if !ok || filePath == "" {
-		panic("@shell sink requires command parameter (file path)")
+		return nil, fmt.Errorf("@shell I/O requires command parameter (file path)")
 	}
 
-	return &shellFileSink{path: filePath}
-}
-
-// shellFileSink implements sdk.Sink for file I/O
-type shellFileSink struct {
-	path string
-}
-
-func (s *shellFileSink) Caps() sdk.SinkCaps {
-	return sdk.SinkCaps{
-		Overwrite:      true,
-		Append:         true,
-		Atomic:         false,
-		ConcurrentSafe: false,
+	if appendMode {
+		// >> append mode
+		file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file for append: %w", err)
+		}
+		return file, nil
 	}
-}
 
-func (s *shellFileSink) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
-	switch mode {
-	case sdk.RedirectOverwrite:
-		return os.Create(s.path)
-	case sdk.RedirectAppend:
-		return os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	default:
-		return nil, fmt.Errorf("unsupported redirect mode: %v", mode)
+	// > overwrite mode
+	file, err := os.Create(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file for writing: %w", err)
 	}
+	return file, nil
 }
 
-func (s *shellFileSink) Identity() (string, string) {
-	return "fs.file", s.path
+// WithParams implements decorator.IOFactory.
+// Creates a new ShellDecorator instance with the given parameters.
+// This is used for redirect targets where @shell("file.txt") needs params.
+func (d *ShellDecorator) WithParams(params map[string]any) decorator.IO {
+	return &ShellDecorator{params: params}
 }
 
-// Register @shell decorator with both registries (dual registration during migration)
+// Register @shell decorator
 func init() {
-	// Register with new decorator registry
+	// Register with decorator registry
 	if err := decorator.Register("shell", &ShellDecorator{}); err != nil {
 		panic(fmt.Sprintf("failed to register @shell decorator: %v", err))
 	}
-
-	// Also register with old SDK registry for backward compatibility (redirect targets)
-	// This allows @shell("file.txt") to work as redirect target during migration
-	types.Global().RegisterSDKHandler("shell", types.DecoratorKindExecution, &shellSDKAdapter{})
 }

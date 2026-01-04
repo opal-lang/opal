@@ -83,7 +83,7 @@ func TestAllRoleInference(t *testing.T) {
 		{"value", &mockValueDecorator{path: "test.value"}, RoleProvider},
 		{"exec", &mockExecDecorator{path: "test.exec"}, RoleWrapper},
 		{"transport", &mockTransportDecorator{path: "test.transport"}, RoleBoundary},
-		{"endpoint", &mockEndpointDecorator{path: "test.endpoint"}, RoleEndpoint},
+		{"endpoint", &mockIODecorator{path: "test.endpoint"}, RoleEndpoint},
 	}
 
 	for _, tt := range tests {
@@ -398,15 +398,23 @@ func (m *mockTransportDecorator) Wrap(next ExecNode, params map[string]any) Exec
 	return nil // Stub
 }
 
-type mockEndpointDecorator struct {
+type mockIODecorator struct {
 	path string
 }
 
-func (m *mockEndpointDecorator) Descriptor() Descriptor {
+func (m *mockIODecorator) Descriptor() Descriptor {
 	return Descriptor{Path: m.path}
 }
 
-func (m *mockEndpointDecorator) Open(ctx ExecContext, mode IOType) (io.ReadWriteCloser, error) {
+func (m *mockIODecorator) IOCaps() IOCaps {
+	return IOCaps{Read: true, Write: true, Append: true}
+}
+
+func (m *mockIODecorator) OpenRead(ctx ExecContext, opts ...IOOpts) (io.ReadCloser, error) {
+	return nil, nil // Stub
+}
+
+func (m *mockIODecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IOOpts) (io.WriteCloser, error) {
 	return nil, nil // Stub
 }
 
@@ -430,7 +438,15 @@ func (m *mockMultiRoleDecorator) Resolve(ctx ValueEvalContext, calls ...ValueCal
 	return results, nil
 }
 
-func (m *mockMultiRoleDecorator) Open(ctx ExecContext, mode IOType) (io.ReadWriteCloser, error) {
+func (m *mockMultiRoleDecorator) IOCaps() IOCaps {
+	return IOCaps{Read: true, Write: true, Append: true}
+}
+
+func (m *mockMultiRoleDecorator) OpenRead(ctx ExecContext, opts ...IOOpts) (io.ReadCloser, error) {
+	return nil, nil // Stub
+}
+
+func (m *mockMultiRoleDecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IOOpts) (io.WriteCloser, error) {
 	return nil, nil // Stub
 }
 

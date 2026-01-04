@@ -47,7 +47,7 @@ func init() {
 		WithRedirect(types.RedirectOverwriteOnly).
 		Build()
 
-	if err := types.Global().RegisterSDKHandlerWithSchema(fileTempSchema, nil); err != nil {
+	if err := types.Global().RegisterExecutionWithSchema(fileTempSchema, nil); err != nil {
 		panic(err)
 	}
 

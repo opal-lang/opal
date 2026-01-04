@@ -491,3 +491,142 @@ func TestBuildSecretUses_UnresolvedExpression_IsExcluded(t *testing.T) {
 		t.Errorf("Expected 0 SecretUses for unresolved expression, got %d", len(uses))
 	}
 }
+
+// ========== ResolveDisplayIDWithTransport: Simplified Execution-Time Resolution ==========
+// This method is for the new planner architecture where:
+// - Decorators receive resolved values, never see Vault
+// - Contract verification via plan hash handles integrity
+// - Transport boundary is the only runtime check needed (no site authorization)
+
+func TestResolveDisplayIDWithTransport_SameTransport_Succeeds(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// GIVEN: Transport-sensitive expression resolved in local transport
+	exprID := v.DeclareVariableTransportSensitive("TOKEN", "@env.TOKEN")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// WHEN: Resolve in same transport
+	value, err := v.ResolveDisplayIDWithTransport(displayID, "local")
+	// THEN: Should succeed
+	if err != nil {
+		t.Errorf("ResolveDisplayIDWithTransport() should succeed in same transport, got: %v", err)
+	}
+	if value != "secret-value" {
+		t.Errorf("ResolveDisplayIDWithTransport() = %q, want %q", value, "secret-value")
+	}
+}
+
+func TestResolveDisplayIDWithTransport_DifferentTransport_Fails(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// GIVEN: Transport-sensitive expression resolved in local transport
+	exprID := v.DeclareVariableTransportSensitive("TOKEN", "@env.TOKEN")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// WHEN: Resolve in different transport
+	_, err := v.ResolveDisplayIDWithTransport(displayID, "ssh://remote-host")
+
+	// THEN: Should fail with transport boundary error
+	if err == nil {
+		t.Error("ResolveDisplayIDWithTransport() should fail for different transport")
+	}
+	if !containsString(err.Error(), "transport boundary") {
+		t.Errorf("Error should mention transport boundary, got: %v", err)
+	}
+}
+
+func TestResolveDisplayIDWithTransport_TransportAgnostic_CrossesBoundary(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// GIVEN: Transport-agnostic expression (e.g., @var)
+	exprID := v.DeclareVariable("API_KEY", "@var.API_KEY") // Not transport-sensitive
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "sk-secret-123")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// WHEN: Resolve in different transport
+	value, err := v.ResolveDisplayIDWithTransport(displayID, "ssh://remote-host")
+	// THEN: Should succeed (transport-agnostic can cross boundaries)
+	if err != nil {
+		t.Errorf("ResolveDisplayIDWithTransport() should succeed for transport-agnostic, got: %v", err)
+	}
+	if value != "sk-secret-123" {
+		t.Errorf("ResolveDisplayIDWithTransport() = %q, want %q", value, "sk-secret-123")
+	}
+}
+
+func TestResolveDisplayIDWithTransport_UnknownDisplayID_Fails(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// WHEN: Resolve unknown DisplayID
+	_, err := v.ResolveDisplayIDWithTransport("opal:unknown1234567890ab", "local")
+
+	// THEN: Should fail with not found error
+	if err == nil {
+		t.Error("ResolveDisplayIDWithTransport() should fail for unknown DisplayID")
+	}
+	if !containsString(err.Error(), "not found") {
+		t.Errorf("Error should mention not found, got: %v", err)
+	}
+}
+
+func TestResolveDisplayIDWithTransport_UnresolvedExpression_Fails(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// GIVEN: Expression tracked but not resolved
+	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	// Note: NOT calling ResolveAllTouched() - expression is unresolved
+
+	// Manually set DisplayID to simulate partial state
+	v.mu.Lock()
+	v.expressions[exprID].DisplayID = "opal:test1234567890abcd"
+	v.displayIDIndex["opal:test1234567890abcd"] = exprID
+	v.mu.Unlock()
+
+	// WHEN: Try to resolve
+	_, err := v.ResolveDisplayIDWithTransport("opal:test1234567890abcd", "local")
+
+	// THEN: Should fail because not resolved
+	if err == nil {
+		t.Error("ResolveDisplayIDWithTransport() should fail for unresolved expression")
+	}
+	if !containsString(err.Error(), "not resolved") {
+		t.Errorf("Error should mention not resolved, got: %v", err)
+	}
+}
+
+func TestResolveDisplayIDWithTransport_NoSiteAuthRequired(t *testing.T) {
+	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
+
+	// GIVEN: Expression resolved but NO site reference recorded
+	// (This would fail with Access() but should succeed with ResolveDisplayIDWithTransport)
+	exprID := v.DeclareVariable("TOKEN", "@env.TOKEN")
+	v.MarkTouched(exprID)
+	v.StoreUnresolvedValue(exprID, "secret-value")
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	// Note: NOT calling RecordReference() - no site authorization
+
+	// WHEN: Resolve with new method (no site auth)
+	value, err := v.ResolveDisplayIDWithTransport(displayID, "local")
+	// THEN: Should succeed (no site auth required)
+	if err != nil {
+		t.Errorf("ResolveDisplayIDWithTransport() should not require site auth, got: %v", err)
+	}
+	if value != "secret-value" {
+		t.Errorf("ResolveDisplayIDWithTransport() = %q, want %q", value, "secret-value")
+	}
+}
