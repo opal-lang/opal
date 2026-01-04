@@ -802,6 +802,55 @@ func (v *Vault) GetPlanKey() []byte {
 	return keyCopy
 }
 
+// ResolveDisplayIDWithTransport resolves a DisplayID to its value, checking only transport boundary.
+// This is the simplified execution-time resolution - no site authorization (contract verification
+// handles plan integrity via hash).
+//
+// Parameters:
+//   - displayID: The DisplayID to resolve (e.g., "opal:abc123...")
+//   - currentTransportID: Current transport context ID (e.g., "transport:abc123" or "local")
+//
+// Returns error if:
+//   - DisplayID not found
+//   - Expression not resolved
+//   - Transport boundary violation (transport-sensitive secret used in different transport)
+//
+// This method is intended for the new planner architecture where:
+//   - Decorators receive resolved values, never see Vault
+//   - Contract verification via plan hash handles integrity
+//   - Transport boundary is the only runtime check needed
+func (v *Vault) ResolveDisplayIDWithTransport(displayID, currentTransportID string) (any, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	// Look up exprID from DisplayID
+	exprID, found := v.displayIDIndex[displayID]
+	if !found {
+		return nil, fmt.Errorf("DisplayID %q not found in vault", displayID)
+	}
+
+	// Get expression
+	expr, exists := v.expressions[exprID]
+	if !exists {
+		return nil, fmt.Errorf("expression %q not found", exprID)
+	}
+	if !expr.Resolved {
+		return nil, fmt.Errorf("expression %q not resolved yet", exprID)
+	}
+
+	// Check transport boundary (strict check - no crossing allowed)
+	// Transport-sensitive expressions must match exactly
+	// Transport-agnostic expressions (TransportSensitive=false) can be used anywhere
+	if expr.TransportSensitive && expr.DeclaredTransport != currentTransportID {
+		return nil, fmt.Errorf(
+			"transport boundary violation: secret from %q cannot be used in %q",
+			expr.DeclaredTransport, currentTransportID,
+		)
+	}
+
+	return expr.Value, nil
+}
+
 // checkTransportBoundary checks if expression can be used in current transport.
 // Only enforces boundary for transport-sensitive expressions (e.g., @env).
 // Transport-agnostic expressions (e.g., @var) can cross boundaries freely.

@@ -79,8 +79,9 @@ type executor struct {
 	vault  *vault.Vault // For DisplayID resolution (nil if no secrets)
 
 	// Execution state
-	stepsRun int
-	exitCode int
+	stepsRun         int
+	exitCode         int
+	currentTransport string // Current transport context (e.g., "local", "transport:abc123")
 
 	// Observability
 	debugEvents []DebugEvent
@@ -101,9 +102,10 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Va
 	invariant.NotNil(steps, "steps")
 
 	e := &executor{
-		config:    config,
-		vault:     vlt,
-		startTime: time.Now(),
+		config:           config,
+		vault:            vlt,
+		currentTransport: "local", // Default to local transport
+		startTime:        time.Now(),
 	}
 
 	// Initialize telemetry if enabled
@@ -192,22 +194,13 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Va
 
 // executeStep executes a single step by executing its tree.
 //
-// Site context matching: During planning, the planner records variable references
-// at site paths like "root/step-1/params/command". During execution, we must push
-// the same step context so AccessByDisplayID() can verify authorization at the
-// matching site. Without this, all authorization checks would fail.
+// Transport context: The executor tracks the current transport (e.g., "local", "transport:abc123")
+// and passes it to Vault for transport boundary checks. Site-based authorization is handled
+// by contract verification (plan hash), not runtime checks.
 func (e *executor) executeStep(execCtx sdk.ExecutionContext, step sdk.Step) int {
 	// INPUT CONTRACT
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
-
-	// Push step context to vault for site path matching
-	if e.vault != nil {
-		stepName := fmt.Sprintf("step-%d", step.ID)
-		e.vault.ResetCounts() // Reset decorator indices for new step
-		e.vault.Push(stepName)
-		defer e.vault.Pop()
-	}
 
 	return e.executeTree(execCtx, step.Tree)
 }
@@ -461,10 +454,10 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 //   - Deterministic hashing for contract stability
 //
 // During execution, we resolve DisplayIDs back to actual values just before passing
-// params to decorators. The vault enforces site-based authorization to prevent
-// unauthorized access.
+// params to decorators. The vault enforces transport boundary checks to prevent
+// secrets from leaking across host boundaries. Site-based authorization is handled
+// by contract verification (plan hash), not runtime checks.
 func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string) (map[string]any, error) {
-	// Import regexp here since we need it
 	displayIDPattern := regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
 	resolved := make(map[string]any)
 
@@ -487,8 +480,8 @@ func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string
 		// Resolve each DisplayID
 		result := strVal
 		for _, displayID := range matches {
-			// Call vault.AccessByDisplayID with site info
-			actualValue, err := e.vault.AccessByDisplayID(displayID, key)
+			// Resolve DisplayID with transport boundary check
+			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, e.currentTransport)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve %s in %s.%s: %w", displayID, decoratorName, key, err)
 			}
