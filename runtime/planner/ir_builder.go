@@ -1,8 +1,6 @@
 package planner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 
@@ -249,15 +247,24 @@ func (b *irBuilder) buildVarDecl() (*StatementIR, error) {
 		return nil, fmt.Errorf("variable declaration at position %d has no name", startPos)
 	}
 
-	exprID := b.generateExprID(name)
-	b.scopes.Define(name, exprID)
+	// ExprID is NOT generated here - it will be generated during resolution
+	// based on the actual scope context (loop iteration, transport, etc.).
+	// This ensures each loop iteration gets a unique ExprID for variables
+	// declared in the loop body.
+	//
+	// We still define the variable in scopes with a placeholder so that
+	// subsequent VarRefs can find it. The actual ExprID will be set
+	// during resolution when collectVarDecl processes this VarDecl.
+	placeholderID := fmt.Sprintf("placeholder:%s:%d", name, b.exprSeq)
+	b.exprSeq++
+	b.scopes.Define(name, placeholderID)
 
 	return &StatementIR{
 		Kind: StmtVarDecl,
 		VarDecl: &VarDeclIR{
-			Name:   name,
-			Value:  value,
-			ExprID: exprID,
+			Name:  name,
+			Value: value,
+			// ExprID intentionally empty - generated during resolution
 		},
 	}, nil
 }
@@ -1414,13 +1421,6 @@ func (b *irBuilder) buildBinaryExprWithLeft(left *ExprIR) *ExprIR {
 		Left:  left,
 		Right: right,
 	}
-}
-
-// generateExprID generates a unique expression ID.
-func (b *irBuilder) generateExprID(name string) string {
-	b.exprSeq++
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%s-%d", name, b.exprSeq)))
-	return "expr-" + hex.EncodeToString(hash[:8])
 }
 
 // tokenToValue converts a token to its Go value.

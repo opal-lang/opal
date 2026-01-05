@@ -479,6 +479,17 @@ func (r *Resolver) selectStatements() []*StatementIR {
 func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	exprID := decl.ExprID
 
+	// Generate ExprID if not already set.
+	// ExprID is intentionally NOT set during IR building - it's generated here
+	// during resolution based on the actual scope context (loop iteration, transport).
+	// This ensures each loop iteration gets a unique ExprID for variables declared
+	// in the loop body.
+	if exprID == "" {
+		raw := r.buildVarDeclRaw(decl)
+		exprID = r.vault.DeclareVariable(decl.Name, raw)
+		decl.ExprID = exprID // Update the IR with the generated ExprID
+	}
+
 	// Update scopes so subsequent ExprVarRef lookups can find this variable.
 	// This is critical for:
 	// 1. Variables declared in taken branches (mutations leak per spec)
@@ -488,13 +499,72 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Collect the value expression (may add pending decorator calls)
 	r.collectExprForVar(decl.Value, exprID, decl.Name)
 
-	// For literals, store the value immediately in Vault
-	// getValue() will look it up via scope → exprID → Vault
-	if decl.Value.Kind == ExprLiteral {
+	// Handle different expression types
+	switch decl.Value.Kind {
+	case ExprLiteral:
+		// For literals, store the value immediately in Vault
 		r.vault.StoreUnresolvedValue(exprID, decl.Value.Value)
 		r.vault.MarkTouched(exprID)
+
+	case ExprVarRef:
+		// For var refs, look up the referenced value and store it
+		// Also mark this VarDecl's ExprID as touched
+		refExprID, ok := r.graph.Scopes.Lookup(decl.Value.VarName)
+		if ok {
+			// Get the value from the referenced variable
+			if val, exists := r.vault.GetUnresolvedValue(refExprID); exists {
+				r.vault.StoreUnresolvedValue(exprID, val)
+			}
+			r.vault.MarkTouched(exprID)
+		}
+		// Note: If the variable isn't found, collectExprForVar already added an error
+
+	case ExprDecoratorRef:
+		// For decorator refs, the value will be stored after batch resolution
+		// Mark as touched now so it's included in resolution
+		r.vault.MarkTouched(exprID)
 	}
-	// For decorator refs, the value will be stored after batch resolution
+}
+
+// buildVarDeclRaw builds a raw string for a variable declaration.
+// The raw string is used to generate a deterministic ExprID.
+//
+// The raw includes:
+// - For literals: "literal:<value>"
+// - For decorator refs: "@decorator.selector"
+// - For var refs: "varref:<name>:<referenced_exprID>" (includes dependency)
+//
+// Including the referenced ExprID for var refs ensures that:
+//
+//	for item in ["a", "b"] { var X = @var.item }
+//
+// produces unique ExprIDs for X in each iteration, because item has
+// different ExprIDs per iteration.
+func (r *Resolver) buildVarDeclRaw(decl *VarDeclIR) string {
+	if decl.Value == nil {
+		return fmt.Sprintf("var:%s:nil", decl.Name)
+	}
+
+	switch decl.Value.Kind {
+	case ExprLiteral:
+		return fmt.Sprintf("literal:%v", decl.Value.Value)
+
+	case ExprDecoratorRef:
+		return buildDecoratorRaw(decl.Value.Decorator)
+
+	case ExprVarRef:
+		// Include the referenced variable's ExprID to ensure uniqueness
+		// when the same var ref appears in different scopes (e.g., loop iterations)
+		refExprID, ok := r.graph.Scopes.Lookup(decl.Value.VarName)
+		if !ok {
+			// Variable not found - will be caught later as an error
+			return fmt.Sprintf("varref:%s:undefined", decl.Value.VarName)
+		}
+		return fmt.Sprintf("varref:%s:%s", decl.Value.VarName, refExprID)
+
+	default:
+		return fmt.Sprintf("expr:%s:%d", decl.Name, decl.Value.Kind)
+	}
 }
 
 // collectExprForVar collects an expression that's part of a variable declaration.
