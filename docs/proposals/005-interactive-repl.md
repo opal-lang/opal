@@ -4,55 +4,53 @@ title: Interactive REPL
 status: Draft
 type: Tooling
 created: 2025-01-21
-updated: 2025-01-21
+updated: 2025-01-27
 ---
 
 # OEP-005: Interactive REPL
 
 ## Summary
 
-Add an interactive REPL (Read-Eval-Print Loop) for Opal, enabling command-line exploration, function definition, and plan-first execution. The REPL provides a familiar shell-like interface with Opal's safety and determinism guarantees.
+Add an interactive REPL (Read-Eval-Print Loop) for Opal. The REPL enables quick experimentation with commands, decorators, and functions without writing script files.
 
 ## Motivation
 
-### The Problem
-
-Current Opal requires writing scripts to test functionality:
+Currently, testing Opal functionality requires creating a script file:
 
 ```bash
-# ❌ Must write script file
-cat > deploy.opl << 'EOF'
-fun deploy(env: String) {
-    kubectl apply -f k8s/@var.env/
-}
-deploy("staging")
-EOF
-
-opal deploy.opl
+# Current workflow - requires a file
+echo 'echo "hello"' > test.opl
+opal test.opl
+rm test.opl
 ```
 
-**Problems:**
-- Friction for exploration and testing
-- Can't easily try different commands
-- No interactive feedback
-- No history or completion
+A REPL removes this friction:
+
+```bash
+$ opal
+opal> echo "hello"
+hello
+```
 
 ### Use Cases
 
-**1. Interactive exploration:**
+**Quick command testing:**
 ```bash
-$ opal
+opal> kubectl get pods
+NAME                    READY   STATUS    RESTARTS   AGE
+app-1234567890-abcde    1/1     Running   0          2d
+```
+
+**Exploring decorators:**
+```bash
 opal> @env.USER
 "alice"
 
 opal> @env.HOME
 "/home/alice"
-
-opal> echo hello
-hello
 ```
 
-**2. Function definition and testing:**
+**Defining and testing functions:**
 ```bash
 opal> fun deploy(env: String) {
 ...     kubectl apply -f k8s/@var.env/
@@ -61,55 +59,33 @@ Function 'deploy' defined
 
 opal> deploy("staging")
 ✓ Executed successfully
-
-opal> deploy("prod")
-✓ Executed successfully
 ```
 
-**3. Plan-first execution:**
+**Plan-first execution:**
 ```bash
 opal> plan deploy("prod")
 Plan: a3b2c1d4
   1. kubectl apply -f k8s/prod/
-  2. kubectl scale --replicas=3 deployment/app
 
 Execute? [y/N] y
 ✓ Executed successfully
 ```
 
-**4. Decorator integration:**
-```bash
-opal> @retry(attempts=3) {
-...     curl /health
-...   }
-✓ Executed successfully
-```
-
 ## Proposal
 
-### REPL Modes
+### Modes
 
-#### Execute Mode (Default)
-
-Execute commands immediately:
-
+**Execute Mode (default)** - Commands run immediately:
 ```bash
-$ opal
 opal> echo hello
 hello
 
-opal> @env.USER
-"alice"
-
 opal> kubectl get pods
-NAME                    READY   STATUS    RESTARTS   AGE
-app-1234567890-abcde    1/1     Running   0          2d
+NAME         READY   STATUS
+app-abc123   1/1     Running
 ```
 
-#### Plan Mode
-
-Generate and review plans before execution:
-
+**Plan Mode** - Review before executing:
 ```bash
 opal> plan kubectl apply -f k8s/prod/
 Plan: a3b2c1d4
@@ -119,10 +95,7 @@ Execute? [y/N] y
 ✓ Executed successfully
 ```
 
-#### Dry-Run Mode
-
-Generate plans without executing:
-
+**Dry-Run Mode** - Generate plan without executing:
 ```bash
 opal> dry-run kubectl apply -f k8s/prod/
 Plan: a3b2c1d4
@@ -133,70 +106,32 @@ Plan: a3b2c1d4
 
 ### Features
 
-#### Command History
+**Command history** - Arrow keys navigate previous commands.
 
-Access previous commands:
-
+**Autocomplete** - Tab completion for commands and decorators:
 ```bash
-opal> echo hello
-hello
+opal> kube<TAB>
+kubectl
 
-opal> ↑  # Previous command
-opal> echo hello
-hello
+opal> @re<TAB>
+@retry
 ```
 
-#### Autocomplete
-
-Tab completion for decorators, functions, and variables:
-
+**Multi-line input** - Braces trigger multi-line mode:
 ```bash
-opal> @sh<TAB>
-@shell
-
-opal> kubectl <TAB>
-apply    create   delete   describe   get   logs   scale
-```
-
-#### Function Definitions
-
-Define and reuse functions:
-
-```bash
-opal> fun deploy(env: String) {
-...     kubectl apply -f k8s/@var.env/
+opal> fun greet(name: String) {
+...     echo "Hello, @var.name!"
 ...   }
-Function 'deploy' defined
-
-opal> deploy("staging")
-✓ Executed successfully
-
-opal> deploy("prod")
-✓ Executed successfully
+Function 'greet' defined
 ```
 
-#### Variable Binding
-
-Bind variables for reuse:
-
+**Variable binding:**
 ```bash
 opal> var ENV = "prod"
-Variable 'ENV' bound
-
 opal> kubectl apply -f k8s/@var.ENV/
-✓ Executed successfully
-
-opal> var ENV = "staging"
-Variable 'ENV' rebound
-
-opal> kubectl apply -f k8s/@var.ENV/
-✓ Executed successfully
 ```
 
-#### Decorator Integration
-
-Use all Opal decorators:
-
+**Decorator integration:**
 ```bash
 opal> @retry(attempts=3) {
 ...     curl /health
@@ -207,200 +142,63 @@ opal> @timeout(30s) {
 ...     long-running-command
 ...   }
 ✓ Executed successfully
-
-opal> @parallel {
-...     curl /api/users
-...     curl /api/posts
-...   }
-✓ Executed successfully
 ```
 
-#### Multi-Line Input
+### Built-in Commands
 
-Support multi-line commands:
+| Command | Description |
+|---------|-------------|
+| `help` | Show help |
+| `exit` | Exit REPL |
+| `clear` | Clear screen |
+| `history` | Show command history |
+| `plan <cmd>` | Generate plan, prompt to execute |
+| `dry-run <cmd>` | Generate plan without executing |
+| `vars` | Show defined variables |
+| `funcs` | Show defined functions |
 
-```bash
-opal> fun deploy(env: String) {
-...     kubectl apply -f k8s/@var.env/
-...     kubectl rollout status deployment/app
-...   }
-Function 'deploy' defined
-```
+### Session Behavior
 
-### Core Restrictions
-
-#### Restriction 1: REPL is stateless between sessions
-
-State is not persisted between REPL sessions:
+Each REPL session starts fresh. Functions and variables defined in a session are available until you exit:
 
 ```bash
 $ opal
-opal> fun deploy(env: String) { ... }
+opal> var X = 1
+opal> fun foo() { echo "hi" }
 opal> exit
 
 $ opal
-opal> deploy("prod")
-# Error: deploy not defined
+opal> echo @var.X
+# Error: X not defined
 ```
 
-**Why?** Simplicity. Functions and variables are session-local.
-
-#### Restriction 2: No script imports in REPL
-
-Cannot import external scripts:
-
-```bash
-# ❌ FORBIDDEN: imports
-opal> import "deploy.opl"
-# Error: imports not allowed in REPL
-
-# ✅ CORRECT: define functions in REPL
-opal> fun deploy(env: String) { ... }
-```
-
-**Why?** REPL is for interactive exploration, not script composition.
-
-#### Restriction 3: Plan mode requires explicit confirmation
-
-Plan mode requires user confirmation before execution:
-
-```bash
-opal> plan kubectl apply -f k8s/prod/
-Plan: a3b2c1d4
-  1. kubectl apply -f k8s/prod/
-
-Execute? [y/N] y
-✓ Executed successfully
-```
-
-**Why?** Safety. Prevents accidental execution of dangerous commands.
-
-### REPL Commands
-
-#### Built-in Commands
-
-- `help` - Show help
-- `exit` - Exit REPL
-- `clear` - Clear screen
-- `history` - Show command history
-- `plan <command>` - Generate plan without executing
-- `dry-run <command>` - Generate plan without executing (alias for plan)
-- `set <var> <value>` - Set variable
-- `unset <var>` - Unset variable
-- `vars` - Show all variables
-- `funcs` - Show all functions
-
-#### Example Usage
-
-```bash
-opal> help
-Opal REPL - Interactive command execution
-
-Commands:
-  help              Show this help
-  exit              Exit REPL
-  clear             Clear screen
-  history           Show command history
-  plan <cmd>        Generate plan without executing
-  dry-run <cmd>    Generate plan without executing
-  set <var> <val>   Set variable
-  unset <var>       Unset variable
-  vars              Show all variables
-  funcs             Show all functions
-
-opal> vars
-ENV = "prod"
-REGION = "us-west-2"
-
-opal> funcs
-deploy(env: String)
-migrate(version: String)
-```
-
-## Rationale
-
-### Why a REPL?
-
-**Exploration:** Easy to try commands without writing scripts.
-
-**Learning:** Familiar interface for new users.
-
-**Debugging:** Quick way to test decorators and functions.
-
-**Scripting:** Can copy-paste commands from REPL into scripts.
-
-### Why stateless?
-
-**Simplicity:** No need to persist state between sessions.
-
-**Clarity:** Each session is independent.
-
-**Safety:** No accidental state leakage between sessions.
-
-### Why plan mode?
-
-**Safety:** Review plans before execution.
-
-**Debugging:** See what will happen before it happens.
-
-**Learning:** Understand how Opal plans work.
-
-## Alternatives Considered
-
-### Alternative 1: Stateful REPL with persistence
-
-**Rejected:** Adds complexity. Stateless is simpler and safer.
-
-### Alternative 2: Full shell replacement
-
-**Rejected:** Out of scope. REPL is for Opal exploration, not shell replacement. (See OEP-011 for System Shell.)
-
-### Alternative 3: No plan mode
-
-**Rejected:** Plan mode is important for safety and learning.
+This keeps things simple - no hidden state files or persistence to manage.
 
 ## Implementation
 
-### Phase 1: Basic REPL
-- Lexer and parser integration
-- Execute mode
-- Command history
-- Basic autocomplete
+### Phase 1: Core REPL
+- Basic read-eval-print loop
+- Command history (readline)
+- Multi-line input detection
 
-### Phase 2: Advanced Features
-- Plan mode
-- Dry-run mode
-- Function definitions
-- Variable binding
-
-### Phase 3: Polish
-- Better error messages
+### Phase 2: Enhancements
+- Tab completion
 - Syntax highlighting
-- Multi-line input
-- Built-in commands
+- Plan/dry-run modes
 
-### Phase 4: Integration
-- LSP support for REPL
-- Documentation and examples
-
-## Compatibility
-
-**Breaking changes:** None. This is a new feature.
-
-**Migration path:** N/A (new feature, no existing code to migrate).
+### Phase 3: Integration
+- LSP support for REPL context
+- Better error messages with suggestions
 
 ## Open Questions
 
-1. **Persistence:** Should we add optional persistence for functions/variables?
-2. **Scripting:** Should REPL support scripting mode (read commands from stdin)?
-3. **Debugging:** Should we add debugging commands (breakpoints, step-through)?
-4. **Performance:** Should we cache parsed commands for faster execution?
-5. **Customization:** Should users be able to customize REPL prompts and colors?
+1. **Persistence**: Should we offer optional session save/restore?
+2. **Scripting mode**: Should `opal -` read commands from stdin?
+3. **Customization**: Custom prompts, colors, key bindings?
 
 ## References
 
-- **Python REPL:** Inspiration for interactive exploration
-- **Node.js REPL:** Similar features and interface
-- **Elixir IEx:** Advanced REPL with introspection
-- **Related OEPs:**
-  - OEP-011: System Shell (long-term vision for daily-driver shell)
+- **Python REPL**: Simple, effective interactive mode
+- **Node.js REPL**: Good autocomplete and history
+- **Elixir IEx**: Advanced introspection features
+- **Related**: OEP-011 (System Shell) explores full shell replacement
