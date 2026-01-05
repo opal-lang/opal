@@ -75,6 +75,10 @@ const (
 
 // BlockerIR represents control flow that blocks execution until resolved.
 // The Resolver evaluates conditions and sets the Taken flag.
+//
+// After resolution:
+//   - if/when: Taken is set, untaken branch is nil (pruned)
+//   - for: Iterations contains resolved loop iterations with deep-copied body
 type BlockerIR struct {
 	Kind       BlockerKind
 	Depth      int            // Nesting level (for wave-based resolution)
@@ -87,8 +91,22 @@ type BlockerIR struct {
 	LoopVar    string  // Loop variable name (for "for x in ...")
 	Collection *ExprIR // Collection expression (for "for x in collection")
 
+	// Set by Resolver for for-loops: resolved iterations with deep-copied body
+	Iterations []LoopIteration
+
 	// When-specific (pattern matching)
 	Arms []*WhenArmIR // Pattern arms (for "when expr { pattern -> ... }")
+
+	// Set by Resolver for when: index of the matched arm (-1 if none)
+	MatchedArm int
+}
+
+// LoopIteration represents one iteration of a resolved for-loop.
+// Each iteration has its own deep-copied body to allow independent resolution
+// of nested blockers (e.g., if statements inside the loop).
+type LoopIteration struct {
+	Value any            // Loop variable value for this iteration
+	Body  []*StatementIR // Deep-copied statements for this iteration
 }
 
 // WhenArmIR represents a single arm in a when statement.
@@ -152,4 +170,162 @@ func (s *ScopeStack) Lookup(name string) (string, bool) {
 // Depth returns the current scope depth.
 func (s *ScopeStack) Depth() int {
 	return len(s.scopes)
+}
+
+// DeepCopyStatements creates a deep copy of a statement slice.
+// Used by the Resolver to create independent copies for each loop iteration,
+// allowing nested blockers to be resolved independently.
+func DeepCopyStatements(stmts []*StatementIR) []*StatementIR {
+	if stmts == nil {
+		return nil
+	}
+	result := make([]*StatementIR, len(stmts))
+	for i, stmt := range stmts {
+		result[i] = DeepCopyStatement(stmt)
+	}
+	return result
+}
+
+// DeepCopyStatement creates a deep copy of a single statement.
+func DeepCopyStatement(stmt *StatementIR) *StatementIR {
+	if stmt == nil {
+		return nil
+	}
+	result := &StatementIR{
+		Kind:         stmt.Kind,
+		Span:         stmt.Span,
+		CreatesScope: stmt.CreatesScope,
+	}
+	switch stmt.Kind {
+	case StmtCommand:
+		result.Command = deepCopyCommandStmt(stmt.Command)
+	case StmtVarDecl:
+		result.VarDecl = deepCopyVarDecl(stmt.VarDecl)
+	case StmtBlocker:
+		result.Blocker = deepCopyBlocker(stmt.Blocker)
+	case StmtTry:
+		result.Try = deepCopyTry(stmt.Try)
+	}
+	return result
+}
+
+func deepCopyCommandStmt(cmd *CommandStmtIR) *CommandStmtIR {
+	if cmd == nil {
+		return nil
+	}
+	return &CommandStmtIR{
+		Decorator: cmd.Decorator,
+		Command:   deepCopyCommandExpr(cmd.Command),
+		Args:      deepCopyExprs(cmd.Args),
+		Block:     DeepCopyStatements(cmd.Block),
+		Operator:  cmd.Operator,
+	}
+}
+
+func deepCopyVarDecl(decl *VarDeclIR) *VarDeclIR {
+	if decl == nil {
+		return nil
+	}
+	return &VarDeclIR{
+		Name:   decl.Name,
+		Value:  deepCopyExpr(decl.Value),
+		ExprID: decl.ExprID,
+	}
+}
+
+func deepCopyBlocker(blocker *BlockerIR) *BlockerIR {
+	if blocker == nil {
+		return nil
+	}
+	result := &BlockerIR{
+		Kind:       blocker.Kind,
+		Depth:      blocker.Depth,
+		Condition:  deepCopyExpr(blocker.Condition),
+		ThenBranch: DeepCopyStatements(blocker.ThenBranch),
+		ElseBranch: DeepCopyStatements(blocker.ElseBranch),
+		LoopVar:    blocker.LoopVar,
+		Collection: deepCopyExpr(blocker.Collection),
+		MatchedArm: blocker.MatchedArm,
+	}
+	// Copy Taken pointer
+	if blocker.Taken != nil {
+		taken := *blocker.Taken
+		result.Taken = &taken
+	}
+	// Copy Iterations
+	if blocker.Iterations != nil {
+		result.Iterations = make([]LoopIteration, len(blocker.Iterations))
+		for i, iter := range blocker.Iterations {
+			result.Iterations[i] = LoopIteration{
+				Value: iter.Value,
+				Body:  DeepCopyStatements(iter.Body),
+			}
+		}
+	}
+	// Copy Arms
+	if blocker.Arms != nil {
+		result.Arms = make([]*WhenArmIR, len(blocker.Arms))
+		for i, arm := range blocker.Arms {
+			result.Arms[i] = &WhenArmIR{
+				Pattern: deepCopyExpr(arm.Pattern),
+				Body:    DeepCopyStatements(arm.Body),
+			}
+		}
+	}
+	return result
+}
+
+func deepCopyTry(try *TryIR) *TryIR {
+	if try == nil {
+		return nil
+	}
+	return &TryIR{
+		TryBlock:     DeepCopyStatements(try.TryBlock),
+		CatchBlock:   DeepCopyStatements(try.CatchBlock),
+		FinallyBlock: DeepCopyStatements(try.FinallyBlock),
+		ErrorVar:     try.ErrorVar,
+	}
+}
+
+func deepCopyCommandExpr(cmd *CommandExpr) *CommandExpr {
+	if cmd == nil {
+		return nil
+	}
+	return &CommandExpr{
+		Parts: deepCopyExprs(cmd.Parts),
+	}
+}
+
+func deepCopyExprs(exprs []*ExprIR) []*ExprIR {
+	if exprs == nil {
+		return nil
+	}
+	result := make([]*ExprIR, len(exprs))
+	for i, expr := range exprs {
+		result[i] = deepCopyExpr(expr)
+	}
+	return result
+}
+
+func deepCopyExpr(expr *ExprIR) *ExprIR {
+	if expr == nil {
+		return nil
+	}
+	result := &ExprIR{
+		Kind:    expr.Kind,
+		Span:    expr.Span,
+		Value:   expr.Value,
+		VarName: expr.VarName,
+		Op:      expr.Op,
+		Left:    deepCopyExpr(expr.Left),
+		Right:   deepCopyExpr(expr.Right),
+	}
+	if expr.Decorator != nil {
+		result.Decorator = &DecoratorRef{
+			Name:     expr.Decorator.Name,
+			Selector: append([]string(nil), expr.Decorator.Selector...),
+			Args:     deepCopyExprs(expr.Decorator.Args),
+		}
+	}
+	return result
 }
