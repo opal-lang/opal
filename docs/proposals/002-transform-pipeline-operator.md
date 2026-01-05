@@ -115,13 +115,13 @@ PipeOps cannot access filesystem, network, clock, or environment:
 
 ```opal
 // ❌ FORBIDDEN: filesystem access
-@shell("cat /etc/passwd") |> my.custom_pipeop()  // Error if custom_pipeop reads files
+cat /etc/passwd |> my.custom_pipeop()  // Error if custom_pipeop reads files
 
 // ❌ FORBIDDEN: network access
-@shell("curl example.com") |> my.custom_pipeop()  // Error if custom_pipeop makes requests
+curl example.com |> my.custom_pipeop()  // Error if custom_pipeop makes requests
 
 // ✅ CORRECT: pure transformation
-@shell("echo hello") |> lines.count()
+echo hello |> lines.count()
 ```
 
 **Why?** Pure transforms are deterministic and safe to cache/parallelize.
@@ -146,10 +146,10 @@ Same input must always produce same output:
 
 ```opal
 // ❌ FORBIDDEN: non-deterministic
-@shell("date") |> my.custom_pipeop()  // Error if custom_pipeop depends on current time
+date |> my.custom_pipeop()  // Error if custom_pipeop depends on current time
 
 // ✅ CORRECT: deterministic
-@shell("echo hello") |> lines.count()
+echo hello |> lines.count()
 ```
 
 **Why?** Determinism enables plan verification and reproducibility.

@@ -694,7 +694,7 @@ opal init
 # 2. Write decorators
 cat > decorators/custom.opl << 'EOF'
 fun custom.validate(rules: String) {
-    @shell("validate --rules @var.rules")
+    validate --rules @var.rules
 }
 EOF
 

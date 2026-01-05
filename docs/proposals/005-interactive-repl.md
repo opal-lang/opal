@@ -23,7 +23,7 @@ Current Opal requires writing scripts to test functionality:
 # ❌ Must write script file
 cat > deploy.opl << 'EOF'
 fun deploy(env: String) {
-    @shell("kubectl apply -f k8s/@var.env/")
+    kubectl apply -f k8s/@var.env/
 }
 deploy("staging")
 EOF
@@ -48,14 +48,14 @@ opal> @env.USER
 opal> @env.HOME
 "/home/alice"
 
-opal> @shell("echo hello")
+opal> echo hello
 hello
 ```
 
 **2. Function definition and testing:**
 ```bash
 opal> fun deploy(env: String) {
-...     @shell("kubectl apply -f k8s/@var.env/")
+...     kubectl apply -f k8s/@var.env/
 ...   }
 Function 'deploy' defined
 
@@ -95,13 +95,13 @@ Execute commands immediately:
 
 ```bash
 $ opal
-opal> @shell("echo hello")
+opal> echo hello
 hello
 
 opal> @env.USER
 "alice"
 
-opal> @shell("kubectl get pods")
+opal> kubectl get pods
 NAME                    READY   STATUS    RESTARTS   AGE
 app-1234567890-abcde    1/1     Running   0          2d
 ```
@@ -111,7 +111,7 @@ app-1234567890-abcde    1/1     Running   0          2d
 Generate and review plans before execution:
 
 ```bash
-opal> plan @shell("kubectl apply -f k8s/prod/")
+opal> plan kubectl apply -f k8s/prod/
 Plan: a3b2c1d4
   1. kubectl apply -f k8s/prod/
 
@@ -124,7 +124,7 @@ Execute? [y/N] y
 Generate plans without executing:
 
 ```bash
-opal> dry-run @shell("kubectl apply -f k8s/prod/")
+opal> dry-run kubectl apply -f k8s/prod/
 Plan: a3b2c1d4
   1. kubectl apply -f k8s/prod/
 
@@ -138,11 +138,11 @@ Plan: a3b2c1d4
 Access previous commands:
 
 ```bash
-opal> @shell("echo hello")
+opal> echo hello
 hello
 
 opal> ↑  # Previous command
-opal> @shell("echo hello")
+opal> echo hello
 hello
 ```
 
@@ -154,7 +154,7 @@ Tab completion for decorators, functions, and variables:
 opal> @sh<TAB>
 @shell
 
-opal> @shell("kubectl <TAB>
+opal> kubectl <TAB>
 apply    create   delete   describe   get   logs   scale
 ```
 
@@ -164,7 +164,7 @@ Define and reuse functions:
 
 ```bash
 opal> fun deploy(env: String) {
-...     @shell("kubectl apply -f k8s/@var.env/")
+...     kubectl apply -f k8s/@var.env/
 ...   }
 Function 'deploy' defined
 
@@ -183,13 +183,13 @@ Bind variables for reuse:
 opal> var ENV = "prod"
 Variable 'ENV' bound
 
-opal> @shell("kubectl apply -f k8s/@var.ENV/")
+opal> kubectl apply -f k8s/@var.ENV/
 ✓ Executed successfully
 
 opal> var ENV = "staging"
 Variable 'ENV' rebound
 
-opal> @shell("kubectl apply -f k8s/@var.ENV/")
+opal> kubectl apply -f k8s/@var.ENV/
 ✓ Executed successfully
 ```
 
@@ -204,7 +204,7 @@ opal> @retry(attempts=3) {
 ✓ Executed successfully
 
 opal> @timeout(30s) {
-...     @shell("long-running-command")
+...     long-running-command
 ...   }
 ✓ Executed successfully
 
@@ -221,8 +221,8 @@ Support multi-line commands:
 
 ```bash
 opal> fun deploy(env: String) {
-...     @shell("kubectl apply -f k8s/@var.env/")
-...     @shell("kubectl rollout status deployment/app")
+...     kubectl apply -f k8s/@var.env/
+...     kubectl rollout status deployment/app
 ...   }
 Function 'deploy' defined
 ```
@@ -245,22 +245,7 @@ opal> deploy("prod")
 
 **Why?** Simplicity. Functions and variables are session-local.
 
-#### Restriction 2: No file I/O in REPL
-
-Cannot read/write files directly in REPL:
-
-```bash
-# ❌ FORBIDDEN: file I/O
-opal> cat /etc/passwd
-# Error: file I/O not allowed in REPL
-
-# ✅ CORRECT: use @shell
-opal> @shell("cat /etc/passwd")
-```
-
-**Why?** Safety. REPL is for exploration, not file manipulation.
-
-#### Restriction 3: No script imports in REPL
+#### Restriction 2: No script imports in REPL
 
 Cannot import external scripts:
 
@@ -275,12 +260,12 @@ opal> fun deploy(env: String) { ... }
 
 **Why?** REPL is for interactive exploration, not script composition.
 
-#### Restriction 4: Plan mode requires explicit confirmation
+#### Restriction 3: Plan mode requires explicit confirmation
 
 Plan mode requires user confirmation before execution:
 
 ```bash
-opal> plan @shell("kubectl apply -f k8s/prod/")
+opal> plan kubectl apply -f k8s/prod/
 Plan: a3b2c1d4
   1. kubectl apply -f k8s/prod/
 
