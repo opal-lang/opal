@@ -41,7 +41,7 @@ func TestResolve_SimpleCommand(t *testing.T) {
 	config := ResolveConfig{
 		Context: context.Background(),
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestResolve_VarDecl(t *testing.T) {
 	config := ResolveConfig{
 		Context: context.Background(),
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestResolve_IfTrue(t *testing.T) {
 	config := ResolveConfig{
 		Context: context.Background(),
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestResolve_IfFalse(t *testing.T) {
 	config := ResolveConfig{
 		Context: context.Background(),
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestResolve_UndefinedVar(t *testing.T) {
 	config := ResolveConfig{
 		Context: context.Background(),
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 
 	// Verify: should get error about undefined variable
 	if err == nil {
@@ -453,7 +453,7 @@ func TestResolve_IfBranchPruning(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -561,7 +561,7 @@ func TestResolve_MultiWave(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestResolve_CommandMode(t *testing.T) {
 		Context:        context.Background(),
 		TargetFunction: "target_func",
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestResolve_FunctionNotFound(t *testing.T) {
 		Context:        context.Background(),
 		TargetFunction: "nonexistent",
 	}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 
 	// Should get error about function not found
 	if err == nil {
@@ -749,7 +749,7 @@ func TestResolve_ForLoop(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -841,7 +841,7 @@ func TestResolve_WhenStatement(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -929,7 +929,7 @@ func TestResolve_NestedIfFor(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1010,18 +1010,50 @@ func TestResolve_ForLoopWithNestedCondition(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	result, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// The inner blocker should have been evaluated
-	// On the last iteration (env="prod"), it should be taken
-	if innerBlocker.Taken == nil {
-		t.Fatalf("Inner blocker.Taken is nil, expected to be evaluated")
+	// With the new design, for-loops populate Iterations with deep-copied bodies.
+	// The original innerBlocker is NOT modified - only the copies in Iterations are.
+	// We need to check the resolved result.
+	if len(result.Statements) != 1 {
+		t.Fatalf("Expected 1 statement (for-loop), got %d", len(result.Statements))
 	}
-	// Note: The Taken value reflects the last iteration's evaluation
-	// since we're reusing the same BlockerIR struct
+	forStmt := result.Statements[0]
+	if forStmt.Kind != StmtBlocker || forStmt.Blocker.Kind != BlockerFor {
+		t.Fatalf("Expected for-loop blocker")
+	}
+	if len(forStmt.Blocker.Iterations) != 2 {
+		t.Fatalf("Expected 2 iterations, got %d", len(forStmt.Blocker.Iterations))
+	}
+
+	// Check iteration 0 (env="dev"): inner if should NOT be taken
+	iter0 := forStmt.Blocker.Iterations[0]
+	if iter0.Value != "dev" {
+		t.Errorf("Iteration 0 value = %v, want 'dev'", iter0.Value)
+	}
+	if len(iter0.Body) != 1 || iter0.Body[0].Kind != StmtBlocker {
+		t.Fatalf("Iteration 0 body should have 1 blocker")
+	}
+	iter0Blocker := iter0.Body[0].Blocker
+	if iter0Blocker.Taken == nil || *iter0Blocker.Taken {
+		t.Errorf("Iteration 0 (env='dev'): inner if should NOT be taken")
+	}
+
+	// Check iteration 1 (env="prod"): inner if SHOULD be taken
+	iter1 := forStmt.Blocker.Iterations[1]
+	if iter1.Value != "prod" {
+		t.Errorf("Iteration 1 value = %v, want 'prod'", iter1.Value)
+	}
+	if len(iter1.Body) != 1 || iter1.Body[0].Kind != StmtBlocker {
+		t.Fatalf("Iteration 1 body should have 1 blocker")
+	}
+	iter1Blocker := iter1.Body[0].Blocker
+	if iter1Blocker.Taken == nil || !*iter1Blocker.Taken {
+		t.Errorf("Iteration 1 (env='prod'): inner if SHOULD be taken")
+	}
 }
 
 // TestResolve_ForLoopVariableLeak tests that variables declared inside for-loops leak to outer scope.
@@ -1091,7 +1123,7 @@ func TestResolve_ForLoopVariableLeak(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1182,7 +1214,7 @@ func TestResolve_IfBlockVariableLeak(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1273,25 +1305,40 @@ func TestResolve_ForLoopUnrollingWithUniqueBlockers(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	result, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// The blockerA is reused for all iterations due to how ThenBranch works.
-	// After all iterations, it should reflect the LAST evaluation.
-	// With items ["a", "b", "c"], the last check is item=="b" when item="c", which is false.
-	//
-	// But wait - the unrolling injects VarDecl statements, so each iteration
-	// should see its own value. Let's verify the blocker was evaluated.
-	if blockerA.Taken == nil {
-		t.Fatalf("blockerA.Taken is nil - blocker was not evaluated")
+	// With the new design, for-loops populate Iterations with deep-copied bodies.
+	// The original blockerA is NOT modified - only the copies in Iterations are.
+	// Each iteration gets its own copy of the body, so each inner blocker is evaluated
+	// independently with the correct loop variable value.
+	if len(result.Statements) != 1 {
+		t.Fatalf("Expected 1 statement (for-loop), got %d", len(result.Statements))
+	}
+	forStmt := result.Statements[0]
+	if forStmt.Kind != StmtBlocker || forStmt.Blocker.Kind != BlockerFor {
+		t.Fatalf("Expected for-loop blocker")
+	}
+	if len(forStmt.Blocker.Iterations) != 3 {
+		t.Fatalf("Expected 3 iterations, got %d", len(forStmt.Blocker.Iterations))
 	}
 
-	// Since the same blocker struct is reused, it will have the result of the
-	// last iteration (item="c", so item=="b" is false)
-	if *blockerA.Taken {
-		t.Errorf("blockerA.Taken should be false for last iteration (item='c')")
+	// Check each iteration's inner blocker
+	expectedTaken := []bool{false, true, false} // "a"!="b", "b"=="b", "c"!="b"
+	for i, iter := range forStmt.Blocker.Iterations {
+		if len(iter.Body) != 1 || iter.Body[0].Kind != StmtBlocker {
+			t.Fatalf("Iteration %d body should have 1 blocker", i)
+		}
+		innerBlocker := iter.Body[0].Blocker
+		if innerBlocker.Taken == nil {
+			t.Fatalf("Iteration %d: inner blocker.Taken is nil", i)
+		}
+		if *innerBlocker.Taken != expectedTaken[i] {
+			t.Errorf("Iteration %d (item=%v): inner blocker.Taken = %v, want %v",
+				i, iter.Value, *innerBlocker.Taken, expectedTaken[i])
+		}
 	}
 }
 
@@ -1359,7 +1406,7 @@ func TestResolve_ForLoopBlockerMustResolveCollection(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1454,7 +1501,7 @@ func TestResolve_WaveModel_BlockersMustResolveBeforeEvaluation(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1519,7 +1566,7 @@ func TestBug_ErrorsFromCollectExprAreSilentlyIgnored(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 
 	// BUG: Currently this returns nil because errors are silently ignored
 	// EXPECTED: Should return error about undefined variable
@@ -1582,7 +1629,7 @@ func TestBug_ForLoopVariableNotInScope(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	// Should succeed - loop variable should be accessible in body
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
@@ -1687,7 +1734,7 @@ func TestBug_VarDeclInTakenBranchNotVisibleAfter(t *testing.T) {
 	// Resolve
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	// Should succeed - INNER should be visible to the echo command in the same block
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
@@ -1819,7 +1866,7 @@ func TestResolve_MultipleBlockersSameLevel(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -1946,7 +1993,7 @@ func TestResolve_SequentialBlockers_ConditionAfterFirstBlocker(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -2083,7 +2130,7 @@ func TestResolve_ThreeLevelNestedIfs_AllTrue(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -2207,7 +2254,7 @@ func TestResolve_ThreeLevelNestedIfs_ThirdFalse(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -2325,7 +2372,7 @@ func TestResolve_ThreeLevelNestedIfs_SecondFalse(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -2403,7 +2450,7 @@ func TestResolve_ForLoopEachIterationGetsUniqueBinding(t *testing.T) {
 
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
-	err := Resolve(graph, v, session, config)
+	_, err := Resolve(graph, v, session, config)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}

@@ -3,7 +3,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/opal-lang/opal/core/decorator"
@@ -122,7 +121,6 @@ type Resolver struct {
 	// Resolution state
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
-	nextWaveStmts    []*StatementIR    // Statements for next wave (taken branches)
 	errors           []error           // Collected errors
 }
 
@@ -130,6 +128,15 @@ type Resolver struct {
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
 	Context        context.Context // Execution context
+}
+
+// ResolveResult contains the resolved execution tree.
+// The tree preserves structure for rich dry-run output:
+//   - Blockers remain as nodes with Taken set and untaken branches pruned
+//   - For-loops have Iterations populated with resolved values and deep-copied bodies
+//   - Try/catch blocks are preserved as-is (runtime constructs)
+type ResolveResult struct {
+	Statements []*StatementIR // Pruned tree (only taken branches, nested blockers resolved)
 }
 
 // decoratorCall represents a decorator call to be batch resolved.
@@ -142,8 +149,14 @@ type decoratorCall struct {
 }
 
 // Resolve processes the execution graph and resolves all expressions.
-// Returns error if resolution fails (undefined variables, decorator failures, etc.).
-func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, config ResolveConfig) error {
+// Returns a ResolveResult containing the pruned execution tree, or an error
+// if resolution fails (undefined variables, decorator failures, etc.).
+//
+// The returned tree preserves structure for rich dry-run output:
+//   - Blockers remain as nodes with Taken set and untaken branches pruned (set to nil)
+//   - For-loops have Iterations populated with resolved values and deep-copied bodies
+//   - Try/catch blocks are preserved as-is (runtime constructs)
+func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, config ResolveConfig) (*ResolveResult, error) {
 	r := &Resolver{
 		graph:            graph,
 		vault:            v,
@@ -173,75 +186,277 @@ func (r *Resolver) getValue(name string) (any, bool) {
 	return nil, false
 }
 
-// resolve is the main wave loop.
+// resolve is the main resolution entry point.
 //
-// The wave model collects ALL blockers at the current depth, resolves their
-// conditions in a batch, then evaluates them. Statements AFTER blockers wait
-// until the taken branches are processed (flattening semantics).
+// The resolver processes statements in waves, preserving tree structure:
+//  1. Collect expressions from statements until we hit a blocker
+//  2. Batch resolve all collected expressions (grouped by decorator type)
+//  3. Evaluate the blocker condition
+//  4. Prune untaken branch, recursively resolve taken branch
+//  5. Continue with remaining statements
 //
-// Example with multiple blockers:
-//
-//	var A = 1
-//	if @var.COND1 { var B = 2 }
-//	var C = 3
-//	if @var.COND2 { var D = 4 }
-//	echo @var.B @var.D
-//
-// Wave 1:
-//  1. Collect: A, COND1, C, COND2 (expressions from statements and blocker conditions)
-//  2. Identify blockers: [if COND1, if COND2]
-//  3. Note: "echo" comes AFTER blockers, so it waits for wave 2
-//  4. Batch resolve all expressions
-//  5. Evaluate BOTH blockers
-//
-// Wave 2:
-//  1. Process: taken branches (var B, var D) + statements after last blocker (echo)
-//  2. Now B and D are in scope, echo can reference them
-//
-// This ensures variables declared in taken branches are visible to statements
-// that come after the blockers (flattening semantics).
-func (r *Resolver) resolve() error {
+// The result is a pruned tree where:
+//   - Blockers remain as nodes with Taken set
+//   - Untaken branches are set to nil
+//   - For-loops have Iterations populated with deep-copied bodies
+//   - All nested blockers are recursively resolved
+func (r *Resolver) resolve() (*ResolveResult, error) {
 	// Select statements based on mode (script vs command)
 	stmts := r.selectStatements()
 	if stmts == nil {
 		// Error already recorded
-		return r.buildError()
+		return nil, r.buildError()
 	}
 
-	// Wave loop - process statements until done
-	for len(stmts) > 0 {
-		// Phase 1: Collect all blockers and expressions at current level
-		blockers, afterBlockers := r.collectAllBlockers(stmts)
+	// Resolve the statement list, returning the pruned tree
+	resolved, err := r.resolveStatements(stmts)
+	if err != nil {
+		return nil, err
+	}
 
-		// Check for errors from collection (e.g., undefined variables)
-		if err := r.buildError(); err != nil {
-			return err
-		}
+	return &ResolveResult{Statements: resolved}, nil
+}
 
-		// Phase 2: Batch resolve all touched expressions
-		if err := r.batchResolve(); err != nil {
-			return err
-		}
+// resolveStatements resolves a list of statements, returning the pruned tree.
+// This is the core recursive resolution function.
+func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, error) {
+	if len(stmts) == 0 {
+		return nil, nil
+	}
 
-		// Phase 3: Evaluate all blockers
-		for _, blocker := range blockers {
-			if err := r.evaluateBlocker(blocker); err != nil {
-				return err
+	var result []*StatementIR
+
+	for i := 0; i < len(stmts); i++ {
+		stmt := stmts[i]
+
+		switch stmt.Kind {
+		case StmtVarDecl:
+			// Collect and resolve variable declaration
+			r.collectVarDecl(stmt.VarDecl)
+			if err := r.buildError(); err != nil {
+				return nil, err
 			}
-		}
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			result = append(result, stmt)
 
-		// Phase 4: Queue next wave
-		if len(blockers) > 0 {
-			// Taken branches come FIRST, then statements after the last blocker
-			stmts = slices.Concat(r.nextWaveStmts, afterBlockers)
-			r.nextWaveStmts = nil
-		} else {
-			// No blockers - we're done
-			stmts = nil
+		case StmtCommand:
+			// Collect expressions in command
+			r.collectCommand(stmt.Command)
+			if err := r.buildError(); err != nil {
+				return nil, err
+			}
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			result = append(result, stmt)
+
+		case StmtBlocker:
+			// Collect blocker condition, resolve, evaluate, then recurse into taken branch
+			resolvedBlocker, err := r.resolveBlocker(stmt)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, resolvedBlocker)
+
+		case StmtTry:
+			// Try/catch is a runtime construct - resolve all branches
+			resolvedTry, err := r.resolveTry(stmt)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, resolvedTry)
 		}
 	}
 
-	return nil
+	return result, nil
+}
+
+// collectCommand collects all expressions in a command for resolution.
+func (r *Resolver) collectCommand(cmd *CommandStmtIR) {
+	if cmd == nil || cmd.Command == nil {
+		return
+	}
+	for _, part := range cmd.Command.Parts {
+		r.collectExpr(part, "")
+	}
+	// Also collect expressions in decorator args
+	for _, arg := range cmd.Args {
+		r.collectExpr(arg, "")
+	}
+}
+
+// resolveBlocker resolves a blocker statement and returns the pruned result.
+// The blocker node is preserved with Taken set and untaken branch pruned.
+func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
+	// Collect blocker condition/collection
+	r.collectExpr(blocker.Condition, "")
+	if blocker.Kind == BlockerFor && blocker.Collection != nil {
+		r.collectExpr(blocker.Collection, "")
+	}
+
+	// Check for errors from collection
+	if err := r.buildError(); err != nil {
+		return nil, err
+	}
+
+	// Batch resolve expressions
+	if err := r.batchResolve(); err != nil {
+		return nil, err
+	}
+
+	// Evaluate the blocker
+	switch blocker.Kind {
+	case BlockerIf:
+		return r.resolveIfBlocker(stmt)
+	case BlockerFor:
+		return r.resolveForBlocker(stmt)
+	case BlockerWhen:
+		return r.resolveWhenBlocker(stmt)
+	default:
+		return nil, fmt.Errorf("unknown blocker kind: %d", blocker.Kind)
+	}
+}
+
+// resolveIfBlocker evaluates an if statement and returns the pruned result.
+func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
+	// Evaluate condition
+	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
+	}
+
+	taken := IsTruthy(result)
+	blocker.Taken = &taken
+
+	// Resolve taken branch, prune untaken branch
+	if taken {
+		resolved, err := r.resolveStatements(blocker.ThenBranch)
+		if err != nil {
+			return nil, err
+		}
+		blocker.ThenBranch = resolved
+		blocker.ElseBranch = nil // Prune untaken branch
+	} else {
+		if blocker.ElseBranch != nil {
+			resolved, err := r.resolveStatements(blocker.ElseBranch)
+			if err != nil {
+				return nil, err
+			}
+			blocker.ElseBranch = resolved
+		}
+		blocker.ThenBranch = nil // Prune untaken branch
+	}
+
+	return stmt, nil
+}
+
+// resolveForBlocker evaluates a for-loop and populates Iterations.
+func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
+	// Evaluate collection
+	collection, err := r.evaluateCollection(blocker.Collection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
+	}
+
+	// Build iterations with deep-copied bodies
+	blocker.Iterations = make([]LoopIteration, len(collection))
+	for i, item := range collection {
+		// Create exprID for this iteration's loop variable
+		loopVarRaw := fmt.Sprintf("literal:%v", item)
+		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
+
+		// Store the value and update scope
+		r.vault.StoreUnresolvedValue(loopVarExprID, item)
+		r.vault.MarkTouched(loopVarExprID)
+		r.graph.Scopes.Define(blocker.LoopVar, loopVarExprID)
+
+		// Deep-copy the body for this iteration
+		bodyCopy := DeepCopyStatements(blocker.ThenBranch)
+
+		// Resolve the copied body (may contain nested blockers)
+		resolvedBody, err := r.resolveStatements(bodyCopy)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+		}
+
+		blocker.Iterations[i] = LoopIteration{
+			Value: item,
+			Body:  resolvedBody,
+		}
+	}
+
+	// Clear ThenBranch since we've moved content to Iterations
+	// (ThenBranch was the template, Iterations are the resolved copies)
+	blocker.ThenBranch = nil
+
+	return stmt, nil
+}
+
+// resolveWhenBlocker evaluates a when statement and returns the pruned result.
+func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
+	// Evaluate condition
+	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate when condition: %w", err)
+	}
+
+	// Find first matching arm
+	blocker.MatchedArm = -1
+	for i, arm := range blocker.Arms {
+		if matchPattern(arm.Pattern, value, r.getValue) {
+			blocker.MatchedArm = i
+
+			// Resolve the matched arm's body
+			resolved, err := r.resolveStatements(arm.Body)
+			if err != nil {
+				return nil, err
+			}
+			arm.Body = resolved
+
+			// Clear other arms' bodies (pruned)
+			for j, otherArm := range blocker.Arms {
+				if j != i {
+					otherArm.Body = nil
+				}
+			}
+			break
+		}
+	}
+
+	return stmt, nil
+}
+
+// resolveTry resolves a try/catch/finally statement.
+// Both try and catch branches are preserved (runtime determines which executes).
+func (r *Resolver) resolveTry(stmt *StatementIR) (*StatementIR, error) {
+	try := stmt.Try
+
+	// Resolve all branches - they all need to be in the plan
+	var err error
+	try.TryBlock, err = r.resolveStatements(try.TryBlock)
+	if err != nil {
+		return nil, err
+	}
+	try.CatchBlock, err = r.resolveStatements(try.CatchBlock)
+	if err != nil {
+		return nil, err
+	}
+	try.FinallyBlock, err = r.resolveStatements(try.FinallyBlock)
+	if err != nil {
+		return nil, err
+	}
+
+	return stmt, nil
 }
 
 // selectStatements chooses which statements to process based on mode.
@@ -258,107 +473,6 @@ func (r *Resolver) selectStatements() []*StatementIR {
 
 	// Script mode: all top-level statements
 	return r.graph.Statements
-}
-
-// collectAllBlockers processes statements until it hits a blocker, then collects
-// that blocker's condition. ALL statements after the first blocker are queued
-// for the next wave (they might depend on the taken branch, and subsequent
-// blocker conditions might reference variables defined after the first blocker).
-//
-// Example:
-//
-//	var A = 1              <- collected (before first blocker)
-//	if COND1 { ... }       <- blocker, condition collected
-//	var COND2 = true       <- queued for wave 2
-//	if COND2 { ... }       <- queued for wave 2 (condition depends on COND2)
-//	echo "after"           <- queued for wave 2
-//
-// This ensures correct ordering: statements and blockers after the first blocker
-// wait until the first blocker's taken branch is processed (flattening semantics).
-//
-// # Future Optimization: Parallel Blocker Resolution
-//
-// TODO: Implement dependency-aware wave collection for better batching.
-//
-// The current approach stops at the FIRST blocker and queues everything after it.
-// This is correct but suboptimal for batching.
-//
-// Current behavior example:
-//
-//	var COND1 = true
-//	var COND2 = true
-//	if @var.COND1 { var B = 2 }   # Blocker 1
-//	if @var.COND2 { var C = 3 }   # Blocker 2 (independent of Blocker 1)
-//	echo @var.D                    # Independent of both blockers
-//
-// Current: 3 waves (one per blocker + final statements)
-// Optimal: 1 wave (all conditions already defined, resolve in parallel)
-//
-// Target behavior - statements wait ONLY if they depend on a blocker's modifications:
-//
-//	var COND1 = true
-//	var COND2 = true
-//	if @var.COND1 { var B = 2 }   # Blocker1 modifies: {B}
-//	if @var.COND2 { var C = 3 }   # Condition doesn't reference B → Wave 1
-//	echo @var.D                    # Doesn't reference B or C → Wave 1
-//	echo @var.B                    # References B → Wave 2
-//
-// The optimization would:
-//  1. Pre-scan blocker branches to identify "potentially modified variables"
-//  2. A statement after a blocker waits ONLY IF it references a variable that
-//     could be modified by a preceding blocker's taken branch
-//  3. Independent blockers and statements can be collected in the same wave
-//
-// This matters for batching decorator calls: 100 independent @aws.secret calls
-// could be 1 API request (150ms) instead of 100 sequential waves (15 seconds).
-//
-// Deferring this optimization until we have real-world usage data showing it matters.
-// The current simple approach is correct and easier to reason about.
-//
-// Returns: blockers found (0 or 1), statements to process after blocker is evaluated
-func (r *Resolver) collectAllBlockers(stmts []*StatementIR) ([]*BlockerIR, []*StatementIR) {
-	for i, stmt := range stmts {
-		switch stmt.Kind {
-		case StmtVarDecl:
-			// Handle variable declaration
-			r.collectVarDecl(stmt.VarDecl)
-
-		case StmtCommand:
-			// Collect all expressions in command parts
-			for _, part := range stmt.Command.Command.Parts {
-				r.collectExpr(part, "")
-			}
-
-		case StmtBlocker:
-			// Hit a blocker - collect its condition, then STOP
-			// All statements after this blocker wait for the next wave
-			r.collectExpr(stmt.Blocker.Condition, "")
-			if stmt.Blocker.Kind == BlockerFor && stmt.Blocker.Collection != nil {
-				r.collectExpr(stmt.Blocker.Collection, "")
-			}
-			// Return this blocker and all remaining statements
-			return []*BlockerIR{stmt.Blocker}, stmts[i+1:]
-
-		case StmtTry:
-			// Try/catch is special - both branches are in the plan
-			// (exception is runtime, not plan-time)
-			// Queue all branches for processing
-			r.queueTryBlock(stmt.Try)
-		}
-	}
-
-	// No blocker found
-	return nil, nil
-}
-
-// queueTryBlock queues try/catch/finally blocks for processing.
-// Both try and catch branches are in the plan (runtime determines which executes).
-func (r *Resolver) queueTryBlock(tryStmt *TryIR) {
-	// Queue all branches - they all need to be in the plan
-	// Process them in order: try, catch, finally
-	r.nextWaveStmts = append(r.nextWaveStmts, tryStmt.TryBlock...)
-	r.nextWaveStmts = append(r.nextWaveStmts, tryStmt.CatchBlock...)
-	r.nextWaveStmts = append(r.nextWaveStmts, tryStmt.FinallyBlock...)
 }
 
 // collectVarDecl handles variable declaration - stores value by variable name for condition evaluation.
@@ -539,97 +653,6 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 		// via collectVarDecl, so no need to duplicate here
 	}
 
-	return nil
-}
-
-// evaluateBlocker evaluates a blocker and sets its Taken flag.
-func (r *Resolver) evaluateBlocker(blocker *BlockerIR) error {
-	switch blocker.Kind {
-	case BlockerIf:
-		return r.evaluateIfBlocker(blocker)
-	case BlockerFor:
-		return r.evaluateForBlocker(blocker)
-	case BlockerWhen:
-		return r.evaluateWhenBlocker(blocker)
-	default:
-		return fmt.Errorf("unknown blocker kind: %d", blocker.Kind)
-	}
-}
-
-// evaluateIfBlocker evaluates an if statement and queues the taken branch.
-func (r *Resolver) evaluateIfBlocker(blocker *BlockerIR) error {
-	// Evaluate condition using getValue to look up values from Vault
-	result, err := EvaluateExpr(blocker.Condition, r.getValue)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate if condition: %w", err)
-	}
-
-	taken := IsTruthy(result)
-	blocker.Taken = &taken
-
-	// Queue taken branch for next wave
-	if taken {
-		r.nextWaveStmts = append(r.nextWaveStmts, blocker.ThenBranch...)
-	} else if blocker.ElseBranch != nil {
-		r.nextWaveStmts = append(r.nextWaveStmts, blocker.ElseBranch...)
-	}
-	// Untaken branch is NEVER added to nextWaveStmts → branch pruning
-
-	return nil
-}
-
-// evaluateForBlocker evaluates a for-loop and unrolls it.
-// Unrolling injects VarDecl statements before each iteration's body so the
-// loop variable is properly bound when those statements are processed in wave 2.
-func (r *Resolver) evaluateForBlocker(blocker *BlockerIR) error {
-	// Evaluate collection
-	collection, err := r.evaluateCollection(blocker.Collection)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate for collection: %w", err)
-	}
-
-	// Unroll loop - inject VarDecl + body statements for each iteration
-	for _, item := range collection {
-		// Create exprID for this iteration's loop variable
-		loopVarRaw := fmt.Sprintf("literal:%v", item)
-		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-
-		// Inject a VarDecl statement that binds the loop variable for this iteration
-		// This ensures the variable is properly bound when wave 2 processes these statements
-		iterVarDecl := &StatementIR{
-			Kind: StmtVarDecl,
-			VarDecl: &VarDeclIR{
-				Name:   blocker.LoopVar,
-				ExprID: loopVarExprID,
-				Value:  &ExprIR{Kind: ExprLiteral, Value: item},
-			},
-		}
-
-		// Add: VarDecl (rebinds loop var) + body statements
-		r.nextWaveStmts = append(r.nextWaveStmts, iterVarDecl)
-		r.nextWaveStmts = append(r.nextWaveStmts, blocker.ThenBranch...)
-	}
-
-	return nil
-}
-
-// evaluateWhenBlocker evaluates a when statement and queues the matching arm.
-func (r *Resolver) evaluateWhenBlocker(blocker *BlockerIR) error {
-	// Evaluate condition
-	value, err := EvaluateExpr(blocker.Condition, r.getValue)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate when condition: %w", err)
-	}
-
-	// Find first matching arm
-	for _, arm := range blocker.Arms {
-		if matchPattern(arm.Pattern, value, r.getValue) {
-			r.nextWaveStmts = append(r.nextWaveStmts, arm.Body...)
-			return nil
-		}
-	}
-
-	// No matching arm (when statements don't require exhaustive patterns)
 	return nil
 }
 
