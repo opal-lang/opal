@@ -1232,52 +1232,34 @@ if runtime.GOOS != "windows" && cmd.Process != nil {
 
 ## Vault: Secret Tracking and Variable Management
 
-**Vault is the single source of truth for variables and secrets.** It manages variable scoping, tracks secret usage sites, enforces transport boundaries, and prunes unused expressions.
+**Vault is the single source of truth for resolved values and DisplayIDs.** Variable scoping lives in the IR + Resolver, SecretUses are recorded by the Emitter, and Vault focuses on value storage, DisplayID generation, transport ownership, and pruning.
 
 ### Variable Rules
 
-**1. Declaration and Scoping**
-
-Variables can be declared in root scope or block scopes:
-- **Root scope:** Accessible across all steps (steps are NOT scopes)
-- **Block scope:** Scoped to that block only
-
-```opal
-var COUNT = 5        # Root scope - accessible everywhere
-
-@retry {
-    var COUNT = 3    # Block scope - shadows outer COUNT
-    echo "@var.COUNT"  # Prints 3
-}
-echo "@var.COUNT"    # Prints 5 (outer scope unchanged)
-```
-
-**2. No Variable Hoisting**
+**1. Declaration and Source Order**
 
 Variables must be declared before use. No forward references allowed.
+Name resolution uses the most recent visible declaration from that point in source order.
 
 ```opal
 echo "@var.NAME"  # ❌ ERROR: NAME not declared yet
 var NAME = "Aled"
 echo "@var.NAME"  # ✅ OK: NAME declared above
+
+var COUNT = 1
+echo "@var.COUNT"  # Prints 1
+var COUNT = 2
+echo "@var.COUNT"  # Prints 2
 ```
 
-**3. Same-Level Override**
+**2. Scope Types**
 
-Later declarations shadow earlier ones at the same scope level.
-
-```opal
-var COUNT = 5
-var COUNT = 10       # Overrides at same level
-echo "@var.COUNT"    # Prints 10
-```
-
-**4. Block Scope Isolation**
-
-Which blocks create isolated scopes:
-- ✅ **Decorator blocks** (`@retry`, `@timeout`, etc.) - changes don't leak out
-- ✅ **`try/catch` blocks** - scope isolation
-- ❌ **Language control blocks** (`if`, `for`, `when`, `fun`) - mutations leak to outer scope
+- **Root scope:** Accessible across all steps (steps are NOT scopes)
+- **Execution blocks:** `try/catch` and decorator blocks create isolated scopes
+  - Can READ outer values
+  - Mutations stay local; parent value restored on exit
+- **Metaprogramming blocks:** `if`, `for`, `when`, `fun` are flattened at plan time
+  - Mutations leak to outer scope because the block disappears
 
 ```opal
 var COUNT = 5
@@ -1285,15 +1267,20 @@ var COUNT = 5
 @retry {
     var COUNT = 3    # Shadows outer (isolated scope)
 }
-echo "@var.COUNT"    # Prints 5 (unchanged)
+echo "@var.COUNT"    # Prints 5 (outer scope restored)
 
 if (true) {
-    var COUNT = 10   # Mutates outer scope (NOT isolated)
+    var COUNT = 10   # Mutates outer scope (flattened)
 }
 echo "@var.COUNT"    # Prints 10 (mutation leaked)
 ```
 
-**5. Transport Boundaries**
+**3. Command Mode Prelude**
+
+Function bodies inherit top-level variables declared **earlier** in the file.
+Variables declared after the function are not visible unless passed explicitly.
+
+**4. Transport Boundaries**
 
 Variables cannot cross transport boundaries (security isolation).
 
@@ -1320,25 +1307,26 @@ var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in "local" transport
 
 **Core principles:**
 1. **RuntimeValue NEVER leaves Vault** - only DisplayID in plan
-2. **Site-based authorization** - RecordReference authorizes sites, Access checks SiteID
+2. **SecretUse recording** - Emit site paths for contract verification (no runtime auth)
 3. **Transport boundaries** - values cannot cross transport boundaries
-4. **DisplayID = HMAC(PlanSalt, value)** - deterministic, content-addressed
+4. **DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)** - deterministic, per-use, transport-aware
 
 ### Expression Deduplication
 
-Same literal value → same exprID → same DisplayID (resolved only once):
+Same literal value → same exprID (resolved only once). DisplayIDs are generated
+per usage site (path + transport), so placeholders may differ across blocks.
 
 ```opal
 var NAME1 = "Aled"
 var NAME2 = "Aled"
 # Both share same exprID (hash-based deduplication)
-# Both get same DisplayID
 # Value resolved only once
+# DisplayIDs differ if used in different paths/transports
 ```
 
-### Site-Based Authorization
+### SecretUse Recording
 
-**Every secret usage is authorized at a specific site in the decorator DAG.**
+**Every secret usage is recorded at a specific site in the plan tree.**
 
 ```opal
 var API_KEY = "sk-secret"
@@ -1356,16 +1344,13 @@ SecretUse{
 }
 ```
 
-**Enforcement:**
-- Secret can ONLY be unwrapped at authorized site
-- SiteID is HMAC-based (unforgeable without planKey)
-- Parent/child decorators CANNOT unwrap (different sites)
+**Purpose:**
+- SecretUses are part of the contract hash (audit + verification)
+- Moving a secret to a different site changes SiteID and DisplayID
 
-**Access checks:**
-1. **Transport boundary** - Value cannot cross transport boundaries
-2. **Site authorization** - (exprID, currentSiteID) must be authorized
-
-Both must pass for `Access()` to succeed.
+**Execution-time enforcement:**
+- DisplayID lookup + transport boundary check only
+- No site authorization at runtime (contract verification already covers it)
 
 ### Three-Pass Planning Model
 
@@ -1510,40 +1495,28 @@ echo "Hello, @var.NAME"             # NAME is touched
 
 ### Scope Implementation
 
-**Vault's pathStack IS the scope trie.**
+Scope tracking lives in the IR + Resolver, not in Vault. A `ScopeStack` models
+nested scopes with parent links and enforces source-order resolution.
 
-```go
-// pathStack: [root, step-1, @retry[0], @shell[0]]
-// This IS the scope hierarchy
+- **Execution blocks** (`try/catch`, decorator blocks) push a new scope frame
+  - Can READ outer values
+  - Mutations stay local; parent restored on exit
+- **Metaprogramming blocks** (`if`, `for`, `when`, `fun`) are flattened at plan-time
+  - Mutations leak to outer scope because the block disappears
+- **Source order**: declarations take effect from the point they appear (no hoisting)
+
+### Expression IDs and DisplayIDs
+
+**ExprIDs** are generated during resolution based on the binding and transport
+context. They capture *which* value was resolved, not where it is used.
+
+**DisplayIDs** are generated per-use:
 ```
-
-**Scope lookup:**
-- Variables declared at a scope are stored in that scope
-- Lookup walks up the trie: current → parent → grandparent → root
-
-```go
-// LookupVariable walks up the scope trie
-func (v *Vault) LookupVariable(varName string) (string, error) {
-    scopePath := v.currentScopePath()
-    
-    for scopePath != "" {
-        scope := v.scopes[scopePath]
-        if scope != nil {
-            if exprID, exists := scope.vars[varName]; exists {
-                return exprID, nil  // Found
-            }
-        }
-        scopePath = scope.parent  // Walk up
-    }
-    
-    return "", fmt.Errorf("variable %q not found", varName)
-}
+DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)
 ```
-
-**Expression IDs are transport-aware, NOT scope-aware:**
-- `@env.HOME` in local → `local:abc123` (always same ID)
-- `@env.HOME` in ssh:server → `ssh:server:def456` (different ID, different value)
-- Scope path doesn't affect exprID, only transport does
+- **path** = canonical plan site path (built by the Emitter)
+- **transport** = current transport ID
+- Same value in different blocks/transports → different DisplayIDs
 
 ### Vault API
 
@@ -3438,64 +3411,44 @@ The placeholder system protects sensitive values while enabling change detection
 
 ### Two-Track Identity Model
 
-Secrets need two representations for different purposes:
+Secrets have two representations for different purposes:
 
 **Track 1: Display (User-Visible)**
-- Format: `🔒 opal:s:3J98t56A` (Base58 encoded, context-aware ID)
+- Format: `🔒 opal:s:3J98t56A` (context-aware ID)
 - Used in: Terminal output, logs, CLI display, plan files
-- Properties: No length leak, context-sensitive, deterministic in resolved plans
-- Example: `API_KEY: 🔒 opal:s:3J98t56A`
+- Deterministic within a plan for a given site + transport
 
-**Track 2: Internal (Machine-Readable)**
-- Format: BLAKE2b-256 keyed hash with per-run key
-- Used in: Scrubber matching, secret detection, internal verification
-- Properties: Keyed (per-run), deterministic within run, prevents oracle attacks
+**Track 2: Internal (Scrubber)**
+- Keyed fingerprint of the raw value (algorithm internal)
+- Used for scrubber matching and secret detection
 - Never displayed to users
 
-**DisplayID Generation (Keyed PRF):**
+### DisplayID Generation (Keyed PRF)
 
-DisplayIDs use a keyed BLAKE2s-128 PRF over `(plan_salt, step_path, decorator, key_name, hash(value))`:
+DisplayIDs are generated per usage site:
 
-- **Resolved plans** (`ModePlan`): Deterministic IDs with per-plan salt
-  - Key: `plan_key = HKDF(plan_digest, "opal/displayid/plan/v1")`
-  - Salt: `plan_salt = CSPRNG(32 bytes)` (generated once per plan, stored in plan header)
-  - Same plan + context + value → same DisplayID (within that plan)
-  - Different plans → different DisplayIDs (prevents cross-plan correlation)
-  - Enables contract verification (plan hash includes DisplayIDs + salt)
+```
+DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)
+```
 
-- **Direct execution** (`ModeRun`): Random-looking IDs with fresh per-run key
-  - Key: `run_key = CSPRNG(32 bytes)`
-  - Different runs → different DisplayIDs
-  - Prevents correlation and tracking
+- **PlanSalt**: 32-byte random salt stored in the plan header
+- **path**: canonical site path built by the Emitter
+- **transport**: current transport ID
 
-**DisplayID policy (structure-only, not value-linked):**
-- DisplayIDs are derived from **structure** (step path, decorator, param name) + **per-plan salt**
-- Value hash included in PRF input to prevent oracle attacks
-- Same secret value in different plans → different DisplayIDs (unlinkability)
-- Secret rotation does NOT change DisplayID (structure unchanged)
-- Plan hash changes on rotation (new value → new plan)
+**Properties:**
+- Same value in different sites/transports → different DisplayIDs
+- Same value in same site/transport → stable within the plan
+- Different plans (different PlanSalt) → different DisplayIDs
+- Value changes → DisplayID changes (contract verification detects drift)
 
-**Why this works:**
-- **Contract verification**: Deterministic DisplayIDs in resolved plans ensure same plan → same hash
-- **Security**: Context-aware PRF prevents oracle attacks; per-plan salt prevents cross-plan correlation
-- **Unlinkability**: Different plans produce different DisplayIDs even for same value
-- **No length leak**: `hash(value)` used in PRF input, not raw value
-- **Rotation-safe**: DisplayID stable across rotations, plan hash changes
-- **UX**: Users see short, readable identifiers (11 chars typical)
+**Direct execution:** uses a fresh PlanSalt per run (no correlation across runs).
+**Contract execution:** reuses the contract PlanSalt (DisplayIDs must match).
 
-**Secret rotation semantics:**
-- DisplayID remains stable (structure unchanged)
-- Plan hash changes (new value)
-- Scrubber seeds updated (new value → new fingerprints)
-- Audit trail shows rotation via plan hash change
-
-**Implementation:**
-- `secret.IDFactory` interface with `ModePlan` and `ModeRun` modes
-- `planfmt.NewPlanIDFactory(plan)` creates deterministic factory for resolved plans
-- `planfmt.NewRunIDFactory()` creates random factory for direct execution
-- `secret.Handle.ID()` returns DisplayID from factory
-- `secret.Handle.Fingerprint(key)` returns keyed hash for scrubber (separate from DisplayID)
-- Scrubber uses fingerprints for matching, displays DisplayIDs in output
+**Implementation (new pipeline):**
+- Resolver stores resolved values in Vault by exprID
+- Emitter builds site paths and requests DisplayIDs per usage
+- Vault records DisplayID → exprID for execution lookups
+- Executor resolves DisplayID with transport boundary checks
 
 ### Plan Provenance Headers
 

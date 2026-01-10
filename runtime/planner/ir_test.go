@@ -351,8 +351,11 @@ func TestCommandStmtIR_WithOperator(t *testing.T) {
 func TestCommandStmtIR_DecoratorBlock(t *testing.T) {
 	cmd := &CommandStmtIR{
 		Decorator: "@retry",
-		Args: []*ExprIR{
-			{Kind: ExprLiteral, Value: 3},
+		Args: []ArgIR{
+			{
+				Name:  "times",
+				Value: &ExprIR{Kind: ExprLiteral, Value: 3},
+			},
 		},
 		Block: []*StatementIR{
 			{Kind: StmtCommand, Command: &CommandStmtIR{Decorator: "@shell"}},

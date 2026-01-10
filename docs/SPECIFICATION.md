@@ -448,28 +448,38 @@ echo "@var.service()_backup"  # Expands to "api_backup"
    var NAME = "Aled"
    ```
 
-2. **Root scope** - accessible across all steps
+2. **Source order matters** - the most recent visible declaration wins
+   ```opal
+   var COUNT = 1
+   echo "@var.COUNT"  # Prints 1
+   var COUNT = 2
+   echo "@var.COUNT"  # Prints 2
+   ```
+
+3. **Root scope** - accessible across all steps
    ```opal
    var COUNT = 5
    echo "@var.COUNT"  # Step 1
    echo "@var.COUNT"  # Step 2 - same variable
    ```
 
-3. **Block scope** - decorator blocks create isolated scopes
+4. **Execution block isolation** - `try/catch` and decorator blocks create isolated scopes
    ```opal
    var COUNT = 5
    @retry {
        var COUNT = 3  # Shadows outer COUNT
        echo "@var.COUNT"  # Prints 3
    }
-   echo "@var.COUNT"  # Prints 5 (unchanged)
+   echo "@var.COUNT"  # Prints 5 (outer scope restored)
    ```
 
-4. **Same-level override** - later declaration shadows earlier
+5. **Metaprogramming blocks leak** - `if`, `for`, `when`, and `fun` are flattened at plan time
    ```opal
-   var COUNT = 5
-   var COUNT = 10  # Overrides
-   echo "@var.COUNT"  # Prints 10
+   var COUNT = 1
+   if true {
+       var COUNT = 2
+   }
+   echo "@var.COUNT"  # Prints 2 (flattened into outer scope)
    ```
 
 ### Resolution and Pruning
@@ -763,6 +773,8 @@ build_all: {
 
 **Plan-time expansion**: `fun` definitions are **macros** that expand at plan-time when called via `@cmd.function_name()`. All parameters must be resolvable at plan-time using value decorators.
 
+**Top-level visibility**: Function bodies inherit top-level variables declared **earlier** in the file (source order). Variables declared after the function are not visible unless passed explicitly.
+
 **DAG constraint**: Command calls must form a directed acyclic graph. Recursive calls or cycles result in plan generation errors.
 
 **Parameter binding**: Arguments are bound to their resolved values at plan-time. Default values are supported and must be plan-time expressions.
@@ -853,7 +865,7 @@ The plan records all possible execution paths through try/catch blocks. At runti
 > Metaprogramming blocks (`if`, `for`, `when`, `fun`) use flattening semantics where variables leak to the outer scope.
 > See [Metaprogramming Flattening](#metaprogramming-flattening) for details.
 
-For execution blocks, the rule is simple: **values can flow in from the outer scope, but mutations never flow back out**.
+For execution blocks, the rule is simple: **values can flow in from the outer scope, but mutations never flow back out**. Mutations apply only within the block after they appear; the parent value is restored when the block exits.
 
 ```opal
 var counter = 0
@@ -998,6 +1010,8 @@ var local_user = @env.USER  # "alice" from local session
 #### Environment Isolation
 
 **Critical:** Environments do NOT automatically pass between transports.
+This boundary applies to all value decorators: a value resolved in one transport
+cannot be reused in another transport unless explicitly passed.
 
 ```opal
 # Local: USER=alice
@@ -1168,8 +1182,10 @@ opal run --plan prod.plan
 >   - Hash comparison succeeds if structure unchanged (DisplayIDs match)
 >   - Hash comparison fails if structure changed (drift detected)
 > 
-> DisplayIDs use a keyed PRF: `BLAKE2s(PlanSalt, step_path || decorator || key_name || hash(value))`.
-> This prevents oracle attacks while enabling deterministic contract verification.
+> DisplayIDs use a keyed PRF: `BLAKE2s-128(PlanSalt, value || path || transport)`.
+> The `path` is the canonical plan site path and `transport` is the transport ID.
+> Same value in different sites or transports → different DisplayIDs (prevents correlation),
+> while the same value in the same site/transport is stable for contract verification.
 
 
 
@@ -1493,6 +1509,10 @@ deploy:
 - `🔒 opal:3J98t56A` - single character value (e.g., "3")
 - `🔒 opal:3J98t56A` - 32 character value (e.g., secret token)
 - `🔒 opal:3J98t56A` - 8 character value (e.g., hostname)
+
+**Context-aware IDs**: DisplayIDs are derived from **value + usage path + transport**.
+The same value used in different blocks or transports produces different IDs,
+which prevents correlation and encodes transport boundaries.
 
 **Why all values are secrets**: Even seemingly innocuous values could leak sensitive information:
 - `@env.HOME` - Could leak system paths

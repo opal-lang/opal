@@ -14,6 +14,7 @@ type FunctionIR struct {
 	Params []ParamIR // Function parameters
 	Body   []*StatementIR
 	Span   SourceSpan
+	Scopes *ScopeStack // Scope snapshot for command mode prelude
 }
 
 // ParamIR represents a function parameter.
@@ -52,9 +53,15 @@ type StatementIR struct {
 type CommandStmtIR struct {
 	Decorator string         // "@shell", "@retry", etc.
 	Command   *CommandExpr   // The command with interpolated expressions
-	Args      []*ExprIR      // Decorator arguments
+	Args      []ArgIR        // Decorator arguments
 	Block     []*StatementIR // Nested statements (for decorator blocks)
 	Operator  string         // "&&", "||", "|", ";" - chain to next command
+}
+
+// ArgIR represents a decorator argument.
+type ArgIR struct {
+	Name  string // Parameter name
+	Value *ExprIR
 }
 
 // VarDeclIR represents a variable declaration.
@@ -172,6 +179,19 @@ func (s *ScopeStack) Depth() int {
 	return len(s.scopes)
 }
 
+// Clone returns a deep copy of the scope stack.
+func (s *ScopeStack) Clone() *ScopeStack {
+	cloned := make([]map[string]string, len(s.scopes))
+	for i, scope := range s.scopes {
+		scopeCopy := make(map[string]string, len(scope))
+		for key, value := range scope {
+			scopeCopy[key] = value
+		}
+		cloned[i] = scopeCopy
+	}
+	return &ScopeStack{scopes: cloned}
+}
+
 // DeepCopyStatements creates a deep copy of a statement slice.
 // Used by the Resolver to create independent copies for each loop iteration,
 // allowing nested blockers to be resolved independently.
@@ -216,10 +236,24 @@ func deepCopyCommandStmt(cmd *CommandStmtIR) *CommandStmtIR {
 	return &CommandStmtIR{
 		Decorator: cmd.Decorator,
 		Command:   deepCopyCommandExpr(cmd.Command),
-		Args:      deepCopyExprs(cmd.Args),
+		Args:      deepCopyArgs(cmd.Args),
 		Block:     DeepCopyStatements(cmd.Block),
 		Operator:  cmd.Operator,
 	}
+}
+
+func deepCopyArgs(args []ArgIR) []ArgIR {
+	if args == nil {
+		return nil
+	}
+	result := make([]ArgIR, len(args))
+	for i, arg := range args {
+		result[i] = ArgIR{
+			Name:  arg.Name,
+			Value: deepCopyExpr(arg.Value),
+		}
+	}
+	return result
 }
 
 func deepCopyVarDecl(decl *VarDeclIR) *VarDeclIR {

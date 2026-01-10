@@ -113,10 +113,12 @@ import (
 //   - Batch-first: Collect expressions up to blocker, THEN batch resolve
 //   - Branch pruning: Untaken branches are never resolved
 type Resolver struct {
-	graph   *ExecutionGraph
-	vault   *vault.Vault
-	session decorator.Session
-	config  ResolveConfig
+	graph          *ExecutionGraph
+	vault          *vault.Vault
+	session        decorator.Session
+	config         ResolveConfig
+	scopes         *ScopeStack
+	activeFunction *FunctionIR
 
 	// Resolution state
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
@@ -176,8 +178,10 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 //  2. Decorator key → exprID via decoratorExprIDs → value via Vault
 func (r *Resolver) getValue(name string) (any, bool) {
 	// Try variable lookup first (via scope)
-	if exprID, ok := r.graph.Scopes.Lookup(name); ok {
-		return r.vault.GetUnresolvedValue(exprID)
+	if r.scopes != nil {
+		if exprID, ok := r.scopes.Lookup(name); ok {
+			return r.vault.GetUnresolvedValue(exprID)
+		}
 	}
 	// Try decorator key lookup
 	if exprID, ok := r.decoratorExprIDs[name]; ok {
@@ -206,6 +210,12 @@ func (r *Resolver) resolve() (*ResolveResult, error) {
 	if stmts == nil {
 		// Error already recorded
 		return nil, r.buildError()
+	}
+
+	if r.activeFunction != nil {
+		if err := r.resolvePrelude(r.activeFunction); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve the statement list, returning the pruned tree
@@ -250,6 +260,9 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 			if err := r.batchResolve(); err != nil {
 				return nil, err
 			}
+			if err := r.resolveCommandBlock(stmt.Command); err != nil {
+				return nil, err
+			}
 			result = append(result, stmt)
 
 		case StmtBlocker:
@@ -283,7 +296,7 @@ func (r *Resolver) collectCommand(cmd *CommandStmtIR) {
 	}
 	// Also collect expressions in decorator args
 	for _, arg := range cmd.Args {
-		r.collectExpr(arg, "")
+		r.collectExpr(arg.Value, "")
 	}
 }
 
@@ -376,7 +389,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		// Store the value and update scope
 		r.vault.StoreUnresolvedValue(loopVarExprID, item)
 		r.vault.MarkTouched(loopVarExprID)
-		r.graph.Scopes.Define(blocker.LoopVar, loopVarExprID)
+		if r.scopes != nil {
+			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		}
 
 		// Deep-copy the body for this iteration
 		bodyCopy := DeepCopyStatements(blocker.ThenBranch)
@@ -443,20 +458,70 @@ func (r *Resolver) resolveTry(stmt *StatementIR) (*StatementIR, error) {
 
 	// Resolve all branches - they all need to be in the plan
 	var err error
+
+	r.scopes.Push()
 	try.TryBlock, err = r.resolveStatements(try.TryBlock)
+	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
+
+	r.scopes.Push()
 	try.CatchBlock, err = r.resolveStatements(try.CatchBlock)
+	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
+
+	r.scopes.Push()
 	try.FinallyBlock, err = r.resolveStatements(try.FinallyBlock)
+	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
 
 	return stmt, nil
+}
+
+func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
+	if cmd == nil || len(cmd.Block) == 0 {
+		return nil
+	}
+
+	r.scopes.Push()
+	resolved, err := r.resolveStatements(cmd.Block)
+	r.scopes.Pop()
+	if err != nil {
+		return err
+	}
+
+	cmd.Block = resolved
+	return nil
+}
+
+func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
+	if fn == nil {
+		return nil
+	}
+
+	for _, stmt := range r.graph.Statements {
+		if stmt.Kind != StmtVarDecl {
+			continue
+		}
+		if stmt.Span.Start >= fn.Span.Start {
+			continue
+		}
+
+		r.collectVarDecl(stmt.VarDecl)
+		if err := r.buildError(); err != nil {
+			return err
+		}
+		if err := r.batchResolve(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // selectStatements chooses which statements to process based on mode.
@@ -468,10 +533,18 @@ func (r *Resolver) selectStatements() []*StatementIR {
 			r.errors = append(r.errors, fmt.Errorf("function %q not found", r.config.TargetFunction))
 			return nil
 		}
+		r.activeFunction = fn
+		if fn.Scopes != nil {
+			r.scopes = fn.Scopes
+		} else {
+			r.scopes = r.graph.Scopes
+		}
 		return fn.Body
 	}
 
 	// Script mode: all top-level statements
+	r.activeFunction = nil
+	r.scopes = r.graph.Scopes
 	return r.graph.Statements
 }
 
@@ -494,7 +567,9 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// This is critical for:
 	// 1. Variables declared in taken branches (mutations leak per spec)
 	// 2. Loop variables injected during for-loop unrolling
-	r.graph.Scopes.Define(decl.Name, exprID)
+	if r.scopes != nil {
+		r.scopes.Define(decl.Name, exprID)
+	}
 
 	// Collect the value expression (may add pending decorator calls)
 	r.collectExprForVar(decl.Value, exprID, decl.Name)
@@ -509,7 +584,7 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	case ExprVarRef:
 		// For var refs, look up the referenced value and store it
 		// Also mark this VarDecl's ExprID as touched
-		refExprID, ok := r.graph.Scopes.Lookup(decl.Value.VarName)
+		refExprID, ok := r.lookupScopeExprID(decl.Value.VarName)
 		if ok {
 			// Get the value from the referenced variable
 			if val, exists := r.vault.GetUnresolvedValue(refExprID); exists {
@@ -524,6 +599,16 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 		// Mark as touched now so it's included in resolution
 		r.vault.MarkTouched(exprID)
 	}
+}
+
+// lookupScopeExprID finds an exprID using the active scope stack.
+func (r *Resolver) lookupScopeExprID(name string) (string, bool) {
+	if r.scopes != nil {
+		if exprID, ok := r.scopes.Lookup(name); ok {
+			return exprID, true
+		}
+	}
+	return "", false
 }
 
 // buildVarDeclRaw builds a raw string for a variable declaration.
@@ -555,7 +640,7 @@ func (r *Resolver) buildVarDeclRaw(decl *VarDeclIR) string {
 	case ExprVarRef:
 		// Include the referenced variable's ExprID to ensure uniqueness
 		// when the same var ref appears in different scopes (e.g., loop iterations)
-		refExprID, ok := r.graph.Scopes.Lookup(decl.Value.VarName)
+		refExprID, ok := r.lookupScopeExprID(decl.Value.VarName)
 		if !ok {
 			// Variable not found - will be caught later as an error
 			return fmt.Sprintf("varref:%s:undefined", decl.Value.VarName)
@@ -613,7 +698,7 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 
 	case ExprVarRef:
 		// Look up exprID from scope
-		varExprID, ok := r.graph.Scopes.Lookup(expr.VarName)
+		varExprID, ok := r.lookupScopeExprID(expr.VarName)
 		if !ok {
 			r.errors = append(r.errors, &EvalError{
 				Message: "undefined variable (no hoisting allowed)",
@@ -654,7 +739,9 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 // batchResolve resolves all pending decorator calls in batches (grouped by decorator type).
 func (r *Resolver) batchResolve() error {
 	if len(r.pendingCalls) == 0 {
-		return nil // No decorators to resolve
+		// Still generate DisplayIDs for literals/vars touched in this wave
+		r.vault.ResolveAllTouched()
+		return nil
 	}
 
 	// Group pending calls by decorator name

@@ -3,6 +3,7 @@ package planner
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
@@ -12,11 +13,12 @@ import (
 // This is a pure structural pass - no resolution or condition evaluation.
 func BuildIR(events []parser.Event, tokens []lexer.Token) (*ExecutionGraph, error) {
 	b := &irBuilder{
-		events:  events,
-		tokens:  tokens,
-		pos:     0,
-		scopes:  NewScopeStack(),
-		exprSeq: 0,
+		events:    events,
+		tokens:    tokens,
+		pos:       0,
+		scopes:    NewScopeStack(),
+		functions: make(map[string]*FunctionIR),
+		exprSeq:   0,
 	}
 
 	stmts, err := b.buildSource()
@@ -26,17 +28,19 @@ func BuildIR(events []parser.Event, tokens []lexer.Token) (*ExecutionGraph, erro
 
 	return &ExecutionGraph{
 		Statements: stmts,
+		Functions:  b.functions,
 		Scopes:     b.scopes,
 	}, nil
 }
 
 // irBuilder walks parser events and builds the IR.
 type irBuilder struct {
-	events  []parser.Event
-	tokens  []lexer.Token
-	pos     int
-	scopes  *ScopeStack
-	exprSeq int
+	events    []parser.Event
+	tokens    []lexer.Token
+	pos       int
+	scopes    *ScopeStack
+	functions map[string]*FunctionIR
+	exprSeq   int
 }
 
 // buildSource processes the top-level source node.
@@ -53,6 +57,16 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 			switch node {
 			case parser.NodeSource:
 				b.pos++
+				continue
+
+			case parser.NodeFunction:
+				fn, err := b.buildFunction()
+				if err != nil {
+					return nil, err
+				}
+				if fn != nil && fn.Name != "" {
+					b.functions[fn.Name] = fn
+				}
 				continue
 
 			case parser.NodeVarDecl:
@@ -121,6 +135,233 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 	return stmts, nil
 }
 
+// buildFunction processes a function definition.
+func (b *irBuilder) buildFunction() (*FunctionIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeFunction
+
+	var name string
+	var params []ParamIR
+	var body []*StatementIR
+
+	// Snapshot outer scopes and use a cloned scope stack for the function body
+	outerScopes := b.scopes
+	functionScopes := b.scopes.Clone()
+	b.scopes = functionScopes
+	defer func() { b.scopes = outerScopes }()
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeFunction {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER && name == "" {
+				name = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeParamList:
+				parsedParams, err := b.buildParamList()
+				if err != nil {
+					return nil, err
+				}
+				params = parsedParams
+				continue
+			case parser.NodeBlock:
+				blockStmts, err := b.buildBlock()
+				if err != nil {
+					return nil, err
+				}
+				body = append(body, blockStmts...)
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventStepEnter {
+			stepStmts, err := b.buildStep()
+			if err != nil {
+				return nil, err
+			}
+			body = append(body, stepStmts...)
+			continue
+		}
+
+		b.pos++
+	}
+
+	if name == "" {
+		return nil, fmt.Errorf("function declaration at position %d has no name", startPos)
+	}
+
+	return &FunctionIR{
+		Name:   name,
+		Params: params,
+		Body:   body,
+		Span:   SourceSpan{Start: startPos, End: b.pos},
+		Scopes: functionScopes,
+	}, nil
+}
+
+// buildParamList processes a function parameter list.
+func (b *irBuilder) buildParamList() ([]ParamIR, error) {
+	b.pos++ // Move past OPEN NodeParamList
+
+	var params []ParamIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeParamList {
+			b.pos++
+			break
+		}
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeParam {
+			param, err := b.buildParam()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, param)
+			continue
+		}
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			continue
+		}
+		b.pos++
+	}
+
+	return params, nil
+}
+
+func (b *irBuilder) buildParam() (ParamIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeParam
+
+	var param ParamIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeParam {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER && param.Name == "" {
+				param.Name = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeTypeAnnotation:
+				param.Type = b.buildTypeAnnotation()
+				continue
+			case parser.NodeDefaultValue:
+				param.Default = b.buildDefaultValue()
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	if param.Name == "" {
+		return ParamIR{}, fmt.Errorf("parameter at position %d has no name", startPos)
+	}
+
+	return param, nil
+}
+
+func (b *irBuilder) buildTypeAnnotation() string {
+	b.pos++ // Move past OPEN NodeTypeAnnotation
+
+	var typeName string
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeTypeAnnotation {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER {
+				typeName = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return typeName
+}
+
+func (b *irBuilder) buildDefaultValue() *ExprIR {
+	b.pos++ // Move past OPEN NodeDefaultValue
+
+	var expr *ExprIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeDefaultValue {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeLiteral:
+				expr = b.buildLiteralExpr()
+				continue
+			case parser.NodeDecorator:
+				expr = b.buildDecoratorExpr()
+				continue
+			case parser.NodeIdentifier:
+				expr = b.buildIdentifierExpr()
+				continue
+			case parser.NodeBinaryExpr:
+				expr = b.buildBinaryExpr()
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventToken && expr == nil {
+			tok := b.tokens[evt.Data]
+			expr = &ExprIR{
+				Kind:  ExprLiteral,
+				Value: tokenToValue(tok),
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return expr
+}
+
 // buildStep processes a step (EventStepEnter to EventStepExit).
 func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 	if b.pos >= len(b.events) || b.events[b.pos].Kind != parser.EventStepEnter {
@@ -157,6 +398,16 @@ func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 					return nil, err
 				}
 				stmts = append(stmts, stmt)
+				continue
+
+			case parser.NodeDecorator:
+				stmt, err := b.buildDecoratorStmt()
+				if err != nil {
+					return nil, err
+				}
+				if stmt != nil {
+					stmts = append(stmts, stmt)
+				}
 				continue
 
 			case parser.NodeIf:
@@ -261,6 +512,7 @@ func (b *irBuilder) buildVarDecl() (*StatementIR, error) {
 
 	return &StatementIR{
 		Kind: StmtVarDecl,
+		Span: SourceSpan{Start: startPos, End: b.pos},
 		VarDecl: &VarDeclIR{
 			Name:  name,
 			Value: value,
@@ -336,6 +588,179 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 	}, nil
 }
 
+// buildDecoratorStmt processes a decorator statement with optional args and block.
+func (b *irBuilder) buildDecoratorStmt() (*StatementIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeDecorator
+
+	var nameParts []string
+	var args []ArgIR
+	var block []*StatementIR
+	parsingName := true
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeDecorator {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeParamList:
+				parsedArgs, err := b.buildDecoratorArgs()
+				if err != nil {
+					return nil, err
+				}
+				args = parsedArgs
+				parsingName = false
+				continue
+			case parser.NodeBlock:
+				blockStmts, err := b.buildBlock()
+				if err != nil {
+					return nil, err
+				}
+				block = append(block, blockStmts...)
+				parsingName = false
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventToken {
+			if parsingName {
+				tok := b.tokens[evt.Data]
+				switch tok.Type {
+				case lexer.AT, lexer.DOT:
+					// Skip
+				case lexer.IDENTIFIER, lexer.VAR:
+					nameParts = append(nameParts, string(tok.Text))
+				}
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	if len(nameParts) == 0 {
+		return nil, fmt.Errorf("decorator statement at position %d has no name", startPos)
+	}
+
+	decoratorName := "@" + strings.Join(nameParts, ".")
+
+	return &StatementIR{
+		Kind:         StmtCommand,
+		CreatesScope: len(block) > 0,
+		Command: &CommandStmtIR{
+			Decorator: decoratorName,
+			Args:      args,
+			Block:     block,
+		},
+	}, nil
+}
+
+func (b *irBuilder) buildDecoratorArgs() ([]ArgIR, error) {
+	b.pos++ // Move past OPEN NodeParamList
+
+	var args []ArgIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeParamList {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeParam {
+			arg, err := b.buildDecoratorArg()
+			if err != nil {
+				return nil, err
+			}
+			if arg.Name == "" {
+				arg.Name = fmt.Sprintf("arg%d", len(args)+1)
+			}
+			args = append(args, arg)
+			continue
+		}
+
+		if evt.Kind == parser.EventToken {
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	return args, nil
+}
+
+func (b *irBuilder) buildDecoratorArg() (ArgIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeParam
+
+	var arg ArgIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeParam {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			switch tok.Type {
+			case lexer.IDENTIFIER:
+				if arg.Name == "" {
+					arg.Name = string(tok.Text)
+					b.pos++
+					continue
+				}
+			case lexer.EQUALS:
+				b.pos++
+				continue
+			default:
+				if arg.Value == nil {
+					arg.Value = &ExprIR{Kind: ExprLiteral, Value: tokenToValue(tok)}
+				}
+				b.pos++
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeLiteral:
+				arg.Value = b.buildLiteralExpr()
+				continue
+			case parser.NodeDecorator:
+				arg.Value = b.buildDecoratorExpr()
+				continue
+			case parser.NodeIdentifier:
+				arg.Value = b.buildIdentifierExpr()
+				continue
+			case parser.NodeBinaryExpr:
+				arg.Value = b.buildBinaryExpr()
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	if arg.Value == nil {
+		return ArgIR{}, fmt.Errorf("decorator parameter at position %d has no value", startPos)
+	}
+
+	return arg, nil
+}
+
 // shellArgNeedsSpace checks if the upcoming shell arg needs a space before it.
 // This looks ahead to find the first token in the NodeShellArg and checks HasSpaceBefore.
 func (b *irBuilder) shellArgNeedsSpace() bool {
@@ -408,89 +833,91 @@ func (b *irBuilder) buildShellArg() []*ExprIR {
 func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 	b.pos++ // Move past OPEN NodeInterpolatedString
 
-	var parts []*ExprIR
+	var tokenText []byte
+	var quoteType byte
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
 
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.STRING {
+				tokenText = tok.Text
+				if len(tokenText) > 0 {
+					quoteType = tokenText[0]
+				}
+				b.pos++
+				break
+			}
+		}
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeInterpolatedString {
+			b.pos++
+			return nil
+		}
+
+		b.pos++
+	}
+
+	var parts []*ExprIR
+	if len(tokenText) >= 2 {
+		content := tokenText[1 : len(tokenText)-1]
+		stringParts := parser.TokenizeString(content, quoteType)
+
+		if len(stringParts) > 0 {
+			parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
+		}
+
+		for _, part := range stringParts {
+			segment := string(content[part.Start:part.End])
+			if part.IsLiteral {
+				if segment != "" {
+					parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: segment})
+				}
+				continue
+			}
+
+			if segment == "" {
+				continue
+			}
+
+			if segment == "var" && part.PropertyStart >= 0 {
+				parts = append(parts, &ExprIR{
+					Kind:    ExprVarRef,
+					VarName: string(content[part.PropertyStart:part.PropertyEnd]),
+				})
+				continue
+			}
+
+			selector := []string{}
+			if part.PropertyStart >= 0 {
+				selector = append(selector, string(content[part.PropertyStart:part.PropertyEnd]))
+			}
+
+			parts = append(parts, &ExprIR{
+				Kind: ExprDecoratorRef,
+				Decorator: &DecoratorRef{
+					Name:     segment,
+					Selector: selector,
+				},
+			})
+		}
+
+		if len(stringParts) > 0 {
+			parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
+		}
+	}
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
 		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeInterpolatedString {
 			b.pos++
 			break
 		}
-
-		if evt.Kind == parser.EventOpen {
-			node := parser.NodeKind(evt.Data)
-
-			switch node {
-			case parser.NodeStringPart:
-				part := b.buildStringPart()
-				if part != nil {
-					parts = append(parts, part)
-				}
-				continue
-			case parser.NodeDecorator:
-				expr := b.buildDecoratorExpr()
-				parts = append(parts, expr)
-				continue
-			}
-		}
-
-		if evt.Kind == parser.EventToken {
-			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 && tok.Type == lexer.STRING {
-				parts = append(parts, &ExprIR{
-					Kind:  ExprLiteral,
-					Value: string(tok.Text),
-				})
-			}
-			b.pos++
-			continue
-		}
-
 		b.pos++
 	}
 
 	return parts
-}
-
-// buildStringPart processes a string part within an interpolated string.
-func (b *irBuilder) buildStringPart() *ExprIR {
-	b.pos++ // Move past OPEN NodeStringPart
-
-	var result *ExprIR
-
-	for b.pos < len(b.events) {
-		evt := b.events[b.pos]
-
-		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeStringPart {
-			b.pos++
-			break
-		}
-
-		if evt.Kind == parser.EventOpen {
-			node := parser.NodeKind(evt.Data)
-			if node == parser.NodeDecorator {
-				result = b.buildDecoratorExpr()
-				continue
-			}
-		}
-
-		if evt.Kind == parser.EventToken {
-			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 {
-				result = &ExprIR{
-					Kind:  ExprLiteral,
-					Value: string(tok.Text),
-				}
-			}
-			b.pos++
-			continue
-		}
-
-		b.pos++
-	}
-
-	return result
 }
 
 // buildLiteralExpr processes a literal expression.
@@ -773,7 +1200,6 @@ func (b *irBuilder) buildElseClause() ([]*StatementIR, error) {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-
 			switch node {
 			case parser.NodeBlock:
 				blockStmts, err := b.buildBlock()
