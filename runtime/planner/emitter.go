@@ -16,10 +16,11 @@ import (
 // - SecretUses for contract verification
 // - DisplayID placeholders for secrets
 type Emitter struct {
-	result *ResolveResult
-	vault  *vault.Vault
-	scopes *ScopeStack
-	target string
+	result           *ResolveResult
+	vault            *vault.Vault
+	scopes           *ScopeStack
+	decoratorExprIDs map[string]string
+	target           string
 
 	// State
 	nextStepID uint64
@@ -29,13 +30,19 @@ type Emitter struct {
 
 // NewEmitter creates a new Emitter.
 func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, target string) *Emitter {
+	var decoratorExprIDs map[string]string
+	if result != nil {
+		decoratorExprIDs = result.DecoratorExprIDs
+	}
+
 	return &Emitter{
-		result:     result,
-		vault:      v,
-		scopes:     scopes,
-		target:     target,
-		nextStepID: 1,
-		sitePath:   []string{"root"},
+		result:           result,
+		vault:            v,
+		scopes:           scopes,
+		decoratorExprIDs: decoratorExprIDs,
+		target:           target,
+		nextStepID:       1,
+		sitePath:         []string{"root"},
 	}
 }
 
@@ -86,6 +93,9 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 		case StmtVarDecl:
 			// Variable declarations don't produce steps
 			// (values already resolved, just need to track for DisplayID lookup)
+			if stmt.VarDecl != nil && stmt.VarDecl.ExprID != "" && e.scopes != nil {
+				e.scopes.Define(stmt.VarDecl.Name, stmt.VarDecl.ExprID)
+			}
 
 		case StmtBlocker:
 			blockerSteps, err := e.emitBlocker(stmt.Blocker)
@@ -117,7 +127,10 @@ func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error
 	}
 
 	// Build execution tree from command chain
-	tree := e.buildOperatorTree(chain)
+	tree, err := e.buildOperatorTree(chain)
+	if err != nil {
+		return nil, err
+	}
 
 	step := &planfmt.Step{
 		ID:   e.nextStepID,
@@ -130,54 +143,80 @@ func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error
 
 // buildOperatorTree builds an ExecutionNode tree from a chain of commands.
 // Handles operator precedence: | > && > || > ;
-func (e *Emitter) buildOperatorTree(chain []*CommandStmtIR) planfmt.ExecutionNode {
+func (e *Emitter) buildOperatorTree(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	if len(chain) == 1 {
-		return e.commandToNode(chain[0])
+		return e.buildCommandNode(chain[0])
 	}
 
 	// Parse by precedence (lowest to highest)
 	// 1. Semicolon (lowest)
-	if node := e.parseSequence(chain); node != nil {
-		return node
+	if node, err := e.parseSequence(chain); node != nil || err != nil {
+		return node, err
 	}
 
 	// 2. OR (||)
-	if node := e.parseOr(chain); node != nil {
-		return node
+	if node, err := e.parseOr(chain); node != nil || err != nil {
+		return node, err
 	}
 
 	// 3. AND (&&)
-	if node := e.parseAnd(chain); node != nil {
-		return node
+	if node, err := e.parseAnd(chain); node != nil || err != nil {
+		return node, err
 	}
 
 	// 4. Pipe (|) - highest
-	if node := e.parsePipe(chain); node != nil {
-		return node
+	if node, err := e.parsePipe(chain); node != nil || err != nil {
+		return node, err
 	}
 
 	// Single command
-	return e.commandToNode(chain[0])
+	return e.buildCommandNode(chain[0])
 }
 
-// commandToNode converts a CommandStmtIR to a CommandNode.
-func (e *Emitter) commandToNode(cmd *CommandStmtIR) *planfmt.CommandNode {
+// buildCommandNode converts a CommandStmtIR to a CommandNode.
+func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, error) {
 	displayIDs := e.buildDisplayIDMap(cmd)
-	commandStr := RenderCommand(cmd.Command, displayIDs)
 
-	return &planfmt.CommandNode{
-		Decorator: cmd.Decorator,
-		Args: []planfmt.Arg{
-			{
-				Key: "command",
-				Val: planfmt.Value{Kind: planfmt.ValueString, Str: commandStr},
-			},
-		},
+	args := make([]planfmt.Arg, 0, len(cmd.Args)+1)
+	if cmd.Command != nil {
+		commandStr := RenderCommand(cmd.Command, displayIDs)
+		args = append(args, planfmt.Arg{
+			Key: "command",
+			Val: planfmt.Value{Kind: planfmt.ValueString, Str: commandStr},
+		})
 	}
+
+	for _, arg := range cmd.Args {
+		args = append(args, planfmt.Arg{
+			Key: arg.Name,
+			Val: planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(arg.Value, displayIDs)},
+		})
+	}
+
+	cmdNode := &planfmt.CommandNode{
+		Decorator: cmd.Decorator,
+		Args:      args,
+	}
+
+	if len(cmd.Block) > 0 {
+		if e.scopes != nil {
+			e.scopes.Push()
+		}
+		blockSteps, err := e.emitStatements(cmd.Block)
+		if e.scopes != nil {
+			e.scopes.Pop()
+		}
+		if err != nil {
+			return nil, err
+		}
+		cmdNode.Block = blockSteps
+	}
+
+	return cmdNode, nil
 }
 
 // parseSequence splits on semicolon operators (lowest precedence).
-func (e *Emitter) parseSequence(chain []*CommandStmtIR) planfmt.ExecutionNode {
+func (e *Emitter) parseSequence(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	var segments [][]*CommandStmtIR
 	start := 0
 
@@ -189,7 +228,7 @@ func (e *Emitter) parseSequence(chain []*CommandStmtIR) planfmt.ExecutionNode {
 	}
 
 	if len(segments) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Add remaining commands
@@ -203,14 +242,18 @@ func (e *Emitter) parseSequence(chain []*CommandStmtIR) planfmt.ExecutionNode {
 		if len(seg) > 0 && seg[len(seg)-1].Operator == ";" {
 			seg[len(seg)-1].Operator = ""
 		}
-		nodes = append(nodes, e.buildOperatorTree(seg))
+		node, err := e.buildOperatorTree(seg)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, node)
 	}
 
-	return &planfmt.SequenceNode{Nodes: nodes}
+	return &planfmt.SequenceNode{Nodes: nodes}, nil
 }
 
 // parseOr splits on || operators.
-func (e *Emitter) parseOr(chain []*CommandStmtIR) planfmt.ExecutionNode {
+func (e *Emitter) parseOr(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	// Find rightmost || (left-to-right associativity)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if chain[i].Operator == "||" {
@@ -218,16 +261,22 @@ func (e *Emitter) parseOr(chain []*CommandStmtIR) planfmt.ExecutionNode {
 			copy(leftChain, chain[:i+1])
 			leftChain[i].Operator = "" // Clear operator
 
-			left := e.buildOperatorTree(leftChain)
-			right := e.buildOperatorTree(chain[i+1:])
-			return &planfmt.OrNode{Left: left, Right: right}
+			left, err := e.buildOperatorTree(leftChain)
+			if err != nil {
+				return nil, err
+			}
+			right, err := e.buildOperatorTree(chain[i+1:])
+			if err != nil {
+				return nil, err
+			}
+			return &planfmt.OrNode{Left: left, Right: right}, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // parseAnd splits on && operators.
-func (e *Emitter) parseAnd(chain []*CommandStmtIR) planfmt.ExecutionNode {
+func (e *Emitter) parseAnd(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	// Find rightmost && (left-to-right associativity)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if chain[i].Operator == "&&" {
@@ -235,20 +284,30 @@ func (e *Emitter) parseAnd(chain []*CommandStmtIR) planfmt.ExecutionNode {
 			copy(leftChain, chain[:i+1])
 			leftChain[i].Operator = "" // Clear operator
 
-			left := e.buildOperatorTree(leftChain)
-			right := e.buildOperatorTree(chain[i+1:])
-			return &planfmt.AndNode{Left: left, Right: right}
+			left, err := e.buildOperatorTree(leftChain)
+			if err != nil {
+				return nil, err
+			}
+			right, err := e.buildOperatorTree(chain[i+1:])
+			if err != nil {
+				return nil, err
+			}
+			return &planfmt.AndNode{Left: left, Right: right}, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // parsePipe splits on | operators (highest precedence).
-func (e *Emitter) parsePipe(chain []*CommandStmtIR) planfmt.ExecutionNode {
+func (e *Emitter) parsePipe(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	var pipeCommands []planfmt.ExecutionNode
 
 	for i, cmd := range chain {
-		pipeCommands = append(pipeCommands, e.commandToNode(cmd))
+		cmdNode, err := e.buildCommandNode(cmd)
+		if err != nil {
+			return nil, err
+		}
+		pipeCommands = append(pipeCommands, cmdNode)
 		if cmd.Operator != "|" && i < len(chain)-1 {
 			// Non-pipe operator in the middle - shouldn't happen at this point
 			break
@@ -256,17 +315,18 @@ func (e *Emitter) parsePipe(chain []*CommandStmtIR) planfmt.ExecutionNode {
 	}
 
 	if len(pipeCommands) <= 1 {
-		return nil
+		return nil, nil
 	}
 
-	return &planfmt.PipelineNode{Commands: pipeCommands}
+	return &planfmt.PipelineNode{Commands: pipeCommands}, nil
 }
 
 // emitCommand emits a single command statement as a Step.
 func (e *Emitter) emitCommand(cmd *CommandStmtIR) (*planfmt.Step, error) {
-	cmdNode := e.commandToNode(cmd)
-
-	// TODO: Handle decorator blocks (cmd.Block)
+	cmdNode, err := e.buildCommandNode(cmd)
+	if err != nil {
+		return nil, err
+	}
 
 	step := &planfmt.Step{
 		ID:   e.nextStepID,
@@ -282,32 +342,47 @@ func (e *Emitter) emitCommand(cmd *CommandStmtIR) (*planfmt.Step, error) {
 func (e *Emitter) buildDisplayIDMap(cmd *CommandStmtIR) map[string]string {
 	displayIDs := make(map[string]string)
 
-	if cmd.Command == nil {
-		return displayIDs
-	}
-
-	for _, part := range cmd.Command.Parts {
-		switch part.Kind {
-		case ExprVarRef:
-			// Look up exprID from scopes
-			if exprID, ok := e.scopes.Lookup(part.VarName); ok {
-				if displayID := e.vault.GetDisplayID(exprID); displayID != "" {
-					displayIDs[part.VarName] = displayID
-					// Record secret use at current site
-					e.recordSecretUse(exprID, displayID, part.VarName)
-				}
-			}
-
-		case ExprDecoratorRef:
-			// Build decorator key and look up DisplayID
-			key := decoratorKey(part.Decorator)
-			// For decorator refs, the exprID is tracked differently
-			// TODO: Need to get exprID from resolver's decoratorExprIDs
-			_ = key
+	if cmd.Command != nil {
+		for _, part := range cmd.Command.Parts {
+			e.collectDisplayID(part, displayIDs)
 		}
 	}
 
+	for _, arg := range cmd.Args {
+		e.collectDisplayID(arg.Value, displayIDs)
+	}
+
 	return displayIDs
+}
+
+func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
+	if expr == nil {
+		return
+	}
+
+	switch expr.Kind {
+	case ExprVarRef:
+		// Look up exprID from scopes
+		if e.scopes != nil {
+			if exprID, ok := e.scopes.Lookup(expr.VarName); ok {
+				if displayID := e.vault.GetDisplayID(exprID); displayID != "" {
+					displayIDs[expr.VarName] = displayID
+					// Record secret use at current site
+					e.recordSecretUse(exprID, displayID, expr.VarName)
+				}
+			}
+		}
+
+	case ExprDecoratorRef:
+		// Build decorator key and look up DisplayID
+		key := decoratorKey(expr.Decorator)
+		if exprID, ok := e.decoratorExprIDs[key]; ok {
+			if displayID := e.vault.GetDisplayID(exprID); displayID != "" {
+				displayIDs[key] = displayID
+				e.recordSecretUse(exprID, displayID, key)
+			}
+		}
+	}
 }
 
 // recordSecretUse records a secret usage at the current site path.
@@ -495,6 +570,16 @@ func (e *Emitter) emitWhenBlocker(blocker *BlockerIR) ([]planfmt.Step, error) {
 // All branches are included in the plan (runtime determines which executes).
 func (e *Emitter) emitTry(try *TryIR) ([]planfmt.Step, error) {
 	// TODO: Implement try/catch emission
-	// For now, just emit the try block
-	return e.emitStatements(try.TryBlock)
+	// For now, just emit the try block with isolated scope
+	if e.scopes != nil {
+		e.scopes.Push()
+	}
+	steps, err := e.emitStatements(try.TryBlock)
+	if e.scopes != nil {
+		e.scopes.Pop()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return steps, nil
 }

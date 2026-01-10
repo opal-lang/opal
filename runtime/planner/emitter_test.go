@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -439,6 +440,233 @@ func TestEmit_MultipleVarRefs(t *testing.T) {
 	// Should have 2 SecretUses (one for each variable)
 	if len(plan.SecretUses) != 2 {
 		t.Errorf("Expected 2 SecretUses, got %d", len(plan.SecretUses))
+	}
+}
+
+func TestEmit_ScopeOrderUsesLatestBinding(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	exprID1 := v.DeclareVariable("COUNT", "literal:1")
+	v.StoreUnresolvedValue(exprID1, "1")
+	v.MarkTouched(exprID1)
+
+	exprID2 := v.DeclareVariable("COUNT", "literal:2")
+	v.StoreUnresolvedValue(exprID2, "2")
+	v.MarkTouched(exprID2)
+
+	v.ResolveAllTouched()
+
+	displayID1 := v.GetDisplayID(exprID1)
+	displayID2 := v.GetDisplayID(exprID2)
+
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COUNT",
+					ExprID: exprID1,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "1"},
+				},
+			},
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "COUNT"},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COUNT",
+					ExprID: exprID2,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "2"},
+				},
+			},
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "COUNT"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 2 {
+		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
+	}
+
+	command1 := plan.Steps[0].Tree.(*planfmt.CommandNode).Args[0].Val.Str
+	command2 := plan.Steps[1].Tree.(*planfmt.CommandNode).Args[0].Val.Str
+
+	if !strings.Contains(command1, displayID1) {
+		t.Errorf("First command should use displayID1, got %q", command1)
+	}
+	if !strings.Contains(command2, displayID2) {
+		t.Errorf("Second command should use displayID2, got %q", command2)
+	}
+}
+
+func TestEmit_BlockScopeIsolation(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	exprIDOuter := v.DeclareVariable("COUNT", "literal:1")
+	v.StoreUnresolvedValue(exprIDOuter, "1")
+	v.MarkTouched(exprIDOuter)
+
+	exprIDInner := v.DeclareVariable("COUNT", "literal:2")
+	v.StoreUnresolvedValue(exprIDInner, "2")
+	v.MarkTouched(exprIDInner)
+
+	v.ResolveAllTouched()
+
+	displayIDOuter := v.GetDisplayID(exprIDOuter)
+	displayIDInner := v.GetDisplayID(exprIDInner)
+
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name:   "COUNT",
+					ExprID: exprIDOuter,
+					Value:  &ExprIR{Kind: ExprLiteral, Value: "1"},
+				},
+			},
+			{
+				Kind:         StmtCommand,
+				CreatesScope: true,
+				Command: &CommandStmtIR{
+					Decorator: "@retry",
+					Args: []ArgIR{
+						{Name: "times", Value: &ExprIR{Kind: ExprLiteral, Value: 3}},
+					},
+					Block: []*StatementIR{
+						{
+							Kind: StmtVarDecl,
+							VarDecl: &VarDeclIR{
+								Name:   "COUNT",
+								ExprID: exprIDInner,
+								Value:  &ExprIR{Kind: ExprLiteral, Value: "2"},
+							},
+						},
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo "},
+										{Kind: ExprVarRef, VarName: "COUNT"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "COUNT"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 2 {
+		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
+	}
+
+	retryNode := plan.Steps[0].Tree.(*planfmt.CommandNode)
+	if len(retryNode.Block) != 1 {
+		t.Fatalf("Expected retry block to have 1 step, got %d", len(retryNode.Block))
+	}
+
+	innerCmd := retryNode.Block[0].Tree.(*planfmt.CommandNode).Args[0].Val.Str
+	outerCmd := plan.Steps[1].Tree.(*planfmt.CommandNode).Args[0].Val.Str
+
+	if !strings.Contains(innerCmd, displayIDInner) {
+		t.Errorf("Inner command should use displayIDInner, got %q", innerCmd)
+	}
+	if !strings.Contains(outerCmd, displayIDOuter) {
+		t.Errorf("Outer command should use displayIDOuter, got %q", outerCmd)
+	}
+}
+
+func TestEmit_DecoratorRefDisplayID(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	ref := &DecoratorRef{Name: "env", Selector: []string{"HOME"}}
+	exprID := v.TrackExpression("@env.HOME")
+	v.StoreUnresolvedValue(exprID, "/home/test")
+	v.MarkTouched(exprID)
+	v.ResolveAllTouched()
+
+	displayID := v.GetDisplayID(exprID)
+
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprDecoratorRef, Decorator: ref},
+						},
+					},
+				},
+			},
+		},
+		DecoratorExprIDs: map[string]string{
+			decoratorKey(ref): exprID,
+		},
+	}
+
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	command := plan.Steps[0].Tree.(*planfmt.CommandNode).Args[0].Val.Str
+	if !strings.Contains(command, displayID) {
+		t.Errorf("Expected decorator DisplayID in command, got %q", command)
 	}
 }
 

@@ -138,7 +138,8 @@ type ResolveConfig struct {
 //   - For-loops have Iterations populated with resolved values and deep-copied bodies
 //   - Try/catch blocks are preserved as-is (runtime constructs)
 type ResolveResult struct {
-	Statements []*StatementIR // Pruned tree (only taken branches, nested blockers resolved)
+	Statements       []*StatementIR    // Pruned tree (only taken branches, nested blockers resolved)
+	DecoratorExprIDs map[string]string // Decorator key → exprID for display ID lookup
 }
 
 // decoratorCall represents a decorator call to be batch resolved.
@@ -224,7 +225,15 @@ func (r *Resolver) resolve() (*ResolveResult, error) {
 		return nil, err
 	}
 
-	return &ResolveResult{Statements: resolved}, nil
+	decoratorExprIDs := make(map[string]string, len(r.decoratorExprIDs))
+	for key, exprID := range r.decoratorExprIDs {
+		decoratorExprIDs[key] = exprID
+	}
+
+	return &ResolveResult{
+		Statements:       resolved,
+		DecoratorExprIDs: decoratorExprIDs,
+	}, nil
 }
 
 // resolveStatements resolves a list of statements, returning the pruned tree.
