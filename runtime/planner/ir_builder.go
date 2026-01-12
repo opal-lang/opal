@@ -859,53 +859,56 @@ func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 		b.pos++
 	}
 
+	// Malformed string literal: must have opening and closing quotes
+	if len(tokenText) < 2 {
+		return nil
+	}
+
 	var parts []*ExprIR
-	if len(tokenText) >= 2 {
-		content := tokenText[1 : len(tokenText)-1]
-		stringParts := parser.TokenizeString(content, quoteType)
+	content := tokenText[1 : len(tokenText)-1]
+	stringParts := parser.TokenizeString(content, quoteType)
 
-		if len(stringParts) > 0 {
-			parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
+	if len(stringParts) > 0 {
+		parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
+	}
+
+	for _, part := range stringParts {
+		segment := string(content[part.Start:part.End])
+		if part.IsLiteral {
+			if segment != "" {
+				parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: segment})
+			}
+			continue
 		}
 
-		for _, part := range stringParts {
-			segment := string(content[part.Start:part.End])
-			if part.IsLiteral {
-				if segment != "" {
-					parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: segment})
-				}
-				continue
-			}
+		if segment == "" {
+			continue
+		}
 
-			if segment == "" {
-				continue
-			}
-
-			if segment == "var" && part.PropertyStart >= 0 {
-				parts = append(parts, &ExprIR{
-					Kind:    ExprVarRef,
-					VarName: string(content[part.PropertyStart:part.PropertyEnd]),
-				})
-				continue
-			}
-
-			selector := []string{}
-			if part.PropertyStart >= 0 {
-				selector = append(selector, string(content[part.PropertyStart:part.PropertyEnd]))
-			}
-
+		if segment == "var" && part.PropertyStart >= 0 {
 			parts = append(parts, &ExprIR{
-				Kind: ExprDecoratorRef,
-				Decorator: &DecoratorRef{
-					Name:     segment,
-					Selector: selector,
-				},
+				Kind:    ExprVarRef,
+				VarName: string(content[part.PropertyStart:part.PropertyEnd]),
 			})
+			continue
 		}
 
-		if len(stringParts) > 0 {
-			parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
+		selector := []string{}
+		if part.PropertyStart >= 0 {
+			selector = append(selector, string(content[part.PropertyStart:part.PropertyEnd]))
 		}
+
+		parts = append(parts, &ExprIR{
+			Kind: ExprDecoratorRef,
+			Decorator: &DecoratorRef{
+				Name:     segment,
+				Selector: selector,
+			},
+		})
+	}
+
+	if len(stringParts) > 0 {
+		parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
 	}
 
 	for b.pos < len(b.events) {
