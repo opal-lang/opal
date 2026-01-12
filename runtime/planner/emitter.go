@@ -201,11 +201,9 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	if len(cmd.Block) > 0 {
 		if e.scopes != nil {
 			e.scopes.Push()
+			defer e.scopes.Pop()
 		}
 		blockSteps, err := e.emitStatements(cmd.Block)
-		if e.scopes != nil {
-			e.scopes.Pop()
-		}
 		if err != nil {
 			return nil, err
 		}

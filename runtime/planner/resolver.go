@@ -469,22 +469,22 @@ func (r *Resolver) resolveTry(stmt *StatementIR) (*StatementIR, error) {
 	var err error
 
 	r.scopes.Push()
+	defer r.scopes.Pop()
 	try.TryBlock, err = r.resolveStatements(try.TryBlock)
-	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
 
 	r.scopes.Push()
+	defer r.scopes.Pop()
 	try.CatchBlock, err = r.resolveStatements(try.CatchBlock)
-	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
 
 	r.scopes.Push()
+	defer r.scopes.Pop()
 	try.FinallyBlock, err = r.resolveStatements(try.FinallyBlock)
-	r.scopes.Pop()
 	if err != nil {
 		return nil, err
 	}
@@ -498,8 +498,8 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 	}
 
 	r.scopes.Push()
+	defer r.scopes.Pop()
 	resolved, err := r.resolveStatements(cmd.Block)
-	r.scopes.Pop()
 	if err != nil {
 		return err
 	}
