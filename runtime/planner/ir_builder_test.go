@@ -120,7 +120,7 @@ func TestBuildIR_VarDecl_Literal(t *testing.T) {
 	if stmt.VarDecl.Value.Kind != ExprLiteral {
 		t.Errorf("Value.Kind = %v, want ExprLiteral", stmt.VarDecl.Value.Kind)
 	}
-	// String value - the lexer may include or exclude quotes
+	// String value - lexer may include or exclude quotes
 	val, ok := stmt.VarDecl.Value.Value.(string)
 	if !ok {
 		t.Fatalf("Value.Value is not string, got %T", stmt.VarDecl.Value.Value)
@@ -197,7 +197,7 @@ echo @var.NAME`)
 		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
 	}
 
-	// Check the command has interpolated parts
+	// Check command has interpolated parts
 	cmd := graph.Statements[1].Command
 	if cmd == nil || cmd.Command == nil {
 		t.Fatal("Command is nil")
@@ -205,7 +205,7 @@ echo @var.NAME`)
 
 	parts := cmd.Command.Parts
 
-	// Find the var ref part
+	// Find var ref part
 	hasVarRef := false
 	for _, part := range parts {
 		if part.Kind == ExprVarRef && part.VarName == "NAME" {
@@ -612,5 +612,46 @@ if @var.X == 1 {
 	// Check final else branch
 	if len(elseIfStmt.Blocker.ElseBranch) != 1 {
 		t.Errorf("len(elseIfStmt.ElseBranch) = %d, want 1", len(elseIfStmt.Blocker.ElseBranch))
+	}
+}
+
+// ========== String Literal Validation Tests ==========
+
+func TestBuildIR_MalformedStringLiterals(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantStmts int
+	}{
+		{
+			name:      "empty string with quotes",
+			source:    `echo ""`,
+			wantStmts: 1,
+		},
+		{
+			name:      "simple string",
+			source:    `echo "hello"`,
+			wantStmts: 1,
+		},
+		{
+			name:      "string with spaces",
+			source:    `echo "hello world"`,
+			wantStmts: 1,
+		},
+		{
+			name:      "interpolated string with var",
+			source:    `var NAME = "test"; echo "hello @var.NAME"`,
+			wantStmts: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			graph := buildIR(t, tt.source)
+
+			if len(graph.Statements) != tt.wantStmts {
+				t.Errorf("len(Statements) = %d, want %d", len(graph.Statements), tt.wantStmts)
+			}
+		})
 	}
 }
