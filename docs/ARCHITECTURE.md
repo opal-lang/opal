@@ -3415,9 +3415,9 @@ The placeholder system protects sensitive values while enabling change detection
 Secrets have two representations for different purposes:
 
 **Track 1: Display (User-Visible)**
-- Format: `🔒 opal:s:3J98t56A` (context-aware ID)
+- Format: `🔒 opal:s:3J98t56A` (value-based ID)
 - Used in: Terminal output, logs, CLI display, plan files
-- Deterministic within a plan for a given site + transport
+- Deterministic within a plan for a given value (same across sites/transports)
 
 **Track 2: Internal (Scrubber)**
 - Keyed fingerprint of the raw value (algorithm internal)

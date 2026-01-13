@@ -86,7 +86,7 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 				return nil, fmt.Errorf("nil command in StmtCommand at index %d", i)
 			}
 			chain := []*CommandStmtIR{stmt.Command}
-			for i+1 < len(stmts) && stmt.Command.Operator != "" && stmts[i+1].Kind == StmtCommand {
+			for i+1 < len(stmts) && stmt.Command.Operator != "" && stmts[i+1].Kind == StmtCommand && stmts[i+1].Command != nil {
 				i++
 				chain = append(chain, stmts[i].Command)
 				stmt = stmts[i]
