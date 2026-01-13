@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
 
 	// Import decorators to populate the registry for @var detection
@@ -717,6 +718,27 @@ func TestBuildIR_MalformedStringLiterals(t *testing.T) {
 				t.Errorf("len(Statements) = %d, want %d", len(graph.Statements), tt.wantStmts)
 			}
 		})
+	}
+}
+
+func TestBuildInterpolatedString_MalformedLiteral(t *testing.T) {
+	builder := &irBuilder{
+		events: []parser.Event{
+			{Kind: parser.EventOpen, Data: uint32(parser.NodeInterpolatedString)},
+			{Kind: parser.EventToken, Data: 0},
+			{Kind: parser.EventClose, Data: uint32(parser.NodeInterpolatedString)},
+		},
+		tokens: []lexer.Token{{Type: lexer.STRING, Text: []byte("\"")}},
+	}
+
+	_, err := builder.buildInterpolatedString()
+	if err == nil {
+		t.Fatal("expected error for malformed interpolated string")
+	}
+
+	expected := "malformed interpolated string literal at position 0"
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
 	}
 }
 

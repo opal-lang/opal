@@ -548,7 +548,10 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 						Value: " ",
 					})
 				}
-				argParts := b.buildShellArg()
+				argParts, err := b.buildShellArg()
+				if err != nil {
+					return nil, err
+				}
 				parts = append(parts, argParts...)
 				continue
 			case parser.NodeDecorator:
@@ -556,7 +559,10 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 				parts = append(parts, expr)
 				continue
 			case parser.NodeInterpolatedString:
-				strParts := b.buildInterpolatedString()
+				strParts, err := b.buildInterpolatedString()
+				if err != nil {
+					return nil, err
+				}
 				parts = append(parts, strParts...)
 				continue
 			}
@@ -806,7 +812,7 @@ func (b *irBuilder) shellArgNeedsSpace() bool {
 }
 
 // buildShellArg processes a shell argument node.
-func (b *irBuilder) buildShellArg() []*ExprIR {
+func (b *irBuilder) buildShellArg() ([]*ExprIR, error) {
 	b.pos++ // Move past OPEN NodeShellArg
 
 	var parts []*ExprIR
@@ -828,7 +834,10 @@ func (b *irBuilder) buildShellArg() []*ExprIR {
 				parts = append(parts, expr)
 				continue
 			case parser.NodeInterpolatedString:
-				strParts := b.buildInterpolatedString()
+				strParts, err := b.buildInterpolatedString()
+				if err != nil {
+					return nil, err
+				}
 				parts = append(parts, strParts...)
 				continue
 			}
@@ -849,11 +858,12 @@ func (b *irBuilder) buildShellArg() []*ExprIR {
 		b.pos++
 	}
 
-	return parts
+	return parts, nil
 }
 
 // buildInterpolatedString processes an interpolated string.
-func (b *irBuilder) buildInterpolatedString() []*ExprIR {
+func (b *irBuilder) buildInterpolatedString() ([]*ExprIR, error) {
+	startPos := b.pos
 	b.pos++ // Move past OPEN NodeInterpolatedString
 
 	var tokenText []byte
@@ -876,15 +886,15 @@ func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 
 		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeInterpolatedString {
 			b.pos++
-			return nil
+			return nil, fmt.Errorf("interpolated string at position %d has no token", startPos)
 		}
 
 		b.pos++
 	}
 
 	// Malformed string literal: must have opening and closing quotes
-	if len(tokenText) < 2 {
-		return nil
+	if len(tokenText) < 2 || tokenText[0] != tokenText[len(tokenText)-1] {
+		return nil, fmt.Errorf("malformed interpolated string literal at position %d", startPos)
 	}
 
 	var parts []*ExprIR
@@ -943,7 +953,7 @@ func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 		b.pos++
 	}
 
-	return parts
+	return parts, nil
 }
 
 // buildLiteralExpr processes a literal expression.
