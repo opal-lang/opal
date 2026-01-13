@@ -81,6 +81,42 @@ func TestEmit_SimpleCommand(t *testing.T) {
 	}
 }
 
+func TestEmit_NilResolveResult(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(nil, v, NewScopeStack(), "")
+
+	_, err := emitter.Emit()
+	if err == nil {
+		t.Fatal("Expected error for nil resolve result")
+	}
+
+	expected := "cannot emit: no resolve result"
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEmit_NilCommand(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{{
+			Kind: StmtCommand,
+		}},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	_, err := emitter.Emit()
+	if err == nil {
+		t.Fatal("Expected error for nil command")
+	}
+
+	expected := "nil command in StmtCommand at index 0"
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestEmit_MultipleCommands tests emitting multiple sequential commands.
 func TestEmit_MultipleCommands(t *testing.T) {
 	// Build resolved IR: echo "a"; echo "b"
@@ -140,6 +176,41 @@ func TestEmit_MultipleCommands(t *testing.T) {
 	}
 	if cmd1.Args[0].Val.Str != "echo \"b\"" {
 		t.Errorf("Step[1] command = %q, want %q", cmd1.Args[0].Val.Str, "echo \"b\"")
+	}
+}
+
+func TestEmit_CommandChainDoesNotMutateOperators(t *testing.T) {
+	cmd1 := &CommandStmtIR{
+		Decorator: "@shell",
+		Operator:  ";",
+		Command: &CommandExpr{
+			Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo \"a\""}},
+		},
+	}
+	cmd2 := &CommandStmtIR{
+		Decorator: "@shell",
+		Command: &CommandExpr{
+			Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo \"b\""}},
+		},
+	}
+
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{Kind: StmtCommand, Command: cmd1},
+			{Kind: StmtCommand, Command: cmd2},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	_, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if diff := cmp.Diff(";", cmd1.Operator); diff != "" {
+		t.Errorf("Operator mismatch (-want +got):\n%s", diff)
 	}
 }
 

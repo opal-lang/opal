@@ -716,11 +716,16 @@ func (b *irBuilder) buildDecoratorArg() (ArgIR, error) {
 			tok := b.tokens[evt.Data]
 			switch tok.Type {
 			case lexer.IDENTIFIER:
-				if arg.Name == "" {
+				if arg.Name == "" && b.decoratorArgHasName() {
 					arg.Name = string(tok.Text)
 					b.pos++
 					continue
 				}
+				if arg.Value == nil {
+					arg.Value = &ExprIR{Kind: ExprLiteral, Value: tokenToValue(tok)}
+				}
+				b.pos++
+				continue
 			case lexer.EQUALS:
 				b.pos++
 				continue
@@ -759,6 +764,24 @@ func (b *irBuilder) buildDecoratorArg() (ArgIR, error) {
 	}
 
 	return arg, nil
+}
+
+func (b *irBuilder) decoratorArgHasName() bool {
+	for i := b.pos + 1; i < len(b.events); i++ {
+		evt := b.events[i]
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			return tok.Type == lexer.EQUALS
+		}
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeParam {
+			return false
+		}
+		if evt.Kind == parser.EventOpen {
+			return false
+		}
+	}
+
+	return false
 }
 
 // shellArgNeedsSpace checks if the upcoming shell arg needs a space before it.
@@ -868,7 +891,7 @@ func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 	content := tokenText[1 : len(tokenText)-1]
 	stringParts := parser.TokenizeString(content, quoteType)
 
-	if len(stringParts) > 0 {
+	if len(tokenText) >= 2 {
 		parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
 	}
 
@@ -907,7 +930,7 @@ func (b *irBuilder) buildInterpolatedString() []*ExprIR {
 		})
 	}
 
-	if len(stringParts) > 0 {
+	if len(tokenText) >= 2 {
 		parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: string(quoteType)})
 	}
 

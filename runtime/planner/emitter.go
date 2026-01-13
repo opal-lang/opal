@@ -23,9 +23,10 @@ type Emitter struct {
 	target           string
 
 	// State
-	nextStepID uint64
-	sitePath   []string
-	secretUses []planfmt.SecretUse
+	nextStepID      uint64
+	sitePath        []string
+	decoratorCounts []map[string]int
+	secretUses      []planfmt.SecretUse
 }
 
 // NewEmitter creates a new Emitter.
@@ -43,11 +44,16 @@ func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, targe
 		target:           target,
 		nextStepID:       1,
 		sitePath:         []string{"root"},
+		decoratorCounts:  []map[string]int{},
 	}
 }
 
 // Emit transforms the resolved IR into a Plan.
 func (e *Emitter) Emit() (*planfmt.Plan, error) {
+	if e.result == nil {
+		return nil, fmt.Errorf("cannot emit: no resolve result")
+	}
+
 	plan := planfmt.NewPlan()
 	plan.Target = e.target
 
@@ -76,6 +82,9 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 		switch stmt.Kind {
 		case StmtCommand:
 			// Collect all chained commands (commands connected by operators)
+			if stmt.Command == nil {
+				return nil, fmt.Errorf("nil command in StmtCommand at index %d", i)
+			}
 			chain := []*CommandStmtIR{stmt.Command}
 			for i+1 < len(stmts) && stmt.Command.Operator != "" && stmts[i+1].Kind == StmtCommand {
 				i++
@@ -126,14 +135,18 @@ func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error
 		return e.emitCommand(chain[0])
 	}
 
+	stepID := e.nextStepID
+	e.pushStep(stepID)
+
 	// Build execution tree from command chain
 	tree, err := e.buildOperatorTree(chain)
+	e.popStep()
 	if err != nil {
 		return nil, err
 	}
 
 	step := &planfmt.Step{
-		ID:   e.nextStepID,
+		ID:   stepID,
 		Tree: tree,
 	}
 	e.nextStepID++
@@ -175,6 +188,11 @@ func (e *Emitter) buildOperatorTree(chain []*CommandStmtIR) (planfmt.ExecutionNo
 
 // buildCommandNode converts a CommandStmtIR to a CommandNode.
 func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, error) {
+	if cmd.Decorator != "" {
+		e.pushDecorator(cmd.Decorator)
+		defer e.popDecorator()
+	}
+
 	displayIDs := e.buildDisplayIDMap(cmd)
 
 	args := make([]planfmt.Arg, 0, len(cmd.Args)+1)
@@ -238,7 +256,7 @@ func (e *Emitter) parseSequence(chain []*CommandStmtIR) (planfmt.ExecutionNode, 
 	for _, seg := range segments {
 		// Clear operator on last command to prevent infinite recursion
 		if len(seg) > 0 && seg[len(seg)-1].Operator == ";" {
-			seg[len(seg)-1].Operator = ""
+			seg = cloneCommandChainWithClearedOperator(seg, len(seg)-1)
 		}
 		node, err := e.buildOperatorTree(seg)
 		if err != nil {
@@ -250,14 +268,31 @@ func (e *Emitter) parseSequence(chain []*CommandStmtIR) (planfmt.ExecutionNode, 
 	return &planfmt.SequenceNode{Nodes: nodes}, nil
 }
 
+func cloneCommandChainWithClearedOperator(chain []*CommandStmtIR, index int) []*CommandStmtIR {
+	if len(chain) == 0 {
+		return chain
+	}
+
+	cloned := make([]*CommandStmtIR, len(chain))
+	copy(cloned, chain)
+
+	if index < 0 || index >= len(cloned) || cloned[index] == nil {
+		return cloned
+	}
+
+	cmdCopy := *cloned[index]
+	cmdCopy.Operator = ""
+	cloned[index] = &cmdCopy
+
+	return cloned
+}
+
 // parseOr splits on || operators.
 func (e *Emitter) parseOr(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	// Find rightmost || (left-to-right associativity)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if chain[i].Operator == "||" {
-			leftChain := make([]*CommandStmtIR, i+1)
-			copy(leftChain, chain[:i+1])
-			leftChain[i].Operator = "" // Clear operator
+			leftChain := cloneCommandChainWithClearedOperator(chain[:i+1], i)
 
 			left, err := e.buildOperatorTree(leftChain)
 			if err != nil {
@@ -278,9 +313,7 @@ func (e *Emitter) parseAnd(chain []*CommandStmtIR) (planfmt.ExecutionNode, error
 	// Find rightmost && (left-to-right associativity)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if chain[i].Operator == "&&" {
-			leftChain := make([]*CommandStmtIR, i+1)
-			copy(leftChain, chain[:i+1])
-			leftChain[i].Operator = "" // Clear operator
+			leftChain := cloneCommandChainWithClearedOperator(chain[:i+1], i)
 
 			left, err := e.buildOperatorTree(leftChain)
 			if err != nil {
@@ -321,13 +354,16 @@ func (e *Emitter) parsePipe(chain []*CommandStmtIR) (planfmt.ExecutionNode, erro
 
 // emitCommand emits a single command statement as a Step.
 func (e *Emitter) emitCommand(cmd *CommandStmtIR) (*planfmt.Step, error) {
+	stepID := e.nextStepID
+	e.pushStep(stepID)
 	cmdNode, err := e.buildCommandNode(cmd)
+	e.popStep()
 	if err != nil {
 		return nil, err
 	}
 
 	step := &planfmt.Step{
-		ID:   e.nextStepID,
+		ID:   stepID,
 		Tree: cmdNode,
 	}
 	e.nextStepID++
@@ -381,6 +417,45 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
 			}
 		}
 	}
+}
+
+func (e *Emitter) pushStep(stepID uint64) {
+	e.sitePath = append(e.sitePath, fmt.Sprintf("step-%d", stepID))
+	e.decoratorCounts = append(e.decoratorCounts, make(map[string]int))
+}
+
+func (e *Emitter) popStep() {
+	if len(e.sitePath) > 1 {
+		e.sitePath = e.sitePath[:len(e.sitePath)-1]
+	}
+	if len(e.decoratorCounts) > 0 {
+		e.decoratorCounts = e.decoratorCounts[:len(e.decoratorCounts)-1]
+	}
+}
+
+func (e *Emitter) pushDecorator(name string) {
+	counts := e.currentDecoratorCounts()
+	if counts == nil {
+		counts = make(map[string]int)
+		e.decoratorCounts = append(e.decoratorCounts, counts)
+	}
+
+	index := counts[name]
+	counts[name] = index + 1
+	e.sitePath = append(e.sitePath, fmt.Sprintf("%s[%d]", name, index))
+}
+
+func (e *Emitter) popDecorator() {
+	if len(e.sitePath) > 1 {
+		e.sitePath = e.sitePath[:len(e.sitePath)-1]
+	}
+}
+
+func (e *Emitter) currentDecoratorCounts() map[string]int {
+	if len(e.decoratorCounts) == 0 {
+		return nil
+	}
+	return e.decoratorCounts[len(e.decoratorCounts)-1]
 }
 
 // recordSecretUse records a secret usage at the current site path.

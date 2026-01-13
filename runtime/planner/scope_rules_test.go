@@ -67,6 +67,31 @@ var LATER = "ignored"
 	}
 }
 
+func TestCommandMode_PreludeResolvesIfBlock(t *testing.T) {
+	source := `
+if true {
+    var ENV = "prod"
+}
+fun deploy {
+    echo "@var.ENV"
+}
+`
+
+	plan, _, _, err := planWithPipeline(t, source, "deploy")
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	command := getCommandArg(plan.Steps[0].Tree, "command")
+	if !containsDisplayID(command) {
+		t.Errorf("Expected DisplayID placeholder in command, got %q", command)
+	}
+}
+
 func TestCommandMode_DoesNotSeeLaterVars(t *testing.T) {
 	source := `
 fun deploy {

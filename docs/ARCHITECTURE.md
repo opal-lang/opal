@@ -1309,19 +1309,20 @@ var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in "local" transport
 1. **RuntimeValue NEVER leaves Vault** - only DisplayID in plan
 2. **SecretUse recording** - Emit site paths for contract verification (no runtime auth)
 3. **Transport boundaries** - values cannot cross transport boundaries
-4. **DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)** - deterministic, per-use, transport-aware
+4. **DisplayID = HMAC-SHA256(PlanSalt, value)** (truncated to 16 bytes) - deterministic per value within the plan; site + transport are tracked separately
 
 ### Expression Deduplication
 
 Same literal value → same exprID (resolved only once). DisplayIDs are generated
-per usage site (path + transport), so placeholders may differ across blocks.
+per value within a plan, so the same value shares the same DisplayID even when
+used in multiple sites; SiteIDs carry the per-site binding instead.
 
 ```opal
 var NAME1 = "Aled"
 var NAME2 = "Aled"
 # Both share same exprID (hash-based deduplication)
 # Value resolved only once
-# DisplayIDs differ if used in different paths/transports
+# DisplayID stays the same across sites; SiteID differs per site
 ```
 
 ### SecretUse Recording
@@ -1346,7 +1347,7 @@ SecretUse{
 
 **Purpose:**
 - SecretUses are part of the contract hash (audit + verification)
-- Moving a secret to a different site changes SiteID and DisplayID
+- Moving a secret to a different site changes SiteID (DisplayID stays the same)
 
 **Execution-time enforcement:**
 - DisplayID lookup + transport boundary check only
@@ -1510,13 +1511,13 @@ nested scopes with parent links and enforces source-order resolution.
 **ExprIDs** are generated during resolution based on the binding and transport
 context. They capture *which* value was resolved, not where it is used.
 
-**DisplayIDs** are generated per-use:
+**DisplayIDs** are generated per value using a keyed HMAC:
 ```
-DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)
+DisplayID = HMAC-SHA256(PlanSalt, canonical_value)  // truncated to 16 bytes
 ```
-- **path** = canonical plan site path (built by the Emitter)
-- **transport** = current transport ID
-- Same value in different blocks/transports → different DisplayIDs
+- **path** is captured in SecretUses via SiteID, not in the DisplayID
+- **transport** ownership is recorded on the expression for boundary checks
+- Same value in different sites/transports → same DisplayID (SiteID differs)
 
 ### Vault API
 
@@ -3423,21 +3424,22 @@ Secrets have two representations for different purposes:
 - Used for scrubber matching and secret detection
 - Never displayed to users
 
-### DisplayID Generation (Keyed PRF)
+### DisplayID Generation (Keyed HMAC)
 
-DisplayIDs are generated per usage site:
+DisplayIDs are generated per value:
 
 ```
-DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)
+DisplayID = HMAC-SHA256(PlanSalt, canonical_value)  // truncated to 16 bytes
 ```
 
 - **PlanSalt**: 32-byte random salt stored in the plan header
-- **path**: canonical site path built by the Emitter
-- **transport**: current transport ID
+- **canonical_value**: raw bytes (string/[]byte) or JSON-canonicalized value
+- **Site paths** are captured separately in SecretUses via SiteID
+- **Transport** ownership is tracked per expression for boundary checks
 
 **Properties:**
-- Same value in different sites/transports → different DisplayIDs
-- Same value in same site/transport → stable within the plan
+- Same value in different sites/transports → same DisplayID (SiteID differs)
+- Same value in same plan → stable within the plan
 - Different plans (different PlanSalt) → different DisplayIDs
 - Value changes → DisplayID changes (contract verification detects drift)
 
@@ -3446,9 +3448,12 @@ DisplayID = BLAKE2s-128(PlanSalt, value || path || transport)
 
 **Implementation (new pipeline):**
 - Resolver stores resolved values in Vault by exprID
-- Emitter builds site paths and requests DisplayIDs per usage
-- Vault records DisplayID → exprID for execution lookups
+- Vault computes DisplayIDs once per resolved value
+- Emitter records site paths and inserts DisplayIDs
 - Executor resolves DisplayID with transport boundary checks
+
+**Note:** The SDK IDFactory uses BLAKE2s-128 for scrubber placeholders; Vault
+DisplayIDs use HMAC-SHA256.
 
 ### Plan Provenance Headers
 

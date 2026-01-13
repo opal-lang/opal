@@ -468,22 +468,28 @@ func (r *Resolver) resolveTry(stmt *StatementIR) (*StatementIR, error) {
 	// Resolve all branches - they all need to be in the plan
 	var err error
 
-	r.scopes.Push()
-	defer r.scopes.Pop()
+	if r.scopes != nil {
+		r.scopes.Push()
+		defer r.scopes.Pop()
+	}
 	try.TryBlock, err = r.resolveStatements(try.TryBlock)
 	if err != nil {
 		return nil, err
 	}
 
-	r.scopes.Push()
-	defer r.scopes.Pop()
+	if r.scopes != nil {
+		r.scopes.Push()
+		defer r.scopes.Pop()
+	}
 	try.CatchBlock, err = r.resolveStatements(try.CatchBlock)
 	if err != nil {
 		return nil, err
 	}
 
-	r.scopes.Push()
-	defer r.scopes.Pop()
+	if r.scopes != nil {
+		r.scopes.Push()
+		defer r.scopes.Pop()
+	}
 	try.FinallyBlock, err = r.resolveStatements(try.FinallyBlock)
 	if err != nil {
 		return nil, err
@@ -497,8 +503,10 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 		return nil
 	}
 
-	r.scopes.Push()
-	defer r.scopes.Pop()
+	if r.scopes != nil {
+		r.scopes.Push()
+		defer r.scopes.Pop()
+	}
 	resolved, err := r.resolveStatements(cmd.Block)
 	if err != nil {
 		return err
@@ -514,19 +522,134 @@ func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
 	}
 
 	for _, stmt := range r.graph.Statements {
-		if stmt.Kind != StmtVarDecl {
-			continue
-		}
 		if stmt.Span.Start >= fn.Span.Start {
 			continue
 		}
+		if err := r.resolvePreludeStatement(stmt); err != nil {
+			return err
+		}
+	}
 
+	return nil
+}
+
+func (r *Resolver) resolvePreludeStatements(stmts []*StatementIR) error {
+	for _, stmt := range stmts {
+		if err := r.resolvePreludeStatement(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) resolvePreludeStatement(stmt *StatementIR) error {
+	if stmt == nil {
+		return nil
+	}
+
+	switch stmt.Kind {
+	case StmtVarDecl:
 		r.collectVarDecl(stmt.VarDecl)
 		if err := r.buildError(); err != nil {
 			return err
 		}
 		if err := r.batchResolve(); err != nil {
 			return err
+		}
+		return nil
+	case StmtBlocker:
+		return r.resolvePreludeBlocker(stmt)
+	case StmtCommand, StmtTry:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
+	blocker := stmt.Blocker
+	if blocker == nil {
+		return nil
+	}
+
+	// Collect blocker condition/collection
+	r.collectExpr(blocker.Condition, "")
+	if blocker.Kind == BlockerFor && blocker.Collection != nil {
+		r.collectExpr(blocker.Collection, "")
+	}
+
+	// Check for errors from collection
+	if err := r.buildError(); err != nil {
+		return err
+	}
+
+	// Batch resolve expressions
+	if err := r.batchResolve(); err != nil {
+		return err
+	}
+
+	switch blocker.Kind {
+	case BlockerIf:
+		return r.resolvePreludeIf(blocker)
+	case BlockerFor:
+		return r.resolvePreludeFor(blocker)
+	case BlockerWhen:
+		return r.resolvePreludeWhen(blocker)
+	default:
+		return fmt.Errorf("unknown blocker kind: %d", blocker.Kind)
+	}
+}
+
+func (r *Resolver) resolvePreludeIf(blocker *BlockerIR) error {
+	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate if condition: %w", err)
+	}
+
+	if IsTruthy(result) {
+		return r.resolvePreludeStatements(blocker.ThenBranch)
+	}
+
+	if blocker.ElseBranch != nil {
+		return r.resolvePreludeStatements(blocker.ElseBranch)
+	}
+
+	return nil
+}
+
+func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
+	collection, err := r.evaluateCollection(blocker.Collection)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate for collection: %w", err)
+	}
+
+	for i, item := range collection {
+		loopVarRaw := fmt.Sprintf("literal:%v", item)
+		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
+
+		r.vault.StoreUnresolvedValue(loopVarExprID, item)
+		r.vault.MarkTouched(loopVarExprID)
+		if r.scopes != nil {
+			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		}
+
+		if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
+			return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
+	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate when condition: %w", err)
+	}
+
+	for _, arm := range blocker.Arms {
+		if matchPattern(arm.Pattern, value, r.getValue) {
+			return r.resolvePreludeStatements(arm.Body)
 		}
 	}
 

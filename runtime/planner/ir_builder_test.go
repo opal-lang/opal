@@ -168,10 +168,74 @@ func TestBuildIR_VarDecl_DecoratorRef(t *testing.T) {
 	}
 }
 
+func TestBuildIR_DecoratorArg_IdentifierValue(t *testing.T) {
+	graph := buildIR(t, `@env.HOME(default=HOME)`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	args := stmt.Command.Args
+	if len(args) != 1 {
+		t.Fatalf("len(Args) = %d, want 1", len(args))
+	}
+
+	arg := args[0]
+	if arg.Name != "default" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "default")
+	}
+	if arg.Value == nil {
+		t.Fatal("Arg.Value is nil")
+	}
+	if arg.Value.Kind != ExprLiteral {
+		t.Errorf("Arg.Value.Kind = %v, want ExprLiteral", arg.Value.Kind)
+	}
+	if diff := cmp.Diff("HOME", arg.Value.Value); diff != "" {
+		t.Errorf("Arg.Value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
+	graph := buildIR(t, `@env(HOME)`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	args := stmt.Command.Args
+	if len(args) != 1 {
+		t.Fatalf("len(Args) = %d, want 1", len(args))
+	}
+
+	arg := args[0]
+	if arg.Name != "arg1" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "arg1")
+	}
+	if arg.Value == nil {
+		t.Fatal("Arg.Value is nil")
+	}
+	if arg.Value.Kind != ExprLiteral {
+		t.Errorf("Arg.Value.Kind = %v, want ExprLiteral", arg.Value.Kind)
+	}
+	if diff := cmp.Diff("HOME", arg.Value.Value); diff != "" {
+		t.Errorf("Arg.Value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildIR_MultipleStatements(t *testing.T) {
 	graph := buildIR(t, `var X = 1
-echo "hello"
-var Y = 2`)
+ echo "hello"
+ var Y = 2`)
 
 	if len(graph.Statements) != 3 {
 		t.Fatalf("len(Statements) = %d, want 3", len(graph.Statements))
@@ -653,5 +717,23 @@ func TestBuildIR_MalformedStringLiterals(t *testing.T) {
 				t.Errorf("len(Statements) = %d, want %d", len(graph.Statements), tt.wantStmts)
 			}
 		})
+	}
+}
+
+func TestBuildIR_EmptyStringPreservesQuotes(t *testing.T) {
+	graph := buildIR(t, `echo ""`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[0].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	expected := `echo ""`
+	if diff := cmp.Diff(expected, RenderCommand(cmd.Command, nil)); diff != "" {
+		t.Errorf("RenderCommand mismatch (-want +got):\n%s", diff)
 	}
 }
