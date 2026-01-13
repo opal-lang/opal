@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
 
 	// Import decorators to populate the registry for @var detection
@@ -120,7 +121,7 @@ func TestBuildIR_VarDecl_Literal(t *testing.T) {
 	if stmt.VarDecl.Value.Kind != ExprLiteral {
 		t.Errorf("Value.Kind = %v, want ExprLiteral", stmt.VarDecl.Value.Kind)
 	}
-	// String value - the lexer may include or exclude quotes
+	// String value - lexer may include or exclude quotes
 	val, ok := stmt.VarDecl.Value.Value.(string)
 	if !ok {
 		t.Fatalf("Value.Value is not string, got %T", stmt.VarDecl.Value.Value)
@@ -168,10 +169,74 @@ func TestBuildIR_VarDecl_DecoratorRef(t *testing.T) {
 	}
 }
 
+func TestBuildIR_DecoratorArg_IdentifierValue(t *testing.T) {
+	graph := buildIR(t, `@env.HOME(default=HOME)`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	args := stmt.Command.Args
+	if len(args) != 1 {
+		t.Fatalf("len(Args) = %d, want 1", len(args))
+	}
+
+	arg := args[0]
+	if arg.Name != "default" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "default")
+	}
+	if arg.Value == nil {
+		t.Fatal("Arg.Value is nil")
+	}
+	if arg.Value.Kind != ExprLiteral {
+		t.Errorf("Arg.Value.Kind = %v, want ExprLiteral", arg.Value.Kind)
+	}
+	if diff := cmp.Diff("HOME", arg.Value.Value); diff != "" {
+		t.Errorf("Arg.Value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
+	graph := buildIR(t, `@env(HOME)`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	args := stmt.Command.Args
+	if len(args) != 1 {
+		t.Fatalf("len(Args) = %d, want 1", len(args))
+	}
+
+	arg := args[0]
+	if arg.Name != "arg1" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "arg1")
+	}
+	if arg.Value == nil {
+		t.Fatal("Arg.Value is nil")
+	}
+	if arg.Value.Kind != ExprLiteral {
+		t.Errorf("Arg.Value.Kind = %v, want ExprLiteral", arg.Value.Kind)
+	}
+	if diff := cmp.Diff("HOME", arg.Value.Value); diff != "" {
+		t.Errorf("Arg.Value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildIR_MultipleStatements(t *testing.T) {
 	graph := buildIR(t, `var X = 1
-echo "hello"
-var Y = 2`)
+ echo "hello"
+ var Y = 2`)
 
 	if len(graph.Statements) != 3 {
 		t.Fatalf("len(Statements) = %d, want 3", len(graph.Statements))
@@ -197,7 +262,7 @@ echo @var.NAME`)
 		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
 	}
 
-	// Check the command has interpolated parts
+	// Check command has interpolated parts
 	cmd := graph.Statements[1].Command
 	if cmd == nil || cmd.Command == nil {
 		t.Fatal("Command is nil")
@@ -205,7 +270,7 @@ echo @var.NAME`)
 
 	parts := cmd.Command.Parts
 
-	// Find the var ref part
+	// Find var ref part
 	hasVarRef := false
 	for _, part := range parts {
 		if part.Kind == ExprVarRef && part.VarName == "NAME" {
@@ -612,5 +677,85 @@ if @var.X == 1 {
 	// Check final else branch
 	if len(elseIfStmt.Blocker.ElseBranch) != 1 {
 		t.Errorf("len(elseIfStmt.ElseBranch) = %d, want 1", len(elseIfStmt.Blocker.ElseBranch))
+	}
+}
+
+// ========== String Literal Validation Tests ==========
+
+func TestBuildIR_MalformedStringLiterals(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantStmts int
+	}{
+		{
+			name:      "empty string with quotes",
+			source:    `echo ""`,
+			wantStmts: 1,
+		},
+		{
+			name:      "simple string",
+			source:    `echo "hello"`,
+			wantStmts: 1,
+		},
+		{
+			name:      "string with spaces",
+			source:    `echo "hello world"`,
+			wantStmts: 1,
+		},
+		{
+			name:      "interpolated string with var",
+			source:    `var NAME = "test"; echo "hello @var.NAME"`,
+			wantStmts: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			graph := buildIR(t, tt.source)
+
+			if len(graph.Statements) != tt.wantStmts {
+				t.Errorf("len(Statements) = %d, want %d", len(graph.Statements), tt.wantStmts)
+			}
+		})
+	}
+}
+
+func TestBuildInterpolatedString_MalformedLiteral(t *testing.T) {
+	builder := &irBuilder{
+		events: []parser.Event{
+			{Kind: parser.EventOpen, Data: uint32(parser.NodeInterpolatedString)},
+			{Kind: parser.EventToken, Data: 0},
+			{Kind: parser.EventClose, Data: uint32(parser.NodeInterpolatedString)},
+		},
+		tokens: []lexer.Token{{Type: lexer.STRING, Text: []byte("\"")}},
+	}
+
+	_, err := builder.buildInterpolatedString()
+	if err == nil {
+		t.Fatal("expected error for malformed interpolated string")
+	}
+
+	expected := "malformed interpolated string literal at position 0"
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_EmptyStringPreservesQuotes(t *testing.T) {
+	graph := buildIR(t, `echo ""`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[0].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	expected := `echo ""`
+	if diff := cmp.Diff(expected, RenderCommand(cmd.Command, nil)); diff != "" {
+		t.Errorf("RenderCommand mismatch (-want +got):\n%s", diff)
 	}
 }
