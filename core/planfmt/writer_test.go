@@ -462,3 +462,283 @@ func TestWriteTooManySequenceNodes(t *testing.T) {
 		t.Errorf("Wrong error message: %v", err)
 	}
 }
+
+// TestTryNodeRoundtrip verifies TryNode serialization round-trip
+func TestTryNodeRoundtrip(t *testing.T) {
+	// Given: a plan with try/catch/finally
+	plan := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.TryNode{
+					TryBlock: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'risky'"}},
+								},
+							},
+						},
+					},
+					CatchBlock: []planfmt.Step{
+						{
+							ID: 3,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'error'"}},
+								},
+							},
+						},
+					},
+					FinallyBlock: []planfmt.Step{
+						{
+							ID: 4,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'cleanup'"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// When: write and read back
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	readPlan, _, err := planfmt.Read(&buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	// Then: verify structure
+	if len(readPlan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(readPlan.Steps))
+	}
+
+	tryNode, ok := readPlan.Steps[0].Tree.(*planfmt.TryNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *TryNode", readPlan.Steps[0].Tree)
+	}
+
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+
+	if len(tryNode.CatchBlock) != 1 {
+		t.Errorf("CatchBlock has %d steps, want 1", len(tryNode.CatchBlock))
+	}
+
+	if len(tryNode.FinallyBlock) != 1 {
+		t.Errorf("FinallyBlock has %d steps, want 1", len(tryNode.FinallyBlock))
+	}
+
+	// Verify nested command
+	cmd := tryNode.TryBlock[0].Tree.(*planfmt.CommandNode)
+	if cmd.Args[0].Val.Str != "echo 'risky'" {
+		t.Errorf("Try block command = %q, want 'echo 'risky''", cmd.Args[0].Val.Str)
+	}
+}
+
+// TestTryNodeOnlyRoundtrip verifies TryNode with only try block
+func TestTryNodeOnlyRoundtrip(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.TryNode{
+					TryBlock: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'try'"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	readPlan, _, err := planfmt.Read(&buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	tryNode := readPlan.Steps[0].Tree.(*planfmt.TryNode)
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+	if len(tryNode.CatchBlock) != 0 {
+		t.Errorf("CatchBlock has %d steps, want 0", len(tryNode.CatchBlock))
+	}
+	if len(tryNode.FinallyBlock) != 0 {
+		t.Errorf("FinallyBlock has %d steps, want 0", len(tryNode.FinallyBlock))
+	}
+}
+
+// TestTryNodeFinallyOnlyRoundtrip verifies TryNode with try/finally (no catch)
+func TestTryNodeFinallyOnlyRoundtrip(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.TryNode{
+					TryBlock: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'try'"}},
+								},
+							},
+						},
+					},
+					FinallyBlock: []planfmt.Step{
+						{
+							ID: 3,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo 'finally'"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	readPlan, _, err := planfmt.Read(&buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	tryNode := readPlan.Steps[0].Tree.(*planfmt.TryNode)
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+	if len(tryNode.CatchBlock) != 0 {
+		t.Errorf("CatchBlock has %d steps, want 0", len(tryNode.CatchBlock))
+	}
+	if len(tryNode.FinallyBlock) != 1 {
+		t.Errorf("FinallyBlock has %d steps, want 1", len(tryNode.FinallyBlock))
+	}
+}
+
+// TestTryNodeTooManyTrySteps tests validation of try block step count
+func TestTryNodeTooManyTrySteps(t *testing.T) {
+	trySteps := make([]planfmt.Step, 65536)
+	for i := range trySteps {
+		trySteps[i] = planfmt.Step{ID: uint64(i + 1), Tree: &planfmt.CommandNode{Decorator: "test"}}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.TryNode{TryBlock: trySteps},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for try block step count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "try block step count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestTryNodeTooManyCatchSteps tests validation of catch block step count
+func TestTryNodeTooManyCatchSteps(t *testing.T) {
+	catchSteps := make([]planfmt.Step, 65536)
+	for i := range catchSteps {
+		catchSteps[i] = planfmt.Step{ID: uint64(i + 1), Tree: &planfmt.CommandNode{Decorator: "test"}}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.TryNode{CatchBlock: catchSteps},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for catch block step count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "catch block step count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}
+
+// TestTryNodeTooManyFinallySteps tests validation of finally block step count
+func TestTryNodeTooManyFinallySteps(t *testing.T) {
+	finallySteps := make([]planfmt.Step, 65536)
+	for i := range finallySteps {
+		finallySteps[i] = planfmt.Step{ID: uint64(i + 1), Tree: &planfmt.CommandNode{Decorator: "test"}}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID:   1,
+				Tree: &planfmt.TryNode{FinallyBlock: finallySteps},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+
+	if err == nil {
+		t.Fatal("Expected error for finally block step count exceeding uint16 max, got nil")
+	}
+
+	if err.Error() != "finally block step count 65536 exceeds maximum 65535" {
+		t.Errorf("Wrong error message: %v", err)
+	}
+}

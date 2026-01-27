@@ -639,20 +639,72 @@ func (e *Emitter) emitWhenBlocker(blocker *BlockerIR) ([]planfmt.Step, error) {
 	return []planfmt.Step{step}, nil
 }
 
-// emitTry emits a try/catch/finally statement.
+// emitTry emits a try/catch/finally statement as a single step with TryNode.
 // All branches are included in the plan (runtime determines which executes).
 func (e *Emitter) emitTry(try *TryIR) ([]planfmt.Step, error) {
-	// TODO: Implement try/catch emission
-	// For now, just emit the try block with isolated scope
-	if e.scopes != nil {
-		e.scopes.Push()
+	stepID := e.nextStepID
+	e.nextStepID++
+	e.pushStep(stepID)
+	defer e.popStep()
+
+	// Emit try block with isolated scope
+	var trySteps []planfmt.Step
+	if len(try.TryBlock) > 0 {
+		if e.scopes != nil {
+			e.scopes.Push()
+		}
+		steps, err := e.emitStatements(try.TryBlock)
+		if e.scopes != nil {
+			e.scopes.Pop()
+		}
+		if err != nil {
+			return nil, err
+		}
+		trySteps = steps
 	}
-	steps, err := e.emitStatements(try.TryBlock)
-	if e.scopes != nil {
-		e.scopes.Pop()
+
+	// Emit catch block with isolated scope (if present)
+	var catchSteps []planfmt.Step
+	if len(try.CatchBlock) > 0 {
+		if e.scopes != nil {
+			e.scopes.Push()
+		}
+		steps, err := e.emitStatements(try.CatchBlock)
+		if e.scopes != nil {
+			e.scopes.Pop()
+		}
+		if err != nil {
+			return nil, err
+		}
+		catchSteps = steps
 	}
-	if err != nil {
-		return nil, err
+
+	// Emit finally block with isolated scope (if present)
+	var finallySteps []planfmt.Step
+	if len(try.FinallyBlock) > 0 {
+		if e.scopes != nil {
+			e.scopes.Push()
+		}
+		steps, err := e.emitStatements(try.FinallyBlock)
+		if e.scopes != nil {
+			e.scopes.Pop()
+		}
+		if err != nil {
+			return nil, err
+		}
+		finallySteps = steps
 	}
-	return steps, nil
+
+	// Create TryNode with all blocks
+	tryNode := &planfmt.TryNode{
+		TryBlock:     trySteps,
+		CatchBlock:   catchSteps,
+		FinallyBlock: finallySteps,
+	}
+
+	// Return as a single step wrapping the TryNode
+	return []planfmt.Step{{
+		ID:   stepID,
+		Tree: tryNode,
+	}}, nil
 }

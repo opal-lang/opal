@@ -1597,7 +1597,6 @@ func (b *irBuilder) buildTryStmt() (*StatementIR, error) {
 	var tryBlock []*StatementIR
 	var catchBlock []*StatementIR
 	var finallyBlock []*StatementIR
-	var errorVar string
 
 	// Skip TRY token
 	for b.pos < len(b.events) {
@@ -1632,12 +1631,11 @@ func (b *irBuilder) buildTryStmt() (*StatementIR, error) {
 				}
 				continue
 			case parser.NodeCatch:
-				catchStmts, errVar, err := b.buildCatchClause()
+				catchStmts, err := b.buildCatchClause()
 				if err != nil {
 					return nil, err
 				}
 				catchBlock = catchStmts
-				errorVar = errVar
 				continue
 			case parser.NodeFinally:
 				finallyStmts, err := b.buildFinallyClause()
@@ -1659,17 +1657,15 @@ func (b *irBuilder) buildTryStmt() (*StatementIR, error) {
 			TryBlock:     tryBlock,
 			CatchBlock:   catchBlock,
 			FinallyBlock: finallyBlock,
-			ErrorVar:     errorVar,
 		},
 	}, nil
 }
 
 // buildCatchClause processes a catch clause.
-func (b *irBuilder) buildCatchClause() ([]*StatementIR, string, error) {
+func (b *irBuilder) buildCatchClause() ([]*StatementIR, error) {
 	b.pos++ // Move past OPEN NodeCatch
 
 	var stmts []*StatementIR
-	var errorVar string
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -1679,11 +1675,8 @@ func (b *irBuilder) buildCatchClause() ([]*StatementIR, string, error) {
 			break
 		}
 
+		// Skip error variable identifier if present (not used until runtime variables exist)
 		if evt.Kind == parser.EventToken {
-			tok := b.tokens[evt.Data]
-			if tok.Type == lexer.IDENTIFIER && errorVar == "" {
-				errorVar = string(tok.Text)
-			}
 			b.pos++
 			continue
 		}
@@ -1694,7 +1687,7 @@ func (b *irBuilder) buildCatchClause() ([]*StatementIR, string, error) {
 			if node == parser.NodeBlock {
 				blockStmts, err := b.buildBlock()
 				if err != nil {
-					return nil, "", err
+					return nil, err
 				}
 				stmts = append(stmts, blockStmts...)
 				continue
@@ -1704,7 +1697,7 @@ func (b *irBuilder) buildCatchClause() ([]*StatementIR, string, error) {
 		b.pos++
 	}
 
-	return stmts, errorVar, nil
+	return stmts, nil
 }
 
 // buildFinallyClause processes a finally clause.

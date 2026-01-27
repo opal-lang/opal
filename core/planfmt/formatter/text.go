@@ -58,9 +58,36 @@ func formatExecutionNode(node planfmt.ExecutionNode) string {
 			parts = append(parts, formatExecutionNode(child))
 		}
 		return strings.Join(parts, " ; ")
+	case *planfmt.TryNode:
+		return formatTryNode(n)
 	default:
 		return fmt.Sprintf("(unknown: %T)", node)
 	}
+}
+
+// formatTryNode formats a try/catch/finally node
+func formatTryNode(try *planfmt.TryNode) string {
+	var parts []string
+	parts = append(parts, "try {")
+	for _, step := range try.TryBlock {
+		parts = append(parts, "  "+formatExecutionNode(step.Tree))
+	}
+	parts = append(parts, "}")
+	if len(try.CatchBlock) > 0 {
+		parts = append(parts, "catch {")
+		for _, step := range try.CatchBlock {
+			parts = append(parts, "  "+formatExecutionNode(step.Tree))
+		}
+		parts = append(parts, "}")
+	}
+	if len(try.FinallyBlock) > 0 {
+		parts = append(parts, "finally {")
+		for _, step := range try.FinallyBlock {
+			parts = append(parts, "  "+formatExecutionNode(step.Tree))
+		}
+		parts = append(parts, "}")
+	}
+	return strings.Join(parts, " ")
 }
 
 // formatCommandNode formats a single command node

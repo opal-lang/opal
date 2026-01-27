@@ -386,6 +386,55 @@ func (rd *Reader) readExecutionNode(r io.Reader, depth, maxDepth int) (Execution
 		}
 		return &SequenceNode{Nodes: nodes}, nil
 
+	case 0x06: // TryNode
+		// Read try block step count
+		var tryCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &tryCount); err != nil {
+			return nil, fmt.Errorf("read try block step count: %w", err)
+		}
+		// Read try block steps
+		tryBlock := make([]Step, tryCount)
+		for i := 0; i < int(tryCount); i++ {
+			step, err := rd.readStep(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read try block step %d: %w", i, err)
+			}
+			tryBlock[i] = *step
+		}
+		// Read catch block step count
+		var catchCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &catchCount); err != nil {
+			return nil, fmt.Errorf("read catch block step count: %w", err)
+		}
+		// Read catch block steps
+		catchBlock := make([]Step, catchCount)
+		for i := 0; i < int(catchCount); i++ {
+			step, err := rd.readStep(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read catch block step %d: %w", i, err)
+			}
+			catchBlock[i] = *step
+		}
+		// Read finally block step count
+		var finallyCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &finallyCount); err != nil {
+			return nil, fmt.Errorf("read finally block step count: %w", err)
+		}
+		// Read finally block steps
+		finallyBlock := make([]Step, finallyCount)
+		for i := 0; i < int(finallyCount); i++ {
+			step, err := rd.readStep(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read finally block step %d: %w", i, err)
+			}
+			finallyBlock[i] = *step
+		}
+		return &TryNode{
+			TryBlock:     tryBlock,
+			CatchBlock:   catchBlock,
+			FinallyBlock: finallyBlock,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown node type: 0x%02x", nodeType)
 	}
