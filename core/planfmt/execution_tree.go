@@ -113,3 +113,25 @@ type LogicNode struct {
 }
 
 func (*LogicNode) isExecutionNode() {}
+
+// TryNode represents a runtime try/catch/finally error handling block.
+// Unlike LogicNode (plan-time), all branches appear in the plan and the runtime
+// determines which executes based on whether an error occurs.
+//
+// Example:
+//
+//	try { risky_command }
+//	catch { echo "error occurred" }
+//	finally { cleanup }
+//
+// The plan includes all three blocks; runtime executes:
+//   - TryBlock always (first)
+//   - CatchBlock only if TryBlock errors
+//   - FinallyBlock always (after try or catch completes)
+type TryNode struct {
+	TryBlock     []Step // Statements in try block (always executed first)
+	CatchBlock   []Step // Statements in catch block (executed on error)
+	FinallyBlock []Step // Statements in finally block (always executed last)
+}
+
+func (*TryNode) isExecutionNode() {}

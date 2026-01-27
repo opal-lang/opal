@@ -90,6 +90,12 @@ func toSDKTreeWithRegistry(node ExecutionNode, registry *types.Registry) sdk.Tre
 			Sink:   sink,
 			Mode:   sdk.RedirectMode(n.Mode),
 		}
+	case *TryNode:
+		return &sdk.TryNode{
+			TryBlock:     ToSDKStepsWithRegistry(n.TryBlock, registry),
+			CatchBlock:   ToSDKStepsWithRegistry(n.CatchBlock, registry),
+			FinallyBlock: ToSDKStepsWithRegistry(n.FinallyBlock, registry),
+		}
 	default:
 		invariant.Invariant(false, "unknown ExecutionNode type: %T", node)
 		return nil // unreachable
