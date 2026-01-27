@@ -127,7 +127,6 @@ type TryIR struct {
 	TryBlock     []*StatementIR // Statements in try block
 	CatchBlock   []*StatementIR // Statements in catch block (optional)
 	FinallyBlock []*StatementIR // Statements in finally block (optional)
-	ErrorVar     string         // Variable name for caught error (optional)
 }
 
 // ScopeStack tracks variable scopes during IR building.
@@ -317,7 +316,6 @@ func deepCopyTry(try *TryIR) *TryIR {
 		TryBlock:     DeepCopyStatements(try.TryBlock),
 		CatchBlock:   DeepCopyStatements(try.CatchBlock),
 		FinallyBlock: DeepCopyStatements(try.FinallyBlock),
-		ErrorVar:     try.ErrorVar,
 	}
 }
 

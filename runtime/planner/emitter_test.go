@@ -1469,3 +1469,283 @@ func TestEmit_OrOperator(t *testing.T) {
 		t.Errorf("Right command = %q, want %q", rightCmd.Args[0].Val.Str, "echo \"fallback\"")
 	}
 }
+
+// TestEmit_TryCatch_Basic tests basic try/catch emission.
+// Input IR: try { echo "risky" } catch { echo "error" }
+// Expected: Single step with TryNode containing both blocks
+func TestEmit_TryCatch_Basic(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtTry,
+				Try: &TryIR{
+					TryBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"risky\""},
+									},
+								},
+							},
+						},
+					},
+					CatchBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"error\""},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	tryNode, ok := plan.Steps[0].Tree.(*planfmt.TryNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.TryNode", plan.Steps[0].Tree)
+	}
+
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+
+	if len(tryNode.CatchBlock) != 1 {
+		t.Errorf("CatchBlock has %d steps, want 1", len(tryNode.CatchBlock))
+	}
+
+	if len(tryNode.FinallyBlock) != 0 {
+		t.Errorf("FinallyBlock has %d steps, want 0", len(tryNode.FinallyBlock))
+	}
+}
+
+// TestEmit_TryCatchFinally tests try/catch/finally emission.
+// Input IR: try { echo "risky" } catch { echo "error" } finally { echo "cleanup" }
+// Expected: TryNode with all three blocks
+func TestEmit_TryCatchFinally(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtTry,
+				Try: &TryIR{
+					TryBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"risky\""},
+									},
+								},
+							},
+						},
+					},
+					CatchBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"error\""},
+									},
+								},
+							},
+						},
+					},
+					FinallyBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"cleanup\""},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	tryNode, ok := plan.Steps[0].Tree.(*planfmt.TryNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.TryNode", plan.Steps[0].Tree)
+	}
+
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+
+	if len(tryNode.CatchBlock) != 1 {
+		t.Errorf("CatchBlock has %d steps, want 1", len(tryNode.CatchBlock))
+	}
+
+	if len(tryNode.FinallyBlock) != 1 {
+		t.Errorf("FinallyBlock has %d steps, want 1", len(tryNode.FinallyBlock))
+	}
+}
+
+// TestEmit_TryOnly tests try block without catch or finally.
+// Input IR: try { echo "risky" }
+// Expected: TryNode with only TryBlock populated
+func TestEmit_TryOnly(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtTry,
+				Try: &TryIR{
+					TryBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"risky\""},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	tryNode, ok := plan.Steps[0].Tree.(*planfmt.TryNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.TryNode", plan.Steps[0].Tree)
+	}
+
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+
+	if len(tryNode.CatchBlock) != 0 {
+		t.Errorf("CatchBlock has %d steps, want 0", len(tryNode.CatchBlock))
+	}
+
+	if len(tryNode.FinallyBlock) != 0 {
+		t.Errorf("FinallyBlock has %d steps, want 0", len(tryNode.FinallyBlock))
+	}
+}
+
+// TestEmit_TryFinally tests try/finally without catch.
+// Input IR: try { echo "risky" } finally { echo "cleanup" }
+// Expected: TryNode with TryBlock and FinallyBlock, empty CatchBlock
+func TestEmit_TryFinally(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtTry,
+				Try: &TryIR{
+					TryBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"risky\""},
+									},
+								},
+							},
+						},
+					},
+					FinallyBlock: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command: &CommandExpr{
+									Parts: []*ExprIR{
+										{Kind: ExprLiteral, Value: "echo \"cleanup\""},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	tryNode, ok := plan.Steps[0].Tree.(*planfmt.TryNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.TryNode", plan.Steps[0].Tree)
+	}
+
+	if len(tryNode.TryBlock) != 1 {
+		t.Errorf("TryBlock has %d steps, want 1", len(tryNode.TryBlock))
+	}
+
+	if len(tryNode.CatchBlock) != 0 {
+		t.Errorf("CatchBlock has %d steps, want 0", len(tryNode.CatchBlock))
+	}
+
+	if len(tryNode.FinallyBlock) != 1 {
+		t.Errorf("FinallyBlock has %d steps, want 1", len(tryNode.FinallyBlock))
+	}
+}

@@ -56,6 +56,12 @@ func renderTreeStep(w io.Writer, step planfmt.Step, isLast, useColor bool) {
 		prefix = "├─ "
 	}
 
+	// Handle TryNode specially to render its nested blocks
+	if try, ok := step.Tree.(*planfmt.TryNode); ok {
+		renderTryBlock(w, try, prefix, "", isLast, useColor)
+		return
+	}
+
 	// Render the execution tree
 	treeStr := renderExecutionNode(step.Tree, useColor)
 	_, _ = fmt.Fprintf(w, "%s%s\n", prefix, treeStr)
@@ -63,6 +69,44 @@ func renderTreeStep(w io.Writer, step planfmt.Step, isLast, useColor bool) {
 	// Render nested blocks if this is a CommandNode with a Block
 	if cmd, ok := step.Tree.(*planfmt.CommandNode); ok && len(cmd.Block) > 0 {
 		renderNestedBlock(w, cmd.Block, "   ", useColor)
+	}
+}
+
+// renderTryBlock renders a try/catch/finally block with proper indentation
+func renderTryBlock(w io.Writer, try *planfmt.TryNode, prefix, indent string, isLast, useColor bool) {
+	// Render try {
+	tryPrefix := prefix
+	if indent != "" {
+		if isLast {
+			tryPrefix = indent + "└─ "
+		} else {
+			tryPrefix = indent + "├─ "
+		}
+	}
+	_, _ = fmt.Fprintf(w, "%s%s\n", tryPrefix, Colorize("try {", ColorYellow, useColor))
+
+	// Render try block contents
+	tryIndent := indent + "│  "
+	if isLast {
+		tryIndent = indent + "   "
+	}
+	renderNestedBlock(w, try.TryBlock, tryIndent, useColor)
+
+	// Render try closing brace
+	_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
+
+	// Render catch block if present
+	if len(try.CatchBlock) > 0 {
+		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("catch {", ColorYellow, useColor))
+		renderNestedBlock(w, try.CatchBlock, tryIndent, useColor)
+		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
+	}
+
+	// Render finally block if present
+	if len(try.FinallyBlock) > 0 {
+		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("finally {", ColorYellow, useColor))
+		renderNestedBlock(w, try.FinallyBlock, tryIndent, useColor)
+		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
 	}
 }
 
@@ -101,9 +145,16 @@ func renderExecutionNode(node planfmt.ExecutionNode, useColor bool) string {
 		return renderOrNode(n, useColor)
 	case *planfmt.SequenceNode:
 		return renderSequenceNode(n, useColor)
+	case *planfmt.TryNode:
+		return renderTryNode(n, useColor)
 	default:
 		return fmt.Sprintf("(unknown node type: %T)", node)
 	}
+}
+
+// renderTryNode renders a try/catch/finally node for inline display
+func renderTryNode(try *planfmt.TryNode, useColor bool) string {
+	return Colorize("try { ... }", ColorYellow, useColor)
 }
 
 // renderCommandNode renders a single command

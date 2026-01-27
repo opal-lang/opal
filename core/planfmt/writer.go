@@ -290,6 +290,7 @@ const (
 	nodeTypeAnd      = 0x03
 	nodeTypeOr       = 0x04
 	nodeTypeSequence = 0x05
+	nodeTypeTry      = 0x06
 )
 
 // writeExecutionNode writes an execution tree node recursively
@@ -369,6 +370,54 @@ func (wr *Writer) writeExecutionNode(buf *bytes.Buffer, node ExecutionNode) erro
 		// Write each node
 		for i := range n.Nodes {
 			if err := wr.writeExecutionNode(buf, n.Nodes[i]); err != nil {
+				return err
+			}
+		}
+
+	case *TryNode:
+		// Write node type
+		if err := buf.WriteByte(nodeTypeTry); err != nil {
+			return err
+		}
+		// Write try block step count
+		if err := validateUint16(len(n.TryBlock), "try block step count"); err != nil {
+			return err
+		}
+		tryCount := uint16(len(n.TryBlock))
+		if err := binary.Write(buf, binary.LittleEndian, tryCount); err != nil {
+			return err
+		}
+		// Write each try block step
+		for i := range n.TryBlock {
+			if err := wr.writeStep(buf, &n.TryBlock[i]); err != nil {
+				return err
+			}
+		}
+		// Write catch block step count
+		if err := validateUint16(len(n.CatchBlock), "catch block step count"); err != nil {
+			return err
+		}
+		catchCount := uint16(len(n.CatchBlock))
+		if err := binary.Write(buf, binary.LittleEndian, catchCount); err != nil {
+			return err
+		}
+		// Write each catch block step
+		for i := range n.CatchBlock {
+			if err := wr.writeStep(buf, &n.CatchBlock[i]); err != nil {
+				return err
+			}
+		}
+		// Write finally block step count
+		if err := validateUint16(len(n.FinallyBlock), "finally block step count"); err != nil {
+			return err
+		}
+		finallyCount := uint16(len(n.FinallyBlock))
+		if err := binary.Write(buf, binary.LittleEndian, finallyCount); err != nil {
+			return err
+		}
+		// Write each finally block step
+		for i := range n.FinallyBlock {
+			if err := wr.writeStep(buf, &n.FinallyBlock[i]); err != nil {
 				return err
 			}
 		}

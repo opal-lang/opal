@@ -173,6 +173,16 @@ type SequenceNode struct {
 
 func (*SequenceNode) isTreeNode() {}
 
+// TryNode represents a try/catch/finally error handling block.
+// All blocks appear in the plan; runtime determines which execute.
+type TryNode struct {
+	TryBlock     []Step // Statements in try block (always executed first)
+	CatchBlock   []Step // Statements in catch block (executed on error)
+	FinallyBlock []Step // Statements in finally block (always executed last)
+}
+
+func (*TryNode) isTreeNode() {}
+
 // RedirectMode is defined in executor package to avoid import cycles.
 // Re-export it here for convenience.
 type RedirectMode = executor.RedirectMode
