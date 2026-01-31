@@ -109,6 +109,100 @@ func (t Token) String() string {
 	return string(t.Text)
 }
 
+// Symbol returns the token's symbol or text representation.
+// For tokens with Text (identifiers, literals), returns the text.
+// For operator tokens with empty Text, returns the symbol (e.g., "-", "+", "&&").
+// This method is allocation-free - it returns a static string for operators.
+func (t Token) Symbol() string {
+	if len(t.Text) > 0 {
+		return string(t.Text)
+	}
+
+	// Return static symbols for operators (no allocation)
+	switch t.Type {
+	case MINUS:
+		return "-"
+	case PLUS:
+		return "+"
+	case MULTIPLY:
+		return "*"
+	case DIVIDE:
+		return "/"
+	case MODULO:
+		return "%"
+	case EQ_EQ:
+		return "=="
+	case NOT_EQ:
+		return "!="
+	case LT:
+		return "<"
+	case LT_EQ:
+		return "<="
+	case GT:
+		return ">"
+	case GT_EQ:
+		return ">="
+	case AND:
+		return "&"
+	case OR:
+		return "|"
+	case AND_AND:
+		return "&&"
+	case OR_OR:
+		return "||"
+	case NOT:
+		return "!"
+	case INCREMENT:
+		return "++"
+	case DECREMENT:
+		return "--"
+	case PLUS_ASSIGN:
+		return "+="
+	case MINUS_ASSIGN:
+		return "-="
+	case MULTIPLY_ASSIGN:
+		return "*="
+	case DIVIDE_ASSIGN:
+		return "/="
+	case MODULO_ASSIGN:
+		return "%="
+	case PIPE:
+		return "|"
+	case APPEND:
+		return ">>"
+	case EQUALS:
+		return "="
+	case COLON:
+		return ":"
+	case COMMA:
+		return ","
+	case SEMICOLON:
+		return ";"
+	case DOT:
+		return "."
+	case DOTDOTDOT:
+		return "..."
+	case ARROW:
+		return "->"
+	case AT:
+		return "@"
+	case LPAREN:
+		return "("
+	case RPAREN:
+		return ")"
+	case LBRACE:
+		return "{"
+	case RBRACE:
+		return "}"
+	case LSQUARE:
+		return "["
+	case RSQUARE:
+		return "]"
+	default:
+		return ""
+	}
+}
+
 // Position represents a position in the source code
 type Position struct {
 	Line   int // 1-based line number
