@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/opal-lang/opal/core/planfmt"
@@ -161,8 +160,8 @@ echo "Third"`
 		}
 
 		actual := getCommandArg(step.Tree, "command")
-		if !strings.Contains(actual, expectedCommands[i]) {
-			t.Errorf("Step %d: Expected command containing %q, got %q", i, expectedCommands[i], actual)
+		if actual != expectedCommands[i] {
+			t.Errorf("Step %d: Expected command %q, got %q", i, expectedCommands[i], actual)
 		}
 	}
 }
@@ -227,8 +226,9 @@ fun deploy = kubectl apply -f k8s/`
 
 	// Verify it's the right command
 	cmd := getCommandArg(plan.Steps[0].Tree, "command")
-	if !strings.Contains(cmd, "Hello") {
-		t.Errorf("Expected command containing 'Hello', got %q", cmd)
+	expectedCmd := `echo "Hello"`
+	if cmd != expectedCmd {
+		t.Errorf("Expected command %q, got %q", expectedCmd, cmd)
 	}
 }
 

@@ -3,6 +3,7 @@ package planner_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/planner"
@@ -127,15 +128,17 @@ func BenchmarkPlannerNewVsBaseline(b *testing.B) {
 
 		b.ResetTimer()
 		b.ReportAllocs()
+		start := time.Now()
 		for i := 0; i < b.N; i++ {
 			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
 			if err != nil {
 				b.Fatalf("Plan failed: %v", err)
 			}
 		}
+		elapsed := time.Since(start)
 
 		// After run, check against baseline
-		result := testing.BenchmarkResult{N: b.N, T: b.Elapsed()}
+		result := testing.BenchmarkResult{N: b.N, T: elapsed}
 		nsPerOp := float64(result.T.Nanoseconds()) / float64(b.N)
 		if nsPerOp > 400 { // Allow 10% margin over 361ns
 			b.Logf("WARNING: Simple case slower than baseline: %.0f ns/op vs target 361 ns/op", nsPerOp)
@@ -148,14 +151,16 @@ func BenchmarkPlannerNewVsBaseline(b *testing.B) {
 
 		b.ResetTimer()
 		b.ReportAllocs()
+		start := time.Now()
 		for i := 0; i < b.N; i++ {
 			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
 			if err != nil {
 				b.Fatalf("Plan failed: %v", err)
 			}
 		}
+		elapsed := time.Since(start)
 
-		result := testing.BenchmarkResult{N: b.N, T: b.Elapsed()}
+		result := testing.BenchmarkResult{N: b.N, T: elapsed}
 		nsPerOp := float64(result.T.Nanoseconds()) / float64(b.N)
 		if nsPerOp > 5200 { // Allow 10% margin over 4.7µs
 			b.Logf("WARNING: Complex case slower than baseline: %.0f ns/op vs target 4700 ns/op", nsPerOp)

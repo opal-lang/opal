@@ -142,6 +142,10 @@ func (t Token) Symbol() string {
 		return ">"
 	case GT_EQ:
 		return ">="
+	case AND:
+		return "&"
+	case OR:
+		return "|"
 	case AND_AND:
 		return "&&"
 	case OR_OR:
