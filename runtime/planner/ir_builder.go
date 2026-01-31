@@ -570,10 +570,11 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 {
+			symbol := tok.Symbol()
+			if symbol != "" {
 				parts = append(parts, &ExprIR{
 					Kind:  ExprLiteral,
-					Value: string(tok.Text),
+					Value: symbol,
 				})
 			}
 			b.pos++
@@ -845,10 +846,11 @@ func (b *irBuilder) buildShellArg() ([]*ExprIR, error) {
 
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 {
+			symbol := tok.Symbol()
+			if symbol != "" {
 				parts = append(parts, &ExprIR{
 					Kind:  ExprLiteral,
-					Value: string(tok.Text),
+					Value: symbol,
 				})
 			}
 			b.pos++
@@ -1889,6 +1891,6 @@ func tokenToValue(tok lexer.Token) any {
 	case lexer.BOOLEAN:
 		return string(tok.Text) == "true"
 	default:
-		return string(tok.Text)
+		return tok.Symbol()
 	}
 }
