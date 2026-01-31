@@ -208,10 +208,11 @@ func (r *Resolver) getValue(name string) (any, bool) {
 func (r *Resolver) resolve() (*ResolveResult, error) {
 	// Select statements based on mode (script vs command)
 	stmts := r.selectStatements()
-	if stmts == nil {
+	if stmts == nil && len(r.errors) > 0 {
 		// Error already recorded
 		return nil, r.buildError()
 	}
+	// stmts may be empty (nil or len==0) which is valid - produces empty plan
 
 	if r.activeFunction != nil {
 		if err := r.resolvePrelude(r.activeFunction); err != nil {

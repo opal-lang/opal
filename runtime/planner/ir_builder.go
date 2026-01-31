@@ -444,6 +444,23 @@ func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 			}
 		}
 
+		if evt.Kind == parser.EventToken {
+			// Check for operator tokens between commands within a step
+			tok := b.tokens[evt.Data]
+			switch tok.Type {
+			case lexer.AND_AND, lexer.OR_OR, lexer.PIPE, lexer.SEMICOLON:
+				// Apply operator to the last command statement
+				if len(stmts) > 0 {
+					lastStmt := stmts[len(stmts)-1]
+					if lastStmt.Kind == StmtCommand && lastStmt.Command != nil {
+						lastStmt.Command.Operator = tok.Symbol()
+					}
+				}
+			}
+			b.pos++
+			continue
+		}
+
 		b.pos++
 	}
 
@@ -570,10 +587,11 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 {
+			symbol := tok.Symbol()
+			if symbol != "" {
 				parts = append(parts, &ExprIR{
 					Kind:  ExprLiteral,
-					Value: string(tok.Text),
+					Value: symbol,
 				})
 			}
 			b.pos++
@@ -845,10 +863,11 @@ func (b *irBuilder) buildShellArg() ([]*ExprIR, error) {
 
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
-			if len(tok.Text) > 0 {
+			symbol := tok.Symbol()
+			if symbol != "" {
 				parts = append(parts, &ExprIR{
 					Kind:  ExprLiteral,
-					Value: string(tok.Text),
+					Value: symbol,
 				})
 			}
 			b.pos++
@@ -1889,6 +1908,6 @@ func tokenToValue(tok lexer.Token) any {
 	case lexer.BOOLEAN:
 		return string(tok.Text) == "true"
 	default:
-		return string(tok.Text)
+		return tok.Symbol()
 	}
 }

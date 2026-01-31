@@ -1992,8 +1992,7 @@ func (p *planner) planCommand() (Command, error) {
 		}
 
 		// Get token text - handle operators with empty Text
-		tokenText := getTokenText(token)
-		command += tokenText
+		command += token.Symbol()
 	}
 
 	// POSTCONDITION: command must not be empty
@@ -2087,8 +2086,7 @@ func (p *planner) planCommand() (Command, error) {
 						targetCmd += " "
 					}
 
-					tokenText := getTokenText(token)
-					targetCmd += tokenText
+					targetCmd += token.Symbol()
 				}
 
 				// Create redirect target command
@@ -2197,95 +2195,6 @@ func (p *planner) planCommand() (Command, error) {
 // isAlphaNumeric checks if a byte is alphanumeric
 func isAlphaNumeric(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
-}
-
-// getTokenText returns the string representation of a token.
-// For tokens with Text (identifiers, strings, numbers), returns the text.
-// For operator/punctuation tokens with empty Text, reconstructs from token type.
-func getTokenText(token lexer.Token) string {
-	if len(token.Text) > 0 {
-		return string(token.Text)
-	}
-
-	// Handle punctuation/operator tokens that have empty Text
-	switch token.Type {
-	case lexer.DECREMENT:
-		return "--"
-	case lexer.INCREMENT:
-		return "++"
-	case lexer.PLUS:
-		return "+"
-	case lexer.MINUS:
-		return "-"
-	case lexer.MULTIPLY:
-		return "*"
-	case lexer.DIVIDE:
-		return "/"
-	case lexer.MODULO:
-		return "%"
-	case lexer.EQUALS:
-		return "="
-	case lexer.EQ_EQ:
-		return "=="
-	case lexer.NOT_EQ:
-		return "!="
-	case lexer.LT:
-		return "<"
-	case lexer.LT_EQ:
-		return "<="
-	case lexer.GT:
-		return ">"
-	case lexer.GT_EQ:
-		return ">="
-	case lexer.AND_AND:
-		return "&&"
-	case lexer.OR_OR:
-		return "||"
-	case lexer.PIPE:
-		return "|"
-	case lexer.NOT:
-		return "!"
-	case lexer.COLON:
-		return ":"
-	case lexer.COMMA:
-		return ","
-	case lexer.SEMICOLON:
-		return ";"
-	case lexer.LPAREN:
-		return "("
-	case lexer.RPAREN:
-		return ")"
-	case lexer.LBRACE:
-		return "{"
-	case lexer.RBRACE:
-		return "}"
-	case lexer.LSQUARE:
-		return "["
-	case lexer.RSQUARE:
-		return "]"
-	case lexer.AT:
-		return "@"
-	case lexer.DOT:
-		return "."
-	case lexer.DOTDOTDOT:
-		return "..."
-	case lexer.ARROW:
-		return "->"
-	case lexer.APPEND:
-		return ">>"
-	case lexer.PLUS_ASSIGN:
-		return "+="
-	case lexer.MINUS_ASSIGN:
-		return "-="
-	case lexer.MULTIPLY_ASSIGN:
-		return "*="
-	case lexer.DIVIDE_ASSIGN:
-		return "/="
-	case lexer.MODULO_ASSIGN:
-		return "%="
-	default:
-		return ""
-	}
 }
 
 // parseVarValue parses a variable value expression (literal, object, or array)

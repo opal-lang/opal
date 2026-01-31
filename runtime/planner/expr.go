@@ -1,6 +1,9 @@
 package planner
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // ExprKind identifies the type of expression.
 type ExprKind int
@@ -345,6 +348,7 @@ func RenderExpr(expr *ExprIR, displayIDs map[string]string) string {
 
 // RenderCommand renders a command expression to a string with DisplayID placeholders.
 // Concatenates all parts, rendering each according to its type.
+// Trims leading and trailing whitespace from the result.
 func RenderCommand(cmd *CommandExpr, displayIDs map[string]string) string {
 	if cmd == nil || len(cmd.Parts) == 0 {
 		return ""
@@ -354,7 +358,7 @@ func RenderCommand(cmd *CommandExpr, displayIDs map[string]string) string {
 	for _, part := range cmd.Parts {
 		result += RenderExpr(part, displayIDs)
 	}
-	return result
+	return strings.TrimSpace(result)
 }
 
 // literalToString converts a literal value to its string representation.
