@@ -444,6 +444,23 @@ func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 			}
 		}
 
+		if evt.Kind == parser.EventToken {
+			// Check for operator tokens between commands within a step
+			tok := b.tokens[evt.Data]
+			switch tok.Type {
+			case lexer.AND_AND, lexer.OR_OR, lexer.PIPE, lexer.SEMICOLON:
+				// Apply operator to the last command statement
+				if len(stmts) > 0 {
+					lastStmt := stmts[len(stmts)-1]
+					if lastStmt.Kind == StmtCommand && lastStmt.Command != nil {
+						lastStmt.Command.Operator = tok.Symbol()
+					}
+				}
+			}
+			b.pos++
+			continue
+		}
+
 		b.pos++
 	}
 

@@ -198,7 +198,8 @@ fun world = echo "World"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	// Plan in script mode - should plan all functions
+	// Plan in script mode with only functions - should produce empty plan
+	// (functions are only executed when targeted in command mode)
 	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Target: "",
 	})
@@ -206,9 +207,9 @@ fun world = echo "World"`
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// In script mode, we should get steps for the content
-	if len(plan.Steps) == 0 {
-		t.Error("Expected steps in script mode")
+	// In script mode with only functions, plan should be empty (valid but no steps)
+	if len(plan.Steps) != 0 {
+		t.Errorf("Expected 0 steps in script mode with only functions, got %d", len(plan.Steps))
 	}
 }
 
@@ -322,7 +323,7 @@ func TestParity_ShellCommandWithOperators(t *testing.T) {
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// Should have 1 step (operators chain commands into single step)
+	// Operators chain commands into a single step with AndNode
 	if len(plan.Steps) != 1 {
 		t.Fatalf("Expected 1 step for chained commands, got %d", len(plan.Steps))
 	}
@@ -332,14 +333,19 @@ func TestParity_ShellCommandWithOperators(t *testing.T) {
 	// Check if it's an AndNode (representing &&)
 	andNode, ok := step.Tree.(*planfmt.AndNode)
 	if !ok {
-		// Could be a CommandNode if operators not fully implemented
-		t.Logf("Expected AndNode for && chain, got %T - operators may not be fully implemented", step.Tree)
-		return
+		t.Fatalf("Expected AndNode for && chain, got %T", step.Tree)
 	}
 
 	// Verify both sides are CommandNodes
 	if andNode.Left == nil || andNode.Right == nil {
 		t.Error("AndNode should have both left and right children")
+	}
+
+	// Verify left and right are @shell commands
+	_, leftOk := andNode.Left.(*planfmt.CommandNode)
+	_, rightOk := andNode.Right.(*planfmt.CommandNode)
+	if !leftOk || !rightOk {
+		t.Errorf("AndNode children should be CommandNodes: left=%T, right=%T", andNode.Left, andNode.Right)
 	}
 }
 
