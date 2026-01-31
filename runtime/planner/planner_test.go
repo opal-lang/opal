@@ -41,6 +41,7 @@ func getDecorator(tree planfmt.ExecutionNode) string {
 	return cmd.Decorator
 }
 
+// MIGRATED: Ported to TestParity_SimpleShellCommand in planner_new_parity_test.go
 // TestSimpleShellCommand tests converting a simple shell command to @shell decorator
 func TestSimpleShellCommand(t *testing.T) {
 	source := []byte(`echo "Hello, World!"`)
