@@ -12,9 +12,15 @@ AI_CONTEXT.local.md
 AI_CONTEXT.md
 .agent/
 
-# Work session tracking files (user-specific)
+# Work session tracking files (user-specific, not committed)
+# Active work files: WORK.<description>.md (ignored - user-specific)
+# Archive format: WORK.YYYY-MM-DD.<description>.archive.md (ignored - user-specific)
 WORK.md
+WORK.[a-zA-Z]*.md
 work.md
+work.[a-zA-Z]*.md
+WORK.*.archive.md
+work.*.archive.md
 
 # Cursor AI Editor
 .cursor/
