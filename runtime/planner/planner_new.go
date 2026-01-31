@@ -8,7 +8,6 @@ import (
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/sdk/secret"
 	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/vault"
@@ -56,16 +55,6 @@ func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, confi
 			Event:     "enter_plan",
 			Context:   fmt.Sprintf("target=%s", config.Target),
 		})
-	}
-
-	// Initialize ID factory for deterministic placeholder generation
-	idFactory := config.IDFactory
-	if idFactory == nil {
-		// Default: use plan mode with random 32-byte key
-		key := make([]byte, 32)
-		_, err := rand.Read(key)
-		invariant.ExpectNoError(err, "failed to generate IDFactory key")
-		idFactory = secret.NewIDFactory(secret.ModePlan, key)
 	}
 
 	// Use provided Vault or create new one with random planKey

@@ -8,23 +8,6 @@ import (
 	"github.com/opal-lang/opal/runtime/parser"
 )
 
-// getPlanArg extracts a command argument from a CommandNode
-func getPlanArg(tree planfmt.ExecutionNode, key string) string {
-	if tree == nil {
-		return ""
-	}
-	cmd, ok := tree.(*planfmt.CommandNode)
-	if !ok {
-		return ""
-	}
-	for _, arg := range cmd.Args {
-		if arg.Key == key {
-			return arg.Val.Str
-		}
-	}
-	return ""
-}
-
 // getPlanDecorator extracts the decorator name from a CommandNode
 func getPlanDecorator(tree planfmt.ExecutionNode) string {
 	if tree == nil {
@@ -38,7 +21,7 @@ func getPlanDecorator(tree planfmt.ExecutionNode) string {
 }
 
 // parseAndPlan is a helper that parses source and runs the new planner
-func parseAndPlan(t *testing.T, source string, target string) (*planfmt.Plan, error) {
+func parseAndPlan(t *testing.T, source, target string) (*planfmt.Plan, error) {
 	t.Helper()
 
 	tree := parser.Parse([]byte(source))
