@@ -504,25 +504,6 @@ func cloneCommandChain(chain []*CommandStmtIR) []*CommandStmtIR {
 	return cloned
 }
 
-// emitCommand emits a single command statement as a Step.
-func (e *Emitter) emitCommand(cmd *CommandStmtIR) (*planfmt.Step, error) {
-	stepID := e.nextStepID
-	e.pushStep(stepID)
-	cmdNode, err := e.buildCommandNode(cmd)
-	e.popStep()
-	if err != nil {
-		return nil, err
-	}
-
-	step := &planfmt.Step{
-		ID:   stepID,
-		Tree: cmdNode,
-	}
-	e.nextStepID++
-
-	return step, nil
-}
-
 // buildDisplayIDMap builds a map of variable/decorator names to DisplayIDs.
 // Used by RenderCommand to substitute placeholders.
 func (e *Emitter) buildDisplayIDMap(cmd *CommandStmtIR) map[string]string {

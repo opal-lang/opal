@@ -240,11 +240,6 @@ func renderTryBlock(w io.Writer, try *planfmt.TryNode, indent string, isLast, us
 	}
 }
 
-// renderNestedBlock renders nested steps with proper indentation
-func renderNestedBlock(w io.Writer, steps []planfmt.Step, indent string, useColor bool) {
-	renderStepList(w, steps, indent, useColor)
-}
-
 // renderExecutionNode renders an execution node to a string
 func renderExecutionNode(node planfmt.ExecutionNode, useColor bool) string {
 	switch n := node.(type) {

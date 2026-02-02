@@ -518,7 +518,7 @@ func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *CommandNode) error {
 	return nil
 }
 
-func writeString(buf *bytes.Buffer, value string, fieldName string) error {
+func writeString(buf *bytes.Buffer, value, fieldName string) error {
 	if err := validateUint16(len(value), fieldName); err != nil {
 		return err
 	}
