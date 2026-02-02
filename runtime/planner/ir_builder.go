@@ -968,24 +968,6 @@ func (b *irBuilder) buildExprFromNode(node parser.NodeKind, allowBinary bool) (*
 	return nil, false
 }
 
-func (b *irBuilder) skipNode() {
-	depth := 0
-	for b.pos < len(b.events) {
-		evt := b.events[b.pos]
-		switch evt.Kind {
-		case parser.EventOpen:
-			depth++
-		case parser.EventClose:
-			depth--
-			if depth == 0 {
-				b.pos++
-				return
-			}
-		}
-		b.pos++
-	}
-}
-
 func (b *irBuilder) buildArrayLiteralExpr() *ExprIR {
 	b.pos++ // Move past OPEN NodeArrayLiteral
 
