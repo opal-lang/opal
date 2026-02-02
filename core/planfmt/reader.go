@@ -435,9 +435,72 @@ func (rd *Reader) readExecutionNode(r io.Reader, depth, maxDepth int) (Execution
 			FinallyBlock: finallyBlock,
 		}, nil
 
+	case 0x07: // RedirectNode
+		source, err := rd.readExecutionNode(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read redirect source: %w", err)
+		}
+		target, err := rd.readCommand(r, depth+1, maxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("read redirect target: %w", err)
+		}
+		var modeByte byte
+		if err := binary.Read(r, binary.LittleEndian, &modeByte); err != nil {
+			return nil, fmt.Errorf("read redirect mode: %w", err)
+		}
+		return &RedirectNode{
+			Source: source,
+			Target: *target,
+			Mode:   RedirectMode(modeByte),
+		}, nil
+
+	case 0x08: // LogicNode
+		kind, err := readString(r, "logic kind")
+		if err != nil {
+			return nil, err
+		}
+		condition, err := readString(r, "logic condition")
+		if err != nil {
+			return nil, err
+		}
+		result, err := readString(r, "logic result")
+		if err != nil {
+			return nil, err
+		}
+		var blockCount uint16
+		if err := binary.Read(r, binary.LittleEndian, &blockCount); err != nil {
+			return nil, fmt.Errorf("read logic block count: %w", err)
+		}
+		block := make([]Step, blockCount)
+		for i := 0; i < int(blockCount); i++ {
+			step, err := rd.readStep(r, depth+1, maxDepth)
+			if err != nil {
+				return nil, fmt.Errorf("read logic block step %d: %w", i, err)
+			}
+			block[i] = *step
+		}
+		return &LogicNode{
+			Kind:      kind,
+			Condition: condition,
+			Result:    result,
+			Block:     block,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown node type: 0x%02x", nodeType)
 	}
+}
+
+func readString(r io.Reader, fieldName string) (string, error) {
+	var valueLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &valueLen); err != nil {
+		return "", fmt.Errorf("read %s length: %w", fieldName, err)
+	}
+	valueBytes := make([]byte, valueLen)
+	if _, err := io.ReadFull(r, valueBytes); err != nil {
+		return "", fmt.Errorf("read %s: %w", fieldName, err)
+	}
+	return string(valueBytes), nil
 }
 
 // readCommand reads a single command

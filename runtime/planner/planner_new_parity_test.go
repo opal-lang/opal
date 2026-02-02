@@ -381,30 +381,189 @@ func TestParity_PlanSalt(t *testing.T) {
 // TestParity_RedirectOperators tests > and >> operators
 // BLOCKED: Redirect operators not implemented in IR builder
 func TestParity_RedirectOperators(t *testing.T) {
-	t.Skip("TODO: blocked by redirect operators not implemented in IR builder")
-
-	source := `echo "output" > file.txt`
-
-	plan, err := parseAndPlan(t, source, "")
-	if err != nil {
-		t.Fatalf("Plan failed: %v", err)
+	tests := []struct {
+		name     string
+		input    string
+		wantMode planfmt.RedirectMode
+	}{
+		{
+			name:     "simple redirect overwrite",
+			input:    `echo "hello" > output.txt`,
+			wantMode: planfmt.RedirectOverwrite,
+		},
+		{
+			name:     "simple redirect append",
+			input:    `echo "world" >> output.txt`,
+			wantMode: planfmt.RedirectAppend,
+		},
+		{
+			name:     "redirect with variable",
+			input:    `echo "data" > @var.OUTPUT_FILE`,
+			wantMode: planfmt.RedirectOverwrite,
+		},
 	}
 
-	// Should have redirect information
-	t.Logf("Plan steps: %+v", plan.Steps)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := parseAndPlan(t, tt.input, "")
+			if err != nil {
+				t.Fatalf("Plan failed: %v", err)
+			}
+
+			if len(plan.Steps) != 1 {
+				t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+			}
+
+			step := plan.Steps[0]
+			if step.Tree == nil {
+				t.Fatal("Expected tree, got nil")
+			}
+
+			redirectNode, ok := step.Tree.(*planfmt.RedirectNode)
+			if !ok {
+				t.Fatalf("Expected RedirectNode, got %T", step.Tree)
+			}
+
+			if redirectNode.Mode != tt.wantMode {
+				t.Errorf("Expected mode %v, got %v", tt.wantMode, redirectNode.Mode)
+			}
+
+			sourceCmd, ok := redirectNode.Source.(*planfmt.CommandNode)
+			if !ok {
+				t.Fatalf("Expected source to be CommandNode, got %T", redirectNode.Source)
+			}
+			if sourceCmd.Decorator != "@shell" {
+				t.Errorf("Expected source decorator @shell, got %q", sourceCmd.Decorator)
+			}
+
+			if redirectNode.Target.Decorator != "@shell" {
+				t.Errorf("Expected target decorator @shell, got %q", redirectNode.Target.Decorator)
+			}
+		})
+	}
 }
 
 // TestParity_RedirectWithChaining tests redirects with operators
 // BLOCKED: Redirect operators not implemented in IR builder
 func TestParity_RedirectWithChaining(t *testing.T) {
-	t.Skip("TODO: blocked by redirect operators not implemented in IR builder")
-
-	source := `echo "first" > file.txt && echo "second"`
-
-	plan, err := parseAndPlan(t, source, "")
-	if err != nil {
-		t.Fatalf("Plan failed: %v", err)
+	tests := []struct {
+		name         string
+		input        string
+		wantMode     planfmt.RedirectMode
+		wantOperator string
+	}{
+		{
+			name:         "redirect then AND",
+			input:        `echo "a" > out.txt && echo "b"`,
+			wantMode:     planfmt.RedirectOverwrite,
+			wantOperator: "&&",
+		},
+		{
+			name:         "redirect then OR",
+			input:        `echo "a" > out.txt || echo "b"`,
+			wantMode:     planfmt.RedirectOverwrite,
+			wantOperator: "||",
+		},
+		{
+			name:         "append then AND",
+			input:        `echo "a" >> out.txt && echo "b"`,
+			wantMode:     planfmt.RedirectAppend,
+			wantOperator: "&&",
+		},
+		{
+			name:         "redirect then PIPE",
+			input:        `echo "a" > out.txt | cat`,
+			wantMode:     planfmt.RedirectOverwrite,
+			wantOperator: "|",
+		},
+		{
+			name:         "redirect then SEMICOLON",
+			input:        `echo "a" > out.txt; echo "b"`,
+			wantMode:     planfmt.RedirectOverwrite,
+			wantOperator: ";",
+		},
 	}
 
-	t.Logf("Plan steps: %+v", plan.Steps)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := parseAndPlan(t, tt.input, "")
+			if err != nil {
+				t.Fatalf("Plan failed: %v", err)
+			}
+
+			if len(plan.Steps) != 1 {
+				t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+			}
+
+			step := plan.Steps[0]
+			if step.Tree == nil {
+				t.Fatal("Expected tree, got nil")
+			}
+
+			var leftNode, rightNode planfmt.ExecutionNode
+			switch tt.wantOperator {
+			case "&&":
+				andNode, ok := step.Tree.(*planfmt.AndNode)
+				if !ok {
+					t.Fatalf("Expected AndNode for &&, got %T", step.Tree)
+				}
+				leftNode = andNode.Left
+				rightNode = andNode.Right
+			case "||":
+				orNode, ok := step.Tree.(*planfmt.OrNode)
+				if !ok {
+					t.Fatalf("Expected OrNode for ||, got %T", step.Tree)
+				}
+				leftNode = orNode.Left
+				rightNode = orNode.Right
+			case "|":
+				pipeNode, ok := step.Tree.(*planfmt.PipelineNode)
+				if !ok {
+					t.Fatalf("Expected PipelineNode for |, got %T", step.Tree)
+				}
+				if len(pipeNode.Commands) != 2 {
+					t.Fatalf("Expected 2 pipeline commands, got %d", len(pipeNode.Commands))
+				}
+				redirectNode, ok := pipeNode.Commands[0].(*planfmt.RedirectNode)
+				if !ok {
+					t.Fatalf("Expected first pipeline command to be RedirectNode, got %T", pipeNode.Commands[0])
+				}
+				leftNode = redirectNode
+				cmdNode, ok := pipeNode.Commands[1].(*planfmt.CommandNode)
+				if !ok {
+					t.Fatalf("Expected second pipeline command to be CommandNode, got %T", pipeNode.Commands[1])
+				}
+				rightNode = cmdNode
+			case ";":
+				seqNode, ok := step.Tree.(*planfmt.SequenceNode)
+				if !ok {
+					t.Fatalf("Expected SequenceNode for ;, got %T", step.Tree)
+				}
+				if len(seqNode.Nodes) != 2 {
+					t.Fatalf("Expected 2 sequence nodes, got %d", len(seqNode.Nodes))
+				}
+				leftNode = seqNode.Nodes[0]
+				rightNode = seqNode.Nodes[1]
+			default:
+				t.Fatalf("Unknown operator: %q", tt.wantOperator)
+			}
+
+			redirectNode, ok := leftNode.(*planfmt.RedirectNode)
+			if !ok {
+				t.Fatalf("Expected left side to be RedirectNode, got %T", leftNode)
+			}
+
+			if redirectNode.Mode != tt.wantMode {
+				t.Errorf("Expected redirect mode %v, got %v", tt.wantMode, redirectNode.Mode)
+			}
+
+			rightCmd, ok := rightNode.(*planfmt.CommandNode)
+			if !ok {
+				t.Fatalf("Expected right side to be CommandNode, got %T", rightNode)
+			}
+			if rightCmd.Decorator != "@shell" {
+				t.Errorf("Expected right decorator @shell, got %q", rightCmd.Decorator)
+			}
+		})
+	}
 }

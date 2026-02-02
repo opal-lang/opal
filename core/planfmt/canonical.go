@@ -43,7 +43,7 @@ type CanonicalSecretUse struct {
 
 // CanonicalNode is a union type for execution tree nodes in canonical form
 type CanonicalNode struct {
-	Type string // "command", "pipeline", "and", "or", "sequence", "redirect"
+	Type string // "command", "pipeline", "and", "or", "sequence", "redirect", "logic"
 
 	// CommandNode fields
 	Decorator string
@@ -64,6 +64,11 @@ type CanonicalNode struct {
 	Source *CanonicalNode
 	Target *CanonicalNode
 	Mode   int
+
+	// LogicNode fields
+	LogicKind string
+	Condition string
+	Result    string
 }
 
 // CanonicalArg represents an argument in canonical form
@@ -152,6 +157,8 @@ func toCanonicalNode(node ExecutionNode) (CanonicalNode, error) {
 		return canonicalizeSequenceNode(n)
 	case *RedirectNode:
 		return canonicalizeRedirectNode(n)
+	case *LogicNode:
+		return canonicalizeLogicNode(n)
 	default:
 		return CanonicalNode{}, fmt.Errorf("unknown node type: %T", node)
 	}
@@ -282,6 +289,24 @@ func canonicalizeRedirectNode(n *RedirectNode) (CanonicalNode, error) {
 		Target: &target,
 		Mode:   int(n.Mode),
 	}, nil
+}
+
+func canonicalizeLogicNode(n *LogicNode) (CanonicalNode, error) {
+	cn := CanonicalNode{
+		Type:      "logic",
+		LogicKind: n.Kind,
+		Condition: n.Condition,
+		Result:    n.Result,
+		Block:     make([]CanonicalStep, len(n.Block)),
+	}
+	for i := range n.Block {
+		step, err := canonicalizeStep(&n.Block[i])
+		if err != nil {
+			return CanonicalNode{}, fmt.Errorf("block step %d: %w", i, err)
+		}
+		cn.Block[i] = step
+	}
+	return cn, nil
 }
 
 // MarshalBinary produces deterministic CBOR encoding of the canonical plan.

@@ -431,6 +431,22 @@ func (b *irBuilder) buildStep() ([]*StatementIR, error) {
 				}
 				stmts = append(stmts, stmt)
 				continue
+
+			case parser.NodeRedirect:
+				if len(stmts) == 0 {
+					return nil, fmt.Errorf("redirect at position %d has no preceding command", b.pos)
+				}
+				lastStmt := stmts[len(stmts)-1]
+				if lastStmt.Kind != StmtCommand || lastStmt.Command == nil {
+					return nil, fmt.Errorf("redirect at position %d does not follow a command", b.pos)
+				}
+				mode, target, err := b.buildRedirect()
+				if err != nil {
+					return nil, err
+				}
+				lastStmt.Command.RedirectMode = mode
+				lastStmt.Command.RedirectTarget = target
+				continue
 			}
 		}
 
@@ -592,6 +608,123 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 			},
 		},
 	}, nil
+}
+
+func (b *irBuilder) buildRedirect() (string, *CommandExpr, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeRedirect
+
+	var mode string
+	var target *CommandExpr
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeRedirect {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			switch tok.Type {
+			case lexer.GT:
+				mode = ">"
+			case lexer.APPEND:
+				mode = ">>"
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeRedirectTarget {
+			parsedTarget, err := b.buildRedirectTarget()
+			if err != nil {
+				return "", nil, err
+			}
+			target = parsedTarget
+			continue
+		}
+
+		b.pos++
+	}
+
+	if mode == "" {
+		return "", nil, fmt.Errorf("redirect at position %d missing operator", startPos)
+	}
+	if target == nil {
+		return "", nil, fmt.Errorf("redirect at position %d missing target", startPos)
+	}
+
+	return mode, target, nil
+}
+
+func (b *irBuilder) buildRedirectTarget() (*CommandExpr, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeRedirectTarget
+
+	var parts []*ExprIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeRedirectTarget {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeShellArg:
+				needsSpace := b.shellArgNeedsSpace()
+				if needsSpace {
+					parts = append(parts, &ExprIR{
+						Kind:  ExprLiteral,
+						Value: " ",
+					})
+				}
+				argParts, err := b.buildShellArg()
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, argParts...)
+				continue
+			case parser.NodeDecorator:
+				expr := b.buildDecoratorExpr()
+				parts = append(parts, expr)
+				continue
+			case parser.NodeInterpolatedString:
+				strParts, err := b.buildInterpolatedString()
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, strParts...)
+				continue
+			}
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			symbol := tok.Symbol()
+			if symbol != "" {
+				parts = append(parts, &ExprIR{
+					Kind:  ExprLiteral,
+					Value: symbol,
+				})
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("redirect target at position %d has no parts", startPos)
+	}
+
+	return &CommandExpr{Parts: parts}, nil
 }
 
 // buildDecoratorStmt processes a decorator statement with optional args and block.

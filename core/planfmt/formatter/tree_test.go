@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/planfmt"
 )
 
@@ -18,8 +19,8 @@ func TestFormatTree_EmptyPlan(t *testing.T) {
 	FormatTree(&buf, plan, false)
 
 	expected := "test:\n(no steps)\n"
-	if buf.String() != expected {
-		t.Errorf("Expected:\n%s\nGot:\n%s", expected, buf.String())
+	if diff := cmp.Diff(expected, buf.String()); diff != "" {
+		t.Errorf("Output mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -170,6 +171,104 @@ func TestFormatTree_WithPipeline(t *testing.T) {
 	}
 	if !strings.Contains(output, "grep hello") {
 		t.Error("Expected second command")
+	}
+}
+
+func TestFormatTree_WithRedirect(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "test",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.RedirectNode{
+					Mode: planfmt.RedirectOverwrite,
+					Source: &planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+						},
+					},
+					Target: planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	FormatTree(&buf, plan, false)
+
+	output := buf.String()
+	if !strings.Contains(output, ">") {
+		t.Errorf("Expected redirect operator in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "echo hello") {
+		t.Errorf("Expected source command, got:\n%s", output)
+	}
+	if !strings.Contains(output, "output.txt") {
+		t.Errorf("Expected target command, got:\n%s", output)
+	}
+}
+
+func TestFormatTree_ForLoopGrouped(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "for",
+					Condition: `region in ["us","eu"]`,
+					Result:    "region = us (iteration 1)",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo one"}},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				ID: 3,
+				Tree: &planfmt.LogicNode{
+					Kind:      "for",
+					Condition: `region in ["us","eu"]`,
+					Result:    "region = eu (iteration 2)",
+					Block: []planfmt.Step{
+						{
+							ID: 4,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo two"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	FormatTree(&buf, plan, false)
+
+	output := buf.String()
+	expected := "deploy:\n" +
+		"└─ for region in [\"us\",\"eu\"]: 2 iterations\n" +
+		"   ├─ [1] region = us: @shell echo one\n" +
+		"   └─ [2] region = eu: @shell echo two\n"
+	if diff := cmp.Diff(expected, output); diff != "" {
+		t.Errorf("Output mismatch (-want +got):\n%s", diff)
 	}
 }
 
