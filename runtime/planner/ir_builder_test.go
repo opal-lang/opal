@@ -786,13 +786,20 @@ func TestBuildIR_ForLoopWithArrayLiteral(t *testing.T) {
 		t.Errorf("Collection.Kind = %v, want ExprLiteral", stmt.Blocker.Collection.Kind)
 	}
 
-	// Check the array value
-	arr, ok := stmt.Blocker.Collection.Value.([]any)
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.Blocker.Collection.Value.([]*ExprIR)
 	if !ok {
-		t.Fatalf("Collection.Value = %T, want []any", stmt.Blocker.Collection.Value)
+		t.Fatalf("Collection.Value = %T, want []*ExprIR", stmt.Blocker.Collection.Value)
 	}
-	if len(arr) != 3 {
-		t.Errorf("len(arr) = %d, want 3", len(arr))
+	if len(elements) != 3 {
+		t.Errorf("len(elements) = %d, want 3", len(elements))
+	}
+
+	// Verify elements are proper expressions
+	for i, elem := range elements {
+		if elem.Kind != ExprLiteral {
+			t.Errorf("element %d Kind = %v, want ExprLiteral", i, elem.Kind)
+		}
 	}
 }
 
@@ -819,13 +826,20 @@ func TestBuildIR_VarDeclWithArrayLiteral(t *testing.T) {
 		t.Errorf("VarDecl.Value.Kind = %v, want ExprLiteral", stmt.VarDecl.Value.Kind)
 	}
 
-	// Check the array value
-	arr, ok := stmt.VarDecl.Value.Value.([]any)
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.VarDecl.Value.Value.([]*ExprIR)
 	if !ok {
-		t.Fatalf("VarDecl.Value.Value = %T, want []any", stmt.VarDecl.Value.Value)
+		t.Fatalf("VarDecl.Value.Value = %T, want []*ExprIR", stmt.VarDecl.Value.Value)
 	}
-	if len(arr) != 2 {
-		t.Errorf("len(arr) = %d, want 2", len(arr))
+	if len(elements) != 2 {
+		t.Errorf("len(elements) = %d, want 2", len(elements))
+	}
+
+	// Verify elements are proper expressions
+	for i, elem := range elements {
+		if elem.Kind != ExprLiteral {
+			t.Errorf("element %d Kind = %v, want ExprLiteral", i, elem.Kind)
+		}
 	}
 }
 
@@ -841,21 +855,32 @@ func TestBuildIR_ArrayLiteralWithObjectElements(t *testing.T) {
 		t.Errorf("stmt.Kind = %v, want StmtVarDecl", stmt.Kind)
 	}
 
-	// Check the array value
-	arr, ok := stmt.VarDecl.Value.Value.([]any)
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.VarDecl.Value.Value.([]*ExprIR)
 	if !ok {
-		t.Fatalf("VarDecl.Value.Value = %T, want []any", stmt.VarDecl.Value.Value)
+		t.Fatalf("VarDecl.Value.Value = %T, want []*ExprIR", stmt.VarDecl.Value.Value)
 	}
-	if len(arr) != 2 {
-		t.Errorf("len(arr) = %d, want 2", len(arr))
+	if len(elements) != 2 {
+		t.Errorf("len(elements) = %d, want 2", len(elements))
 	}
 
-	// Check first object
-	obj1, ok := arr[0].(map[string]any)
-	if !ok {
-		t.Fatalf("arr[0] = %T, want map[string]any", arr[0])
+	// Check first element is an *ExprIR (object literal expression)
+	if elements[0].Kind != ExprLiteral {
+		t.Errorf("elements[0].Kind = %v, want ExprLiteral", elements[0].Kind)
 	}
-	if obj1["name"] != "a" {
-		t.Errorf("obj1[name] = %v, want a", obj1["name"])
+
+	// Check the object value inside the expression - fields are map[string]*ExprIR
+	objFields, ok := elements[0].Value.(map[string]*ExprIR)
+	if !ok {
+		t.Fatalf("elements[0].Value = %T, want map[string]*ExprIR", elements[0].Value)
+	}
+
+	// Check the "name" field
+	nameField, ok := objFields["name"]
+	if !ok {
+		t.Fatal("object missing 'name' field")
+	}
+	if nameField.Kind != ExprLiteral || nameField.Value != "a" {
+		t.Errorf("name field = %v, want literal 'a'", nameField.Value)
 	}
 }

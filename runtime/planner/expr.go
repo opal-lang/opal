@@ -79,6 +79,15 @@ type ValueLookup func(name string) (any, bool)
 func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
 	switch expr.Kind {
 	case ExprLiteral:
+		// Handle array literals: []*ExprIR → []any (evaluated)
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			return evaluateExprArray(arr, getValue)
+		}
+		// Handle object literals: map[string]*ExprIR → map[string]any (evaluated)
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			return evaluateExprObject(obj, getValue)
+		}
+		// Primitive literal (string, int, bool)
 		return expr.Value, nil
 
 	case ExprVarRef:
@@ -287,6 +296,34 @@ func toFloat64(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// evaluateExprArray evaluates an array literal where elements are *ExprIR.
+// This handles arrays like ["a", @var.x, 1+2] by evaluating each element.
+func evaluateExprArray(arr []*ExprIR, getValue ValueLookup) (any, error) {
+	result := make([]any, len(arr))
+	for i, expr := range arr {
+		val, err := EvaluateExpr(expr, getValue)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = val
+	}
+	return result, nil
+}
+
+// evaluateExprObject evaluates an object literal where field values are *ExprIR.
+// This handles objects like {name: @var.x, count: 1+2} by evaluating each field.
+func evaluateExprObject(obj map[string]*ExprIR, getValue ValueLookup) (any, error) {
+	result := make(map[string]any, len(obj))
+	for key, expr := range obj {
+		val, err := EvaluateExpr(expr, getValue)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = val
+	}
+	return result, nil
 }
 
 // decoratorKey builds a lookup key for a decorator reference.

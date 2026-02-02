@@ -953,6 +953,8 @@ func (b *irBuilder) buildExprFromNode(node parser.NodeKind, allowBinary bool) (*
 		return b.buildLiteralExpr(), true
 	case parser.NodeArrayLiteral:
 		return b.buildArrayLiteralExpr(), true
+	case parser.NodeObjectLiteral:
+		return b.buildObjectLiteralExpr(), true
 	case parser.NodeDecorator:
 		return b.buildDecoratorExpr(), true
 	case parser.NodeIdentifier:
@@ -987,7 +989,9 @@ func (b *irBuilder) skipNode() {
 func (b *irBuilder) buildArrayLiteralExpr() *ExprIR {
 	b.pos++ // Move past OPEN NodeArrayLiteral
 
-	values := make([]any, 0)
+	// Store elements as []*ExprIR to preserve expressions (decorators, variables, etc.)
+	// This allows arrays like ["a", @var.x, 1+2] to be fully represented
+	elements := make([]*ExprIR, 0)
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -999,21 +1003,10 @@ func (b *irBuilder) buildArrayLiteralExpr() *ExprIR {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-			switch node {
-			case parser.NodeLiteral:
-				literal := b.buildLiteralExpr()
-				values = append(values, literal.Value)
-				continue
-			case parser.NodeArrayLiteral:
-				nested := b.buildArrayLiteralExpr()
-				values = append(values, nested.Value)
-				continue
-			case parser.NodeObjectLiteral:
-				obj := b.buildObjectLiteralExpr()
-				values = append(values, obj.Value)
-				continue
-			default:
-				b.skipNode()
+			// Use buildExprFromNode to handle all expression types uniformly
+			// This preserves decorators (@var.x), identifiers, binary expressions, etc.
+			if expr, ok := b.buildExprFromNode(node, true); ok {
+				elements = append(elements, expr)
 				continue
 			}
 		}
@@ -1023,14 +1016,16 @@ func (b *irBuilder) buildArrayLiteralExpr() *ExprIR {
 
 	return &ExprIR{
 		Kind:  ExprLiteral,
-		Value: values,
+		Value: elements,
 	}
 }
 
 func (b *irBuilder) buildObjectLiteralExpr() *ExprIR {
 	b.pos++ // Move past OPEN NodeObjectLiteral
 
-	obj := make(map[string]any)
+	// Store field values as map[string]*ExprIR to preserve expressions
+	// This allows objects like {name: @var.x, count: 1+2} to be fully represented
+	fields := make(map[string]*ExprIR)
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -1055,27 +1050,17 @@ func (b *irBuilder) buildObjectLiteralExpr() *ExprIR {
 				b.pos++
 			}
 
-			// Parse value
-			var value any
+			// Parse value as *ExprIR to preserve expressions
+			var value *ExprIR
 			if b.pos < len(b.events) && b.events[b.pos].Kind == parser.EventOpen {
 				node := parser.NodeKind(b.events[b.pos].Data)
-				switch node {
-				case parser.NodeLiteral:
-					literal := b.buildLiteralExpr()
-					value = literal.Value
-				case parser.NodeArrayLiteral:
-					arr := b.buildArrayLiteralExpr()
-					value = arr.Value
-				case parser.NodeObjectLiteral:
-					nested := b.buildObjectLiteralExpr()
-					value = nested.Value
-				default:
-					b.skipNode()
+				if expr, ok := b.buildExprFromNode(node, true); ok {
+					value = expr
 				}
 			}
 
-			if key != "" {
-				obj[key] = value
+			if key != "" && value != nil {
+				fields[key] = value
 			}
 
 			// Skip CLOSE ObjectField
@@ -1090,7 +1075,7 @@ func (b *irBuilder) buildObjectLiteralExpr() *ExprIR {
 
 	return &ExprIR{
 		Kind:  ExprLiteral,
-		Value: obj,
+		Value: fields,
 	}
 }
 
