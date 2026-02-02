@@ -58,6 +58,14 @@ func formatExecutionNode(node planfmt.ExecutionNode) string {
 			parts = append(parts, formatExecutionNode(child))
 		}
 		return strings.Join(parts, " ; ")
+	case *planfmt.RedirectNode:
+		op := ">"
+		if n.Mode == planfmt.RedirectAppend {
+			op = ">>"
+		}
+		return fmt.Sprintf("%s %s %s", formatExecutionNode(n.Source), op, formatCommandNode(&n.Target))
+	case *planfmt.LogicNode:
+		return formatLogicNode(n)
 	case *planfmt.TryNode:
 		return formatTryNode(n)
 	default:
@@ -109,6 +117,23 @@ func formatCommandNode(cmd *planfmt.CommandNode) string {
 	}
 
 	return fmt.Sprintf("%s(%s)", cmd.Decorator, strings.Join(argParts, ", "))
+}
+
+func formatLogicNode(logic *planfmt.LogicNode) string {
+	if logic == nil {
+		return ""
+	}
+
+	if logic.Condition != "" && logic.Result != "" {
+		return fmt.Sprintf("%s %s -> %s", logic.Kind, logic.Condition, logic.Result)
+	}
+	if logic.Condition != "" {
+		return fmt.Sprintf("%s %s", logic.Kind, logic.Condition)
+	}
+	if logic.Result != "" {
+		return fmt.Sprintf("%s %s", logic.Kind, logic.Result)
+	}
+	return logic.Kind
 }
 
 // formatValue formats a value based on its kind

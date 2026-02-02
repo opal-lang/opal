@@ -131,10 +131,6 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 // For a single command, returns a Step with CommandNode.
 // For multiple commands, builds an operator tree (AndNode, OrNode, PipelineNode, SequenceNode).
 func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error) {
-	if len(chain) == 1 {
-		return e.emitCommand(chain[0])
-	}
-
 	stepID := e.nextStepID
 	e.pushStep(stepID)
 
@@ -155,10 +151,10 @@ func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error
 }
 
 // buildOperatorTree builds an ExecutionNode tree from a chain of commands.
-// Handles operator precedence: | > && > || > ;
+// Handles operator precedence: | and redirect > && > || > ;
 func (e *Emitter) buildOperatorTree(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
 	if len(chain) == 1 {
-		return e.buildCommandNode(chain[0])
+		return e.buildCommandNodeOrRedirect(chain[0])
 	}
 
 	// Parse by precedence (lowest to highest)
@@ -177,13 +173,13 @@ func (e *Emitter) buildOperatorTree(chain []*CommandStmtIR) (planfmt.ExecutionNo
 		return node, err
 	}
 
-	// 4. Pipe (|) - highest
-	if node, err := e.parsePipe(chain); node != nil || err != nil {
+	// 4. Pipe and Redirect (highest, left-to-right)
+	if node, err := e.parsePipeAndRedirect(chain); node != nil || err != nil {
 		return node, err
 	}
 
 	// Single command
-	return e.buildCommandNode(chain[0])
+	return e.buildCommandNodeOrRedirect(chain[0])
 }
 
 // buildCommandNode converts a CommandStmtIR to a CommandNode.
@@ -229,6 +225,65 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	}
 
 	return cmdNode, nil
+}
+
+func (e *Emitter) buildCommandNodeOrRedirect(cmd *CommandStmtIR) (planfmt.ExecutionNode, error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("command is nil")
+	}
+	if cmd.RedirectMode == "" || cmd.RedirectTarget == nil {
+		return e.buildCommandNode(cmd)
+	}
+
+	source, err := e.buildCommandNode(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return e.buildRedirectNode(source, cmd)
+}
+
+func (e *Emitter) buildRedirectNode(source planfmt.ExecutionNode, cmd *CommandStmtIR) (planfmt.ExecutionNode, error) {
+	if cmd.RedirectMode == "" || cmd.RedirectTarget == nil {
+		return source, nil
+	}
+
+	target, err := e.buildRedirectTargetNode(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := planfmt.RedirectOverwrite
+	if cmd.RedirectMode == ">>" {
+		mode = planfmt.RedirectAppend
+	}
+
+	return &planfmt.RedirectNode{
+		Source: source,
+		Target: *target,
+		Mode:   mode,
+	}, nil
+}
+
+func (e *Emitter) buildRedirectTargetNode(cmd *CommandStmtIR) (*planfmt.CommandNode, error) {
+	if cmd.RedirectTarget == nil {
+		return nil, fmt.Errorf("redirect target is nil")
+	}
+
+	displayIDs := make(map[string]string)
+	for _, part := range cmd.RedirectTarget.Parts {
+		e.collectDisplayID(part, displayIDs)
+	}
+
+	commandStr := RenderCommand(cmd.RedirectTarget, displayIDs)
+	return &planfmt.CommandNode{
+		Decorator: "@shell",
+		Args: []planfmt.Arg{
+			{
+				Key: "command",
+				Val: planfmt.Value{Kind: planfmt.ValueString, Str: commandStr},
+			},
+		},
+	}, nil
 }
 
 // parseSequence splits on semicolon operators (lowest precedence).
@@ -329,46 +384,124 @@ func (e *Emitter) parseAnd(chain []*CommandStmtIR) (planfmt.ExecutionNode, error
 	return nil, nil
 }
 
-// parsePipe splits on | operators (highest precedence).
-func (e *Emitter) parsePipe(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
-	var pipeCommands []planfmt.ExecutionNode
-
-	for i, cmd := range chain {
-		cmdNode, err := e.buildCommandNode(cmd)
-		if err != nil {
-			return nil, err
+// parsePipeAndRedirect handles pipe (|) and redirect (>, >>) with equal precedence.
+// Scans left-to-right to match bash behavior.
+func (e *Emitter) parsePipeAndRedirect(chain []*CommandStmtIR) (planfmt.ExecutionNode, error) {
+	for i := 0; i < len(chain); i++ {
+		cmd := chain[i]
+		if cmd == nil {
+			continue
 		}
-		pipeCommands = append(pipeCommands, cmdNode)
-		if cmd.Operator != "|" && i < len(chain)-1 {
-			// Non-pipe operator in the middle - shouldn't happen at this point
-			break
+
+		if cmd.RedirectMode != "" && cmd.RedirectTarget != nil {
+			leftCmds := cloneCommandChain(chain[:i+1])
+			savedOperator := ""
+			if leftCmds[i] != nil {
+				leftCmds[i].RedirectMode = ""
+				leftCmds[i].RedirectTarget = nil
+				savedOperator = leftCmds[i].Operator
+				leftCmds[i].Operator = ""
+			}
+
+			source, err := e.buildOperatorTree(leftCmds)
+			if err != nil {
+				return nil, err
+			}
+			redirectNode, err := e.buildRedirectNode(source, cmd)
+			if err != nil {
+				return nil, err
+			}
+
+			if savedOperator == "|" && i+1 < len(chain) {
+				right, err := e.buildOperatorTree(chain[i+1:])
+				if err != nil {
+					return nil, err
+				}
+				switch rightNode := right.(type) {
+				case *planfmt.CommandNode:
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{redirectNode, rightNode}}, nil
+				case *planfmt.RedirectNode:
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{redirectNode, rightNode}}, nil
+				case *planfmt.PipelineNode:
+					nodes := make([]planfmt.ExecutionNode, 1+len(rightNode.Commands))
+					nodes[0] = redirectNode
+					copy(nodes[1:], rightNode.Commands)
+					return &planfmt.PipelineNode{Commands: nodes}, nil
+				default:
+					return redirectNode, nil
+				}
+			}
+
+			return redirectNode, nil
+		}
+
+		if cmd.Operator == "|" {
+			leftCmds := cloneCommandChain(chain[:i+1])
+			if leftCmds[i] != nil {
+				leftCmds[i].Operator = ""
+			}
+			left, err := e.buildOperatorTree(leftCmds)
+			if err != nil {
+				return nil, err
+			}
+
+			if i+1 < len(chain) {
+				right, err := e.buildOperatorTree(chain[i+1:])
+				if err != nil {
+					return nil, err
+				}
+
+				leftCmd, leftIsCmd := left.(*planfmt.CommandNode)
+				rightCmd, rightIsCmd := right.(*planfmt.CommandNode)
+				rightPipe, rightIsPipe := right.(*planfmt.PipelineNode)
+				leftRedirect, leftIsRedirect := left.(*planfmt.RedirectNode)
+				rightRedirect, rightIsRedirect := right.(*planfmt.RedirectNode)
+
+				if leftIsCmd && rightIsCmd {
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftCmd, rightCmd}}, nil
+				}
+				if leftIsCmd && rightIsPipe {
+					nodes := make([]planfmt.ExecutionNode, 1+len(rightPipe.Commands))
+					nodes[0] = leftCmd
+					copy(nodes[1:], rightPipe.Commands)
+					return &planfmt.PipelineNode{Commands: nodes}, nil
+				}
+				if leftIsCmd && rightIsRedirect {
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftCmd, rightRedirect}}, nil
+				}
+				if leftIsRedirect && rightIsCmd {
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftRedirect, rightCmd}}, nil
+				}
+				if leftIsRedirect && rightIsRedirect {
+					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftRedirect, rightRedirect}}, nil
+				}
+				if leftIsRedirect && rightIsPipe {
+					nodes := make([]planfmt.ExecutionNode, 1+len(rightPipe.Commands))
+					nodes[0] = leftRedirect
+					copy(nodes[1:], rightPipe.Commands)
+					return &planfmt.PipelineNode{Commands: nodes}, nil
+				}
+
+				return left, nil
+			}
+
+			return left, nil
 		}
 	}
 
-	if len(pipeCommands) <= 1 {
-		return nil, nil
-	}
-
-	return &planfmt.PipelineNode{Commands: pipeCommands}, nil
+	return nil, nil
 }
 
-// emitCommand emits a single command statement as a Step.
-func (e *Emitter) emitCommand(cmd *CommandStmtIR) (*planfmt.Step, error) {
-	stepID := e.nextStepID
-	e.pushStep(stepID)
-	cmdNode, err := e.buildCommandNode(cmd)
-	e.popStep()
-	if err != nil {
-		return nil, err
+func cloneCommandChain(chain []*CommandStmtIR) []*CommandStmtIR {
+	cloned := make([]*CommandStmtIR, len(chain))
+	for i, cmd := range chain {
+		if cmd == nil {
+			continue
+		}
+		cmdCopy := *cmd
+		cloned[i] = &cmdCopy
 	}
-
-	step := &planfmt.Step{
-		ID:   stepID,
-		Tree: cmdNode,
-	}
-	e.nextStepID++
-
-	return step, nil
+	return cloned
 }
 
 // buildDisplayIDMap builds a map of variable/decorator names to DisplayIDs.

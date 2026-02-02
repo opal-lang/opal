@@ -22,16 +22,18 @@ func ToSDKSteps(planSteps []Step) []sdk.Step {
 
 // ToSDKStepsWithRegistry converts planfmt.Step slice to sdk.Step slice using the given registry.
 func ToSDKStepsWithRegistry(planSteps []Step, registry *types.Registry) []sdk.Step {
-	sdkSteps := make([]sdk.Step, len(planSteps))
-	for i, planStep := range planSteps {
-		sdkSteps[i] = toSDKStepWithRegistry(planStep, registry)
+	sdkSteps := make([]sdk.Step, 0, len(planSteps))
+	for _, planStep := range planSteps {
+		appendSDKSteps(&sdkSteps, planStep, registry)
 	}
 	return sdkSteps
 }
 
 // ToSDKStep converts a single planfmt.Step to sdk.Step.
 func ToSDKStep(planStep Step) sdk.Step {
-	return toSDKStepWithRegistry(planStep, types.Global())
+	steps := ToSDKStepsWithRegistry([]Step{planStep}, types.Global())
+	invariant.Precondition(len(steps) == 1, "expected 1 sdk step, got %d", len(steps))
+	return steps[0]
 }
 
 func toSDKStepWithRegistry(planStep Step, registry *types.Registry) sdk.Step {
@@ -39,6 +41,16 @@ func toSDKStepWithRegistry(planStep Step, registry *types.Registry) sdk.Step {
 		ID:   planStep.ID,
 		Tree: toSDKTreeWithRegistry(planStep.Tree, registry),
 	}
+}
+
+func appendSDKSteps(dst *[]sdk.Step, planStep Step, registry *types.Registry) {
+	if logic, ok := planStep.Tree.(*LogicNode); ok {
+		for _, blockStep := range logic.Block {
+			appendSDKSteps(dst, blockStep, registry)
+		}
+		return
+	}
+	*dst = append(*dst, toSDKStepWithRegistry(planStep, registry))
 }
 
 // toSDKTreeWithRegistry converts planfmt.ExecutionNode to sdk.TreeNode.

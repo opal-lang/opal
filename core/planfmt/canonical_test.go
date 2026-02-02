@@ -273,6 +273,152 @@ func TestCanonicalHashIncludesSecretUses(t *testing.T) {
 	}
 }
 
+func TestCanonicalHashIncludesRedirectMode(t *testing.T) {
+	plan1 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.RedirectNode{
+					Mode: planfmt.RedirectOverwrite,
+					Source: &planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+						},
+					},
+					Target: planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	plan2 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.RedirectNode{
+					Mode: planfmt.RedirectAppend,
+					Source: &planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+						},
+					},
+					Target: planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	canonical1, err := plan1.Canonicalize()
+	if err != nil {
+		t.Fatalf("canonicalization plan1 failed: %v", err)
+	}
+	canonical2, err := plan2.Canonicalize()
+	if err != nil {
+		t.Fatalf("canonicalization plan2 failed: %v", err)
+	}
+
+	hash1, err := canonical1.Hash()
+	if err != nil {
+		t.Fatalf("hash plan1 failed: %v", err)
+	}
+	hash2, err := canonical2.Hash()
+	if err != nil {
+		t.Fatalf("hash plan2 failed: %v", err)
+	}
+
+	if hash1 == hash2 {
+		t.Errorf("Canonical hash identical despite different redirect modes\nPlan1: %x\nPlan2: %x", hash1, hash2)
+	}
+}
+
+func TestCanonicalHashIncludesLogicNode(t *testing.T) {
+	plan1 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "if",
+					Condition: "env == prod",
+					Result:    "true",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo deploy"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	plan2 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "if",
+					Condition: "env == prod",
+					Result:    "false",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo deploy"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	canonical1, err := plan1.Canonicalize()
+	if err != nil {
+		t.Fatalf("canonicalization plan1 failed: %v", err)
+	}
+	canonical2, err := plan2.Canonicalize()
+	if err != nil {
+		t.Fatalf("canonicalization plan2 failed: %v", err)
+	}
+
+	hash1, err := canonical1.Hash()
+	if err != nil {
+		t.Fatalf("hash plan1 failed: %v", err)
+	}
+	hash2, err := canonical2.Hash()
+	if err != nil {
+		t.Fatalf("hash plan2 failed: %v", err)
+	}
+
+	if hash1 == hash2 {
+		t.Errorf("Canonical hash identical despite different logic results\nPlan1: %x\nPlan2: %x", hash1, hash2)
+	}
+}
+
 // Helper function for byte comparison
 func bytesEqual(a, b []byte) bool {
 	return bytes.Equal(a, b)

@@ -291,6 +291,8 @@ const (
 	nodeTypeOr       = 0x04
 	nodeTypeSequence = 0x05
 	nodeTypeTry      = 0x06
+	nodeTypeRedirect = 0x07
+	nodeTypeLogic    = 0x08
 )
 
 // writeExecutionNode writes an execution tree node recursively
@@ -422,6 +424,44 @@ func (wr *Writer) writeExecutionNode(buf *bytes.Buffer, node ExecutionNode) erro
 			}
 		}
 
+	case *RedirectNode:
+		if err := buf.WriteByte(nodeTypeRedirect); err != nil {
+			return err
+		}
+		if err := wr.writeExecutionNode(buf, n.Source); err != nil {
+			return err
+		}
+		if err := wr.writeCommand(buf, &n.Target); err != nil {
+			return err
+		}
+		return buf.WriteByte(byte(n.Mode))
+
+	case *LogicNode:
+		if err := buf.WriteByte(nodeTypeLogic); err != nil {
+			return err
+		}
+		if err := writeString(buf, n.Kind, "logic kind length"); err != nil {
+			return err
+		}
+		if err := writeString(buf, n.Condition, "logic condition length"); err != nil {
+			return err
+		}
+		if err := writeString(buf, n.Result, "logic result length"); err != nil {
+			return err
+		}
+		if err := validateUint16(len(n.Block), "logic block step count"); err != nil {
+			return err
+		}
+		blockCount := uint16(len(n.Block))
+		if err := binary.Write(buf, binary.LittleEndian, blockCount); err != nil {
+			return err
+		}
+		for i := range n.Block {
+			if err := wr.writeStep(buf, &n.Block[i]); err != nil {
+				return err
+			}
+		}
+
 	default:
 		return io.ErrUnexpectedEOF // Unknown node type
 	}
@@ -475,6 +515,20 @@ func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *CommandNode) error {
 		}
 	}
 
+	return nil
+}
+
+func writeString(buf *bytes.Buffer, value, fieldName string) error {
+	if err := validateUint16(len(value), fieldName); err != nil {
+		return err
+	}
+	valueLen := uint16(len(value))
+	if err := binary.Write(buf, binary.LittleEndian, valueLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(value); err != nil {
+		return err
+	}
 	return nil
 }
 
