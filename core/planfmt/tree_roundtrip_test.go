@@ -169,6 +169,59 @@ func TestTreeRoundTrip(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "plan with redirect tree",
+			plan: &planfmt.Plan{
+				Target: "test",
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Tree: &planfmt.RedirectNode{
+							Mode: planfmt.RedirectOverwrite,
+							Source: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+								},
+							},
+							Target: planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "plan with logic node tree",
+			plan: &planfmt.Plan{
+				Target: "test",
+				Steps: []planfmt.Step{
+					{
+						ID: 1,
+						Tree: &planfmt.LogicNode{
+							Kind:      "if",
+							Condition: "env == prod",
+							Result:    "true",
+							Block: []planfmt.Step{
+								{
+									ID: 2,
+									Tree: &planfmt.CommandNode{
+										Decorator: "@shell",
+										Args: []planfmt.Arg{
+											{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo deploy"}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

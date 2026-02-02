@@ -3,6 +3,7 @@ package formatter_test
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/opal-lang/opal/core/planfmt/formatter"
 )
@@ -72,6 +73,40 @@ func TestFormatStep(t *testing.T) {
 			expected: `@shell echo hello | @shell grep hello`,
 		},
 		{
+			name: "redirect overwrite",
+			step: planfmt.Step{
+				ID: 1,
+				Tree: &planfmt.RedirectNode{
+					Mode: planfmt.RedirectOverwrite,
+					Source: &planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo hello"}},
+						},
+					},
+					Target: planfmt.CommandNode{
+						Decorator: "@shell",
+						Args: []planfmt.Arg{
+							{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+						},
+					},
+				},
+			},
+			expected: `@shell echo hello > @shell output.txt`,
+		},
+		{
+			name: "for loop logic",
+			step: planfmt.Step{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "for",
+					Condition: `region in ["us","eu"]`,
+					Result:    "region = us (iteration 1)",
+				},
+			},
+			expected: `for region in ["us","eu"] -> region = us (iteration 1)`,
+		},
+		{
 			name: "retry decorator",
 			step: planfmt.Step{
 				ID: 1,
@@ -89,8 +124,8 @@ func TestFormatStep(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatter.FormatStep(&tt.step)
-			if result != tt.expected {
-				t.Errorf("FormatStep() = %q, want %q", result, tt.expected)
+			if diff := cmp.Diff(tt.expected, result); diff != "" {
+				t.Errorf("FormatStep() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -124,8 +159,7 @@ func TestFormat(t *testing.T) {
 
 	result := formatter.Format(plan)
 	expected := "target: deploy\nstep 1: @shell npm build\nstep 2: @shell docker build\n"
-
-	if result != expected {
-		t.Errorf("Format() mismatch\nGot:\n%s\nWant:\n%s", result, expected)
+	if diff := cmp.Diff(expected, result); diff != "" {
+		t.Errorf("Format() mismatch (-want +got):\n%s", diff)
 	}
 }

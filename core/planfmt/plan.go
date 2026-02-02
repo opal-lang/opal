@@ -244,6 +244,38 @@ func validateNode(node ExecutionNode, stepID uint64, seen map[uint64]bool) error
 				return err
 			}
 		}
+
+	case *RedirectNode:
+		if err := validateNode(n.Source, stepID, seen); err != nil {
+			return err
+		}
+		if err := validateNode(&n.Target, stepID, seen); err != nil {
+			return err
+		}
+
+	case *LogicNode:
+		for i := range n.Block {
+			if err := n.Block[i].validate(seen); err != nil {
+				return err
+			}
+		}
+
+	case *TryNode:
+		for i := range n.TryBlock {
+			if err := n.TryBlock[i].validate(seen); err != nil {
+				return err
+			}
+		}
+		for i := range n.CatchBlock {
+			if err := n.CatchBlock[i].validate(seen); err != nil {
+				return err
+			}
+		}
+		for i := range n.FinallyBlock {
+			if err := n.FinallyBlock[i].validate(seen); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -287,6 +319,26 @@ func sortArgsInNode(node ExecutionNode) {
 	case *SequenceNode:
 		for i := range n.Nodes {
 			sortArgsInNode(n.Nodes[i])
+		}
+
+	case *RedirectNode:
+		sortArgsInNode(n.Source)
+		sortArgsInNode(&n.Target)
+
+	case *LogicNode:
+		for i := range n.Block {
+			n.Block[i].sortArgs()
+		}
+
+	case *TryNode:
+		for i := range n.TryBlock {
+			n.TryBlock[i].sortArgs()
+		}
+		for i := range n.CatchBlock {
+			n.CatchBlock[i].sortArgs()
+		}
+		for i := range n.FinallyBlock {
+			n.FinallyBlock[i].sortArgs()
 		}
 	}
 }

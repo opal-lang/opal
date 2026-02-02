@@ -39,26 +39,145 @@ func FormatTree(w io.Writer, plan *planfmt.Plan, useColor bool) {
 		return
 	}
 
-	// Render each step
-	for i, step := range plan.Steps {
-		isLast := i == len(plan.Steps)-1
-		renderTreeStep(w, step, isLast, useColor)
+	renderStepList(w, plan.Steps, "", useColor)
+}
+
+func renderStepList(w io.Writer, steps []planfmt.Step, indent string, useColor bool) {
+	for i := 0; i < len(steps); {
+		step := steps[i]
+		if logic, ok := step.Tree.(*planfmt.LogicNode); ok && logic.Kind == "for" {
+			cond := logic.Condition
+			j := i
+			for j < len(steps) {
+				nextLogic, ok := steps[j].Tree.(*planfmt.LogicNode)
+				if !ok || nextLogic.Kind != "for" || nextLogic.Condition != cond {
+					break
+				}
+				j++
+			}
+			isLastGroup := j == len(steps)
+			renderForGroup(w, steps[i:j], indent, isLastGroup, useColor)
+			i = j
+			continue
+		}
+
+		isLast := i == len(steps)-1
+		renderTreeStep(w, step, indent, isLast, useColor)
+		i++
 	}
 }
 
+func renderForGroup(w io.Writer, steps []planfmt.Step, indent string, isLast, useColor bool) {
+	if len(steps) == 0 {
+		return
+	}
+
+	logic, ok := steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		return
+	}
+
+	condition := logic.Condition
+	if condition == "" {
+		condition = "?"
+	}
+
+	var prefix string
+	if isLast {
+		prefix = indent + "└─ "
+	} else {
+		prefix = indent + "├─ "
+	}
+
+	_, _ = fmt.Fprintf(w, "%sfor %s: %d iterations\n", prefix, condition, len(steps))
+
+	iterationIndent := indent
+	if isLast {
+		iterationIndent += "   "
+	} else {
+		iterationIndent += "│  "
+	}
+
+	for i, step := range steps {
+		iterLogic, ok := step.Tree.(*planfmt.LogicNode)
+		if !ok {
+			continue
+		}
+
+		iterPrefix := iterationIndent
+		if i == len(steps)-1 {
+			iterPrefix += "└─ "
+		} else {
+			iterPrefix += "├─ "
+		}
+
+		label := formatForIterationLabel(iterLogic.Result, i+1)
+		block := iterLogic.Block
+		if len(block) == 1 && canInlineIterationStep(block[0]) {
+			inline := renderExecutionNode(block[0].Tree, useColor)
+			_, _ = fmt.Fprintf(w, "%s[%d] %s: %s\n", iterPrefix, i+1, label, inline)
+			continue
+		}
+
+		if len(block) == 0 {
+			_, _ = fmt.Fprintf(w, "%s[%d] %s\n", iterPrefix, i+1, label)
+			continue
+		}
+
+		_, _ = fmt.Fprintf(w, "%s[%d] %s:\n", iterPrefix, i+1, label)
+		nestedIndent := iterationIndent
+		if i == len(steps)-1 {
+			nestedIndent += "   "
+		} else {
+			nestedIndent += "│  "
+		}
+		renderStepList(w, block, nestedIndent, useColor)
+	}
+}
+
+func formatForIterationLabel(result string, index int) string {
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return fmt.Sprintf("iteration %d", index)
+	}
+	const marker = " (iteration "
+	if strings.HasSuffix(result, ")") {
+		if start := strings.LastIndex(result, marker); start != -1 {
+			return strings.TrimSpace(result[:start])
+		}
+	}
+	return result
+}
+
+func canInlineIterationStep(step planfmt.Step) bool {
+	if step.Tree == nil {
+		return false
+	}
+	if cmd, ok := step.Tree.(*planfmt.CommandNode); ok {
+		return len(cmd.Block) == 0
+	}
+	if logic, ok := step.Tree.(*planfmt.LogicNode); ok {
+		return len(logic.Block) == 0
+	}
+	if _, ok := step.Tree.(*planfmt.TryNode); ok {
+		return false
+	}
+	return true
+}
+
 // renderTreeStep renders a single step with tree characters
-func renderTreeStep(w io.Writer, step planfmt.Step, isLast, useColor bool) {
+func renderTreeStep(w io.Writer, step planfmt.Step, indent string, isLast, useColor bool) {
 	// Choose tree character
 	var prefix string
 	if isLast {
-		prefix = "└─ "
+		prefix = indent + "└─ "
 	} else {
-		prefix = "├─ "
+		prefix = indent + "├─ "
 	}
 
 	// Handle TryNode specially to render its nested blocks
 	if try, ok := step.Tree.(*planfmt.TryNode); ok {
-		renderTryBlock(w, try, prefix, "", isLast, useColor)
+		renderTryBlock(w, try, indent, isLast, useColor)
 		return
 	}
 
@@ -68,68 +187,62 @@ func renderTreeStep(w io.Writer, step planfmt.Step, isLast, useColor bool) {
 
 	// Render nested blocks if this is a CommandNode with a Block
 	if cmd, ok := step.Tree.(*planfmt.CommandNode); ok && len(cmd.Block) > 0 {
-		renderNestedBlock(w, cmd.Block, "   ", useColor)
+		nestedIndent := indent
+		if isLast {
+			nestedIndent += "   "
+		} else {
+			nestedIndent += "│  "
+		}
+		renderStepList(w, cmd.Block, nestedIndent, useColor)
+	}
+
+	if logic, ok := step.Tree.(*planfmt.LogicNode); ok && len(logic.Block) > 0 {
+		nestedIndent := indent
+		if isLast {
+			nestedIndent += "   "
+		} else {
+			nestedIndent += "│  "
+		}
+		renderStepList(w, logic.Block, nestedIndent, useColor)
 	}
 }
 
 // renderTryBlock renders a try/catch/finally block with proper indentation
-func renderTryBlock(w io.Writer, try *planfmt.TryNode, prefix, indent string, isLast, useColor bool) {
-	// Render try {
-	tryPrefix := prefix
-	if indent != "" {
-		if isLast {
-			tryPrefix = indent + "└─ "
-		} else {
-			tryPrefix = indent + "├─ "
-		}
-	}
-	_, _ = fmt.Fprintf(w, "%s%s\n", tryPrefix, Colorize("try {", ColorYellow, useColor))
-
-	// Render try block contents
-	tryIndent := indent + "│  "
+func renderTryBlock(w io.Writer, try *planfmt.TryNode, indent string, isLast, useColor bool) {
+	var prefix string
 	if isLast {
-		tryIndent = indent + "   "
+		prefix = indent + "└─ "
+	} else {
+		prefix = indent + "├─ "
 	}
-	renderNestedBlock(w, try.TryBlock, tryIndent, useColor)
+	_, _ = fmt.Fprintf(w, "%s%s\n", prefix, Colorize("try {", ColorYellow, useColor))
 
-	// Render try closing brace
-	_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
+	blockIndent := indent
+	if isLast {
+		blockIndent += "   "
+	} else {
+		blockIndent += "│  "
+	}
 
-	// Render catch block if present
+	renderStepList(w, try.TryBlock, blockIndent, useColor)
+	_, _ = fmt.Fprintf(w, "%s%s\n", blockIndent, Colorize("}", ColorYellow, useColor))
+
 	if len(try.CatchBlock) > 0 {
-		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("catch {", ColorYellow, useColor))
-		renderNestedBlock(w, try.CatchBlock, tryIndent, useColor)
-		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
+		_, _ = fmt.Fprintf(w, "%s%s\n", blockIndent, Colorize("catch {", ColorYellow, useColor))
+		renderStepList(w, try.CatchBlock, blockIndent, useColor)
+		_, _ = fmt.Fprintf(w, "%s%s\n", blockIndent, Colorize("}", ColorYellow, useColor))
 	}
 
-	// Render finally block if present
 	if len(try.FinallyBlock) > 0 {
-		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("finally {", ColorYellow, useColor))
-		renderNestedBlock(w, try.FinallyBlock, tryIndent, useColor)
-		_, _ = fmt.Fprintf(w, "%s%s\n", tryIndent, Colorize("}", ColorYellow, useColor))
+		_, _ = fmt.Fprintf(w, "%s%s\n", blockIndent, Colorize("finally {", ColorYellow, useColor))
+		renderStepList(w, try.FinallyBlock, blockIndent, useColor)
+		_, _ = fmt.Fprintf(w, "%s%s\n", blockIndent, Colorize("}", ColorYellow, useColor))
 	}
 }
 
 // renderNestedBlock renders nested steps with proper indentation
 func renderNestedBlock(w io.Writer, steps []planfmt.Step, indent string, useColor bool) {
-	for i, step := range steps {
-		isLast := i == len(steps)-1
-		var prefix string
-		if isLast {
-			prefix = indent + "└─ "
-		} else {
-			prefix = indent + "├─ "
-		}
-
-		treeStr := renderExecutionNode(step.Tree, useColor)
-		_, _ = fmt.Fprintf(w, "%s%s\n", prefix, treeStr)
-
-		// Recursively render nested blocks
-		if cmd, ok := step.Tree.(*planfmt.CommandNode); ok && len(cmd.Block) > 0 {
-			newIndent := indent + "   "
-			renderNestedBlock(w, cmd.Block, newIndent, useColor)
-		}
-	}
+	renderStepList(w, steps, indent, useColor)
 }
 
 // renderExecutionNode renders an execution node to a string
@@ -145,6 +258,10 @@ func renderExecutionNode(node planfmt.ExecutionNode, useColor bool) string {
 		return renderOrNode(n, useColor)
 	case *planfmt.SequenceNode:
 		return renderSequenceNode(n, useColor)
+	case *planfmt.RedirectNode:
+		return renderRedirectNode(n, useColor)
+	case *planfmt.LogicNode:
+		return renderLogicNode(n)
 	case *planfmt.TryNode:
 		return renderTryNode(n, useColor)
 	default:
@@ -195,6 +312,30 @@ func renderSequenceNode(seq *planfmt.SequenceNode, useColor bool) string {
 		parts = append(parts, renderExecutionNode(node, useColor))
 	}
 	return strings.Join(parts, " ; ")
+}
+
+func renderRedirectNode(redirect *planfmt.RedirectNode, useColor bool) string {
+	op := ">"
+	if redirect.Mode == planfmt.RedirectAppend {
+		op = ">>"
+	}
+	return fmt.Sprintf("%s %s %s", renderExecutionNode(redirect.Source, useColor), op, renderCommandNode(&redirect.Target, useColor))
+}
+
+func renderLogicNode(logic *planfmt.LogicNode) string {
+	if logic == nil {
+		return ""
+	}
+	if logic.Condition != "" && logic.Result != "" {
+		return fmt.Sprintf("%s %s -> %s", logic.Kind, logic.Condition, logic.Result)
+	}
+	if logic.Condition != "" {
+		return fmt.Sprintf("%s %s", logic.Kind, logic.Condition)
+	}
+	if logic.Result != "" {
+		return fmt.Sprintf("%s %s", logic.Kind, logic.Result)
+	}
+	return logic.Kind
 }
 
 // getCommandString extracts the command string from a CommandNode for display

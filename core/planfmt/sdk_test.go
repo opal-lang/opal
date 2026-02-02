@@ -230,6 +230,101 @@ func TestToSDKSteps(t *testing.T) {
 	}
 }
 
+func TestToSDKSteps_FlattensLogicNodes(t *testing.T) {
+	planSteps := []Step{
+		{
+			ID: 1,
+			Tree: &LogicNode{
+				Kind:      "if",
+				Condition: "env == prod",
+				Result:    "true",
+				Block: []Step{
+					{
+						ID: 2,
+						Tree: &CommandNode{
+							Decorator: "shell",
+							Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo first"}}},
+						},
+					},
+					{
+						ID: 3,
+						Tree: &CommandNode{
+							Decorator: "shell",
+							Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo second"}}},
+						},
+					},
+				},
+			},
+		},
+		{
+			ID: 4,
+			Tree: &CommandNode{
+				Decorator: "shell",
+				Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo third"}}},
+			},
+		},
+	}
+
+	got := ToSDKSteps(planSteps)
+
+	if len(got) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(got))
+	}
+
+	ids := []uint64{got[0].ID, got[1].ID, got[2].ID}
+	if diff := cmp.Diff([]uint64{2, 3, 4}, ids); diff != "" {
+		t.Errorf("step IDs mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestToSDKSteps_FlattensLogicNodesInBlocks(t *testing.T) {
+	planSteps := []Step{
+		{
+			ID: 1,
+			Tree: &CommandNode{
+				Decorator: "retry",
+				Args:      []Arg{{Key: "times", Val: Value{Kind: ValueInt, Int: 2}}},
+				Block: []Step{
+					{
+						ID: 2,
+						Tree: &LogicNode{
+							Kind:      "if",
+							Condition: "env == prod",
+							Result:    "true",
+							Block: []Step{
+								{
+									ID: 3,
+									Tree: &CommandNode{
+										Decorator: "shell",
+										Args:      []Arg{{Key: "command", Val: Value{Kind: ValueString, Str: "echo nested"}}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := ToSDKSteps(planSteps)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(got))
+	}
+
+	cmd, ok := got[0].Tree.(*sdk.CommandNode)
+	if !ok {
+		t.Fatalf("expected *sdk.CommandNode, got %T", got[0].Tree)
+	}
+	if len(cmd.Block) != 1 {
+		t.Fatalf("expected 1 nested step, got %d", len(cmd.Block))
+	}
+	if cmd.Block[0].ID != 3 {
+		t.Errorf("expected nested step ID 3, got %d", cmd.Block[0].ID)
+	}
+}
+
 // TestToSDKSteps_ComplexTree tests complex operator tree conversion
 func TestToSDKSteps_ComplexTree(t *testing.T) {
 	// echo "a" | grep "a" && echo "b" || echo "c"
