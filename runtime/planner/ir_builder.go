@@ -1955,7 +1955,7 @@ func tokenToValue(tok lexer.Token) any {
 	switch tok.Type {
 	case lexer.STRING:
 		value := string(tok.Text)
-		if len(value) >= 2 && value[0] == value[len(value)-1] {
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[0] == value[len(value)-1] {
 			value = value[1 : len(value)-1]
 		}
 		return value

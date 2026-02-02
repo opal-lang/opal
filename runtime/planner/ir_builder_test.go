@@ -884,3 +884,33 @@ func TestBuildIR_ArrayLiteralWithObjectElements(t *testing.T) {
 		t.Errorf("name field = %v, want literal 'a'", nameField.Value)
 	}
 }
+
+func TestTokenToValue_StringQuoteStripping(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"double quotes", `"hello"`, "hello"},
+		{"single quotes", `'world'`, "world"},
+		{"minimal double quote", `"a"`, "a"},
+		{"minimal single quote", `'b'`, "b"},
+		{"no quotes matching chars", `aba`, "aba"},   // Should NOT strip - not quotes
+		{"no quotes matching chars 2", `xyx`, "xyx"}, // Should NOT strip - not quotes
+		{"single char no quote", `x`, "x"},
+		{"empty", ``, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tok := lexer.Token{
+				Type: lexer.STRING,
+				Text: []byte(tt.input),
+			}
+			result := tokenToValue(tok)
+			if result != tt.expected {
+				t.Errorf("tokenToValue(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
