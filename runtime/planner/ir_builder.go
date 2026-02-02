@@ -330,18 +330,8 @@ func (b *irBuilder) buildDefaultValue() *ExprIR {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-			switch node {
-			case parser.NodeLiteral:
-				expr = b.buildLiteralExpr()
-				continue
-			case parser.NodeDecorator:
-				expr = b.buildDecoratorExpr()
-				continue
-			case parser.NodeIdentifier:
-				expr = b.buildIdentifierExpr()
-				continue
-			case parser.NodeBinaryExpr:
-				expr = b.buildBinaryExpr()
+			if parsed, ok := b.buildExprFromNode(node, true); ok {
+				expr = parsed
 				continue
 			}
 		}
@@ -494,16 +484,8 @@ func (b *irBuilder) buildVarDecl() (*StatementIR, error) {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-
-			switch node {
-			case parser.NodeLiteral:
-				value = b.buildLiteralExpr()
-				continue
-			case parser.NodeDecorator:
-				value = b.buildDecoratorExpr()
-				continue
-			case parser.NodeIdentifier:
-				value = b.buildIdentifierExpr()
+			if parsed, ok := b.buildExprFromNode(node, false); ok {
+				value = parsed
 				continue
 			}
 		}
@@ -764,18 +746,8 @@ func (b *irBuilder) buildDecoratorArg() (ArgIR, error) {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-			switch node {
-			case parser.NodeLiteral:
-				arg.Value = b.buildLiteralExpr()
-				continue
-			case parser.NodeDecorator:
-				arg.Value = b.buildDecoratorExpr()
-				continue
-			case parser.NodeIdentifier:
-				arg.Value = b.buildIdentifierExpr()
-				continue
-			case parser.NodeBinaryExpr:
-				arg.Value = b.buildBinaryExpr()
+			if parsed, ok := b.buildExprFromNode(node, true); ok {
+				arg.Value = parsed
 				continue
 			}
 		}
@@ -975,6 +947,120 @@ func (b *irBuilder) buildInterpolatedString() ([]*ExprIR, error) {
 	return parts, nil
 }
 
+func (b *irBuilder) buildExprFromNode(node parser.NodeKind, allowBinary bool) (*ExprIR, bool) {
+	switch node {
+	case parser.NodeLiteral:
+		return b.buildLiteralExpr(), true
+	case parser.NodeArrayLiteral:
+		return b.buildArrayLiteralExpr(), true
+	case parser.NodeObjectLiteral:
+		return b.buildObjectLiteralExpr(), true
+	case parser.NodeDecorator:
+		return b.buildDecoratorExpr(), true
+	case parser.NodeIdentifier:
+		return b.buildIdentifierExpr(), true
+	case parser.NodeBinaryExpr:
+		if allowBinary {
+			return b.buildBinaryExpr(), true
+		}
+	}
+
+	return nil, false
+}
+
+func (b *irBuilder) buildArrayLiteralExpr() *ExprIR {
+	b.pos++ // Move past OPEN NodeArrayLiteral
+
+	// Store elements as []*ExprIR to preserve expressions (decorators, variables, etc.)
+	// This allows arrays like ["a", @var.x, 1+2] to be fully represented
+	elements := make([]*ExprIR, 0)
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeArrayLiteral {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			// Use buildExprFromNode to handle all expression types uniformly
+			// This preserves decorators (@var.x), identifiers, binary expressions, etc.
+			if expr, ok := b.buildExprFromNode(node, true); ok {
+				elements = append(elements, expr)
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprLiteral,
+		Value: elements,
+	}
+}
+
+func (b *irBuilder) buildObjectLiteralExpr() *ExprIR {
+	b.pos++ // Move past OPEN NodeObjectLiteral
+
+	// Store field values as map[string]*ExprIR to preserve expressions
+	// This allows objects like {name: @var.x, count: 1+2} to be fully represented
+	fields := make(map[string]*ExprIR)
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeObjectLiteral {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeObjectField {
+			b.pos++ // Move past OPEN NodeObjectField
+
+			// Get key (should be TOKEN)
+			var key string
+			if b.pos < len(b.events) && b.events[b.pos].Kind == parser.EventToken {
+				key = string(b.tokens[b.events[b.pos].Data].Text)
+				b.pos++ // Move past key token
+			}
+
+			// Skip colon token
+			if b.pos < len(b.events) && b.events[b.pos].Kind == parser.EventToken {
+				b.pos++
+			}
+
+			// Parse value as *ExprIR to preserve expressions
+			var value *ExprIR
+			if b.pos < len(b.events) && b.events[b.pos].Kind == parser.EventOpen {
+				node := parser.NodeKind(b.events[b.pos].Data)
+				if expr, ok := b.buildExprFromNode(node, true); ok {
+					value = expr
+				}
+			}
+
+			if key != "" && value != nil {
+				fields[key] = value
+			}
+
+			// Skip CLOSE ObjectField
+			if b.pos < len(b.events) && b.events[b.pos].Kind == parser.EventClose {
+				b.pos++
+			}
+			continue
+		}
+
+		b.pos++
+	}
+
+	return &ExprIR{
+		Kind:  ExprLiteral,
+		Value: fields,
+	}
+}
+
 // buildLiteralExpr processes a literal expression.
 func (b *irBuilder) buildLiteralExpr() *ExprIR {
 	b.pos++ // Move past OPEN NodeLiteral
@@ -1130,27 +1216,14 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
 
-			switch node {
-			case parser.NodeDecorator:
-				primaryExpr = b.buildDecoratorExpr()
-				// Check if followed by binary expression
-				if b.pos < len(b.events) {
-					nextEvt := b.events[b.pos]
-					if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeBinaryExpr {
-						condition = b.buildBinaryExprWithLeft(primaryExpr)
-					} else {
-						condition = primaryExpr
-					}
-				} else {
-					condition = primaryExpr
-				}
-				continue
-			case parser.NodeBinaryExpr:
+			if node == parser.NodeBinaryExpr {
 				// Binary expression without explicit left side (shouldn't happen)
 				condition = b.buildBinaryExpr()
 				continue
-			case parser.NodeLiteral:
-				primaryExpr = b.buildLiteralExpr()
+			}
+
+			if parsed, ok := b.buildExprFromNode(node, false); ok {
+				primaryExpr = parsed
 				// Check if followed by binary expression
 				if b.pos < len(b.events) {
 					nextEvt := b.events[b.pos]
@@ -1163,20 +1236,9 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 					condition = primaryExpr
 				}
 				continue
-			case parser.NodeIdentifier:
-				primaryExpr = b.buildIdentifierExpr()
-				// Check if followed by binary expression
-				if b.pos < len(b.events) {
-					nextEvt := b.events[b.pos]
-					if nextEvt.Kind == parser.EventOpen && parser.NodeKind(nextEvt.Data) == parser.NodeBinaryExpr {
-						condition = b.buildBinaryExprWithLeft(primaryExpr)
-					} else {
-						condition = primaryExpr
-					}
-				} else {
-					condition = primaryExpr
-				}
-				continue
+			}
+
+			switch node {
 			case parser.NodeBlock:
 				if thenBranch == nil {
 					stmts, err := b.buildBlock()
@@ -1333,15 +1395,6 @@ func (b *irBuilder) buildForStmt() (*StatementIR, error) {
 			node := parser.NodeKind(evt.Data)
 
 			switch node {
-			case parser.NodeDecorator:
-				collection = b.buildDecoratorExpr()
-				continue
-			case parser.NodeIdentifier:
-				collection = b.buildIdentifierExpr()
-				continue
-			case parser.NodeLiteral:
-				collection = b.buildLiteralExpr()
-				continue
 			case parser.NodeBlock:
 				stmts, err := b.buildBlock()
 				if err != nil {
@@ -1349,6 +1402,11 @@ func (b *irBuilder) buildForStmt() (*StatementIR, error) {
 				}
 				body = stmts
 				continue
+			default:
+				if parsed, ok := b.buildExprFromNode(node, false); ok {
+					collection = parsed
+					continue
+				}
 			}
 		}
 
@@ -1395,17 +1453,12 @@ func (b *irBuilder) buildWhenStmt() (*StatementIR, error) {
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
 
-			switch node {
-			case parser.NodeDecorator:
-				condition = b.buildDecoratorExpr()
+			if parsed, ok := b.buildExprFromNode(node, false); ok {
+				condition = parsed
 				continue
-			case parser.NodeLiteral:
-				condition = b.buildLiteralExpr()
-				continue
-			case parser.NodeIdentifier:
-				condition = b.buildIdentifierExpr()
-				continue
-			case parser.NodeWhenArm:
+			}
+
+			if node == parser.NodeWhenArm {
 				arm, err := b.buildWhenArm()
 				if err != nil {
 					return nil, err
@@ -1769,18 +1822,8 @@ func (b *irBuilder) buildBinaryExpr() *ExprIR {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-
-			var expr *ExprIR
-			switch node {
-			case parser.NodeDecorator:
-				expr = b.buildDecoratorExpr()
-			case parser.NodeLiteral:
-				expr = b.buildLiteralExpr()
-			case parser.NodeIdentifier:
-				expr = b.buildIdentifierExpr()
-			case parser.NodeBinaryExpr:
-				expr = b.buildBinaryExpr()
-			default:
+			expr, ok := b.buildExprFromNode(node, true)
+			if !ok {
 				b.pos++
 				continue
 			}
@@ -1870,17 +1913,9 @@ func (b *irBuilder) buildBinaryExprWithLeft(left *ExprIR) *ExprIR {
 
 		if evt.Kind == parser.EventOpen {
 			node := parser.NodeKind(evt.Data)
-
-			switch node {
-			case parser.NodeDecorator:
-				right = b.buildDecoratorExpr()
-			case parser.NodeLiteral:
-				right = b.buildLiteralExpr()
-			case parser.NodeIdentifier:
-				right = b.buildIdentifierExpr()
-			case parser.NodeBinaryExpr:
-				right = b.buildBinaryExpr()
-			default:
+			if parsed, ok := b.buildExprFromNode(node, true); ok {
+				right = parsed
+			} else {
 				b.pos++
 			}
 			continue
@@ -1901,7 +1936,11 @@ func (b *irBuilder) buildBinaryExprWithLeft(left *ExprIR) *ExprIR {
 func tokenToValue(tok lexer.Token) any {
 	switch tok.Type {
 	case lexer.STRING:
-		return string(tok.Text)
+		value := string(tok.Text)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[0] == value[len(value)-1] {
+			value = value[1 : len(value)-1]
+		}
+		return value
 	case lexer.INTEGER:
 		val, _ := strconv.ParseInt(string(tok.Text), 10, 64)
 		return val

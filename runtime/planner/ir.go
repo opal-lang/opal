@@ -51,11 +51,13 @@ type StatementIR struct {
 // Note: Named CommandStmtIR to avoid conflict with existing CommandIR in planner.go.
 // Will be renamed when old planner is removed.
 type CommandStmtIR struct {
-	Decorator string         // "@shell", "@retry", etc.
-	Command   *CommandExpr   // The command with interpolated expressions
-	Args      []ArgIR        // Decorator arguments
-	Block     []*StatementIR // Nested statements (for decorator blocks)
-	Operator  string         // "&&", "||", "|", ";" - chain to next command
+	Decorator      string         // "@shell", "@retry", etc.
+	Command        *CommandExpr   // The command with interpolated expressions
+	Args           []ArgIR        // Decorator arguments
+	Block          []*StatementIR // Nested statements (for decorator blocks)
+	Operator       string         // "&&", "||", "|", ";" - chain to next command
+	RedirectMode   string         // ">", ">>" - redirect mode (empty if no redirect)
+	RedirectTarget *CommandExpr   // For redirect operators, the target path (nil otherwise)
 }
 
 // ArgIR represents a decorator argument.

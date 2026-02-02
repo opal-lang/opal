@@ -134,7 +134,7 @@ echo "@var.COUNT"
 		t.Fatal("Expected COUNT value to be resolved")
 	}
 
-	if value != "\"2\"" {
+	if value != "2" {
 		t.Errorf("Expected COUNT to leak from if block as \"2\", got %v", value)
 	}
 }
@@ -163,7 +163,7 @@ echo "@var.COUNT"
 		t.Fatal("Expected COUNT value to be resolved")
 	}
 
-	if value != "\"1\"" {
+	if value != "1" {
 		t.Errorf("Expected COUNT to restore parent value \"1\", got %v", value)
 	}
 }
