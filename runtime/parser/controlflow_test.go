@@ -633,7 +633,7 @@ func TestForLoopErrorRecovery(t *testing.T) {
 				Message:    "missing collection expression in for loop",
 				Context:    "for loop",
 				Suggestion: "Provide a collection to iterate over",
-				Example:    "for item in items { ... } or for i in 1...10 { ... }",
+				Example:    "for item in items { ... } or for i in 1...10 { ... } or for x in [1, 2, 3] { ... }",
 				Note:       "collection must resolve at plan-time to a list of concrete values",
 			},
 		},

@@ -844,15 +844,18 @@ func (p *parser) parseForCollection() {
 		p.token()
 	} else if p.at(lexer.AT) {
 		p.parseDecorator()
+	} else if p.at(lexer.LSQUARE) {
+		// Array literal: ["a", "b", "c"]
+		p.arrayLiteral()
 	} else {
 		p.errors = append(p.errors, ParseError{
 			Position:   p.current().Position,
 			Message:    "missing collection expression in for loop",
 			Context:    "for loop",
 			Got:        p.current().Type,
-			Expected:   []lexer.TokenType{lexer.IDENTIFIER, lexer.AT, lexer.INTEGER},
+			Expected:   []lexer.TokenType{lexer.IDENTIFIER, lexer.AT, lexer.INTEGER, lexer.LSQUARE},
 			Suggestion: "Provide a collection to iterate over",
-			Example:    "for item in items { ... } or for i in 1...10 { ... }",
+			Example:    "for item in items { ... } or for i in 1...10 { ... } or for x in [1, 2, 3] { ... }",
 			Note:       "collection must resolve at plan-time to a list of concrete values",
 		})
 	}

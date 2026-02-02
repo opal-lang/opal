@@ -759,3 +759,158 @@ func TestBuildIR_EmptyStringPreservesQuotes(t *testing.T) {
 		t.Errorf("RenderCommand mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestBuildIR_ForLoopWithArrayLiteral(t *testing.T) {
+	graph := buildIR(t, `for item in ["a", "b", "c"] { echo @var.item }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+	if stmt.Blocker.Kind != BlockerFor {
+		t.Errorf("Blocker.Kind = %v, want BlockerFor", stmt.Blocker.Kind)
+	}
+
+	// Check collection is a literal array
+	if stmt.Blocker.Collection == nil {
+		t.Fatal("Collection is nil")
+	}
+	if stmt.Blocker.Collection.Kind != ExprLiteral {
+		t.Errorf("Collection.Kind = %v, want ExprLiteral", stmt.Blocker.Collection.Kind)
+	}
+
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.Blocker.Collection.Value.([]*ExprIR)
+	if !ok {
+		t.Fatalf("Collection.Value = %T, want []*ExprIR", stmt.Blocker.Collection.Value)
+	}
+	if len(elements) != 3 {
+		t.Errorf("len(elements) = %d, want 3", len(elements))
+	}
+
+	// Verify elements are proper expressions
+	for i, elem := range elements {
+		if elem.Kind != ExprLiteral {
+			t.Errorf("element %d Kind = %v, want ExprLiteral", i, elem.Kind)
+		}
+	}
+}
+
+func TestBuildIR_VarDeclWithArrayLiteral(t *testing.T) {
+	graph := buildIR(t, `var items = ["web1", "web2"]`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtVarDecl {
+		t.Errorf("stmt.Kind = %v, want StmtVarDecl", stmt.Kind)
+	}
+	if stmt.VarDecl == nil {
+		t.Fatal("VarDecl is nil")
+	}
+
+	// Check value is a literal array
+	if stmt.VarDecl.Value == nil {
+		t.Fatal("VarDecl.Value is nil")
+	}
+	if stmt.VarDecl.Value.Kind != ExprLiteral {
+		t.Errorf("VarDecl.Value.Kind = %v, want ExprLiteral", stmt.VarDecl.Value.Kind)
+	}
+
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.VarDecl.Value.Value.([]*ExprIR)
+	if !ok {
+		t.Fatalf("VarDecl.Value.Value = %T, want []*ExprIR", stmt.VarDecl.Value.Value)
+	}
+	if len(elements) != 2 {
+		t.Errorf("len(elements) = %d, want 2", len(elements))
+	}
+
+	// Verify elements are proper expressions
+	for i, elem := range elements {
+		if elem.Kind != ExprLiteral {
+			t.Errorf("element %d Kind = %v, want ExprLiteral", i, elem.Kind)
+		}
+	}
+}
+
+func TestBuildIR_ArrayLiteralWithObjectElements(t *testing.T) {
+	graph := buildIR(t, `var items = [{name: "a"}, {name: "b"}]`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtVarDecl {
+		t.Errorf("stmt.Kind = %v, want StmtVarDecl", stmt.Kind)
+	}
+
+	// Check the array value - elements are stored as []*ExprIR
+	elements, ok := stmt.VarDecl.Value.Value.([]*ExprIR)
+	if !ok {
+		t.Fatalf("VarDecl.Value.Value = %T, want []*ExprIR", stmt.VarDecl.Value.Value)
+	}
+	if len(elements) != 2 {
+		t.Errorf("len(elements) = %d, want 2", len(elements))
+	}
+
+	// Check first element is an *ExprIR (object literal expression)
+	if elements[0].Kind != ExprLiteral {
+		t.Errorf("elements[0].Kind = %v, want ExprLiteral", elements[0].Kind)
+	}
+
+	// Check the object value inside the expression - fields are map[string]*ExprIR
+	objFields, ok := elements[0].Value.(map[string]*ExprIR)
+	if !ok {
+		t.Fatalf("elements[0].Value = %T, want map[string]*ExprIR", elements[0].Value)
+	}
+
+	// Check the "name" field
+	nameField, ok := objFields["name"]
+	if !ok {
+		t.Fatal("object missing 'name' field")
+	}
+	if nameField.Kind != ExprLiteral || nameField.Value != "a" {
+		t.Errorf("name field = %v, want literal 'a'", nameField.Value)
+	}
+}
+
+func TestTokenToValue_StringQuoteStripping(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"double quotes", `"hello"`, "hello"},
+		{"single quotes", `'world'`, "world"},
+		{"minimal double quote", `"a"`, "a"},
+		{"minimal single quote", `'b'`, "b"},
+		{"no quotes matching chars", `aba`, "aba"},   // Should NOT strip - not quotes
+		{"no quotes matching chars 2", `xyx`, "xyx"}, // Should NOT strip - not quotes
+		{"single char no quote", `x`, "x"},
+		{"empty", ``, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tok := lexer.Token{
+				Type: lexer.STRING,
+				Text: []byte(tt.input),
+			}
+			result := tokenToValue(tok)
+			if result != tt.expected {
+				t.Errorf("tokenToValue(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
