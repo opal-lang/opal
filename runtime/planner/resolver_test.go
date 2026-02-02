@@ -771,6 +771,81 @@ func TestResolve_ForLoop(t *testing.T) {
 	// The test verifies it doesn't crash and processes the loop
 }
 
+// TestResolve_ForLoopWithArrayLiteral tests for-loop with inline array literal.
+func TestResolve_ForLoopWithArrayLiteral(t *testing.T) {
+	// Create vault
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	// Build IR:
+	//   for item in ["a", "b", "c"] {
+	//     echo @var.item
+	//   }
+	scopes := NewScopeStack()
+
+	blocker := &BlockerIR{
+		Kind:    BlockerFor,
+		LoopVar: "item",
+		Collection: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: []any{"a", "b", "c"},
+		},
+		ThenBranch: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprVarRef, VarName: "item"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind:    StmtBlocker,
+				Blocker: blocker,
+			},
+		},
+		Scopes: scopes,
+	}
+
+	// Resolve
+	session := &mockSession{}
+	config := ResolveConfig{Context: context.Background()}
+	result, err := Resolve(graph, v, session, config)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// Check that we got 3 iterations
+	if len(result.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(result.Statements))
+	}
+
+	forStmt := result.Statements[0]
+	if forStmt.Kind != StmtBlocker || forStmt.Blocker.Kind != BlockerFor {
+		t.Fatal("Expected for-loop blocker")
+	}
+
+	if len(forStmt.Blocker.Iterations) != 3 {
+		t.Errorf("Expected 3 iterations, got %d", len(forStmt.Blocker.Iterations))
+	}
+
+	// Verify each iteration has the correct value
+	expectedValues := []any{"a", "b", "c"}
+	for i, iter := range forStmt.Blocker.Iterations {
+		if iter.Value != expectedValues[i] {
+			t.Errorf("Iteration %d: expected value %v, got %v", i, expectedValues[i], iter.Value)
+		}
+	}
+}
+
 // TestResolve_WhenStatement tests when statement pattern matching.
 func TestResolve_WhenStatement(t *testing.T) {
 	// Create vault

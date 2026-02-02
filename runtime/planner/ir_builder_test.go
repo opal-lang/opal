@@ -759,3 +759,103 @@ func TestBuildIR_EmptyStringPreservesQuotes(t *testing.T) {
 		t.Errorf("RenderCommand mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestBuildIR_ForLoopWithArrayLiteral(t *testing.T) {
+	graph := buildIR(t, `for item in ["a", "b", "c"] { echo @var.item }`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtBlocker {
+		t.Errorf("stmt.Kind = %v, want StmtBlocker", stmt.Kind)
+	}
+	if stmt.Blocker == nil {
+		t.Fatal("Blocker is nil")
+	}
+	if stmt.Blocker.Kind != BlockerFor {
+		t.Errorf("Blocker.Kind = %v, want BlockerFor", stmt.Blocker.Kind)
+	}
+
+	// Check collection is a literal array
+	if stmt.Blocker.Collection == nil {
+		t.Fatal("Collection is nil")
+	}
+	if stmt.Blocker.Collection.Kind != ExprLiteral {
+		t.Errorf("Collection.Kind = %v, want ExprLiteral", stmt.Blocker.Collection.Kind)
+	}
+
+	// Check the array value
+	arr, ok := stmt.Blocker.Collection.Value.([]any)
+	if !ok {
+		t.Fatalf("Collection.Value = %T, want []any", stmt.Blocker.Collection.Value)
+	}
+	if len(arr) != 3 {
+		t.Errorf("len(arr) = %d, want 3", len(arr))
+	}
+}
+
+func TestBuildIR_VarDeclWithArrayLiteral(t *testing.T) {
+	graph := buildIR(t, `var items = ["web1", "web2"]`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtVarDecl {
+		t.Errorf("stmt.Kind = %v, want StmtVarDecl", stmt.Kind)
+	}
+	if stmt.VarDecl == nil {
+		t.Fatal("VarDecl is nil")
+	}
+
+	// Check value is a literal array
+	if stmt.VarDecl.Value == nil {
+		t.Fatal("VarDecl.Value is nil")
+	}
+	if stmt.VarDecl.Value.Kind != ExprLiteral {
+		t.Errorf("VarDecl.Value.Kind = %v, want ExprLiteral", stmt.VarDecl.Value.Kind)
+	}
+
+	// Check the array value
+	arr, ok := stmt.VarDecl.Value.Value.([]any)
+	if !ok {
+		t.Fatalf("VarDecl.Value.Value = %T, want []any", stmt.VarDecl.Value.Value)
+	}
+	if len(arr) != 2 {
+		t.Errorf("len(arr) = %d, want 2", len(arr))
+	}
+}
+
+func TestBuildIR_ArrayLiteralWithObjectElements(t *testing.T) {
+	graph := buildIR(t, `var items = [{name: "a"}, {name: "b"}]`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.Kind != StmtVarDecl {
+		t.Errorf("stmt.Kind = %v, want StmtVarDecl", stmt.Kind)
+	}
+
+	// Check the array value
+	arr, ok := stmt.VarDecl.Value.Value.([]any)
+	if !ok {
+		t.Fatalf("VarDecl.Value.Value = %T, want []any", stmt.VarDecl.Value.Value)
+	}
+	if len(arr) != 2 {
+		t.Errorf("len(arr) = %d, want 2", len(arr))
+	}
+
+	// Check first object
+	obj1, ok := arr[0].(map[string]any)
+	if !ok {
+		t.Fatalf("arr[0] = %T, want map[string]any", arr[0])
+	}
+	if obj1["name"] != "a" {
+		t.Errorf("obj1[name] = %v, want a", obj1["name"])
+	}
+}
