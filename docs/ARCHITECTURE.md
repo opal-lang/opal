@@ -382,62 +382,26 @@ Opal distinguishes between **plan-time** and **execution-time** environments:
 | **Plan-Time** | Planning | Resolve value decorators | `@env.HOME` | `var replicas = @env.REPLICAS` → `"3"` |
 | **Execution-Time** | Execution | Command environment | `$HOME` | `echo $HOME` → local: `/home/user`, remote: `/home/deploy` |
 
-**Key insight**: Value decorators (`@env.X`) resolve at plan-time using the **local** environment, even inside remote transport decorators. This is intentional - it enables plan-time contract verification.
+**Key insight**: Value decorators resolve at plan-time using the **current session**. In idempotent transport blocks, the planner opens the transport session and `@env` reads from that session (remote environment + `env={}` overrides). In non-idempotent transport blocks, `@env` is forbidden because the transport cannot be opened at plan-time; use `$X` for execution-time access or pass explicit values via `env={}`.
 
-### TransportScope: Declaring Decorator Scope
+### Transport Scope and Context
 
-Value decorators declare where they can resolve using the `TransportScope` interface:
+Value decorators declare where they can resolve via `Descriptor.Capabilities.TransportScope` (Local, SSH, Remote, Any). During planning, the resolver passes the current `Session.TransportScope()` into the registry; if the decorator’s scope doesn’t allow the current transport, resolution fails fast.
 
 ```go
-// TransportScope defines where a value decorator can resolve
-type TransportScope uint8
-
-const (
-    ScopeRootOnly     TransportScope = iota  // @env, @file.read - local only, plan-time
-    ScopeAgnostic                            // @var, @random - anywhere, plan-seeded
-    ScopeRemoteAware                         // @proc.env(transport=...) - explicit remote (future)
-)
-
-// ValueScopeProvider is an optional interface that value decorators implement
-type ValueScopeProvider interface {
-    TransportScope() TransportScope
+func (d *EnvDecorator) Descriptor() decorator.Descriptor {
+    return decorator.NewDescriptor("env").
+        Summary("Access environment variables from the current session").
+        TransportScope(decorator.TransportScopeAny).
+        TransportSensitive().
+        Idempotent().
+        Build()
 }
 ```
 
-**Example: @env decorator declares ScopeRootOnly**:
+Transport decorators create boundaries. For each transport block, the planner derives a deterministic `TransportID` from plan salt + decorator path + canonical args + parent transport ID. The plan records these in a transport table, and each `CommandNode` carries the `TransportID` it executes under. Transport-sensitive values (e.g., `@env`) capture the transport they were resolved in, and the vault rejects cross-transport use unless explicitly passed (e.g., `env={...}`).
 
-```go
-type envDecorator struct{}
-
-func (e *envDecorator) Handle(ctx types.Context, args types.Args) (types.Value, error) {
-    // Read from local environment
-    envVar := (*args.Primary).(string)
-    value, exists := ctx.Env[envVar]
-    // ...
-    return value, nil
-}
-
-// Implements ValueScopeProvider
-func (e *envDecorator) TransportScope() types.TransportScope {
-    return types.ScopeRootOnly  // Can only resolve at root (plan-time, local)
-}
-
-// Register
-decorator := &envDecorator{}
-types.Global().RegisterValueDecoratorWithSchema(schema, decorator, decorator.Handle)
-```
-
-**Validation**:
-- Parser tracks `transportDepth` (increments when entering `@ssh.connect`, etc.)
-- For each value decorator, checks `scope := registry.GetTransportScope(decoratorName)`
-- If `scope == ScopeRootOnly && transportDepth > 0` → validation error
-- Default for decorators without interface: `ScopeAgnostic` (safe, works anywhere)
-
-**Benefits**:
-- ✅ Plugin-friendly: decorators self-declare via interface
-- ✅ No hard-coded decorator names in validator
-- ✅ Type-safe: compiler enforces interface
-- ✅ Optional: decorators without interface get sensible defaults
+In non-idempotent transport blocks, `@env` is forbidden because the transport cannot be opened at plan-time. Use shell variables (`$HOME`) or pass explicit values via `env={}`.
 
 ### Transport Interface
 

@@ -59,9 +59,10 @@ func toSDKTreeWithRegistry(node ExecutionNode, registry *types.Registry) sdk.Tre
 	switch n := node.(type) {
 	case *CommandNode:
 		return &sdk.CommandNode{
-			Name:  n.Decorator,
-			Args:  ToSDKArgs(n.Args),
-			Block: ToSDKStepsWithRegistry(n.Block, registry), // Recursive for nested steps
+			Name:        n.Decorator,
+			TransportID: n.TransportID,
+			Args:        ToSDKArgs(n.Args),
+			Block:       ToSDKStepsWithRegistry(n.Block, registry), // Recursive for nested steps
 		}
 	case *PipelineNode:
 		commands := make([]sdk.TreeNode, len(n.Commands))

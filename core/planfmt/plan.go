@@ -60,6 +60,7 @@ type Plan struct {
 	Header     PlanHeader
 	Target     string      // Function/command being executed (e.g., "deploy")
 	Steps      []Step      // List of steps (newline-separated statements)
+	Transports []Transport // Transport table for contract verification
 	SecretUses []SecretUse // Authorization list (DisplayID → SiteID mappings)
 	PlanSalt   []byte      // Per-plan random salt (32 bytes, for DisplayID derivation)
 	Hash       string      // Plan integrity hash (includes SecretUses, computed on Freeze)
@@ -73,6 +74,15 @@ type SecretUse struct {
 	DisplayID string // Secret identifier (e.g., "opal:3J98t56A")
 	SiteID    string // Canonical site ID (HMAC-based, unforgeable)
 	Site      string // Human-readable path (e.g., "root/retry[0]/params/apiKey")
+}
+
+// Transport represents a transport context used in the plan.
+// Transport IDs are deterministic per plan (seeded by PlanSalt).
+type Transport struct {
+	ID        string // "transport:abc123"
+	Decorator string // "@ssh.connect", "@docker.exec", "local"
+	Args      []Arg  // Transport decorator arguments (sorted by Key)
+	ParentID  string // Parent transport ID (empty for root/local)
 }
 
 // PlanHeader contains metadata about the plan.
@@ -177,6 +187,20 @@ func (p *Plan) sortSecretUses() {
 				return p.SecretUses[i].DisplayID < p.SecretUses[j].DisplayID
 			}
 			return p.SecretUses[i].Site < p.SecretUses[j].Site
+		})
+	}
+}
+
+// sortTransports sorts Transports by ID for deterministic binary encoding.
+func (p *Plan) sortTransports() {
+	if len(p.Transports) > 1 {
+		sort.Slice(p.Transports, func(i, j int) bool {
+			return p.Transports[i].ID < p.Transports[j].ID
+		})
+	}
+	for i := range p.Transports {
+		sort.Slice(p.Transports[i].Args, func(a, b int) bool {
+			return p.Transports[i].Args[a].Key < p.Transports[i].Args[b].Key
 		})
 	}
 }

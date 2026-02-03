@@ -80,7 +80,8 @@ type executor struct {
 	// Execution state
 	stepsRun         int
 	exitCode         int
-	currentTransport string // Current transport context (e.g., "local", "transport:abc123")
+	currentTransport string       // Current transport context (e.g., "local", "transport:abc123")
+	transportMu      sync.RWMutex // Protects currentTransport (concurrent pipeline access)
 
 	// Observability
 	debugEvents []DebugEvent
@@ -389,18 +390,36 @@ func (e *executor) executeCommand(execCtx sdk.ExecutionContext, cmd *sdk.Command
 // stdout: piped output (nil if not piped)
 func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
-	// Strip @ prefix from decorator name for registry lookup
-	decoratorName := strings.TrimPrefix(cmd.Name, "@")
+	return e.withTransport(cmd.TransportID, func() int {
+		// Strip @ prefix from decorator name for registry lookup
+		decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
-	// Lookup decorator in registry
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
+		// Lookup decorator in registry
+		entry, exists := decorator.Global().Lookup(decoratorName)
+		invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
 
-	// Check if it's an Exec decorator
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
+		// Check if it's an Exec decorator
+		execDec, ok := entry.Impl.(decorator.Exec)
+		invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
 
-	return e.executeDecorator(execCtx, cmd, execDec, stdin, stdout)
+		return e.executeDecorator(execCtx, cmd, execDec, stdin, stdout)
+	})
+}
+
+func (e *executor) withTransport(transportID string, fn func() int) int {
+	e.transportMu.Lock()
+	previous := e.currentTransport
+	if transportID == "" {
+		e.currentTransport = "local"
+	} else {
+		e.currentTransport = transportID
+	}
+	e.transportMu.Unlock()
+	result := fn()
+	e.transportMu.Lock()
+	e.currentTransport = previous
+	e.transportMu.Unlock()
+	return result
 }
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
@@ -439,7 +458,10 @@ func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string
 		result := strVal
 		for _, displayID := range matches {
 			// Resolve DisplayID with transport boundary check
-			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, e.currentTransport)
+			e.transportMu.RLock()
+			currentTransport := e.currentTransport
+			e.transportMu.RUnlock()
+			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, currentTransport)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve %s in %s.%s: %w", displayID, decoratorName, key, err)
 			}

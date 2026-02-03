@@ -130,9 +130,12 @@ type TreeNode interface {
 
 // CommandNode is a leaf node - represents a single decorator invocation.
 type CommandNode struct {
-	Name  string                 // Decorator name: "shell", "retry", "parallel"
-	Args  map[string]interface{} // Decorator arguments (typed values)
-	Block []Step                 // Nested steps (for decorators with blocks)
+	Name string // Decorator name: "shell", "retry", "parallel"
+	// TransportID is the deterministic transport identifier for this command's execution context.
+	// Empty means default (local) transport.
+	TransportID string
+	Args        map[string]interface{} // Decorator arguments (typed values)
+	Block       []Step                 // Nested steps (for decorators with blocks)
 }
 
 func (*CommandNode) isTreeNode() {}

@@ -17,8 +17,11 @@ type ExecutionNode interface {
 // CommandNode is a leaf node - represents a single decorator invocation.
 type CommandNode struct {
 	Decorator string // "@shell", "@retry", "@parallel", etc.
-	Args      []Arg  // Decorator arguments (sorted by Key)
-	Block     []Step // Nested steps (for decorators with blocks)
+	// TransportID is the deterministic transport identifier for this command's execution context.
+	// Empty means default (local) transport.
+	TransportID string
+	Args        []Arg  // Decorator arguments (sorted by Key)
+	Block       []Step // Nested steps (for decorators with blocks)
 }
 
 func (*CommandNode) isExecutionNode() {}

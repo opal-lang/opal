@@ -192,6 +192,24 @@ func (rd *Reader) readBody(r io.Reader, plan *Plan, maxDepth int) error {
 		}
 	}
 
+	// Read transport count (2 bytes, uint16)
+	var transportCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &transportCount); err != nil {
+		return fmt.Errorf("read transport count: %w", err)
+	}
+
+	// Read each transport
+	if transportCount > 0 {
+		plan.Transports = make([]Transport, transportCount)
+		for i := 0; i < int(transportCount); i++ {
+			transport, err := rd.readTransport(r)
+			if err != nil {
+				return fmt.Errorf("read transport %d: %w", i, err)
+			}
+			plan.Transports[i] = *transport
+		}
+	}
+
 	// Read PlanSalt (32 bytes, fixed size)
 	saltBytes := make([]byte, 32)
 	if _, err := io.ReadFull(r, saltBytes); err != nil {
@@ -268,6 +286,42 @@ func (rd *Reader) readSecretUse(r io.Reader) (*SecretUse, error) {
 	use.Site = string(siteBytes)
 
 	return use, nil
+}
+
+// readTransport reads a single Transport entry.
+func (rd *Reader) readTransport(r io.Reader) (*Transport, error) {
+	transport := &Transport{}
+
+	var err error
+	transport.ID, err = readString(r, "transport ID")
+	if err != nil {
+		return nil, err
+	}
+	transport.Decorator, err = readString(r, "transport decorator")
+	if err != nil {
+		return nil, err
+	}
+	transport.ParentID, err = readString(r, "transport parent ID")
+	if err != nil {
+		return nil, err
+	}
+
+	var argsCount uint16
+	if err := binary.Read(r, binary.LittleEndian, &argsCount); err != nil {
+		return nil, fmt.Errorf("read transport args count: %w", err)
+	}
+	if argsCount > 0 {
+		transport.Args = make([]Arg, argsCount)
+		for i := 0; i < int(argsCount); i++ {
+			arg, err := rd.readArg(r)
+			if err != nil {
+				return nil, fmt.Errorf("read transport arg %d: %w", i, err)
+			}
+			transport.Args[i] = *arg
+		}
+	}
+
+	return transport, nil
 }
 
 // readStep reads a single step and its commands recursively
@@ -519,6 +573,21 @@ func (rd *Reader) readCommand(r io.Reader, depth, maxDepth int) (*CommandNode, e
 		return nil, fmt.Errorf("read decorator: %w", err)
 	}
 	cmd.Decorator = string(decoratorBuf)
+
+	// Read transport ID length (2 bytes, uint16, little-endian)
+	var transportLen uint16
+	if err := binary.Read(r, binary.LittleEndian, &transportLen); err != nil {
+		return nil, fmt.Errorf("read transport ID length: %w", err)
+	}
+
+	// Read transport ID string
+	if transportLen > 0 {
+		transportBuf := make([]byte, transportLen)
+		if _, err := io.ReadFull(r, transportBuf); err != nil {
+			return nil, fmt.Errorf("read transport ID: %w", err)
+		}
+		cmd.TransportID = string(transportBuf)
+	}
 
 	// Read args count (2 bytes, uint16, little-endian)
 	var argsCount uint16

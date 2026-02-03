@@ -219,15 +219,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+            ${{ runner.temp }}/go-build
+            ${{ runner.temp }}/go-mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
       - name: Run module tests
+        env:
+          TMPDIR: ${{ runner.temp }}/go-tmp
+          GOTMPDIR: ${{ runner.temp }}/go-tmp
+          GOCACHE: ${{ runner.temp }}/go-build
+          GOMODCACHE: ${{ runner.temp }}/go-mod
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE"
           nix develop -c bash -c '
             echo "Running ${{ matrix.module }} module tests..."
             cd ${{ matrix.module }}
