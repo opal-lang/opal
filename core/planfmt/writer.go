@@ -65,6 +65,7 @@ type Writer struct {
 func (wr *Writer) WritePlan(p *Plan) ([32]byte, error) {
 	// Sort for deterministic encoding (defense in depth - protects against manual Plan construction)
 	p.sortArgs()
+	p.sortTransports()
 	p.sortSecretUses()
 
 	// Buffer first to compute lengths for preamble
@@ -200,6 +201,20 @@ func (wr *Writer) writeBody(buf *bytes.Buffer, p *Plan) error {
 		}
 	}
 
+	// Write transports table
+	if err := validateUint16(len(p.Transports), "transport count"); err != nil {
+		return err
+	}
+	transportCount := uint16(len(p.Transports))
+	if err := binary.Write(buf, binary.LittleEndian, transportCount); err != nil {
+		return err
+	}
+	for i := range p.Transports {
+		if err := wr.writeTransport(buf, &p.Transports[i]); err != nil {
+			return err
+		}
+	}
+
 	// PlanSalt: 32 bytes fixed (zeros if unset for backward compatibility)
 	var salt [32]byte
 	if len(p.PlanSalt) == 32 {
@@ -269,6 +284,34 @@ func (wr *Writer) writeSecretUse(buf *bytes.Buffer, use *SecretUse) error {
 	return nil
 }
 
+// writeTransport writes a single Transport entry.
+func (wr *Writer) writeTransport(buf *bytes.Buffer, transport *Transport) error {
+	if err := writeString(buf, transport.ID, "transport ID length"); err != nil {
+		return err
+	}
+	if err := writeString(buf, transport.Decorator, "transport decorator length"); err != nil {
+		return err
+	}
+	if err := writeString(buf, transport.ParentID, "transport parent ID length"); err != nil {
+		return err
+	}
+
+	if err := validateUint16(len(transport.Args), "transport args count"); err != nil {
+		return err
+	}
+	argsCount := uint16(len(transport.Args))
+	if err := binary.Write(buf, binary.LittleEndian, argsCount); err != nil {
+		return err
+	}
+	for i := range transport.Args {
+		if err := wr.writeArg(buf, &transport.Args[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // writeStep writes a single step and its execution tree
 func (wr *Writer) writeStep(buf *bytes.Buffer, s *Step) error {
 	// INPUT CONTRACT
@@ -305,9 +348,10 @@ func (wr *Writer) writeExecutionNode(buf *bytes.Buffer, node ExecutionNode) erro
 		}
 		// Write command data (reuse writeCommand logic)
 		return wr.writeCommand(buf, &CommandNode{
-			Decorator: n.Decorator,
-			Args:      n.Args,
-			Block:     n.Block,
+			Decorator:   n.Decorator,
+			TransportID: n.TransportID,
+			Args:        n.Args,
+			Block:       n.Block,
 		})
 
 	case *PipelineNode:
@@ -480,6 +524,18 @@ func (wr *Writer) writeCommand(buf *bytes.Buffer, cmd *CommandNode) error {
 		return err
 	}
 	if _, err := buf.WriteString(cmd.Decorator); err != nil {
+		return err
+	}
+
+	// Write transport ID (2-byte length + string)
+	if err := validateUint16(len(cmd.TransportID), "transport ID length"); err != nil {
+		return err
+	}
+	transportLen := uint16(len(cmd.TransportID))
+	if err := binary.Write(buf, binary.LittleEndian, transportLen); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString(cmd.TransportID); err != nil {
 		return err
 	}
 
