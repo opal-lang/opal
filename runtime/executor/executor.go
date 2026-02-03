@@ -389,18 +389,32 @@ func (e *executor) executeCommand(execCtx sdk.ExecutionContext, cmd *sdk.Command
 // stdout: piped output (nil if not piped)
 func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
-	// Strip @ prefix from decorator name for registry lookup
-	decoratorName := strings.TrimPrefix(cmd.Name, "@")
+	return e.withTransport(cmd.TransportID, func() int {
+		// Strip @ prefix from decorator name for registry lookup
+		decoratorName := strings.TrimPrefix(cmd.Name, "@")
 
-	// Lookup decorator in registry
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
+		// Lookup decorator in registry
+		entry, exists := decorator.Global().Lookup(decoratorName)
+		invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
 
-	// Check if it's an Exec decorator
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
+		// Check if it's an Exec decorator
+		execDec, ok := entry.Impl.(decorator.Exec)
+		invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
 
-	return e.executeDecorator(execCtx, cmd, execDec, stdin, stdout)
+		return e.executeDecorator(execCtx, cmd, execDec, stdin, stdout)
+	})
+}
+
+func (e *executor) withTransport(transportID string, fn func() int) int {
+	previous := e.currentTransport
+	if transportID == "" {
+		e.currentTransport = "local"
+	} else {
+		e.currentTransport = transportID
+	}
+	result := fn()
+	e.currentTransport = previous
+	return result
 }
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"sort"
 
 	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/opal-lang/opal/runtime/vault"
@@ -21,12 +22,15 @@ type Emitter struct {
 	scopes           *ScopeStack
 	decoratorExprIDs map[string]string
 	target           string
+	transportKey     []byte
 
 	// State
 	nextStepID      uint64
 	sitePath        []string
 	decoratorCounts []map[string]int
 	secretUses      []planfmt.SecretUse
+	transportStack  []string
+	transports      map[string]planfmt.Transport
 }
 
 // NewEmitter creates a new Emitter.
@@ -36,15 +40,26 @@ func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, targe
 		decoratorExprIDs = result.DecoratorExprIDs
 	}
 
+	localID := localTransportID(v.GetPlanKey())
+
 	return &Emitter{
 		result:           result,
 		vault:            v,
 		scopes:           scopes,
 		decoratorExprIDs: decoratorExprIDs,
 		target:           target,
+		transportKey:     v.GetPlanKey(),
 		nextStepID:       1,
 		sitePath:         []string{"root"},
 		decoratorCounts:  []map[string]int{},
+		transportStack:   []string{localID},
+		transports: map[string]planfmt.Transport{
+			localID: {
+				ID:        localID,
+				Decorator: "local",
+				ParentID:  "",
+			},
+		},
 	}
 }
 
@@ -66,6 +81,9 @@ func (e *Emitter) Emit() (*planfmt.Plan, error) {
 
 	// Add collected SecretUses
 	plan.SecretUses = e.secretUses
+
+	// Add transport table
+	plan.Transports = e.collectTransports()
 
 	return plan, nil
 }
@@ -132,6 +150,7 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 // For multiple commands, builds an operator tree (AndNode, OrNode, PipelineNode, SequenceNode).
 func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error) {
 	stepID := e.nextStepID
+	e.nextStepID++
 	e.pushStep(stepID)
 
 	// Build execution tree from command chain
@@ -145,7 +164,6 @@ func (e *Emitter) emitCommandChain(chain []*CommandStmtIR) (*planfmt.Step, error
 		ID:   stepID,
 		Tree: tree,
 	}
-	e.nextStepID++
 
 	return step, nil
 }
@@ -208,11 +226,19 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	}
 
 	cmdNode := &planfmt.CommandNode{
-		Decorator: cmd.Decorator,
-		Args:      args,
+		Decorator:   cmd.Decorator,
+		TransportID: e.currentTransportID(),
+		Args:        args,
 	}
 
 	if len(cmd.Block) > 0 {
+		isTransport := isTransportDecoratorName(cmd.Decorator)
+		if isTransport {
+			if err := e.enterTransport(cmd, args); err != nil {
+				return nil, err
+			}
+			defer e.popTransport()
+		}
 		if e.scopes != nil {
 			e.scopes.Push()
 			defer e.scopes.Pop()
@@ -276,7 +302,8 @@ func (e *Emitter) buildRedirectTargetNode(cmd *CommandStmtIR) (*planfmt.CommandN
 
 	commandStr := RenderCommand(cmd.RedirectTarget, displayIDs)
 	return &planfmt.CommandNode{
-		Decorator: "@shell",
+		Decorator:   "@shell",
+		TransportID: e.currentTransportID(),
 		Args: []planfmt.Arg{
 			{
 				Key: "command",
@@ -522,6 +549,55 @@ func (e *Emitter) buildDisplayIDMap(cmd *CommandStmtIR) map[string]string {
 	return displayIDs
 }
 
+func (e *Emitter) getValue(name string) (any, bool) {
+	if e.scopes != nil {
+		if exprID, ok := e.scopes.Lookup(name); ok {
+			return e.vault.GetUnresolvedValue(exprID)
+		}
+	}
+	if exprID, ok := e.decoratorExprIDs[name]; ok {
+		return e.vault.GetUnresolvedValue(exprID)
+	}
+	return nil, false
+}
+
+func (e *Emitter) currentTransportID() string {
+	if len(e.transportStack) == 0 {
+		return "local"
+	}
+	return e.transportStack[len(e.transportStack)-1]
+}
+
+func (e *Emitter) enterTransport(cmd *CommandStmtIR, args []planfmt.Arg) error {
+	params, err := evaluateArgs(cmd.Args, e.getValue)
+	if err != nil {
+		return err
+	}
+	transportID, err := deriveTransportID(e.transportKey, cmd.Decorator, params, e.currentTransportID())
+	if err != nil {
+		return err
+	}
+
+	if _, exists := e.transports[transportID]; !exists {
+		e.transports[transportID] = planfmt.Transport{
+			ID:        transportID,
+			Decorator: cmd.Decorator,
+			Args:      args,
+			ParentID:  e.currentTransportID(),
+		}
+	}
+
+	e.transportStack = append(e.transportStack, transportID)
+	return nil
+}
+
+func (e *Emitter) popTransport() {
+	if len(e.transportStack) <= 1 {
+		return
+	}
+	e.transportStack = e.transportStack[:len(e.transportStack)-1]
+}
+
 func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
 	if expr == nil {
 		return
@@ -601,6 +677,17 @@ func (e *Emitter) recordSecretUse(exprID, displayID, paramName string) {
 		SiteID:    siteID,
 		Site:      site,
 	})
+}
+
+func (e *Emitter) collectTransports() []planfmt.Transport {
+	transports := make([]planfmt.Transport, 0, len(e.transports))
+	for _, transport := range e.transports {
+		transports = append(transports, transport)
+	}
+	sort.Slice(transports, func(i, j int) bool {
+		return transports[i].ID < transports[j].ID
+	})
+	return transports
 }
 
 // buildSitePath builds the current site path with the given parameter name.

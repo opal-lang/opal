@@ -24,6 +24,7 @@ type CanonicalPlan struct {
 	Version    uint8                // Canonical format version (for forward compatibility)
 	Target     string               // Command/function being executed (ensures deploy != destroy)
 	Steps      []CanonicalStep      // Steps in canonical form
+	Transports []CanonicalTransport // Transport table in canonical form
 	SecretUses []CanonicalSecretUse // Secret uses in canonical form
 }
 
@@ -46,9 +47,10 @@ type CanonicalNode struct {
 	Type string // "command", "pipeline", "and", "or", "sequence", "redirect", "logic"
 
 	// CommandNode fields
-	Decorator string
-	Args      []CanonicalArg
-	Block     []CanonicalStep
+	Decorator   string
+	TransportID string
+	Args        []CanonicalArg
+	Block       []CanonicalStep
 
 	// PipelineNode fields
 	Commands []CanonicalNode
@@ -81,6 +83,14 @@ type CanonicalArg struct {
 	Ref  uint32
 }
 
+// CanonicalTransport represents a transport entry in canonical form.
+type CanonicalTransport struct {
+	ID        string
+	Decorator string
+	Args      []CanonicalArg
+	ParentID  string
+}
+
 // Canonicalize converts a Plan into canonical form for deterministic hashing.
 // Sorts args before canonicalization to ensure same structure produces same hash.
 // Includes Target to ensure different commands produce different hashes.
@@ -88,11 +98,13 @@ func (p *Plan) Canonicalize() (*CanonicalPlan, error) {
 	// Sort args first to ensure deterministic ordering
 	// Args may come from Go maps with non-deterministic iteration order
 	p.sortArgs()
+	p.sortTransports()
 
 	cp := &CanonicalPlan{
 		Version:    1,        // Canonical format version
 		Target:     p.Target, // Include target to distinguish deploy vs destroy
 		Steps:      make([]CanonicalStep, len(p.Steps)),
+		Transports: make([]CanonicalTransport, len(p.Transports)),
 		SecretUses: make([]CanonicalSecretUse, len(p.SecretUses)),
 	}
 
@@ -121,6 +133,15 @@ func (p *Plan) Canonicalize() (*CanonicalPlan, error) {
 		return secretUses[i].Site < secretUses[j].Site
 	})
 	cp.SecretUses = secretUses
+
+	// Canonicalize transports (sorted by ID for determinism)
+	for i := range p.Transports {
+		cp.Transports[i] = canonicalizeTransport(&p.Transports[i])
+	}
+
+	sort.Slice(cp.Transports, func(i, j int) bool {
+		return cp.Transports[i].ID < cp.Transports[j].ID
+	})
 
 	return cp, nil
 }
@@ -167,10 +188,11 @@ func toCanonicalNode(node ExecutionNode) (CanonicalNode, error) {
 // canonicalizeCommandNode converts a CommandNode into canonical form
 func canonicalizeCommandNode(n *CommandNode) (CanonicalNode, error) {
 	cn := CanonicalNode{
-		Type:      "command",
-		Decorator: n.Decorator,
-		Args:      make([]CanonicalArg, len(n.Args)),
-		Block:     make([]CanonicalStep, len(n.Block)),
+		Type:        "command",
+		Decorator:   n.Decorator,
+		TransportID: n.TransportID,
+		Args:        make([]CanonicalArg, len(n.Args)),
+		Block:       make([]CanonicalStep, len(n.Block)),
 	}
 
 	// Canonicalize args (already sorted by Key in Plan.sortArgs())
@@ -195,6 +217,28 @@ func canonicalizeCommandNode(n *CommandNode) (CanonicalNode, error) {
 	}
 
 	return cn, nil
+}
+
+func canonicalizeTransport(t *Transport) CanonicalTransport {
+	ct := CanonicalTransport{
+		ID:        t.ID,
+		Decorator: t.Decorator,
+		Args:      make([]CanonicalArg, len(t.Args)),
+		ParentID:  t.ParentID,
+	}
+
+	for i := range t.Args {
+		ct.Args[i] = CanonicalArg{
+			Key:  t.Args[i].Key,
+			Kind: uint8(t.Args[i].Val.Kind),
+			Str:  t.Args[i].Val.Str,
+			Int:  t.Args[i].Val.Int,
+			Bool: t.Args[i].Val.Bool,
+			Ref:  t.Args[i].Val.Ref,
+		}
+	}
+
+	return ct
 }
 
 // canonicalizePipelineNode converts a PipelineNode into canonical form

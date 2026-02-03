@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-03
+- Added transport table and per-command transport IDs to plan format for contract verification
+- Enforced session-aware @env resolution for idempotent transports, with boundary checks for non-idempotent blocks
+
 ### 2025-11-30
 - Added `if`/`else if`/`else` control flow to planner with plan-time condition evaluation
 - Planner now supports comparison operators (`==`, `!=`) in conditions

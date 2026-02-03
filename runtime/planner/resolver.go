@@ -116,6 +116,7 @@ type Resolver struct {
 	graph          *ExecutionGraph
 	vault          *vault.Vault
 	session        decorator.Session
+	sessionStack   []decorator.Session
 	config         ResolveConfig
 	scopes         *ScopeStack
 	activeFunction *FunctionIR
@@ -124,6 +125,16 @@ type Resolver struct {
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
 	errors           []error           // Collected errors
+
+	// @env allowance context (non-idempotent transports forbid @env)
+	envAllowed      bool
+	envBlockedBy    string
+	envContextStack []envContext
+}
+
+type envContext struct {
+	allowed   bool
+	decorator string
 }
 
 // ResolveConfig configures the resolution process.
@@ -166,6 +177,11 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		session:          session,
 		config:           config,
 		decoratorExprIDs: make(map[string]string),
+		envAllowed:       true,
+	}
+
+	if v != nil {
+		v.EnterTransport(localTransportID(v.GetPlanKey()))
 	}
 
 	return r.resolve()
@@ -259,6 +275,11 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 			if err := r.batchResolve(); err != nil {
 				return nil, err
 			}
+			if stmt.VarDecl != nil {
+				if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
+					return nil, err
+				}
+			}
 			result = append(result, stmt)
 
 		case StmtCommand:
@@ -268,6 +289,9 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 				return nil, err
 			}
 			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.checkTransportBoundaryCommand(stmt.Command); err != nil {
 				return nil, err
 			}
 			if err := r.resolveCommandBlock(stmt.Command); err != nil {
@@ -349,6 +373,9 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
 	// Evaluate condition
+	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
+		return nil, err
+	}
 	result, err := EvaluateExpr(blocker.Condition, r.getValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
@@ -384,6 +411,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
 	// Evaluate collection
+	if err := r.checkTransportBoundaryExpr(blocker.Collection); err != nil {
+		return nil, err
+	}
 	collection, err := r.evaluateCollection(blocker.Collection)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
@@ -430,6 +460,9 @@ func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
 	// Evaluate condition
+	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
+		return nil, err
+	}
 	value, err := EvaluateExpr(blocker.Condition, r.getValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate when condition: %w", err)
@@ -438,6 +471,9 @@ func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 	// Find first matching arm
 	blocker.MatchedArm = -1
 	for i, arm := range blocker.Arms {
+		if err := r.checkTransportBoundaryExpr(arm.Pattern); err != nil {
+			return nil, err
+		}
 		if matchPattern(arm.Pattern, value, r.getValue) {
 			blocker.MatchedArm = i
 
@@ -504,6 +540,44 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 		return nil
 	}
 
+	var restoreTransport string
+	if transportDec, desc, ok := lookupTransportDecorator(cmd.Decorator); ok {
+		params, err := evaluateArgs(cmd.Args, r.getValue)
+		if err != nil {
+			return err
+		}
+
+		parentTransport := r.vault.CurrentTransport()
+		transportID, err := deriveTransportID(r.vault.GetPlanKey(), cmd.Decorator, params, parentTransport)
+		if err != nil {
+			return err
+		}
+
+		restoreTransport = parentTransport
+		r.vault.EnterTransport(transportID)
+		defer func() {
+			r.vault.EnterTransport(restoreTransport)
+		}()
+
+		if desc.Capabilities.Idempotent {
+			session, err := transportDec.Open(r.session, params)
+			if err != nil {
+				return fmt.Errorf("failed to open transport %q: %w", cmd.Decorator, err)
+			}
+			if delta := extractEnvDelta(params); len(delta) > 0 {
+				session = session.WithEnv(delta)
+			}
+			r.pushSession(session)
+			defer r.popSession()
+			r.pushEnvContext(true, "")
+			defer r.popEnvContext()
+		}
+		if !desc.Capabilities.Idempotent {
+			r.pushEnvContext(false, cmd.Decorator)
+			defer r.popEnvContext()
+		}
+	}
+
 	if r.scopes != nil {
 		r.scopes.Push()
 		defer r.scopes.Pop()
@@ -514,6 +588,7 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 	}
 
 	cmd.Block = resolved
+
 	return nil
 }
 
@@ -618,6 +693,72 @@ func (r *Resolver) resolvePreludeIf(blocker *BlockerIR) error {
 	return nil
 }
 
+func (r *Resolver) pushSession(session decorator.Session) {
+	r.sessionStack = append(r.sessionStack, r.session)
+	r.session = session
+}
+
+func (r *Resolver) popSession() {
+	if len(r.sessionStack) == 0 {
+		return
+	}
+	if r.session != nil {
+		_ = r.session.Close()
+	}
+	prev := r.sessionStack[len(r.sessionStack)-1]
+	r.sessionStack = r.sessionStack[:len(r.sessionStack)-1]
+	r.session = prev
+}
+
+func (r *Resolver) pushEnvContext(allowed bool, decoratorName string) {
+	r.envContextStack = append(r.envContextStack, envContext{
+		allowed:   r.envAllowed,
+		decorator: r.envBlockedBy,
+	})
+	r.envAllowed = allowed
+	r.envBlockedBy = decoratorName
+}
+
+func (r *Resolver) popEnvContext() {
+	if len(r.envContextStack) == 0 {
+		return
+	}
+	prev := r.envContextStack[len(r.envContextStack)-1]
+	r.envContextStack = r.envContextStack[:len(r.envContextStack)-1]
+	r.envAllowed = prev.allowed
+	r.envBlockedBy = prev.decorator
+}
+
+func extractEnvDelta(params map[string]any) map[string]string {
+	if params == nil {
+		return nil
+	}
+	value, ok := params["env"]
+	if !ok {
+		return nil
+	}
+	if value == nil {
+		return nil
+	}
+
+	switch v := value.(type) {
+	case map[string]string:
+		return v
+	case map[string]any:
+		delta := make(map[string]string, len(v))
+		for key, raw := range v {
+			str, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			delta[key] = str
+		}
+		return delta
+	default:
+		return nil
+	}
+}
+
 func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
 	collection, err := r.evaluateCollection(blocker.Collection)
 	if err != nil {
@@ -692,7 +833,12 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// in the loop body.
 	if exprID == "" {
 		raw := r.buildVarDeclRaw(decl)
-		exprID = r.vault.DeclareVariable(decl.Name, raw)
+		// Check if value is transport-sensitive and use appropriate declaration method
+		if r.isExprTransportSensitive(decl.Value) {
+			exprID = r.vault.DeclareVariableTransportSensitive(decl.Name, raw)
+		} else {
+			exprID = r.vault.DeclareVariable(decl.Name, raw)
+		}
 		decl.ExprID = exprID // Update the IR with the generated ExprID
 	}
 
@@ -793,6 +939,9 @@ func (r *Resolver) collectExprForVar(expr *ExprIR, exprID, varName string) {
 	}
 
 	if expr.Kind == ExprDecoratorRef {
+		if !r.checkEnvAllowed(expr) {
+			return
+		}
 		// Track decorator call for batch resolution, with variable name
 		raw := buildDecoratorRaw(expr.Decorator)
 
@@ -847,12 +996,19 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 		// when the variable was declared. If not, it will fail during evaluation.
 
 	case ExprDecoratorRef:
+		if !r.checkEnvAllowed(expr) {
+			return
+		}
 		// Track decorator call for batch resolution
 		raw := buildDecoratorRaw(expr.Decorator)
 
 		// Generate or use provided exprID
 		if exprID == "" {
-			exprID = r.vault.TrackExpression(raw)
+			if r.isDecoratorTransportSensitive(expr.Decorator.Name) {
+				exprID = r.vault.TrackExpressionTransportSensitive(raw)
+			} else {
+				exprID = r.vault.TrackExpression(raw)
+			}
 		}
 
 		r.pendingCalls = append(r.pendingCalls, decoratorCall{
@@ -867,6 +1023,154 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 		r.collectExpr(expr.Left, "")
 		r.collectExpr(expr.Right, "")
 	}
+}
+
+func (r *Resolver) checkEnvAllowed(expr *ExprIR) bool {
+	if expr == nil || expr.Decorator == nil {
+		return true
+	}
+	if expr.Decorator.Name != "env" {
+		return true
+	}
+	if r.envAllowed {
+		return true
+	}
+	decoratorName := r.envBlockedBy
+	if decoratorName == "" {
+		decoratorName = "non-idempotent transport"
+	}
+	r.errors = append(r.errors, &EvalError{
+		Message: fmt.Sprintf("@env cannot be used inside %s", decoratorName),
+		Span:    expr.Span,
+	})
+	return false
+}
+
+func (r *Resolver) checkTransportBoundaryCommand(cmd *CommandStmtIR) error {
+	if cmd == nil {
+		return nil
+	}
+
+	if cmd.Command != nil {
+		for _, part := range cmd.Command.Parts {
+			if err := r.checkTransportBoundaryExpr(part); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, arg := range cmd.Args {
+		if err := r.checkTransportBoundaryExpr(arg.Value); err != nil {
+			return err
+		}
+	}
+
+	if cmd.RedirectTarget != nil {
+		for _, part := range cmd.RedirectTarget.Parts {
+			if err := r.checkTransportBoundaryExpr(part); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) checkTransportBoundaryExpr(expr *ExprIR) error {
+	if expr == nil {
+		return nil
+	}
+
+	switch expr.Kind {
+	case ExprLiteral:
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			for _, item := range arr {
+				if err := r.checkTransportBoundaryExpr(item); err != nil {
+					return err
+				}
+			}
+		}
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			for _, item := range obj {
+				if err := r.checkTransportBoundaryExpr(item); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+
+	case ExprVarRef:
+		exprID, ok := r.lookupScopeExprID(expr.VarName)
+		if !ok {
+			return nil
+		}
+		return r.vault.CheckTransportBoundary(exprID)
+
+	case ExprDecoratorRef:
+		key := decoratorKey(expr.Decorator)
+		exprID, ok := r.decoratorExprIDs[key]
+		if !ok {
+			return nil
+		}
+		return r.vault.CheckTransportBoundary(exprID)
+
+	case ExprBinaryOp:
+		if err := r.checkTransportBoundaryExpr(expr.Left); err != nil {
+			return err
+		}
+		return r.checkTransportBoundaryExpr(expr.Right)
+
+	default:
+		return nil
+	}
+}
+
+// isExprTransportSensitive checks if an expression is transport-sensitive.
+// Returns true for:
+// - Decorator refs where the decorator has TransportSensitive capability
+// - Var refs where the referenced variable is transport-sensitive
+// - Binary ops where either operand is transport-sensitive
+func (r *Resolver) isExprTransportSensitive(expr *ExprIR) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch expr.Kind {
+	case ExprLiteral:
+		return false
+
+	case ExprVarRef:
+		// Check if the referenced variable is transport-sensitive
+		refExprID, ok := r.lookupScopeExprID(expr.VarName)
+		if !ok {
+			return false
+		}
+		return r.vault.IsExpressionTransportSensitive(refExprID)
+
+	case ExprDecoratorRef:
+		// Check if the decorator has TransportSensitive capability
+		return r.isDecoratorTransportSensitive(expr.Decorator.Name)
+
+	case ExprBinaryOp:
+		// Check if either operand is transport-sensitive
+		return r.isExprTransportSensitive(expr.Left) || r.isExprTransportSensitive(expr.Right)
+
+	default:
+		return false
+	}
+}
+
+// isDecoratorTransportSensitive checks if a decorator has the TransportSensitive capability.
+func (r *Resolver) isDecoratorTransportSensitive(name string) bool {
+	trimmed := strings.TrimPrefix(name, "@")
+	if trimmed == "" {
+		return false
+	}
+	entry, ok := decorator.Global().Lookup(trimmed)
+	if !ok {
+		return false
+	}
+	return entry.Impl.Descriptor().Capabilities.TransportSensitive
 }
 
 // batchResolve resolves all pending decorator calls in batches (grouped by decorator type).
@@ -916,7 +1220,7 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	}
 
 	// Get current transport scope
-	currentScope := transportStringToScope(r.vault.CurrentTransport())
+	currentScope := r.session.TransportScope()
 
 	// Call decorator's batch Resolve
 	// This is where the magic happens - multiple @aws.secret calls → one API request
@@ -1042,16 +1346,3 @@ func (r *Resolver) buildError() error {
 }
 
 // transportStringToScope converts a transport string to TransportScope.
-func transportStringToScope(transport string) decorator.TransportScope {
-	switch transport {
-	case "":
-		return decorator.TransportScopeLocal
-	case "local":
-		return decorator.TransportScopeLocal
-	case "ssh":
-		return decorator.TransportScopeSSH
-	default:
-		// Unknown transport - treat as remote
-		return decorator.TransportScopeRemote
-	}
-}
