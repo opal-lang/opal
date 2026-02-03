@@ -80,7 +80,8 @@ type executor struct {
 	// Execution state
 	stepsRun         int
 	exitCode         int
-	currentTransport string // Current transport context (e.g., "local", "transport:abc123")
+	currentTransport string       // Current transport context (e.g., "local", "transport:abc123")
+	transportMu      sync.RWMutex // Protects currentTransport (concurrent pipeline access)
 
 	// Observability
 	debugEvents []DebugEvent
@@ -406,14 +407,18 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 }
 
 func (e *executor) withTransport(transportID string, fn func() int) int {
+	e.transportMu.Lock()
 	previous := e.currentTransport
 	if transportID == "" {
 		e.currentTransport = "local"
 	} else {
 		e.currentTransport = transportID
 	}
+	e.transportMu.Unlock()
 	result := fn()
+	e.transportMu.Lock()
 	e.currentTransport = previous
+	e.transportMu.Unlock()
 	return result
 }
 
@@ -453,7 +458,10 @@ func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName string
 		result := strVal
 		for _, displayID := range matches {
 			// Resolve DisplayID with transport boundary check
-			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, e.currentTransport)
+			e.transportMu.RLock()
+			currentTransport := e.currentTransport
+			e.transportMu.RUnlock()
+			actualValue, err := e.vault.ResolveDisplayIDWithTransport(displayID, currentTransport)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve %s in %s.%s: %w", displayID, decoratorName, key, err)
 			}
