@@ -715,6 +715,12 @@ func (r *Resolver) pushEnvContext(allowed bool, decoratorName string) {
 		allowed:   r.envAllowed,
 		decorator: r.envBlockedBy,
 	})
+	if !r.envAllowed {
+		allowed = false
+		if r.envBlockedBy != "" {
+			decoratorName = r.envBlockedBy
+		}
+	}
 	r.envAllowed = allowed
 	r.envBlockedBy = decoratorName
 }

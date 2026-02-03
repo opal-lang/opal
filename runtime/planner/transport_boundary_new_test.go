@@ -113,3 +113,26 @@ func TestPlanNew_TransportBoundary_DirectEnvInNonIdempotentTransportBlocked(t *t
 		t.Errorf("error mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestPlanNew_TransportBoundary_NestedIdempotentBlockedByOuter(t *testing.T) {
+	source := `
+@test.transport {
+    @test.transport.idempotent {
+        echo "Home: @env.HOME"
+    }
+}
+`
+
+	planKey := []byte("plan-key-transport-boundary-0000")
+	v := vault.NewWithPlanKey(planKey)
+
+	_, err := parsePlanNew(t, source, v)
+	if err == nil {
+		t.Fatal("Expected error for nested @env under non-idempotent transport, got nil")
+	}
+
+	expected := "failed to resolve: @env cannot be used inside @test.transport"
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
