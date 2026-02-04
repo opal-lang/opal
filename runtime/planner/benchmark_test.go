@@ -34,7 +34,7 @@ echo "Third"`,
 
 			for i := 0; i < b.N; i++ {
 				// Plan generation is what we're measuring
-				_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+				_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 					Target: "", // Script mode
 				})
 				if err != nil {
@@ -63,7 +63,7 @@ func BenchmarkPlannerTelemetryModes(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+				_, err := planner.PlanNewWithObservability(tree.Events, tree.Tokens, planner.Config{
 					Target:    "",
 					Telemetry: mode,
 				})
@@ -89,7 +89,7 @@ func BenchmarkPlannerScaling(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+				_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 					Target: "",
 				})
 				if err != nil {
@@ -114,7 +114,7 @@ fun deploy = kubectl apply -f k8s/`)
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 				Target: "", // Script mode - plans everything
 			})
 			if err != nil {
@@ -128,7 +128,7 @@ fun deploy = kubectl apply -f k8s/`)
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 				Target: "hello", // Command mode - plans only 'hello'
 			})
 			if err != nil {

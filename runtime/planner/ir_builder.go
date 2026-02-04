@@ -757,7 +757,9 @@ func (b *irBuilder) buildDecoratorStmt() (*StatementIR, error) {
 				parsingName = false
 				continue
 			case parser.NodeBlock:
+				b.scopes.Push()
 				blockStmts, err := b.buildBlock()
+				b.scopes.Pop()
 				if err != nil {
 					return nil, err
 				}
@@ -1428,6 +1430,42 @@ func (b *irBuilder) buildBlock() ([]*StatementIR, error) {
 			continue
 		}
 
+		// Handle control flow statements that appear directly in blocks
+		// (without a step enter event, e.g., nested if statements)
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeIf:
+				ifStmt, err := b.buildIfStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, ifStmt)
+				continue
+			case parser.NodeFor:
+				forStmt, err := b.buildForStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, forStmt)
+				continue
+			case parser.NodeWhen:
+				whenStmt, err := b.buildWhenStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, whenStmt)
+				continue
+			case parser.NodeTry:
+				tryStmt, err := b.buildTryStmt()
+				if err != nil {
+					return nil, err
+				}
+				stmts = append(stmts, tryStmt)
+				continue
+			}
+		}
+
 		b.pos++
 	}
 
@@ -1828,7 +1866,9 @@ func (b *irBuilder) buildTryStmt() (*StatementIR, error) {
 			switch node {
 			case parser.NodeBlock:
 				if tryBlock == nil {
+					b.scopes.Push()
 					stmts, err := b.buildBlock()
+					b.scopes.Pop()
 					if err != nil {
 						return nil, err
 					}
@@ -1890,7 +1930,9 @@ func (b *irBuilder) buildCatchClause() ([]*StatementIR, error) {
 			node := parser.NodeKind(evt.Data)
 
 			if node == parser.NodeBlock {
+				b.scopes.Push()
 				blockStmts, err := b.buildBlock()
+				b.scopes.Pop()
 				if err != nil {
 					return nil, err
 				}
@@ -1923,7 +1965,9 @@ func (b *irBuilder) buildFinallyClause() ([]*StatementIR, error) {
 			node := parser.NodeKind(evt.Data)
 
 			if node == parser.NodeBlock {
+				b.scopes.Push()
 				blockStmts, err := b.buildBlock()
+				b.scopes.Pop()
 				if err != nil {
 					return nil, err
 				}
@@ -2077,6 +2121,11 @@ func tokenToValue(tok lexer.Token) any {
 	case lexer.INTEGER:
 		val, _ := strconv.ParseInt(string(tok.Text), 10, 64)
 		return val
+	case lexer.FLOAT:
+		val, _ := strconv.ParseFloat(string(tok.Text), 64)
+		return val
+	case lexer.DURATION:
+		return durationLiteral(tok.Symbol())
 	case lexer.BOOLEAN:
 		return string(tok.Text) == "true"
 	default:

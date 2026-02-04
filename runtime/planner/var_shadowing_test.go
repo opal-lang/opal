@@ -47,7 +47,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -109,7 +109,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -144,7 +144,7 @@ echo "@var.ANOTHER"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -195,7 +195,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -243,7 +243,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -276,7 +276,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -328,7 +328,7 @@ echo "@var.NAME"
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
 
 	// Mark both values as resolved so we can verify DisplayIDs
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -389,7 +389,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
