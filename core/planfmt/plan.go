@@ -137,10 +137,14 @@ type Value struct {
 	Kind ValueKind
 
 	// Union fields (only one valid per Kind)
-	Str  string // For ValueString
-	Int  int64  // For ValueInt
-	Bool bool   // For ValueBool
-	Ref  uint32 // For ValuePlaceholder (index into placeholder table)
+	Str      string           // For ValueString
+	Int      int64            // For ValueInt
+	Bool     bool             // For ValueBool
+	Ref      uint32           // For ValuePlaceholder (index into placeholder table)
+	Float    float64          // For ValueFloat
+	Duration string           // For ValueDuration
+	Array    []Value          // For ValueArray
+	Map      map[string]Value // For ValueMap
 }
 
 // ValueKind identifies which field in Value is valid
@@ -151,6 +155,10 @@ const (
 	ValueInt                          // Int field valid
 	ValueBool                         // Bool field valid
 	ValuePlaceholder                  // Ref field valid (placeholder table index)
+	ValueFloat                        // Float field valid
+	ValueDuration                     // Duration field valid
+	ValueArray                        // Array field valid
+	ValueMap                          // Map field valid
 )
 
 // Validate checks plan invariants

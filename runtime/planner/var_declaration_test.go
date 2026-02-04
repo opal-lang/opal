@@ -23,7 +23,7 @@ func TestVarDeclaration_SimpleString(t *testing.T) {
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -51,7 +51,7 @@ var ENABLED = "true"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -73,7 +73,7 @@ echo "Hello"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -98,7 +98,7 @@ var NAME = "Aled"`
 	}
 
 	// Planning should fail because NAME is not declared yet
-	_, err := Plan(tree.Events, tree.Tokens, Config{})
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{})
 	if err == nil {
 		t.Fatal("Expected error for using variable before declaration, got nil")
 	}
@@ -124,7 +124,7 @@ func TestVarDeclaration_DifferentTypes(t *testing.T) {
 				t.Fatalf("Parse errors: %v", tree.Errors)
 			}
 
-			result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+			result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 			if err != nil {
 				t.Fatalf("Planning failed: %v", err)
 			}
@@ -161,7 +161,7 @@ var Z = "same"`
 	}
 
 	// This should NOT panic - multiple variables can share the same literal value
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -188,7 +188,7 @@ var F = true`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -224,7 +224,7 @@ echo "Hello, @var.NAME"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -306,7 +306,7 @@ echo "Hello, @var.NAME"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -376,7 +376,7 @@ echo "Goodbye, @var.NAME"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -438,7 +438,7 @@ echo "Hello, @var.USED"`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}

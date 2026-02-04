@@ -37,7 +37,7 @@ var COUNT = "5"
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
 
 	// Create planner but don't call Plan yet - we want to inspect state after Pass 1
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ echo "@var.COUNT"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {

@@ -120,17 +120,40 @@ func toSDKTreeWithRegistry(node ExecutionNode, registry *types.Registry) sdk.Tre
 func ToSDKArgs(planArgs []Arg) map[string]interface{} {
 	args := make(map[string]interface{})
 	for _, arg := range planArgs {
-		switch arg.Val.Kind {
-		case ValueString:
-			args[arg.Key] = arg.Val.Str
-		case ValueInt:
-			args[arg.Key] = arg.Val.Int
-		case ValueBool:
-			args[arg.Key] = arg.Val.Bool
-			// TODO: Handle other value types (float, duration, etc.) as needed
-		}
+		args[arg.Key] = toSDKValue(arg.Val)
 	}
 	return args
+}
+
+func toSDKValue(val Value) interface{} {
+	switch val.Kind {
+	case ValueString:
+		return val.Str
+	case ValueInt:
+		return val.Int
+	case ValueBool:
+		return val.Bool
+	case ValuePlaceholder:
+		return val.Ref
+	case ValueFloat:
+		return val.Float
+	case ValueDuration:
+		return val.Duration
+	case ValueArray:
+		items := make([]interface{}, len(val.Array))
+		for i, item := range val.Array {
+			items[i] = toSDKValue(item)
+		}
+		return items
+	case ValueMap:
+		mapped := make(map[string]interface{}, len(val.Map))
+		for key, item := range val.Map {
+			mapped[key] = toSDKValue(item)
+		}
+		return mapped
+	default:
+		return nil
+	}
 }
 
 // commandNodeToSink converts a CommandNode (redirect target) to a Sink.

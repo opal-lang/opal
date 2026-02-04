@@ -221,7 +221,7 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	for _, arg := range cmd.Args {
 		args = append(args, planfmt.Arg{
 			Key: arg.Name,
-			Val: planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(arg.Value, displayIDs)},
+			Val: e.buildArgValue(arg.Value, displayIDs),
 		})
 	}
 
@@ -297,7 +297,7 @@ func (e *Emitter) buildRedirectTargetNode(cmd *CommandStmtIR) (*planfmt.CommandN
 
 	displayIDs := make(map[string]string)
 	for _, part := range cmd.RedirectTarget.Parts {
-		e.collectDisplayID(part, displayIDs)
+		e.collectDisplayID(part, displayIDs, "command")
 	}
 
 	commandStr := RenderCommand(cmd.RedirectTarget, displayIDs)
@@ -538,12 +538,12 @@ func (e *Emitter) buildDisplayIDMap(cmd *CommandStmtIR) map[string]string {
 
 	if cmd.Command != nil {
 		for _, part := range cmd.Command.Parts {
-			e.collectDisplayID(part, displayIDs)
+			e.collectDisplayID(part, displayIDs, "command")
 		}
 	}
 
 	for _, arg := range cmd.Args {
-		e.collectDisplayID(arg.Value, displayIDs)
+		e.collectDisplayID(arg.Value, displayIDs, arg.Name)
 	}
 
 	return displayIDs
@@ -598,7 +598,7 @@ func (e *Emitter) popTransport() {
 	e.transportStack = e.transportStack[:len(e.transportStack)-1]
 }
 
-func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
+func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string, paramName string) {
 	if expr == nil {
 		return
 	}
@@ -611,7 +611,7 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
 				if displayID := e.vault.GetDisplayID(exprID); displayID != "" {
 					displayIDs[expr.VarName] = displayID
 					// Record secret use at current site
-					e.recordSecretUse(exprID, displayID, expr.VarName)
+					e.recordSecretUse(exprID, displayID, paramName)
 				}
 			}
 		}
@@ -622,9 +622,84 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string) {
 		if exprID, ok := e.decoratorExprIDs[key]; ok {
 			if displayID := e.vault.GetDisplayID(exprID); displayID != "" {
 				displayIDs[key] = displayID
-				e.recordSecretUse(exprID, displayID, key)
+				e.recordSecretUse(exprID, displayID, paramName)
 			}
 		}
+
+	case ExprLiteral:
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			for _, item := range arr {
+				e.collectDisplayID(item, displayIDs, paramName)
+			}
+		}
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			for _, item := range obj {
+				e.collectDisplayID(item, displayIDs, paramName)
+			}
+		}
+	}
+}
+
+func (e *Emitter) buildArgValue(expr *ExprIR, displayIDs map[string]string) planfmt.Value {
+	if expr == nil {
+		return planfmt.Value{Kind: planfmt.ValueString, Str: ""}
+	}
+
+	switch expr.Kind {
+	case ExprLiteral:
+		return e.literalToArgValue(expr.Value, displayIDs)
+	case ExprVarRef, ExprDecoratorRef:
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
+	case ExprBinaryOp:
+		if value, err := EvaluateExpr(expr, e.getValue); err == nil {
+			return e.literalToArgValue(value, displayIDs)
+		}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
+	default:
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
+	}
+}
+
+func (e *Emitter) literalToArgValue(value any, displayIDs map[string]string) planfmt.Value {
+	switch val := value.(type) {
+	case string:
+		return planfmt.Value{Kind: planfmt.ValueString, Str: val}
+	case int:
+		return planfmt.Value{Kind: planfmt.ValueInt, Int: int64(val)}
+	case int64:
+		return planfmt.Value{Kind: planfmt.ValueInt, Int: val}
+	case bool:
+		return planfmt.Value{Kind: planfmt.ValueBool, Bool: val}
+	case float64:
+		return planfmt.Value{Kind: planfmt.ValueFloat, Float: val}
+	case durationLiteral:
+		return planfmt.Value{Kind: planfmt.ValueDuration, Duration: string(val)}
+	case []*ExprIR:
+		items := make([]planfmt.Value, len(val))
+		for i, item := range val {
+			items[i] = e.buildArgValue(item, displayIDs)
+		}
+		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}
+	case map[string]*ExprIR:
+		mapped := make(map[string]planfmt.Value, len(val))
+		for key, item := range val {
+			mapped[key] = e.buildArgValue(item, displayIDs)
+		}
+		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}
+	case []any:
+		items := make([]planfmt.Value, len(val))
+		for i, item := range val {
+			items[i] = e.literalToArgValue(item, displayIDs)
+		}
+		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}
+	case map[string]any:
+		mapped := make(map[string]planfmt.Value, len(val))
+		for key, item := range val {
+			mapped[key] = e.literalToArgValue(item, displayIDs)
+		}
+		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}
+	default:
+		return planfmt.Value{Kind: planfmt.ValueString, Str: fmt.Sprintf("%v", value)}
 	}
 }
 

@@ -57,11 +57,21 @@ func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, confi
 		})
 	}
 
-	// Use provided Vault or create new one with random planKey
+	// Use provided Vault or create new one with planKey
 	var vlt *vault.Vault
 	if config.Vault != nil {
 		// Use shared vault from caller (e.g., CLI for scrubbing integration)
 		vlt = config.Vault
+	} else if config.PlanSalt != nil {
+		// Use provided PlanSalt for deterministic DisplayIDs (contract verification)
+		if len(config.PlanSalt) != 32 {
+			return nil, &PlanError{
+				Message:     fmt.Sprintf("PlanSalt must be 32 bytes, got %d", len(config.PlanSalt)),
+				Context:     "initializing vault",
+				TotalEvents: len(events),
+			}
+		}
+		vlt = vault.NewWithPlanKey(config.PlanSalt)
 	} else {
 		// Create new vault with random planKey for HMAC-based SiteIDs
 		planKey := make([]byte, 32)
@@ -109,6 +119,8 @@ func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, confi
 	resolveConfig := ResolveConfig{
 		TargetFunction: config.Target,
 		Context:        nil, // TODO: pass context from config if available
+		Telemetry:      telemetry,
+		TelemetryLevel: config.Telemetry,
 	}
 
 	resolveResult, err := Resolve(graph, vlt, session, resolveConfig)

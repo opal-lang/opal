@@ -15,6 +15,9 @@ const (
 	ExprBinaryOp                     // Binary operation (==, !=, &&, ||)
 )
 
+// durationLiteral preserves duration typing for literals (e.g., 5m, 30s).
+type durationLiteral string
+
 // ExprIR is the unified expression representation.
 // Used for both conditions (if @var.X == "prod") and command interpolation (echo @var.X).
 // This unification prevents divergence between two separate expression systems.
@@ -222,6 +225,20 @@ func IsTruthy(v any) bool {
 
 // compareEqual compares two values for equality.
 func compareEqual(a, b any) bool {
+	if aDur, ok := a.(durationLiteral); ok {
+		if bDur, ok := b.(durationLiteral); ok {
+			return string(aDur) == string(bDur)
+		}
+		if bStr, ok := b.(string); ok {
+			return string(aDur) == bStr
+		}
+	}
+	if bDur, ok := b.(durationLiteral); ok {
+		if aStr, ok := a.(string); ok {
+			return aStr == string(bDur)
+		}
+	}
+
 	if a == b {
 		return true
 	}
@@ -403,6 +420,8 @@ func literalToString(v any) string {
 	switch val := v.(type) {
 	case string:
 		return val
+	case durationLiteral:
+		return string(val)
 	case int:
 		return strconv.Itoa(val)
 	case int64:

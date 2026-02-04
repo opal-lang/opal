@@ -652,45 +652,119 @@ func (rd *Reader) readArg(r io.Reader) (*Arg, error) {
 	}
 	arg.Val.Kind = ValueKind(kind)
 
-	// Read value based on kind
-	switch arg.Val.Kind {
+	if err := readValueBody(r, &arg.Val); err != nil {
+		return nil, err
+	}
+
+	return arg, nil
+}
+
+func readValue(r io.Reader) (Value, error) {
+	var kind byte
+	if err := binary.Read(r, binary.LittleEndian, &kind); err != nil {
+		return Value{}, fmt.Errorf("read value kind: %w", err)
+	}
+	val := Value{Kind: ValueKind(kind)}
+	if err := readValueBody(r, &val); err != nil {
+		return Value{}, err
+	}
+	return val, nil
+}
+
+func readValueBody(r io.Reader, val *Value) error {
+	switch val.Kind {
 	case ValueString:
 		// String: 2-byte length + string
 		var strLen uint16
 		if err := binary.Read(r, binary.LittleEndian, &strLen); err != nil {
-			return nil, fmt.Errorf("read string length: %w", err)
+			return fmt.Errorf("read string length: %w", err)
 		}
 		strBuf := make([]byte, strLen)
 		if _, err := io.ReadFull(r, strBuf); err != nil {
-			return nil, fmt.Errorf("read string: %w", err)
+			return fmt.Errorf("read string: %w", err)
 		}
-		arg.Val.Str = string(strBuf)
+		val.Str = string(strBuf)
 
 	case ValueInt:
 		// Int: 8 bytes, int64, little-endian
-		if err := binary.Read(r, binary.LittleEndian, &arg.Val.Int); err != nil {
-			return nil, fmt.Errorf("read int: %w", err)
+		if err := binary.Read(r, binary.LittleEndian, &val.Int); err != nil {
+			return fmt.Errorf("read int: %w", err)
 		}
 
 	case ValueBool:
 		// Bool: 1 byte (0 or 1)
 		var b byte
 		if err := binary.Read(r, binary.LittleEndian, &b); err != nil {
-			return nil, fmt.Errorf("read bool: %w", err)
+			return fmt.Errorf("read bool: %w", err)
 		}
-		arg.Val.Bool = b != 0
+		val.Bool = b != 0
 
 	case ValuePlaceholder:
 		// Placeholder: 4 bytes, uint32 (index into placeholder table)
-		if err := binary.Read(r, binary.LittleEndian, &arg.Val.Ref); err != nil {
-			return nil, fmt.Errorf("read placeholder ref: %w", err)
+		if err := binary.Read(r, binary.LittleEndian, &val.Ref); err != nil {
+			return fmt.Errorf("read placeholder ref: %w", err)
+		}
+
+	case ValueFloat:
+		// Float: 8 bytes, float64, little-endian
+		if err := binary.Read(r, binary.LittleEndian, &val.Float); err != nil {
+			return fmt.Errorf("read float: %w", err)
+		}
+
+	case ValueDuration:
+		// Duration: 2-byte length + string
+		var strLen uint16
+		if err := binary.Read(r, binary.LittleEndian, &strLen); err != nil {
+			return fmt.Errorf("read duration length: %w", err)
+		}
+		strBuf := make([]byte, strLen)
+		if _, err := io.ReadFull(r, strBuf); err != nil {
+			return fmt.Errorf("read duration: %w", err)
+		}
+		val.Duration = string(strBuf)
+
+	case ValueArray:
+		var count uint16
+		if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
+			return fmt.Errorf("read array length: %w", err)
+		}
+		val.Array = make([]Value, count)
+		for i := 0; i < int(count); i++ {
+			item, err := readValue(r)
+			if err != nil {
+				return err
+			}
+			val.Array[i] = item
+		}
+
+	case ValueMap:
+		var count uint16
+		if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
+			return fmt.Errorf("read map length: %w", err)
+		}
+		val.Map = make(map[string]Value, count)
+		for i := 0; i < int(count); i++ {
+			var keyLen uint16
+			if err := binary.Read(r, binary.LittleEndian, &keyLen); err != nil {
+				return fmt.Errorf("read map key length: %w", err)
+			}
+			keyBuf := make([]byte, keyLen)
+			if _, err := io.ReadFull(r, keyBuf); err != nil {
+				return fmt.Errorf("read map key: %w", err)
+			}
+			key := string(keyBuf)
+			value, err := readValue(r)
+			if err != nil {
+				return err
+			}
+			val.Map[key] = value
 		}
 
 	default:
-		return nil, fmt.Errorf("unknown value kind: %d", kind)
+		return fmt.Errorf("unknown value kind: %d", val.Kind)
 	}
 
-	return arg, nil
+	return nil
 }
 
 // ReadContract reads a minimal contract file (target + hash only).

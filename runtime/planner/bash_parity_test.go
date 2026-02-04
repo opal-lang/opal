@@ -930,7 +930,7 @@ func TestBashParity(t *testing.T) {
 			}
 
 			// Plan
-			result, err := planner.Plan(parseTree.Events, parseTree.Tokens, planner.Config{
+			result, err := planner.PlanNew(parseTree.Events, parseTree.Tokens, planner.Config{
 				Target: "", // Script mode
 			})
 			if err != nil {

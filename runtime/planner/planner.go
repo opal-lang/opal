@@ -89,6 +89,7 @@ type Config struct {
 	Target    string           // Command name (e.g., "hello") or "" for script mode
 	IDFactory secret.IDFactory // Factory for generating deterministic secret IDs (optional, uses run-mode if nil)
 	Vault     *vault.Vault     // Shared vault for variable storage and scrubbing (optional, creates new if nil)
+	PlanSalt  []byte           // Plan salt for deterministic DisplayIDs (optional, creates random if nil; used for contract verification)
 	Telemetry TelemetryLevel   // Telemetry level (production-safe)
 	Debug     DebugLevel       // Debug level (development only)
 }
@@ -208,11 +209,21 @@ func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config C
 		idFactory = secret.NewIDFactory(secret.ModePlan, key)
 	}
 
-	// Use provided Vault or create new one with random planKey
+	// Use provided Vault or create new one with planKey
 	var vlt *vault.Vault
 	if config.Vault != nil {
 		// Use shared vault from caller (e.g., CLI for scrubbing integration)
 		vlt = config.Vault
+	} else if config.PlanSalt != nil {
+		// Use provided PlanSalt for deterministic DisplayIDs (contract verification)
+		if len(config.PlanSalt) != 32 {
+			return nil, &PlanError{
+				Message:     fmt.Sprintf("PlanSalt must be 32 bytes, got %d", len(config.PlanSalt)),
+				Context:     "initializing vault",
+				TotalEvents: len(events),
+			}
+		}
+		vlt = vault.NewWithPlanKey(config.PlanSalt)
 	} else {
 		// Create new vault with random planKey for HMAC-based SiteIDs
 		planKey := make([]byte, 32)
