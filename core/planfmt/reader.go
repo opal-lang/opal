@@ -772,7 +772,6 @@ func (rd *Reader) readValueBody(r io.Reader, val *Value, depth, maxDepth int) er
 	return nil
 }
 
-// ReadContract reads a minimal contract file (target + hash only).
 // ReadContract reads a contract file and returns target, hash, and full plan.
 //
 // Contract format: MAGIC(4) "OPAL" | VERSION(2) 0x0001 | TYPE(1) 'C' | TARGET_LEN(2) | TARGET(var) | HASH(32) | PLAN(binary)

@@ -1,6 +1,7 @@
 package planfmt
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/opal-lang/opal/core/decorator"
@@ -134,7 +135,10 @@ func toSDKValue(val Value) interface{} {
 	case ValueBool:
 		return val.Bool
 	case ValuePlaceholder:
-		return val.Ref
+		// Placeholders should never reach the SDK - they must be resolved before execution.
+		// Return a descriptive string for debugging, but this indicates a planner bug.
+		invariant.Invariant(false, "ValuePlaceholder reached SDK conversion (ref=%d) - planner should have resolved this", val.Ref)
+		return fmt.Sprintf("$%d", val.Ref)
 	case ValueFloat:
 		return val.Float
 	case ValueDuration:
