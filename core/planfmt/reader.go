@@ -313,7 +313,7 @@ func (rd *Reader) readTransport(r io.Reader) (*Transport, error) {
 	if argsCount > 0 {
 		transport.Args = make([]Arg, argsCount)
 		for i := 0; i < int(argsCount); i++ {
-			arg, err := rd.readArg(r)
+			arg, err := rd.readArg(r, 0, 1000)
 			if err != nil {
 				return nil, fmt.Errorf("read transport arg %d: %w", i, err)
 			}
@@ -599,7 +599,7 @@ func (rd *Reader) readCommand(r io.Reader, depth, maxDepth int) (*CommandNode, e
 	if argsCount > 0 {
 		cmd.Args = make([]Arg, argsCount)
 		for i := 0; i < int(argsCount); i++ {
-			arg, err := rd.readArg(r)
+			arg, err := rd.readArg(r, depth, maxDepth)
 			if err != nil {
 				return nil, fmt.Errorf("read arg %d: %w", i, err)
 			}
@@ -629,7 +629,7 @@ func (rd *Reader) readCommand(r io.Reader, depth, maxDepth int) (*CommandNode, e
 }
 
 // readArg reads a single argument
-func (rd *Reader) readArg(r io.Reader) (*Arg, error) {
+func (rd *Reader) readArg(r io.Reader, depth, maxDepth int) (*Arg, error) {
 	arg := &Arg{}
 
 	// Read key length (2 bytes, uint16, little-endian)
@@ -652,26 +652,31 @@ func (rd *Reader) readArg(r io.Reader) (*Arg, error) {
 	}
 	arg.Val.Kind = ValueKind(kind)
 
-	if err := readValueBody(r, &arg.Val); err != nil {
+	if err := rd.readValueBody(r, &arg.Val, depth, maxDepth); err != nil {
 		return nil, err
 	}
 
 	return arg, nil
 }
 
-func readValue(r io.Reader) (Value, error) {
+func (rd *Reader) readValue(r io.Reader, depth, maxDepth int) (Value, error) {
+	// Check depth limit to prevent stack overflow
+	if depth >= maxDepth {
+		return Value{}, fmt.Errorf("max value recursion depth %d exceeded", maxDepth)
+	}
+
 	var kind byte
 	if err := binary.Read(r, binary.LittleEndian, &kind); err != nil {
 		return Value{}, fmt.Errorf("read value kind: %w", err)
 	}
 	val := Value{Kind: ValueKind(kind)}
-	if err := readValueBody(r, &val); err != nil {
+	if err := rd.readValueBody(r, &val, depth, maxDepth); err != nil {
 		return Value{}, err
 	}
 	return val, nil
 }
 
-func readValueBody(r io.Reader, val *Value) error {
+func (rd *Reader) readValueBody(r io.Reader, val *Value, depth, maxDepth int) error {
 	switch val.Kind {
 	case ValueString:
 		// String: 2-byte length + string
@@ -730,7 +735,7 @@ func readValueBody(r io.Reader, val *Value) error {
 		}
 		val.Array = make([]Value, count)
 		for i := 0; i < int(count); i++ {
-			item, err := readValue(r)
+			item, err := rd.readValue(r, depth+1, maxDepth)
 			if err != nil {
 				return err
 			}
@@ -753,7 +758,7 @@ func readValueBody(r io.Reader, val *Value) error {
 				return fmt.Errorf("read map key: %w", err)
 			}
 			key := string(keyBuf)
-			value, err := readValue(r)
+			value, err := rd.readValue(r, depth+1, maxDepth)
 			if err != nil {
 				return err
 			}
