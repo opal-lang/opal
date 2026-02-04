@@ -167,3 +167,99 @@ func TestMaxBlockStepsLimit(t *testing.T) {
 		t.Fatalf("Read failed: %v", err)
 	}
 }
+
+// TestValueDepthLimit verifies that deeply nested arrays and maps are rejected
+func TestValueDepthLimit(t *testing.T) {
+	// Create a plan with deeply nested array (1001 levels - exceeds 1000 limit)
+	// Build nested array: [[[[...1001 levels...]]]]
+	var deepValue planfmt.Value
+	deepValue.Kind = planfmt.ValueString
+	deepValue.Str = "deep"
+
+	for i := 0; i < 1001; i++ {
+		deepValue = planfmt.Value{
+			Kind:  planfmt.ValueArray,
+			Array: []planfmt.Value{deepValue},
+		}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "deep_values",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "data", Val: deepValue},
+					},
+				},
+			},
+		},
+	}
+
+	// Write should succeed (no depth check on write)
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Read should fail with depth limit error
+	_, _, err = planfmt.Read(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("Expected depth limit error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "max value recursion depth") {
+		t.Errorf("Expected 'max value recursion depth' error, got: %v", err)
+	}
+}
+
+// TestValueDepthLimitMaps verifies that deeply nested maps are rejected
+func TestValueDepthLimitMaps(t *testing.T) {
+	// Create a plan with deeply nested map (1001 levels - exceeds 1000 limit)
+	// Build nested map: {"a": {"a": {"a": ...1001 levels...}}}
+	var deepValue planfmt.Value
+	deepValue.Kind = planfmt.ValueString
+	deepValue.Str = "deep"
+
+	for i := 0; i < 1001; i++ {
+		deepValue = planfmt.Value{
+			Kind: planfmt.ValueMap,
+			Map:  map[string]planfmt.Value{"a": deepValue},
+		}
+	}
+
+	plan := &planfmt.Plan{
+		Target: "deep_values",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "data", Val: deepValue},
+					},
+				},
+			},
+		},
+	}
+
+	// Write should succeed (no depth check on write)
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Read should fail with depth limit error
+	_, _, err = planfmt.Read(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("Expected depth limit error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "max value recursion depth") {
+		t.Errorf("Expected 'max value recursion depth' error, got: %v", err)
+	}
+}

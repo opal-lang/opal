@@ -4,6 +4,8 @@ package formatter
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/opal-lang/opal/core/planfmt"
@@ -147,6 +149,29 @@ func formatValue(val *planfmt.Value) string {
 		return fmt.Sprintf("%t", val.Bool)
 	case planfmt.ValuePlaceholder:
 		return fmt.Sprintf("$%d", val.Ref)
+	case planfmt.ValueFloat:
+		return strconv.FormatFloat(val.Float, 'g', -1, 64)
+	case planfmt.ValueDuration:
+		return val.Duration
+	case planfmt.ValueArray:
+		parts := make([]string, 0, len(val.Array))
+		for i := range val.Array {
+			item := val.Array[i]
+			parts = append(parts, formatValue(&item))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case planfmt.ValueMap:
+		keys := make([]string, 0, len(val.Map))
+		for key := range val.Map {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			item := val.Map[key]
+			parts = append(parts, fmt.Sprintf("%s=%s", key, formatValue(&item)))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		return "?"
 	}

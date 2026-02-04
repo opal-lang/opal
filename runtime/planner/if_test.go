@@ -12,6 +12,32 @@ import (
 	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
+// getCommandFromStep extracts a CommandNode from a step, handling LogicNode wrappers.
+// The new planner preserves structure with LogicNode for if/for/when statements.
+// For elseif chains, it recursively searches through nested LogicNodes.
+func getCommandFromStep(step *planfmt.Step) *planfmt.CommandNode {
+	return getCommandFromNode(step.Tree)
+}
+
+// getCommandFromNode recursively searches for a CommandNode in a tree node.
+func getCommandFromNode(node planfmt.ExecutionNode) *planfmt.CommandNode {
+	// First try direct CommandNode
+	if cmd, ok := node.(*planfmt.CommandNode); ok {
+		return cmd
+	}
+
+	// If it's a LogicNode, recursively search its block
+	if logic, ok := node.(*planfmt.LogicNode); ok {
+		for _, blockStep := range logic.Block {
+			if cmd := getCommandFromNode(blockStep.Tree); cmd != nil {
+				return cmd
+			}
+		}
+	}
+
+	return nil
+}
+
 // =============================================================================
 // Category 1: Basic If (boolean literals)
 // =============================================================================
@@ -25,7 +51,7 @@ func TestIfTrue(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -37,11 +63,11 @@ func TestIfTrue(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	// Verify it's the echo command
+	// Verify it's the echo command (may be wrapped in LogicNode)
 	step := plan.Steps[0]
-	cmd, ok := step.Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", step.Tree)
+	cmd := getCommandFromStep(&step)
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", step.Tree)
 	}
 
 	if cmd.Decorator != "@shell" {
@@ -72,7 +98,7 @@ func TestIfFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -94,16 +120,28 @@ func TestIfTrueEmptyBlock(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// Should have 0 steps (empty block)
-	if len(plan.Steps) != 0 {
-		t.Errorf("Expected 0 steps (empty block), got %d", len(plan.Steps))
+	// Empty blocks now return a LogicNode with no nested commands
+	// This preserves structure for display purposes
+	if len(plan.Steps) != 1 {
+		t.Errorf("Expected 1 step (empty LogicNode), got %d", len(plan.Steps))
+		return
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Errorf("Expected LogicNode for empty if block, got %T", plan.Steps[0].Tree)
+		return
+	}
+
+	if len(logic.Block) != 0 {
+		t.Errorf("Expected empty LogicNode block, got %d steps", len(logic.Block))
 	}
 }
 
@@ -120,7 +158,7 @@ func TestIfTrueElse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -132,9 +170,9 @@ func TestIfTrueElse(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -160,7 +198,7 @@ func TestIfFalseElse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -172,9 +210,9 @@ func TestIfFalseElse(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -204,7 +242,7 @@ func TestElseIfFirstMatch(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -216,9 +254,9 @@ func TestElseIfFirstMatch(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -244,7 +282,7 @@ func TestElseIfSecondMatch(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -256,9 +294,9 @@ func TestElseIfSecondMatch(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -284,7 +322,7 @@ func TestElseIfFallthrough(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -296,9 +334,9 @@ func TestElseIfFallthrough(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -324,16 +362,28 @@ func TestElseIfNoElseAllFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// Should have 0 steps (all pruned)
-	if len(plan.Steps) != 0 {
-		t.Errorf("Expected 0 steps (all pruned), got %d", len(plan.Steps))
+	// When all branches are pruned, we get a LogicNode with empty block
+	// This preserves structure for display purposes
+	if len(plan.Steps) != 1 {
+		t.Errorf("Expected 1 step (empty LogicNode), got %d", len(plan.Steps))
+		return
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Errorf("Expected LogicNode for pruned if-elseif, got %T", plan.Steps[0].Tree)
+		return
+	}
+
+	if len(logic.Block) != 0 {
+		t.Errorf("Expected empty LogicNode block, got %d steps", len(logic.Block))
 	}
 }
 
@@ -351,7 +401,7 @@ if @var.ENV == "prod" { echo "production" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -363,9 +413,9 @@ if @var.ENV == "prod" { echo "production" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -392,7 +442,7 @@ if @var.ENV == "prod" { echo "production" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -415,7 +465,7 @@ if @var.ENV != "dev" { echo "not dev" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -427,9 +477,9 @@ if @var.ENV != "dev" { echo "not dev" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -456,7 +506,7 @@ if @var.ENABLED { echo "enabled" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -468,9 +518,9 @@ if @var.ENABLED { echo "enabled" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -497,7 +547,7 @@ if @var.ENABLED { echo "enabled" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -524,7 +574,7 @@ if "prod" == @var.ENV { echo "matched" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -536,9 +586,9 @@ if "prod" == @var.ENV { echo "matched" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -565,7 +615,7 @@ if "dev" == @var.ENV { echo "matched" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -593,7 +643,7 @@ if @var.A == @var.B { echo "equal" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -605,9 +655,9 @@ if @var.A == @var.B { echo "equal" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -635,7 +685,7 @@ if @var.A == @var.B { echo "equal" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -659,7 +709,7 @@ if @var.A != @var.B { echo "different" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -671,9 +721,9 @@ if @var.A != @var.B { echo "different" }`
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -704,7 +754,7 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -716,9 +766,9 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -745,7 +795,7 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -757,9 +807,9 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -789,7 +839,7 @@ func TestNestedIfBothTrue(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -801,8 +851,8 @@ func TestNestedIfBothTrue(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
 		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
 	}
 
@@ -829,16 +879,26 @@ func TestNestedIfInnerFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// Should have 0 steps (inner pruned)
-	if len(plan.Steps) != 0 {
-		t.Errorf("Expected 0 steps (inner pruned), got %d", len(plan.Steps))
+	// When inner if is pruned (false condition), the inner block should be completely removed
+	// and we should get an empty outer block since there's nothing left to execute.
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step (LogicNode), got %d", len(plan.Steps))
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Fatalf("Expected LogicNode for nested if, got %T", plan.Steps[0].Tree)
+	}
+
+	if len(logic.Block) != 0 {
+		t.Errorf("Expected 0 block steps (inner pruned), got %d", len(logic.Block))
 	}
 }
 
@@ -851,7 +911,7 @@ func TestNestedIfOuterFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -877,7 +937,7 @@ func TestIfUndefinedVariable(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 
@@ -901,7 +961,7 @@ func TestIfUndefinedVariableComparison(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 
@@ -929,7 +989,7 @@ func TestIfInFunction(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "deploy",
 	})
 	if err != nil {
@@ -941,9 +1001,9 @@ func TestIfInFunction(t *testing.T) {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
+	cmd := getCommandFromStep(&plan.Steps[0])
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", plan.Steps[0].Tree)
 	}
 
 	var cmdArg string
@@ -1026,7 +1086,7 @@ func TestIfChainedAndOr(t *testing.T) {
 				t.Fatalf("Parse errors: %v", tree.Errors)
 			}
 
-			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+			plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -1039,9 +1099,9 @@ func TestIfChainedAndOr(t *testing.T) {
 
 			if tt.expectSteps > 0 {
 				step := plan.Steps[0]
-				cmd, ok := step.Tree.(*planfmt.CommandNode)
-				if !ok {
-					t.Fatalf("Expected CommandNode, got %T", step.Tree)
+				cmd := getCommandFromStep(&step)
+				if cmd == nil {
+					t.Fatalf("Expected CommandNode in step, got %T", step.Tree)
 				}
 
 				var cmdArg string
@@ -1103,7 +1163,7 @@ func TestIfEnvDecorator(t *testing.T) {
 				t.Fatalf("Parse errors: %v", tree.Errors)
 			}
 
-			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+			plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -1116,9 +1176,9 @@ func TestIfEnvDecorator(t *testing.T) {
 
 			if tt.expectSteps > 0 {
 				step := plan.Steps[0]
-				cmd, ok := step.Tree.(*planfmt.CommandNode)
-				if !ok {
-					t.Fatalf("Expected CommandNode, got %T", step.Tree)
+				cmd := getCommandFromStep(&step)
+				if cmd == nil {
+					t.Fatalf("Expected CommandNode in step, got %T", step.Tree)
 				}
 
 				var cmdArg string
@@ -1149,7 +1209,7 @@ func TestIfEnvUnset(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -1161,9 +1221,9 @@ func TestIfEnvUnset(t *testing.T) {
 	}
 
 	step := plan.Steps[0]
-	cmd, ok := step.Tree.(*planfmt.CommandNode)
-	if !ok {
-		t.Fatalf("Expected CommandNode, got %T", step.Tree)
+	cmd := getCommandFromStep(&step)
+	if cmd == nil {
+		t.Fatalf("Expected CommandNode in step, got %T", step.Tree)
 	}
 
 	var cmdArg string

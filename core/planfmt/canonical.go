@@ -75,12 +75,28 @@ type CanonicalNode struct {
 
 // CanonicalArg represents an argument in canonical form
 type CanonicalArg struct {
-	Key  string
-	Kind uint8
-	Str  string
-	Int  int64
-	Bool bool
-	Ref  uint32
+	Key   string
+	Value CanonicalValue
+}
+
+// CanonicalValue represents a Value in canonical form.
+// Uses slices for maps to ensure deterministic ordering.
+type CanonicalValue struct {
+	Kind     uint8
+	Str      string
+	Int      int64
+	Bool     bool
+	Ref      uint32
+	Float    float64
+	Duration string
+	Array    []CanonicalValue
+	Map      []CanonicalMapEntry
+}
+
+// CanonicalMapEntry represents a map key/value pair in canonical form.
+type CanonicalMapEntry struct {
+	Key   string
+	Value CanonicalValue
 }
 
 // CanonicalTransport represents a transport entry in canonical form.
@@ -198,12 +214,8 @@ func canonicalizeCommandNode(n *CommandNode) (CanonicalNode, error) {
 	// Canonicalize args (already sorted by Key in Plan.sortArgs())
 	for i := range n.Args {
 		cn.Args[i] = CanonicalArg{
-			Key:  n.Args[i].Key,
-			Kind: uint8(n.Args[i].Val.Kind),
-			Str:  n.Args[i].Val.Str,
-			Int:  n.Args[i].Val.Int,
-			Bool: n.Args[i].Val.Bool,
-			Ref:  n.Args[i].Val.Ref,
+			Key:   n.Args[i].Key,
+			Value: canonicalizeValue(n.Args[i].Val),
 		}
 	}
 
@@ -229,16 +241,47 @@ func canonicalizeTransport(t *Transport) CanonicalTransport {
 
 	for i := range t.Args {
 		ct.Args[i] = CanonicalArg{
-			Key:  t.Args[i].Key,
-			Kind: uint8(t.Args[i].Val.Kind),
-			Str:  t.Args[i].Val.Str,
-			Int:  t.Args[i].Val.Int,
-			Bool: t.Args[i].Val.Bool,
-			Ref:  t.Args[i].Val.Ref,
+			Key:   t.Args[i].Key,
+			Value: canonicalizeValue(t.Args[i].Val),
 		}
 	}
 
 	return ct
+}
+
+func canonicalizeValue(val Value) CanonicalValue {
+	canonical := CanonicalValue{
+		Kind:     uint8(val.Kind),
+		Str:      val.Str,
+		Int:      val.Int,
+		Bool:     val.Bool,
+		Ref:      val.Ref,
+		Float:    val.Float,
+		Duration: val.Duration,
+	}
+
+	switch val.Kind {
+	case ValueArray:
+		canonical.Array = make([]CanonicalValue, len(val.Array))
+		for i, item := range val.Array {
+			canonical.Array[i] = canonicalizeValue(item)
+		}
+	case ValueMap:
+		keys := make([]string, 0, len(val.Map))
+		for key := range val.Map {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		canonical.Map = make([]CanonicalMapEntry, 0, len(keys))
+		for _, key := range keys {
+			canonical.Map = append(canonical.Map, CanonicalMapEntry{
+				Key:   key,
+				Value: canonicalizeValue(val.Map[key]),
+			})
+		}
+	}
+
+	return canonical
 }
 
 // canonicalizePipelineNode converts a PipelineNode into canonical form

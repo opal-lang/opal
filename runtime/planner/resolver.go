@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/runtime/vault"
@@ -118,6 +119,8 @@ type Resolver struct {
 	session        decorator.Session
 	sessionStack   []decorator.Session
 	config         ResolveConfig
+	telemetry      *PlanTelemetry
+	telemetryLevel TelemetryLevel
 	scopes         *ScopeStack
 	activeFunction *FunctionIR
 
@@ -141,6 +144,8 @@ type envContext struct {
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
 	Context        context.Context // Execution context
+	Telemetry      *PlanTelemetry  // Optional telemetry sink
+	TelemetryLevel TelemetryLevel  // Telemetry level
 }
 
 // ResolveResult contains the resolved execution tree.
@@ -176,6 +181,8 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		vault:            v,
 		session:          session,
 		config:           config,
+		telemetry:        config.Telemetry,
+		telemetryLevel:   config.TelemetryLevel,
 		decoratorExprIDs: make(map[string]string),
 		envAllowed:       true,
 	}
@@ -856,6 +863,9 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 		r.scopes.Define(decl.Name, exprID)
 	}
 
+	// Record @var resolution for telemetry (declaration)
+	r.recordVarResolution()
+
 	// Collect the value expression (may add pending decorator calls)
 	r.collectExprForVar(decl.Value, exprID, decl.Name)
 
@@ -890,6 +900,9 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 func (r *Resolver) lookupScopeExprID(name string) (string, bool) {
 	if r.scopes != nil {
 		if exprID, ok := r.scopes.Lookup(name); ok {
+			if strings.HasPrefix(exprID, "placeholder:") {
+				return "", false
+			}
 			return exprID, true
 		}
 	}
@@ -995,6 +1008,8 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 			})
 			return
 		}
+		// Record @var resolution for telemetry (reference)
+		r.recordVarResolution()
 		// Mark as touched (in execution path)
 		r.vault.MarkTouched(varExprID)
 
@@ -1195,9 +1210,19 @@ func (r *Resolver) batchResolve() error {
 
 	// Resolve each group in batch
 	for decoratorName, calls := range groups {
-		if err := r.resolveBatch(decoratorName, calls); err != nil {
-			return err
+		var duration time.Duration
+		if r.telemetry != nil && r.telemetryLevel >= TelemetryTiming {
+			start := time.Now()
+			if err := r.resolveBatch(decoratorName, calls); err != nil {
+				return err
+			}
+			duration = time.Since(start)
+		} else {
+			if err := r.resolveBatch(decoratorName, calls); err != nil {
+				return err
+			}
 		}
+		r.recordBatchResolution(decoratorName, len(calls), duration)
 	}
 
 	// Clear pending calls for next wave
@@ -1207,6 +1232,52 @@ func (r *Resolver) batchResolve() error {
 	r.vault.ResolveAllTouched()
 
 	return nil
+}
+
+func (r *Resolver) recordVarResolution() {
+	r.recordDecoratorResolution("@var", 1)
+}
+
+func (r *Resolver) recordDecoratorResolution(decoratorName string, count int) {
+	if r.telemetry == nil {
+		return
+	}
+	metrics := r.getOrCreateMetrics(decoratorName)
+	if metrics == nil {
+		return
+	}
+	metrics.TotalCalls += count
+}
+
+func (r *Resolver) recordBatchResolution(decoratorName string, batchSize int, duration time.Duration) {
+	if r.telemetry == nil {
+		return
+	}
+	metrics := r.getOrCreateMetrics(decoratorName)
+	if metrics == nil {
+		return
+	}
+	metrics.TotalCalls += batchSize
+	metrics.BatchCalls++
+	metrics.BatchSizes = append(metrics.BatchSizes, batchSize)
+	if r.telemetryLevel >= TelemetryTiming {
+		metrics.TotalTime += duration
+	}
+}
+
+func (r *Resolver) getOrCreateMetrics(decoratorName string) *DecoratorResolutionMetrics {
+	if r.telemetry == nil {
+		return nil
+	}
+	if r.telemetry.DecoratorResolutions == nil {
+		r.telemetry.DecoratorResolutions = make(map[string]*DecoratorResolutionMetrics)
+	}
+	metrics := r.telemetry.DecoratorResolutions[decoratorName]
+	if metrics == nil {
+		metrics = &DecoratorResolutionMetrics{BatchSizes: []int{}}
+		r.telemetry.DecoratorResolutions[decoratorName] = metrics
+	}
+	return metrics
 }
 
 // resolveBatch resolves a batch of calls for a single decorator type.

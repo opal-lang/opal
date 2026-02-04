@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 
 	"golang.org/x/crypto/blake2b"
 
@@ -602,34 +603,42 @@ func (wr *Writer) writeArg(buf *bytes.Buffer, arg *Arg) error {
 		return err
 	}
 
+	return wr.writeValue(buf, &arg.Val)
+}
+
+func (wr *Writer) writeValue(buf *bytes.Buffer, val *Value) error {
 	// Write value kind (1 byte)
-	if err := buf.WriteByte(uint8(arg.Val.Kind)); err != nil {
+	if err := buf.WriteByte(uint8(val.Kind)); err != nil {
 		return err
 	}
 
-	// Write value based on kind
-	switch arg.Val.Kind {
+	return wr.writeValueBody(buf, val)
+}
+
+func (wr *Writer) writeValueBody(buf *bytes.Buffer, val *Value) error {
+	// Write value based on kind (kind already written)
+	switch val.Kind {
 	case ValueString:
 		// String: 2-byte length + string
-		if err := validateUint16(len(arg.Val.Str), "string value length"); err != nil {
+		if err := validateUint16(len(val.Str), "string value length"); err != nil {
 			return err
 		}
-		strLen := uint16(len(arg.Val.Str))
+		strLen := uint16(len(val.Str))
 		if err := binary.Write(buf, binary.LittleEndian, strLen); err != nil {
 			return err
 		}
-		if _, err := buf.WriteString(arg.Val.Str); err != nil {
+		if _, err := buf.WriteString(val.Str); err != nil {
 			return err
 		}
 	case ValueInt:
 		// Int: 8 bytes, int64, little-endian
-		if err := binary.Write(buf, binary.LittleEndian, arg.Val.Int); err != nil {
+		if err := binary.Write(buf, binary.LittleEndian, val.Int); err != nil {
 			return err
 		}
 	case ValueBool:
 		// Bool: 1 byte (0 or 1)
 		var b byte
-		if arg.Val.Bool {
+		if val.Bool {
 			b = 1
 		}
 		if err := buf.WriteByte(b); err != nil {
@@ -637,9 +646,63 @@ func (wr *Writer) writeArg(buf *bytes.Buffer, arg *Arg) error {
 		}
 	case ValuePlaceholder:
 		// Placeholder: 4 bytes, uint32 (index into placeholder table)
-		if err := binary.Write(buf, binary.LittleEndian, arg.Val.Ref); err != nil {
+		if err := binary.Write(buf, binary.LittleEndian, val.Ref); err != nil {
 			return err
 		}
+	case ValueFloat:
+		// Float: 8 bytes, float64, little-endian
+		if err := binary.Write(buf, binary.LittleEndian, val.Float); err != nil {
+			return err
+		}
+	case ValueDuration:
+		// Duration: 2-byte length + string
+		if err := validateUint16(len(val.Duration), "duration value length"); err != nil {
+			return err
+		}
+		strLen := uint16(len(val.Duration))
+		if err := binary.Write(buf, binary.LittleEndian, strLen); err != nil {
+			return err
+		}
+		if _, err := buf.WriteString(val.Duration); err != nil {
+			return err
+		}
+	case ValueArray:
+		if err := validateUint16(len(val.Array), "array length"); err != nil {
+			return err
+		}
+		count := uint16(len(val.Array))
+		if err := binary.Write(buf, binary.LittleEndian, count); err != nil {
+			return err
+		}
+		for i := range val.Array {
+			if err := wr.writeValue(buf, &val.Array[i]); err != nil {
+				return err
+			}
+		}
+	case ValueMap:
+		if err := validateUint16(len(val.Map), "map length"); err != nil {
+			return err
+		}
+		count := uint16(len(val.Map))
+		if err := binary.Write(buf, binary.LittleEndian, count); err != nil {
+			return err
+		}
+		keys := make([]string, 0, len(val.Map))
+		for key := range val.Map {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := writeString(buf, key, "map key"); err != nil {
+				return err
+			}
+			value := val.Map[key]
+			if err := wr.writeValue(buf, &value); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unknown value kind: %d", val.Kind)
 	}
 
 	return nil

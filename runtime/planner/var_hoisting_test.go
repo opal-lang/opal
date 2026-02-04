@@ -27,7 +27,7 @@ var NAME = "Aled"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -40,17 +40,10 @@ var NAME = "Aled"
 		t.Errorf("Error should mention variable name 'NAME', got: %v", err)
 	}
 
-	// CURRENT BEHAVIOR: Error says "not found" for both use-before-declare
-	// and never-declared cases. This is functionally correct (prevents the bug)
-	// but could be improved with better error messages.
-	//
-	// FUTURE IMPROVEMENT: Distinguish between:
-	// - "variable 'X' used before declaration" (will be declared later)
-	// - "variable 'X' not found" (never declared)
-	//
-	// For now, just verify it errors - that's the critical behavior.
-	if !strings.Contains(errMsg, "not found") {
-		t.Errorf("Error should mention variable is not found, got: %v", err)
+	// Error message now explicitly says "undefined variable (no hoisting allowed)"
+	// which is more descriptive than "not found"
+	if !strings.Contains(errMsg, "undefined variable") {
+		t.Errorf("Error should mention variable is undefined, got: %v", err)
 	}
 }
 
@@ -68,7 +61,7 @@ echo "@var.NAME"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -100,7 +93,7 @@ echo "done"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -127,7 +120,7 @@ echo "@var.UNDEFINED"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -139,8 +132,9 @@ echo "@var.UNDEFINED"
 	if !strings.Contains(errMsg, "UNDEFINED") {
 		t.Errorf("Error should mention variable name 'UNDEFINED', got: %v", err)
 	}
-	if !strings.Contains(errMsg, "not found") {
-		t.Errorf("Error should say 'not found' for undeclared variable, got: %v", err)
+	// Error message now explicitly says "undefined variable (no hoisting allowed)"
+	if !strings.Contains(errMsg, "undefined variable") {
+		t.Errorf("Error should say 'undefined variable' for undeclared variable, got: %v", err)
 	}
 }
 
@@ -160,7 +154,7 @@ var COUNT = 5
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -188,7 +182,7 @@ var NAME = "Aled"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -217,7 +211,7 @@ echo "@var.SECOND"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -240,7 +234,7 @@ echo "@var.NAME"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -263,7 +257,7 @@ var COUNT = 10
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	_, err := PlanNew(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 

@@ -43,7 +43,7 @@ echo "@var.COUNT"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -117,7 +117,7 @@ echo "@var.SECRET"
 	}
 
 	// Plan
-	_, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	_, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 
 	// ASSERT: Should fail - SECRET not found in outer scope
 	if err == nil {
@@ -129,9 +129,9 @@ echo "@var.SECRET"
 		t.Errorf("Error should mention 'SECRET', got: %v", err)
 	}
 
-	// ASSERT: Error should mention "not found"
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("Error should mention 'not found', got: %v", err)
+	// ASSERT: Error should mention undefined variable
+	if !strings.Contains(err.Error(), "undefined variable") {
+		t.Errorf("Error should mention 'undefined variable', got: %v", err)
 	}
 
 	t.Logf("✓ Variable declared in @retry block correctly doesn't leak: %v", err)
@@ -154,7 +154,7 @@ var API_KEY = "parent-key"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -205,7 +205,7 @@ echo "@var.COUNT"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -295,7 +295,7 @@ echo "@var.A @var.B @var.C"
 	}
 
 	// Plan
-	_, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	_, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 
 	// ASSERT: Should fail - none of A, B, C accessible outside blocks
 	if err == nil {
@@ -332,7 +332,7 @@ func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestVarBlockScoping_NoHoisting_InExecutionDecorator(t *testing.T) {
 	}
 
 	// Plan
-	_, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	_, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 
 	// ASSERT: Should fail - use before declare
 	if err == nil {
@@ -417,7 +417,7 @@ echo "@var.COUNT"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -468,7 +468,7 @@ echo "@var.A @var.B"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -529,7 +529,7 @@ fun test {
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{Target: "test"})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{Target: "test"})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -601,7 +601,7 @@ var COUNT = "5"
 	}
 
 	// Plan
-	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
