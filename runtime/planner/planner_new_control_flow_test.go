@@ -19,7 +19,7 @@ when @var.ENV { "production" -> echo "prod" else -> echo "other" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -58,7 +58,7 @@ when @var.ENV { "production" -> echo "prod" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPlanNew_TryCatchFinally(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestPlanNew_ForLoopIterations(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}

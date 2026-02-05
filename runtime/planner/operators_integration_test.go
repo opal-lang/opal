@@ -132,7 +132,7 @@ func TestOperatorsEndToEnd(t *testing.T) {
 			require.Empty(t, tree.Errors, "parse errors")
 
 			// Plan
-			plan, err := planner.PlanNew(tree.Events, tokens, planner.Config{Target: tt.target})
+			plan, err := planner.Plan(tree.Events, tokens, planner.Config{Target: tt.target})
 			require.NoError(t, err, "plan error")
 
 			// Execute

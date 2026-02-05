@@ -13,23 +13,19 @@ import (
 	"github.com/opal-lang/opal/runtime/vault"
 )
 
-// PlanNew consumes parser events and generates an execution plan using the new pipeline.
-// This is the new implementation that uses BuildIR → Resolver → Emitter.
-//
-// Pipeline:
-//  1. BuildIR: Convert parser events → ExecutionGraph
-//  2. Resolve: Wave-based resolution → ResolveResult with pruned tree
-//  3. Emit: Generate planfmt.Plan with structure preservation
-func PlanNew(events []parser.Event, tokens []lexer.Token, config Config) (*planfmt.Plan, error) {
-	result, err := PlanNewWithObservability(events, tokens, config)
+// planCanonical consumes parser events and generates an execution plan using
+// the BuildIR -> Resolve -> Emit pipeline.
+func planCanonical(events []parser.Event, tokens []lexer.Token, config Config) (*planfmt.Plan, error) {
+	result, err := planCanonicalWithObservability(events, tokens, config)
 	if err != nil {
 		return nil, err
 	}
 	return result.Plan, nil
 }
 
-// PlanNewWithObservability returns plan with telemetry and debug events using the new pipeline.
-func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, config Config) (*PlanResult, error) {
+// planCanonicalWithObservability returns plan + observability data for the
+// canonical BuildIR -> Resolve -> Emit pipeline.
+func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token, config Config) (*PlanResult, error) {
 	var telemetry *PlanTelemetry
 	var debugEvents []DebugEvent
 
@@ -185,7 +181,7 @@ func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, confi
 	// Set plan metadata
 	plan.Target = config.Target
 	vaultKey := vlt.GetPlanKey()
-	if vaultKey != nil {
+	if len(vaultKey) == 32 {
 		plan.PlanSalt = vaultKey
 	}
 

@@ -51,7 +51,7 @@ func TestIfTrue(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestIfFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -120,7 +120,7 @@ func TestIfTrueEmptyBlock(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -158,7 +158,7 @@ func TestIfTrueElse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -198,7 +198,7 @@ func TestIfFalseElse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -242,7 +242,7 @@ func TestElseIfFirstMatch(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -282,7 +282,7 @@ func TestElseIfSecondMatch(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -322,7 +322,7 @@ func TestElseIfFallthrough(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -362,7 +362,7 @@ func TestElseIfNoElseAllFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -401,7 +401,7 @@ if @var.ENV == "prod" { echo "production" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -442,7 +442,7 @@ if @var.ENV == "prod" { echo "production" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -465,7 +465,7 @@ if @var.ENV != "dev" { echo "not dev" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -506,7 +506,7 @@ if @var.ENABLED { echo "enabled" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -547,7 +547,7 @@ if @var.ENABLED { echo "enabled" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -574,7 +574,7 @@ if "prod" == @var.ENV { echo "matched" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -615,7 +615,7 @@ if "dev" == @var.ENV { echo "matched" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -643,7 +643,7 @@ if @var.A == @var.B { echo "equal" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -685,7 +685,7 @@ if @var.A == @var.B { echo "equal" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -709,7 +709,7 @@ if @var.A != @var.B { echo "different" }`
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -754,7 +754,7 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -795,7 +795,7 @@ if @var.ENV == "prod" { echo "production" } else if @var.ENV == "staging" { echo
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -839,7 +839,7 @@ func TestNestedIfBothTrue(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -879,7 +879,7 @@ func TestNestedIfInnerFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -911,7 +911,7 @@ func TestNestedIfOuterFalse(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -937,7 +937,7 @@ func TestIfUndefinedVariable(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 
@@ -961,7 +961,7 @@ func TestIfUndefinedVariableComparison(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 
@@ -989,7 +989,7 @@ func TestIfInFunction(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "deploy",
 	})
 	if err != nil {
@@ -1086,7 +1086,7 @@ func TestIfChainedAndOr(t *testing.T) {
 				t.Fatalf("Parse errors: %v", tree.Errors)
 			}
 
-			plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -1163,7 +1163,7 @@ func TestIfEnvDecorator(t *testing.T) {
 				t.Fatalf("Parse errors: %v", tree.Errors)
 			}
 
-			plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -1209,7 +1209,7 @@ func TestIfEnvUnset(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {

@@ -48,8 +48,6 @@ type StatementIR struct {
 }
 
 // CommandStmtIR represents a command statement.
-// Note: Named CommandStmtIR to avoid conflict with existing CommandIR in planner.go.
-// Will be renamed when old planner is removed.
 type CommandStmtIR struct {
 	Decorator      string         // "@shell", "@retry", etc.
 	Command        *CommandExpr   // The command with interpolated expressions

@@ -1317,7 +1317,18 @@ SecretUse{
 - DisplayID lookup + transport boundary check only
 - No site authorization at runtime (contract verification already covers it)
 
-### Three-Pass Planning Model
+### Canonical Planner Pipeline
+
+`planner.Plan()` and `planner.PlanWithObservability()` are canonical and run:
+
+1. **BuildIR** - parser events -> `ExecutionGraph`
+2. **Resolve** - wave-based resolution with pruned control-flow tree
+3. **Emit** - resolved tree -> `planfmt.Plan`
+
+The detailed three-pass notes below are historical background from the
+deprecated planner engine and are no longer the implementation authority.
+
+### Historical Three-Pass Model (Deprecated)
 
 **Pass 1: Scan** - Build complete graph with temporal binding
 
@@ -1589,6 +1600,14 @@ echo "two"   # root/step-2/@shell[0]/params/command
 
 ### Planner Integration
 
+Current integration uses the canonical planner API:
+
+```go
+plan, err := planner.Plan(events, tokens, planner.Config{Target: target})
+```
+
+The snippet below describes legacy internals from the deprecated planner engine.
+
 ```go
 type planner struct {
     vault *vault.Vault
@@ -1639,9 +1658,9 @@ func Plan(events []parser.Event) (*planfmt.Plan, error) {
 - Execution path tracking (touched vs untouched)
 - Site-based authorization is auditable
 
-### Legacy Note
+### Scope Note
 
-**ScopeGraph is being replaced by Vault.** The old approach used separate scope management for variables. Vault unifies variable scoping with secret tracking using the pathStack as the scope trie.
+Scope tracking is implemented in IR/Resolver (`ScopeStack`) with source-order visibility and block semantics. Vault remains the value/DisplayID store and transport-boundary enforcer.
 
 ### Transport Boundary Example
 

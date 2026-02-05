@@ -26,7 +26,7 @@ var NAME = "test"
 		Target: "",
 	}
 
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, config)
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, config)
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
 	}
@@ -64,7 +64,7 @@ var HOME = @env.HOME
 	}
 
 	// We don't care if planning succeeds or fails, just that it doesn't hang
-	_, _ = PlanNewWithObservability(tree.Events, tree.Tokens, config)
+	_, _ = PlanWithObservability(tree.Events, tree.Tokens, config)
 }
 
 // TestMultiDotDecoratorParsing tests that decorators with multiple dots
@@ -80,7 +80,7 @@ func TestMultiDotDecoratorParsing(t *testing.T) {
 	}
 
 	config := Config{Target: ""}
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, config)
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, config)
 	// @env.HOME should succeed (resolves from environment)
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
@@ -104,7 +104,7 @@ func TestMultiSegmentDecoratorPath(t *testing.T) {
 	}
 
 	config := Config{Target: ""}
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, config)
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, config)
 	if err != nil {
 		t.Fatalf("Plan failed: %v", err)
 	}

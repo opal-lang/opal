@@ -55,7 +55,7 @@ func TestPlanNew_DecoratorArgTypes(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}

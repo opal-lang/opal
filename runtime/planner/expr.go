@@ -60,8 +60,8 @@ type SourceSpan struct {
 //
 //	Parts: [Literal("echo \"Hello "), VarRef("NAME"), Literal("\"")]
 //
-// Note: Named CommandExpr to avoid conflict with existing CommandIR in planner.go.
-// Will be renamed to CommandIR when old planner is removed in MR #3.
+// Named CommandExpr to distinguish expression-level command parts from
+// statement-level command IR types.
 type CommandExpr struct {
 	Parts []*ExprIR // Sequence of literals and expression references
 }
