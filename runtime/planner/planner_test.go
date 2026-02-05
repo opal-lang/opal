@@ -1417,7 +1417,7 @@ func TestPlanSalt_VaultWithoutPlanKey_PreservesRandomSalt(t *testing.T) {
 	}
 
 	// Create vault WITHOUT plan key (like Mode 4 verification might do)
-	vlt := vault.New() // No plan key set
+	vlt := vault.NewWithPlanKey(nil) // No plan key set
 
 	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
 		Vault: vlt, // Provide vault without plan key

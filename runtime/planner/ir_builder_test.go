@@ -283,6 +283,33 @@ echo @var.NAME`)
 	}
 }
 
+func TestBuildIR_CommandWithVarCallForm(t *testing.T) {
+	graph := buildIR(t, `var NAME = "world"
+echo @var("NAME")`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[1].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	hasVarRef := false
+	for _, part := range parts {
+		if part.Kind == ExprVarRef && part.VarName == "NAME" {
+			hasVarRef = true
+			break
+		}
+	}
+
+	if !hasVarRef {
+		t.Error("@var(\"NAME\") should normalize to VarRef(NAME)")
+	}
+}
+
 // ========== Scope Tests ==========
 
 func TestBuildIR_ScopeTracking(t *testing.T) {
@@ -912,5 +939,78 @@ func TestTokenToValue_StringQuoteStripping(t *testing.T) {
 				t.Errorf("tokenToValue(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDeepCopyStatements_PreservesRedirectMetadata(t *testing.T) {
+	original := []*StatementIR{
+		{
+			Kind: StmtCommand,
+			Command: &CommandStmtIR{
+				Decorator:    "@shell",
+				Operator:     "&&",
+				RedirectMode: ">>",
+				Command: &CommandExpr{Parts: []*ExprIR{
+					{Kind: ExprLiteral, Value: "echo hello"},
+				}},
+				RedirectTarget: &CommandExpr{Parts: []*ExprIR{
+					{Kind: ExprLiteral, Value: "output.log"},
+				}},
+			},
+		},
+	}
+
+	copied := DeepCopyStatements(original)
+	if len(copied) != 1 {
+		t.Fatalf("len(copied) = %d, want 1", len(copied))
+	}
+
+	copyCmd := copied[0].Command
+	if copyCmd == nil {
+		t.Fatal("copied command is nil")
+	}
+
+	if diff := cmp.Diff(">>", copyCmd.RedirectMode); diff != "" {
+		t.Errorf("RedirectMode mismatch (-want +got):\n%s", diff)
+	}
+
+	if copyCmd.RedirectTarget == nil || len(copyCmd.RedirectTarget.Parts) != 1 {
+		t.Fatalf("RedirectTarget missing in copied statement: %#v", copyCmd.RedirectTarget)
+	}
+
+	if diff := cmp.Diff("output.log", copyCmd.RedirectTarget.Parts[0].Value); diff != "" {
+		t.Errorf("RedirectTarget value mismatch (-want +got):\n%s", diff)
+	}
+
+	if copyCmd == original[0].Command {
+		t.Fatal("copied command shares pointer with original")
+	}
+	if copyCmd.RedirectTarget == original[0].Command.RedirectTarget {
+		t.Fatal("copied redirect target shares pointer with original")
+	}
+}
+
+func TestDeepCopyStatements_RedirectTargetMutationIsolation(t *testing.T) {
+	original := []*StatementIR{
+		{
+			Kind: StmtCommand,
+			Command: &CommandStmtIR{
+				Decorator:    "@shell",
+				RedirectMode: ">",
+				Command: &CommandExpr{Parts: []*ExprIR{
+					{Kind: ExprLiteral, Value: "echo hello"},
+				}},
+				RedirectTarget: &CommandExpr{Parts: []*ExprIR{
+					{Kind: ExprLiteral, Value: "out.txt"},
+				}},
+			},
+		},
+	}
+
+	copyStmts := DeepCopyStatements(original)
+	copyStmts[0].Command.RedirectTarget.Parts[0].Value = "changed.txt"
+
+	if diff := cmp.Diff("out.txt", original[0].Command.RedirectTarget.Parts[0].Value); diff != "" {
+		t.Errorf("original redirect target mutated by copy (-want +got):\n%s", diff)
 	}
 }

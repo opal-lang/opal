@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -144,6 +145,8 @@ type envContext struct {
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
 	Context        context.Context // Execution context
+	PlanHash       []byte          // Deterministic plan hash/salt for value resolution context
+	StepPath       string          // Step path prefix for value resolution provenance
 	Telemetry      *PlanTelemetry  // Optional telemetry sink
 	TelemetryLevel TelemetryLevel  // Telemetry level
 }
@@ -176,6 +179,10 @@ type decoratorCall struct {
 //   - For-loops have Iterations populated with resolved values and deep-copied bodies
 //   - Try/catch blocks are preserved as-is (runtime constructs)
 func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, config ResolveConfig) (*ResolveResult, error) {
+	if config.Context == nil {
+		config.Context = context.Background()
+	}
+
 	r := &Resolver{
 		graph:            graph,
 		vault:            v,
@@ -192,6 +199,16 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 	}
 
 	return r.resolve()
+}
+
+func (r *Resolver) checkContext() error {
+	if r.config.Context == nil {
+		return nil
+	}
+	if err := r.config.Context.Err(); err != nil {
+		return fmt.Errorf("resolution canceled: %w", err)
+	}
+	return nil
 }
 
 // getValue looks up a value by name from Vault.
@@ -268,53 +285,60 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 	}
 
 	var result []*StatementIR
+	var pending []*StatementIR
 
 	for i := 0; i < len(stmts); i++ {
+		if err := r.checkContext(); err != nil {
+			return nil, err
+		}
 		stmt := stmts[i]
 
 		switch stmt.Kind {
 		case StmtVarDecl:
-			// Collect and resolve variable declaration
 			r.collectVarDecl(stmt.VarDecl)
 			if err := r.buildError(); err != nil {
 				return nil, err
 			}
-			if err := r.batchResolve(); err != nil {
-				return nil, err
-			}
-			if stmt.VarDecl != nil {
-				if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
-					return nil, err
-				}
-			}
+			pending = append(pending, stmt)
 			result = append(result, stmt)
 
 		case StmtCommand:
-			// Collect expressions in command
 			r.collectCommand(stmt.Command)
 			if err := r.buildError(); err != nil {
 				return nil, err
 			}
-			if err := r.batchResolve(); err != nil {
-				return nil, err
-			}
-			if err := r.checkTransportBoundaryCommand(stmt.Command); err != nil {
-				return nil, err
-			}
-			if err := r.resolveCommandBlock(stmt.Command); err != nil {
-				return nil, err
-			}
+			pending = append(pending, stmt)
 			result = append(result, stmt)
 
 		case StmtBlocker:
-			// Collect blocker condition, resolve, evaluate, then recurse into taken branch
-			resolvedBlocker, err := r.resolveBlocker(stmt)
+			r.collectBlockerInputs(stmt.Blocker)
+			if err := r.buildError(); err != nil {
+				return nil, err
+			}
+
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
+			resolvedBlocker, err := r.resolveBlockerWithResolvedInputs(stmt)
 			if err != nil {
 				return nil, err
 			}
 			result = append(result, resolvedBlocker)
 
 		case StmtTry:
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
 			// Try/catch is a runtime construct - resolve all branches
 			resolvedTry, err := r.resolveTry(stmt)
 			if err != nil {
@@ -322,6 +346,13 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 			}
 			result = append(result, resolvedTry)
 		}
+	}
+
+	if err := r.batchResolve(); err != nil {
+		return nil, err
+	}
+	if err := r.finalizePendingStatements(pending); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -341,26 +372,118 @@ func (r *Resolver) collectCommand(cmd *CommandStmtIR) {
 	}
 }
 
-// resolveBlocker resolves a blocker statement and returns the pruned result.
-// The blocker node is preserved with Taken set and untaken branch pruned.
-func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
-	blocker := stmt.Blocker
+func (r *Resolver) resolveVarDeclStatement(stmt *StatementIR) error {
+	if stmt == nil {
+		return nil
+	}
+
+	r.collectVarDecl(stmt.VarDecl)
+	if err := r.buildError(); err != nil {
+		return err
+	}
+	if err := r.batchResolve(); err != nil {
+		return err
+	}
+	if stmt.VarDecl != nil {
+		if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) finalizePendingStatements(stmts []*StatementIR) error {
+	for _, stmt := range stmts {
+		if stmt == nil {
+			continue
+		}
+
+		switch stmt.Kind {
+		case StmtVarDecl:
+			if stmt.VarDecl != nil {
+				if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
+					return err
+				}
+			}
+		case StmtCommand:
+			if err := r.checkTransportBoundaryCommand(stmt.Command); err != nil {
+				return err
+			}
+			if err := r.resolveCommandBlock(stmt.Command); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) collectBlockerInputs(blocker *BlockerIR) {
+	if blocker == nil {
+		return
+	}
 
 	// Collect blocker condition/collection
 	r.collectExpr(blocker.Condition, "")
 	if blocker.Kind == BlockerFor && blocker.Collection != nil {
 		r.collectExpr(blocker.Collection, "")
 	}
+}
 
-	// Check for errors from collection
+func (r *Resolver) resolveBlockerInputs(blocker *BlockerIR) error {
+	r.collectBlockerInputs(blocker)
+
 	if err := r.buildError(); err != nil {
-		return nil, err
+		return err
 	}
 
-	// Batch resolve expressions
-	if err := r.batchResolve(); err != nil {
-		return nil, err
+	return r.batchResolve()
+}
+
+func (r *Resolver) evaluateCondition(expr *ExprIR, description string, checkTransport bool) (any, error) {
+	if checkTransport {
+		if err := r.checkTransportBoundaryExpr(expr); err != nil {
+			return nil, err
+		}
 	}
+
+	result, err := EvaluateExpr(expr, r.getValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate %s: %w", description, err)
+	}
+
+	return result, nil
+}
+
+func (r *Resolver) evaluateBlockerCollection(blocker *BlockerIR, checkTransport bool) ([]any, error) {
+	if checkTransport {
+		if err := r.checkTransportBoundaryExpr(blocker.Collection); err != nil {
+			return nil, err
+		}
+	}
+
+	collection, err := r.evaluateCollection(blocker.Collection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
+	}
+
+	return collection, nil
+}
+
+func (r *Resolver) bindLoopVar(loopVar string, item any) {
+	loopVarRaw := fmt.Sprintf("literal:%v", item)
+	loopVarExprID := r.vault.DeclareVariable(loopVar, loopVarRaw)
+
+	r.vault.StoreUnresolvedValue(loopVarExprID, item)
+	r.vault.MarkTouched(loopVarExprID)
+	if r.scopes != nil {
+		r.scopes.Define(loopVar, loopVarExprID)
+	}
+}
+
+func (r *Resolver) resolveBlockerWithResolvedInputs(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
 
 	// Evaluate the blocker
 	switch blocker.Kind {
@@ -379,13 +502,9 @@ func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate condition
-	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
-		return nil, err
-	}
-	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	result, err := r.evaluateCondition(blocker.Condition, "if condition", true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
+		return nil, err
 	}
 
 	taken := IsTruthy(result)
@@ -393,6 +512,10 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 
 	// Resolve taken branch, prune untaken branch
 	if taken {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		resolved, err := r.resolveStatements(blocker.ThenBranch)
 		if err != nil {
 			return nil, err
@@ -401,6 +524,10 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 		blocker.ElseBranch = nil // Prune untaken branch
 	} else {
 		if blocker.ElseBranch != nil {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 			resolved, err := r.resolveStatements(blocker.ElseBranch)
 			if err != nil {
 				return nil, err
@@ -417,36 +544,41 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate collection
-	if err := r.checkTransportBoundaryExpr(blocker.Collection); err != nil {
-		return nil, err
-	}
-	collection, err := r.evaluateCollection(blocker.Collection)
+	collection, err := r.evaluateBlockerCollection(blocker, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
+		return nil, err
 	}
 
 	// Build iterations with deep-copied bodies
 	blocker.Iterations = make([]LoopIteration, len(collection))
 	for i, item := range collection {
-		// Create exprID for this iteration's loop variable
-		loopVarRaw := fmt.Sprintf("literal:%v", item)
-		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-
-		// Store the value and update scope
-		r.vault.StoreUnresolvedValue(loopVarExprID, item)
-		r.vault.MarkTouched(loopVarExprID)
-		if r.scopes != nil {
-			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		if err := r.checkContext(); err != nil {
+			return nil, err
 		}
 
-		// Deep-copy the body for this iteration
-		bodyCopy := DeepCopyStatements(blocker.ThenBranch)
+		var resolvedBody []*StatementIR
+		err := func() error {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 
-		// Resolve the copied body (may contain nested blockers)
-		resolvedBody, err := r.resolveStatements(bodyCopy)
+			r.bindLoopVar(blocker.LoopVar, item)
+
+			// Deep-copy the body for this iteration
+			bodyCopy := DeepCopyStatements(blocker.ThenBranch)
+
+			// Resolve the copied body (may contain nested blockers)
+			var err error
+			resolvedBody, err = r.resolveStatements(bodyCopy)
+			if err != nil {
+				return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			}
+
+			return nil
+		}()
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			return nil, err
 		}
 
 		blocker.Iterations[i] = LoopIteration{
@@ -466,13 +598,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate condition
-	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
-		return nil, err
-	}
-	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	value, err := r.evaluateCondition(blocker.Condition, "when condition", true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate when condition: %w", err)
+		return nil, err
 	}
 
 	// Find first matching arm
@@ -485,7 +613,12 @@ func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 			blocker.MatchedArm = i
 
 			// Resolve the matched arm's body
-			resolved, err := r.resolveStatements(arm.Body)
+			var resolved []*StatementIR
+			err := r.withScope(func() error {
+				var err error
+				resolved, err = r.resolveStatements(arm.Body)
+				return err
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -605,6 +738,9 @@ func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
 	}
 
 	for _, stmt := range r.graph.Statements {
+		if err := r.checkContext(); err != nil {
+			return err
+		}
 		if stmt.Span.Start >= fn.Span.Start {
 			continue
 		}
@@ -618,6 +754,9 @@ func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
 
 func (r *Resolver) resolvePreludeStatements(stmts []*StatementIR) error {
 	for _, stmt := range stmts {
+		if err := r.checkContext(); err != nil {
+			return err
+		}
 		if err := r.resolvePreludeStatement(stmt); err != nil {
 			return err
 		}
@@ -632,14 +771,7 @@ func (r *Resolver) resolvePreludeStatement(stmt *StatementIR) error {
 
 	switch stmt.Kind {
 	case StmtVarDecl:
-		r.collectVarDecl(stmt.VarDecl)
-		if err := r.buildError(); err != nil {
-			return err
-		}
-		if err := r.batchResolve(); err != nil {
-			return err
-		}
-		return nil
+		return r.resolveVarDeclStatement(stmt)
 	case StmtBlocker:
 		return r.resolvePreludeBlocker(stmt)
 	case StmtCommand, StmtTry:
@@ -655,19 +787,7 @@ func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
 		return nil
 	}
 
-	// Collect blocker condition/collection
-	r.collectExpr(blocker.Condition, "")
-	if blocker.Kind == BlockerFor && blocker.Collection != nil {
-		r.collectExpr(blocker.Collection, "")
-	}
-
-	// Check for errors from collection
-	if err := r.buildError(); err != nil {
-		return err
-	}
-
-	// Batch resolve expressions
-	if err := r.batchResolve(); err != nil {
+	if err := r.resolveBlockerInputs(blocker); err != nil {
 		return err
 	}
 
@@ -684,16 +804,24 @@ func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
 }
 
 func (r *Resolver) resolvePreludeIf(blocker *BlockerIR) error {
-	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	result, err := r.evaluateCondition(blocker.Condition, "if condition", false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate if condition: %w", err)
+		return err
 	}
 
 	if IsTruthy(result) {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		return r.resolvePreludeStatements(blocker.ThenBranch)
 	}
 
 	if blocker.ElseBranch != nil {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		return r.resolvePreludeStatements(blocker.ElseBranch)
 	}
 
@@ -773,23 +901,31 @@ func extractEnvDelta(params map[string]any) map[string]string {
 }
 
 func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
-	collection, err := r.evaluateCollection(blocker.Collection)
+	collection, err := r.evaluateBlockerCollection(blocker, false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate for collection: %w", err)
+		return err
 	}
 
 	for i, item := range collection {
-		loopVarRaw := fmt.Sprintf("literal:%v", item)
-		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-
-		r.vault.StoreUnresolvedValue(loopVarExprID, item)
-		r.vault.MarkTouched(loopVarExprID)
-		if r.scopes != nil {
-			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		if err := r.checkContext(); err != nil {
+			return err
 		}
+		err := func() error {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 
-		if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
-			return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			r.bindLoopVar(blocker.LoopVar, item)
+
+			if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
+				return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			}
+
+			return nil
+		}()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -797,14 +933,16 @@ func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
 }
 
 func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
-	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	value, err := r.evaluateCondition(blocker.Condition, "when condition", false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate when condition: %w", err)
+		return err
 	}
 
 	for _, arm := range blocker.Arms {
 		if matchPattern(arm.Pattern, value, r.getValue) {
-			return r.resolvePreludeStatements(arm.Body)
+			return r.withScope(func() error {
+				return r.resolvePreludeStatements(arm.Body)
+			})
 		}
 	}
 
@@ -1208,8 +1346,15 @@ func (r *Resolver) batchResolve() error {
 		groups[call.decorator.Name] = append(groups[call.decorator.Name], call)
 	}
 
+	decoratorNames := make([]string, 0, len(groups))
+	for decoratorName := range groups {
+		decoratorNames = append(decoratorNames, decoratorName)
+	}
+	sort.Strings(decoratorNames)
+
 	// Resolve each group in batch
-	for decoratorName, calls := range groups {
+	for _, decoratorName := range decoratorNames {
+		calls := groups[decoratorName]
 		var duration time.Duration
 		if r.telemetry != nil && r.telemetryLevel >= TelemetryTiming {
 			start := time.Now()
@@ -1285,15 +1430,32 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	// Build ValueCall slice for batch resolution
 	valueCalls := make([]decorator.ValueCall, len(calls))
 	for i, call := range calls {
-		valueCalls[i] = buildValueCall(call.decorator)
+		valueCall, err := buildValueCall(call.decorator, r.getValue)
+		if err != nil {
+			return err
+		}
+		valueCalls[i] = valueCall
 	}
 
 	// Build evaluation context
+	stepPath := r.config.StepPath
+	if stepPath == "" {
+		stepPath = "planner.resolve"
+	}
+	if decoratorName != "" {
+		stepPath = stepPath + "." + decoratorName
+	}
+
+	planHash := r.config.PlanHash
+	if len(planHash) == 0 {
+		planHash = r.vault.GetPlanKey()
+	}
+
 	ctx := decorator.ValueEvalContext{
-		Session:  r.session,
-		Vault:    r.vault,
-		PlanHash: nil, // TODO: Get from config
-		StepPath: "",  // TODO: Track current step path
+		Session:     r.session,
+		LookupValue: r.getValue,
+		PlanHash:    planHash,
+		StepPath:    stepPath,
 	}
 
 	// Get current transport scope
@@ -1304,6 +1466,9 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	results, err := decorator.Global().ResolveValues(ctx, currentScope, valueCalls...)
 	if err != nil {
 		return fmt.Errorf("failed to resolve @%s: %w (cannot plan if cannot resolve)", decoratorName, err)
+	}
+	if len(results) != len(calls) {
+		return fmt.Errorf("internal error: resolver received %d results for %d @%s calls", len(results), len(calls), decoratorName)
 	}
 
 	// Store results in Vault
@@ -1369,7 +1534,11 @@ func matchPattern(pattern *ExprIR, value any, getValue ValueLookup) bool {
 }
 
 // buildValueCall converts a DecoratorRef to a decorator.ValueCall.
-func buildValueCall(d *DecoratorRef) decorator.ValueCall {
+func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall, error) {
+	if d == nil {
+		return decorator.ValueCall{Params: map[string]any{}}, nil
+	}
+
 	call := decorator.ValueCall{
 		Path:   d.Name,
 		Params: make(map[string]any),
@@ -1381,9 +1550,18 @@ func buildValueCall(d *DecoratorRef) decorator.ValueCall {
 		call.Primary = &primary
 	}
 
-	// TODO: Handle Args (parameterized decorators)
+	for i, arg := range d.Args {
+		if arg == nil {
+			continue
+		}
+		value, err := EvaluateExpr(arg, getValue)
+		if err != nil {
+			return decorator.ValueCall{}, fmt.Errorf("failed to evaluate decorator arg %d for @%s: %w", i+1, call.Path, err)
+		}
+		call.Params[fmt.Sprintf("arg%d", i+1)] = value
+	}
 
-	return call
+	return call, nil
 }
 
 // buildDecoratorRaw builds a raw decorator string from a DecoratorRef.
@@ -1420,6 +1598,16 @@ func (r *Resolver) buildError() error {
 		sb.WriteString(fmt.Sprintf("  %d. %v\n", i+1, err))
 	}
 	return fmt.Errorf("%s", sb.String())
+}
+
+func (r *Resolver) withScope(run func() error) error {
+	if r.scopes == nil {
+		return run()
+	}
+
+	r.scopes.Push()
+	defer r.scopes.Pop()
+	return run()
 }
 
 // transportStringToScope converts a transport string to TransportScope.

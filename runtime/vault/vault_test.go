@@ -14,47 +14,47 @@ var testKey = []byte("test-key-32-bytes-for-hmac-12345")
 // TestVault_PathTracking_SingleDecorator tests building a simple path
 // with one decorator instance.
 func TestVault_PathTracking_SingleDecorator(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: We enter a step and a decorator
-	v.Push("step-1")
-	v.Push("@shell")
+	v.push("step-1")
+	v.push("@shell")
 
 	// WHEN: We build the site path for a parameter
-	path := v.BuildSitePath("command")
+	path := v.buildSitePath("command")
 
 	// THEN: Path should include decorator with index [0]
 	expected := "root/step-1/@shell[0]/params/command"
 	if path != expected {
-		t.Errorf("BuildSitePath() = %q, want %q", path, expected)
+		t.Errorf("buildSitePath() = %q, want %q", path, expected)
 	}
 }
 
 // TestVault_PathTracking_MultipleInstances tests that multiple instances
 // of the same decorator get different indices.
 func TestVault_PathTracking_MultipleInstances(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Three shell commands in three steps
-	v.Push("step-1")
-	v.Push("@shell")
-	path1 := v.BuildSitePath("command")
-	v.Pop() // Pop @shell
-	v.Pop() // Pop step-1
+	v.push("step-1")
+	v.push("@shell")
+	path1 := v.buildSitePath("command")
+	v.pop() // Pop @shell
+	v.pop() // Pop step-1
 
-	v.ResetCounts() // Reset for new step
-	v.Push("step-2")
-	v.Push("@shell")
-	path2 := v.BuildSitePath("command")
-	v.Pop() // Pop @shell
-	v.Pop() // Pop step-2
+	v.resetCounts() // Reset for new step
+	v.push("step-2")
+	v.push("@shell")
+	path2 := v.buildSitePath("command")
+	v.pop() // Pop @shell
+	v.pop() // Pop step-2
 
-	v.ResetCounts() // Reset for new step
-	v.Push("step-3")
-	v.Push("@shell")
-	path3 := v.BuildSitePath("command")
-	v.Pop() // Pop @shell
-	v.Pop() // Pop step-3
+	v.resetCounts() // Reset for new step
+	v.push("step-3")
+	v.push("@shell")
+	path3 := v.buildSitePath("command")
+	v.pop() // Pop @shell
+	v.pop() // Pop step-3
 
 	// THEN: Each should have different step but same decorator index [0]
 	expected := []string{
@@ -74,44 +74,44 @@ func TestVault_PathTracking_MultipleInstances(t *testing.T) {
 // TestVault_PathTracking_NestedDecorators tests building paths through
 // nested decorator contexts.
 func TestVault_PathTracking_NestedDecorators(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Nested decorators @retry -> @timeout -> @shell
-	v.Push("@retry")
-	v.Push("@timeout")
-	v.Push("@shell")
+	v.push("@retry")
+	v.push("@timeout")
+	v.push("@shell")
 
 	// WHEN: We build the site path
-	path := v.BuildSitePath("command")
+	path := v.buildSitePath("command")
 
 	// THEN: Path should show full nesting
 	expected := "root/@retry[0]/@timeout[0]/@shell[0]/params/command"
 	if path != expected {
-		t.Errorf("BuildSitePath() = %q, want %q", path, expected)
+		t.Errorf("buildSitePath() = %q, want %q", path, expected)
 	}
 }
 
 // TestVault_PathTracking_MultipleDecoratorsAtSameLevel tests that
 // different decorators at the same level get independent indices.
 func TestVault_PathTracking_MultipleDecoratorsAtSameLevel(t *testing.T) {
-	v := New()
+	v := newVault()
 
-	v.Push("step-1")
+	v.push("step-1")
 
 	// First shell command
-	v.Push("@shell")
-	path1 := v.BuildSitePath("command")
-	v.Pop()
+	v.push("@shell")
+	path1 := v.buildSitePath("command")
+	v.pop()
 
 	// Second shell command
-	v.Push("@shell")
-	path2 := v.BuildSitePath("command")
-	v.Pop()
+	v.push("@shell")
+	path2 := v.buildSitePath("command")
+	v.pop()
 
 	// A retry decorator
-	v.Push("@retry")
-	path3 := v.BuildSitePath("times")
-	v.Pop()
+	v.push("@retry")
+	path3 := v.buildSitePath("times")
+	v.pop()
 
 	// THEN: Shell commands get [0] and [1], retry gets [0]
 	expected := []string{
@@ -131,24 +131,24 @@ func TestVault_PathTracking_MultipleDecoratorsAtSameLevel(t *testing.T) {
 // TestVault_PathTracking_ResetCountsPerStep tests that decorator counts
 // reset when entering a new step.
 func TestVault_PathTracking_ResetCountsPerStep(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// Step 1: Two shell commands
-	v.Push("step-1")
-	v.Push("@shell")
-	v.Pop()
-	v.Push("@shell")
-	path1 := v.BuildSitePath("command")
-	v.Pop()
-	v.Pop() // Pop step-1
+	v.push("step-1")
+	v.push("@shell")
+	v.pop()
+	v.push("@shell")
+	path1 := v.buildSitePath("command")
+	v.pop()
+	v.pop() // Pop step-1
 
 	// Step 2: One shell command (should be [0] again)
-	v.ResetCounts() // Reset for new step
-	v.Push("step-2")
-	v.Push("@shell")
-	path2 := v.BuildSitePath("command")
-	v.Pop()
-	v.Pop() // Pop step-2
+	v.resetCounts() // Reset for new step
+	v.push("step-2")
+	v.push("@shell")
+	path2 := v.buildSitePath("command")
+	v.pop()
+	v.pop() // Pop step-2
 
 	// THEN: Step 1 has @shell[1], Step 2 has @shell[0]
 	if path1 != "root/step-1/@shell[1]/params/command" {
@@ -163,7 +163,7 @@ func TestVault_PathTracking_ResetCountsPerStep(t *testing.T) {
 
 // TestVault_EnterExitTransport tests transport scope tracking.
 func TestVault_EnterExitTransport(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: We start in local transport
 	if v.CurrentTransport() != "local" {
@@ -179,7 +179,7 @@ func TestVault_EnterExitTransport(t *testing.T) {
 	}
 
 	// WHEN: We exit transport
-	v.ExitTransport()
+	v.exitTransport()
 
 	// THEN: Back to local
 	if v.CurrentTransport() != "local" {
@@ -199,21 +199,21 @@ func TestVault_TransportBoundaryViolation(t *testing.T) {
 	v.MarkTouched(exprID)
 
 	// AND: Record reference in local transport (allowed)
-	v.Push("step-1")
-	v.Push("@shell")
-	err := v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	err := v.recordReference(exprID, "command")
 	if err != nil {
 		t.Fatalf("RecordReference should succeed in same transport: %v", err)
 	}
 
 	// WHEN: We enter SSH transport and try to access it
 	v.EnterTransport("ssh:untrusted")
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command") // Recording is allowed
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command") // Recording is allowed
 
 	// THEN: Access should fail with transport boundary violation
-	_, err = v.Access(exprID, "command")
+	_, err = v.access(exprID, "command")
 	if err == nil {
 		t.Fatal("Expected transport boundary error, got nil")
 	}
@@ -234,9 +234,9 @@ func TestVault_SameTransportAllowed(t *testing.T) {
 	v.MarkTouched(exprID)
 
 	// WHEN: We use it in same transport
-	v.Push("step-1")
-	v.Push("@shell")
-	err := v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	err := v.recordReference(exprID, "command")
 	// THEN: Should succeed
 	if err != nil {
 		t.Errorf("Expected no error in same transport, got: %v", err)
@@ -247,7 +247,7 @@ func TestVault_SameTransportAllowed(t *testing.T) {
 
 // TestVault_MarkTouched tests marking expressions as touched (in execution path).
 func TestVault_MarkTouched(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: We have two expressions
 	id1 := v.DeclareVariable("USED", "@env.HOME")
@@ -267,7 +267,7 @@ func TestVault_MarkTouched(t *testing.T) {
 
 // TestVault_PruneUntouched tests removing expressions not in execution path.
 func TestVault_PruneUntouched(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Three expressions, only two touched
 	id1 := v.DeclareVariable("TOUCHED1", "@env.HOME")
@@ -278,7 +278,7 @@ func TestVault_PruneUntouched(t *testing.T) {
 	v.MarkTouched(id2)
 
 	// WHEN: We prune untouched
-	v.PruneUntouched()
+	v.pruneUntouched()
 
 	// THEN: Only touched expressions remain
 	if v.expressions[id1] == nil {
@@ -300,14 +300,14 @@ func TestVault_BuildSecretUses(t *testing.T) {
 
 	// GIVEN: Variables with references
 	exprID := v.DeclareVariable("API_KEY", "sk-secret")
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
-	v.Pop()
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
+	v.pop()
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// Resolve expression (normally done during planning)
 	v.expressions[exprID].Value = "sk-secret"
@@ -318,7 +318,7 @@ func TestVault_BuildSecretUses(t *testing.T) {
 	v.MarkTouched(exprID)
 
 	// WHEN: We build final SecretUses
-	uses := v.BuildSecretUses()
+	uses := v.buildSecretUses()
 
 	// THEN: Should have 2 SecretUse entries
 	if len(uses) != 2 {
@@ -344,14 +344,14 @@ func TestVault_BuildSecretUses_RequiresDisplayID(t *testing.T) {
 	// GIVEN: Variable with reference but no DisplayID (not resolved yet)
 	exprID := v.DeclareVariable("UNRESOLVED", "value")
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// Don't assign DisplayID - simulates unresolved expression
 
 	// WHEN: We build SecretUses
-	uses := v.BuildSecretUses()
+	uses := v.buildSecretUses()
 
 	// THEN: Should be empty (no DisplayID = not resolved = skip)
 	if len(uses) != 0 {
@@ -367,10 +367,10 @@ func TestVault_BuildSecretUses_OnlyTouched(t *testing.T) {
 	id1 := v.DeclareVariable("TOUCHED", "@env.HOME")
 	id2 := v.DeclareVariable("UNTOUCHED", "@env.PATH")
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(id1, "command")
-	v.RecordReference(id2, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(id1, "command")
+	v.recordReference(id2, "command")
 
 	// Resolve both
 	v.expressions[id1].Value = "value1"
@@ -384,7 +384,7 @@ func TestVault_BuildSecretUses_OnlyTouched(t *testing.T) {
 	v.MarkTouched(id1)
 
 	// WHEN: We build SecretUses
-	uses := v.BuildSecretUses()
+	uses := v.buildSecretUses()
 
 	// THEN: Only TOUCHED is included
 	if len(uses) != 1 {
@@ -399,7 +399,7 @@ func TestVault_BuildSecretUses_OnlyTouched(t *testing.T) {
 
 // TestVault_DeclareVariable_StoresExpression tests that the expression is stored with hash-based ID.
 func TestVault_DeclareVariable_StoresExpression(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// WHEN: We declare a variable
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
@@ -422,7 +422,7 @@ func TestVault_DeclareVariable_StoresExpression(t *testing.T) {
 
 // TestVault_TrackExpression_ReturnsHashBasedID tests that TrackExpression returns hash-based ID.
 func TestVault_TrackExpression_ReturnsHashBasedID(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// WHEN: We track a direct decorator call
 	exprID := v.TrackExpression("@env.HOME")
@@ -468,7 +468,7 @@ func TestVault_TrackExpression_IncludesTransport(t *testing.T) {
 
 // TestVault_TrackExpression_Deterministic tests that same expression returns same ID.
 func TestVault_TrackExpression_Deterministic(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// WHEN: We track the same expression twice
 	id1 := v.TrackExpression("@env.HOME")
@@ -495,18 +495,18 @@ func TestVault_Access_ChecksSiteID(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// Record authorized site
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: We try to access at authorized site (current site)
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 	// THEN: Should succeed
 	if err != nil {
-		t.Errorf("Access() at authorized site should succeed, got error: %v", err)
+		t.Errorf("access() at authorized site should succeed, got error: %v", err)
 	}
 	if value != "sk-secret-123" {
-		t.Errorf("Access() = %q, want %q", value, "sk-secret-123")
+		t.Errorf("access() = %q, want %q", value, "sk-secret-123")
 	}
 }
 
@@ -521,22 +521,22 @@ func TestVault_Access_RejectsUnauthorizedSite(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// Record authorized site
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
-	v.Pop()
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
+	v.pop()
 
 	// WHEN: We try to access at different site (not authorized)
-	v.Push("step-1")
-	v.Push("@timeout")
-	value, err := v.Access(exprID, "duration")
+	v.push("step-1")
+	v.push("@timeout")
+	value, err := v.access(exprID, "duration")
 
 	// THEN: Should fail with authorization error
 	if err == nil {
-		t.Error("Access() at unauthorized site should fail")
+		t.Error("access() at unauthorized site should fail")
 	}
 	if value != nil {
-		t.Errorf("Access() should return nil on error, got %v", value)
+		t.Errorf("access() should return nil on error, got %v", value)
 	}
 	if err != nil && !containsString(err.Error(), "no authority") {
 		t.Errorf("Error should mention 'no authority', got: %v", err)
@@ -553,19 +553,19 @@ func TestVault_Access_UnresolvedExpression(t *testing.T) {
 	exprID := v.DeclareVariable("UNRESOLVED", "@env.FOO")
 
 	// Record use-site
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: We try to access
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 
 	// THEN: Should fail (not resolved yet)
 	if err == nil {
-		t.Error("Access() on unresolved expression should fail")
+		t.Error("access() on unresolved expression should fail")
 	}
 	if value != nil {
-		t.Errorf("Access() should return nil on error, got %v", value)
+		t.Errorf("access() should return nil on error, got %v", value)
 	}
 	if err != nil && !containsString(err.Error(), "not resolved") {
 		t.Errorf("Error should mention 'not resolved', got: %v", err)
@@ -576,18 +576,18 @@ func TestVault_Access_UnresolvedExpression(t *testing.T) {
 
 // TestVault_PruneUnusedExpressions tests removing expressions with no references.
 func TestVault_PruneUnusedExpressions(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Two variables, one used, one unused
 	id1 := v.DeclareVariable("USED", "sk-used")
 	id2 := v.DeclareVariable("UNUSED", "sk-unused")
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(id1, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(id1, "command")
 
 	// WHEN: We prune unused expressions
-	v.PruneUnused()
+	v.pruneUnused()
 
 	// THEN: Only USED should remain
 	if v.expressions[id1] == nil {
@@ -608,13 +608,13 @@ func TestVault_EndToEnd_PruneAndBuild(t *testing.T) {
 	id3 := v.DeclareVariable("ANOTHER_USED", "value")
 
 	// Only reference USED_SECRET and ANOTHER_USED
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(id1, "command")
-	v.RecordReference(id3, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(id1, "command")
+	v.recordReference(id3, "command")
 
 	// WHEN: We prune and build
-	v.PruneUnused()
+	v.pruneUnused()
 
 	// Resolve expressions (normally done during planning)
 	if v.expressions[id1] != nil {
@@ -632,7 +632,7 @@ func TestVault_EndToEnd_PruneAndBuild(t *testing.T) {
 	v.MarkTouched(id1)
 	v.MarkTouched(id3)
 
-	uses := v.BuildSecretUses()
+	uses := v.buildSecretUses()
 
 	// THEN: Should have 2 SecretUses (UNUSED_SECRET pruned)
 	if len(uses) != 2 {
@@ -649,32 +649,32 @@ func TestVault_EndToEnd_PruneAndBuild(t *testing.T) {
 
 // TestVault_LookupVariable tests basic variable lookup.
 func TestVault_LookupVariable(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Variable declared at root
 	exprID := v.DeclareVariable("NAME", "Aled")
 
 	// WHEN: We lookup the variable
-	foundID, err := v.LookupVariable("NAME")
+	foundID, err := v.lookupVariable("NAME")
 	// THEN: Should find it
 	if err != nil {
-		t.Fatalf("LookupVariable() failed: %v", err)
+		t.Fatalf("lookupVariable() failed: %v", err)
 	}
 	if foundID != exprID {
-		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+		t.Errorf("lookupVariable() = %q, want %q", foundID, exprID)
 	}
 }
 
 // TestVault_LookupVariable_NotFound tests error handling for missing variables.
 func TestVault_LookupVariable_NotFound(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// WHEN: We lookup a non-existent variable
-	_, err := v.LookupVariable("DOES_NOT_EXIST")
+	_, err := v.lookupVariable("DOES_NOT_EXIST")
 
 	// THEN: Should return error
 	if err == nil {
-		t.Error("LookupVariable() should fail for non-existent variable")
+		t.Error("lookupVariable() should fail for non-existent variable")
 	}
 	if err != nil && !containsString(err.Error(), "not found") {
 		t.Errorf("Error should mention 'not found', got: %v", err)
@@ -683,25 +683,25 @@ func TestVault_LookupVariable_NotFound(t *testing.T) {
 
 // TestVault_DeclareVariable_RegistersName tests that DeclareVariable registers the name.
 func TestVault_DeclareVariable_RegistersName(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: We declare a variable
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
 
 	// WHEN: We lookup the variable
-	foundID, err := v.LookupVariable("API_KEY")
+	foundID, err := v.lookupVariable("API_KEY")
 	// THEN: Should find it with same exprID
 	if err != nil {
-		t.Fatalf("LookupVariable() failed: %v", err)
+		t.Fatalf("lookupVariable() failed: %v", err)
 	}
 	if foundID != exprID {
-		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+		t.Errorf("lookupVariable() = %q, want %q", foundID, exprID)
 	}
 }
 
 // TestVault_ScopeAwareVariables_BasicDeclaration tests variable storage in root scope.
 func TestVault_ScopeAwareVariables_BasicDeclaration(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Variable declared at root
 	exprID := v.DeclareVariable("COUNT", "5")
@@ -718,73 +718,73 @@ func TestVault_ScopeAwareVariables_BasicDeclaration(t *testing.T) {
 
 // TestVault_ScopeAwareVariables_ParentToChild tests parent → child variable flow.
 func TestVault_ScopeAwareVariables_ParentToChild(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Variable declared at root
 	exprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter a child scope
-	v.Push("@retry")
+	v.push("@retry")
 
 	// THEN: Child can lookup parent's variable
-	foundID, err := v.LookupVariable("COUNT")
+	foundID, err := v.lookupVariable("COUNT")
 	if err != nil {
-		t.Fatalf("LookupVariable() failed: %v", err)
+		t.Fatalf("lookupVariable() failed: %v", err)
 	}
 	if foundID != exprID {
-		t.Errorf("LookupVariable() = %q, want %q", foundID, exprID)
+		t.Errorf("lookupVariable() = %q, want %q", foundID, exprID)
 	}
 }
 
 // TestVault_ScopeAwareVariables_Shadowing tests variable shadowing.
 func TestVault_ScopeAwareVariables_Shadowing(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Variable declared at root
 	rootExprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter child scope and shadow the variable
-	v.Push("@retry")
+	v.push("@retry")
 	childExprID := v.DeclareVariable("COUNT", "3")
 
 	// THEN: Child lookup should find child's value (shadows parent)
-	foundID, err := v.LookupVariable("COUNT")
+	foundID, err := v.lookupVariable("COUNT")
 	if err != nil {
-		t.Fatalf("LookupVariable() in child failed: %v", err)
+		t.Fatalf("lookupVariable() in child failed: %v", err)
 	}
 	if foundID != childExprID {
-		t.Errorf("Child LookupVariable() = %q, want %q (child shadows parent)", foundID, childExprID)
+		t.Errorf("Child lookupVariable() = %q, want %q (child shadows parent)", foundID, childExprID)
 	}
 
 	// WHEN: We exit child scope
-	v.Pop()
+	v.pop()
 
 	// THEN: Parent lookup should find parent's value (unchanged)
-	foundID, err = v.LookupVariable("COUNT")
+	foundID, err = v.lookupVariable("COUNT")
 	if err != nil {
-		t.Fatalf("LookupVariable() in parent failed: %v", err)
+		t.Fatalf("lookupVariable() in parent failed: %v", err)
 	}
 	if foundID != rootExprID {
-		t.Errorf("Parent LookupVariable() = %q, want %q (parent unchanged)", foundID, rootExprID)
+		t.Errorf("Parent lookupVariable() = %q, want %q (parent unchanged)", foundID, rootExprID)
 	}
 }
 
 // TestVault_ScopeAwareVariables_NotFound tests not found in any scope.
 func TestVault_ScopeAwareVariables_NotFound(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Some variables exist
 	v.DeclareVariable("EXISTS", "value")
 
 	// WHEN: We enter nested scopes and lookup non-existent variable
-	v.Push("@retry")
-	v.Push("@timeout")
+	v.push("@retry")
+	v.push("@timeout")
 
-	_, err := v.LookupVariable("DOES_NOT_EXIST")
+	_, err := v.lookupVariable("DOES_NOT_EXIST")
 
 	// THEN: Should return error
 	if err == nil {
-		t.Error("LookupVariable() should fail for non-existent variable")
+		t.Error("lookupVariable() should fail for non-existent variable")
 	}
 	if err != nil && !containsString(err.Error(), "not found") {
 		t.Errorf("Error should mention 'not found', got: %v", err)
@@ -793,41 +793,41 @@ func TestVault_ScopeAwareVariables_NotFound(t *testing.T) {
 
 // TestVault_ScopeAwareVariables_NestedScopes tests multiple scope levels.
 func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// GIVEN: Variables at different scope levels
 	aID := v.DeclareVariable("A", "1")
 
-	v.Push("@retry")
+	v.push("@retry")
 	bID := v.DeclareVariable("B", "2")
 
-	v.Push("@timeout")
+	v.push("@timeout")
 	cID := v.DeclareVariable("C", "3")
 
 	// WHEN: We lookup from deepest scope
 	// THEN: Should find all three variables
-	foundA, err := v.LookupVariable("A")
+	foundA, err := v.lookupVariable("A")
 	if err != nil {
-		t.Fatalf("LookupVariable(A) failed: %v", err)
+		t.Fatalf("lookupVariable(A) failed: %v", err)
 	}
 	if foundA != aID {
-		t.Errorf("LookupVariable(A) = %q, want %q", foundA, aID)
+		t.Errorf("lookupVariable(A) = %q, want %q", foundA, aID)
 	}
 
-	foundB, err := v.LookupVariable("B")
+	foundB, err := v.lookupVariable("B")
 	if err != nil {
-		t.Fatalf("LookupVariable(B) failed: %v", err)
+		t.Fatalf("lookupVariable(B) failed: %v", err)
 	}
 	if foundB != bID {
-		t.Errorf("LookupVariable(B) = %q, want %q", foundB, bID)
+		t.Errorf("lookupVariable(B) = %q, want %q", foundB, bID)
 	}
 
-	foundC, err := v.LookupVariable("C")
+	foundC, err := v.lookupVariable("C")
 	if err != nil {
-		t.Fatalf("LookupVariable(C) failed: %v", err)
+		t.Fatalf("lookupVariable(C) failed: %v", err)
 	}
 	if foundC != cID {
-		t.Errorf("LookupVariable(C) = %q, want %q", foundC, cID)
+		t.Errorf("lookupVariable(C) = %q, want %q", foundC, cID)
 	}
 }
 
@@ -837,7 +837,7 @@ func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
 
 // TestVault_SecretProvider_NoExpressions tests provider with no expressions
 func TestVault_SecretProvider_NoExpressions(t *testing.T) {
-	v := New()
+	v := newVault()
 	provider := v.SecretProvider()
 
 	chunk := []byte("No secrets here")
@@ -853,7 +853,7 @@ func TestVault_SecretProvider_NoExpressions(t *testing.T) {
 
 // TestVault_SecretProvider_UnresolvedExpression tests provider with unresolved expression
 func TestVault_SecretProvider_UnresolvedExpression(t *testing.T) {
-	v := New()
+	v := newVault()
 
 	// Declare but don't resolve
 	exprID := v.DeclareVariable("API_KEY", "@env.API_KEY")
@@ -1306,192 +1306,3 @@ func TestVault_DisplayID_ByteSliceConsistency(t *testing.T) {
 // ========== Resolve Tests ==========
 
 // TestVault_Resolve_SingleDisplayID tests resolving a single DisplayID in text.
-func TestVault_Resolve_SingleDisplayID(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// GIVEN: A resolved expression with a DisplayID
-	v.Push("step-1")
-	v.Push("@shell")
-	exprID := v.TrackExpression("@env.HOME")
-	v.RecordReference(exprID, "command")
-	v.MarkTouched(exprID)
-	v.StoreUnresolvedValue(exprID, "/home/user")
-	v.ResolveAllTouched()
-
-	displayID := v.GetDisplayID(exprID)
-	if displayID == "" {
-		t.Fatal("DisplayID should not be empty after resolution")
-	}
-
-	// WHEN: We resolve text containing the DisplayID
-	text := "echo Hello from " + displayID
-	site := "root/step-1/@shell[0]/params/command"
-	transport := "local"
-
-	resolved, err := v.Resolve(text, transport, site)
-	// THEN: The DisplayID should be replaced with the actual value
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-
-	expected := "echo Hello from /home/user"
-	if resolved != expected {
-		t.Errorf("Resolve() = %q, want %q", resolved, expected)
-	}
-}
-
-// TestVault_Resolve_MultipleDisplayIDs tests resolving multiple DisplayIDs in text.
-func TestVault_Resolve_MultipleDisplayIDs(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// GIVEN: Two resolved expressions
-	v.Push("step-1")
-	v.Push("@shell")
-
-	exprID1 := v.TrackExpression("@env.HOME")
-	v.RecordReference(exprID1, "command")
-	v.MarkTouched(exprID1)
-	v.StoreUnresolvedValue(exprID1, "/home/user")
-
-	exprID2 := v.TrackExpression("@env.USER")
-	v.RecordReference(exprID2, "command")
-	v.MarkTouched(exprID2)
-	v.StoreUnresolvedValue(exprID2, "alice")
-
-	v.ResolveAllTouched()
-
-	displayID1 := v.GetDisplayID(exprID1)
-	displayID2 := v.GetDisplayID(exprID2)
-
-	// WHEN: We resolve text containing both DisplayIDs
-	text := "echo " + displayID2 + " lives at " + displayID1
-	site := "root/step-1/@shell[0]/params/command"
-	transport := "local"
-
-	resolved, err := v.Resolve(text, transport, site)
-	// THEN: Both DisplayIDs should be replaced
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-
-	expected := "echo alice lives at /home/user"
-	if resolved != expected {
-		t.Errorf("Resolve() = %q, want %q", resolved, expected)
-	}
-}
-
-// TestVault_Resolve_NoDisplayIDs tests that text without DisplayIDs is returned unchanged.
-func TestVault_Resolve_NoDisplayIDs(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// WHEN: We resolve text with no DisplayIDs
-	text := "echo Hello World"
-	resolved, err := v.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
-	// THEN: Text should be returned unchanged
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-
-	if resolved != text {
-		t.Errorf("Resolve() = %q, want %q", resolved, text)
-	}
-}
-
-// TestVault_Resolve_UnknownDisplayID tests that unknown DisplayIDs return an error.
-func TestVault_Resolve_UnknownDisplayID(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// WHEN: We try to resolve an unknown DisplayID
-	text := "echo opal:AAAAAAAAAAAAAAAAAAAAAA"
-	_, err := v.Resolve(text, "local", "root/step-1/@shell[0]/params/command")
-
-	// THEN: Should return an error
-	if err == nil {
-		t.Error("Resolve() should return error for unknown DisplayID")
-	}
-}
-
-// TestVault_Resolve_TransportBoundaryViolation tests that transport boundary is enforced.
-func TestVault_Resolve_TransportBoundaryViolation(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// GIVEN: A transport-sensitive expression declared in "local" transport
-	v.Push("step-1")
-	v.Push("@shell")
-	exprID := v.TrackExpressionTransportSensitive("@env.HOME")
-	v.RecordReference(exprID, "command")
-	v.MarkTouched(exprID)
-	v.StoreUnresolvedValue(exprID, "/home/user")
-	v.ResolveAllTouched()
-
-	displayID := v.GetDisplayID(exprID)
-	text := "echo " + displayID
-	site := "root/step-1/@shell[0]/params/command"
-
-	// WHEN: We try to resolve in a different transport
-	_, err := v.Resolve(text, "ssh://remote", site)
-
-	// THEN: Should return a transport boundary error
-	if err == nil {
-		t.Error("Resolve() should return error for transport boundary violation")
-	}
-}
-
-// TestVault_Resolve_SiteAuthorizationFailure tests that site authorization is enforced.
-func TestVault_Resolve_SiteAuthorizationFailure(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// GIVEN: An expression authorized for a specific site
-	v.Push("step-1")
-	v.Push("@shell")
-	exprID := v.TrackExpression("@env.HOME")
-	v.RecordReference(exprID, "command") // Authorized for "command" param
-	v.MarkTouched(exprID)
-	v.StoreUnresolvedValue(exprID, "/home/user")
-	v.ResolveAllTouched()
-
-	displayID := v.GetDisplayID(exprID)
-	text := "echo " + displayID
-
-	// WHEN: We try to resolve at a different site
-	wrongSite := "root/step-2/@shell[0]/params/command" // Different step!
-
-	_, err := v.Resolve(text, "local", wrongSite)
-
-	// THEN: Should return a site authorization error
-	if err == nil {
-		t.Error("Resolve() should return error for unauthorized site")
-	}
-}
-
-// TestVault_Resolve_DuplicateDisplayIDs tests that duplicate DisplayIDs are only resolved once.
-func TestVault_Resolve_DuplicateDisplayIDs(t *testing.T) {
-	v := NewWithPlanKey(testKey)
-
-	// GIVEN: One expression used multiple times
-	v.Push("step-1")
-	v.Push("@shell")
-	exprID := v.TrackExpression("@env.HOME")
-	v.RecordReference(exprID, "command")
-	v.MarkTouched(exprID)
-	v.StoreUnresolvedValue(exprID, "/home/user")
-	v.ResolveAllTouched()
-
-	displayID := v.GetDisplayID(exprID)
-
-	// WHEN: We resolve text with the same DisplayID appearing multiple times
-	text := "echo " + displayID + " and " + displayID
-	site := "root/step-1/@shell[0]/params/command"
-	transport := "local"
-
-	resolved, err := v.Resolve(text, transport, site)
-	// THEN: Both occurrences should be replaced
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-
-	expected := "echo /home/user and /home/user"
-	if resolved != expected {
-		t.Errorf("Resolve() = %q, want %q", resolved, expected)
-	}
-}

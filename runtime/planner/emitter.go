@@ -444,19 +444,10 @@ func (e *Emitter) parsePipeAndRedirect(chain []*CommandStmtIR) (planfmt.Executio
 				if err != nil {
 					return nil, err
 				}
-				switch rightNode := right.(type) {
-				case *planfmt.CommandNode:
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{redirectNode, rightNode}}, nil
-				case *planfmt.RedirectNode:
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{redirectNode, rightNode}}, nil
-				case *planfmt.PipelineNode:
-					nodes := make([]planfmt.ExecutionNode, 1+len(rightNode.Commands))
-					nodes[0] = redirectNode
-					copy(nodes[1:], rightNode.Commands)
-					return &planfmt.PipelineNode{Commands: nodes}, nil
-				default:
-					return redirectNode, nil
+				if pipeline, ok := buildPipelineBinary(redirectNode, right); ok {
+					return pipeline, nil
 				}
+				return redirectNode, nil
 			}
 
 			return redirectNode, nil
@@ -477,38 +468,9 @@ func (e *Emitter) parsePipeAndRedirect(chain []*CommandStmtIR) (planfmt.Executio
 				if err != nil {
 					return nil, err
 				}
-
-				leftCmd, leftIsCmd := left.(*planfmt.CommandNode)
-				rightCmd, rightIsCmd := right.(*planfmt.CommandNode)
-				rightPipe, rightIsPipe := right.(*planfmt.PipelineNode)
-				leftRedirect, leftIsRedirect := left.(*planfmt.RedirectNode)
-				rightRedirect, rightIsRedirect := right.(*planfmt.RedirectNode)
-
-				if leftIsCmd && rightIsCmd {
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftCmd, rightCmd}}, nil
+				if pipeline, ok := buildPipelineBinary(left, right); ok {
+					return pipeline, nil
 				}
-				if leftIsCmd && rightIsPipe {
-					nodes := make([]planfmt.ExecutionNode, 1+len(rightPipe.Commands))
-					nodes[0] = leftCmd
-					copy(nodes[1:], rightPipe.Commands)
-					return &planfmt.PipelineNode{Commands: nodes}, nil
-				}
-				if leftIsCmd && rightIsRedirect {
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftCmd, rightRedirect}}, nil
-				}
-				if leftIsRedirect && rightIsCmd {
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftRedirect, rightCmd}}, nil
-				}
-				if leftIsRedirect && rightIsRedirect {
-					return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{leftRedirect, rightRedirect}}, nil
-				}
-				if leftIsRedirect && rightIsPipe {
-					nodes := make([]planfmt.ExecutionNode, 1+len(rightPipe.Commands))
-					nodes[0] = leftRedirect
-					copy(nodes[1:], rightPipe.Commands)
-					return &planfmt.PipelineNode{Commands: nodes}, nil
-				}
-
 				return left, nil
 			}
 
@@ -529,6 +491,34 @@ func cloneCommandChain(chain []*CommandStmtIR) []*CommandStmtIR {
 		cloned[i] = &cmdCopy
 	}
 	return cloned
+}
+
+func prependPipeline(left planfmt.ExecutionNode, right *planfmt.PipelineNode) planfmt.ExecutionNode {
+	nodes := make([]planfmt.ExecutionNode, 1+len(right.Commands))
+	nodes[0] = left
+	copy(nodes[1:], right.Commands)
+	return &planfmt.PipelineNode{Commands: nodes}
+}
+
+func buildPipelineBinary(left, right planfmt.ExecutionNode) (planfmt.ExecutionNode, bool) {
+	switch l := left.(type) {
+	case *planfmt.CommandNode:
+		switch r := right.(type) {
+		case *planfmt.CommandNode, *planfmt.RedirectNode:
+			return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{l, r}}, true
+		case *planfmt.PipelineNode:
+			return prependPipeline(l, r), true
+		}
+	case *planfmt.RedirectNode:
+		switch r := right.(type) {
+		case *planfmt.CommandNode, *planfmt.RedirectNode:
+			return &planfmt.PipelineNode{Commands: []planfmt.ExecutionNode{l, r}}, true
+		case *planfmt.PipelineNode:
+			return prependPipeline(l, r), true
+		}
+	}
+
+	return nil, false
 }
 
 // buildDisplayIDMap builds a map of variable/decorator names to DisplayIDs.

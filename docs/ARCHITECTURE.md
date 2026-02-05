@@ -149,8 +149,8 @@ kubectl create secret --from-literal=key=@var.API_KEY
 
 **Planner-driven model:**
 - Planner traverses execution graph, marking expressions as touched
-- When planner hits meta-programming blockers (e.g., `if` statements), it identifies ALL blockers at same depth
-- Planner requests resolution: "I've found all blockers, resolve now"
+- Planner traverses the currently reachable frontier in source order
+- At blocker/frontier barriers, planner batch-resolves all touched-but-unresolved expressions for that reachable frontier
 - Vault resolves all touched-but-unresolved expressions (batched by decorator)
 - Planner evaluates meta-programming and continues traversing
 - Repeat until entire execution path is traversed
@@ -1222,8 +1222,8 @@ echo "@var.COUNT"  # Prints 2
 - **Execution blocks:** `try/catch` and decorator blocks create isolated scopes
   - Can READ outer values
   - Mutations stay local; parent value restored on exit
-- **Metaprogramming blocks:** `if`, `for`, `when`, `fun` are flattened at plan time
-  - Mutations leak to outer scope because the block disappears
+- **Metaprogramming blocks:** `if`, `for`, `when`, `fun` are resolved at plan time with lexical scope
+  - Declarations stay block-local and do not leak to outer scope
 
 ```opal
 var COUNT = 5
@@ -1234,14 +1234,15 @@ var COUNT = 5
 echo "@var.COUNT"    # Prints 5 (outer scope restored)
 
 if (true) {
-    var COUNT = 10   # Mutates outer scope (flattened)
+    var COUNT = 10   # Block-local shadowing
 }
-echo "@var.COUNT"    # Prints 10 (mutation leaked)
+echo "@var.COUNT"    # Prints 5 (outer scope preserved)
 ```
 
 **3. Command Mode Prelude**
 
 Function bodies inherit top-level variables declared **earlier** in the file.
+Declarations inside top-level `if`/`when`/`for` blocks remain block-local and are not inherited by function bodies.
 Variables declared after the function are not visible unless passed explicitly.
 
 **4. Transport Boundaries**
@@ -1477,8 +1478,8 @@ nested scopes with parent links and enforces source-order resolution.
 - **Execution blocks** (`try/catch`, decorator blocks) push a new scope frame
   - Can READ outer values
   - Mutations stay local; parent restored on exit
-- **Metaprogramming blocks** (`if`, `for`, `when`, `fun`) are flattened at plan-time
-  - Mutations leak to outer scope because the block disappears
+- **Metaprogramming blocks** (`if`, `for`, `when`, `fun`) evaluate at plan-time with lexical block scope
+  - Declarations are local to the block/iteration/function body and do not leak
 - **Source order**: declarations take effect from the point they appear (no hoisting)
 
 ### Expression IDs and DisplayIDs

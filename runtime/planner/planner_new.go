@@ -112,9 +112,21 @@ func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token,
 	}
 
 	session := decorator.NewLocalSession()
+	stepPath := "planner.script"
+	if config.Target != "" {
+		stepPath = fmt.Sprintf("planner.%s", config.Target)
+	}
+
+	planHash := config.PlanSalt
+	if len(planHash) == 0 {
+		planHash = vlt.GetPlanKey()
+	}
+
 	resolveConfig := ResolveConfig{
 		TargetFunction: config.Target,
-		Context:        nil, // TODO: pass context from config if available
+		Context:        config.Context,
+		PlanHash:       planHash,
+		StepPath:       stepPath,
 		Telemetry:      telemetry,
 		TelemetryLevel: config.Telemetry,
 	}

@@ -13,8 +13,12 @@ import (
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 	"github.com/opal-lang/opal/core/sdk"
-	"github.com/opal-lang/opal/runtime/vault"
 )
+
+// DisplayIDResolver resolves display IDs in an execution transport context.
+type DisplayIDResolver interface {
+	ResolveDisplayIDWithTransport(displayID, currentTransportID string) (any, error)
+}
 
 // Config configures the executor
 type Config struct {
@@ -75,7 +79,7 @@ type DebugEvent struct {
 // executor holds execution state
 type executor struct {
 	config Config
-	vault  *vault.Vault // For DisplayID resolution (nil if no secrets)
+	vault  DisplayIDResolver // For DisplayID resolution (nil if no secrets)
 
 	// Execution state
 	stepsRun         int
@@ -96,7 +100,7 @@ type executor struct {
 //
 // Context enables cancellation and timeout propagation through the execution chain.
 // The CLI handles secret scrubbing by redirecting stdout/stderr through the scrubber.
-func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt *vault.Vault) (*ExecutionResult, error) {
+func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt DisplayIDResolver) (*ExecutionResult, error) {
 	// INPUT CONTRACT (preconditions)
 	invariant.NotNil(ctx, "ctx")
 	invariant.NotNil(steps, "steps")
