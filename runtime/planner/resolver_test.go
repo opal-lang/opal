@@ -83,6 +83,54 @@ func TestResolve_CanceledContext(t *testing.T) {
 	}
 }
 
+func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
+	call := buildValueCall(&DecoratorRef{
+		Name:     "env",
+		Selector: []string{"HOME"},
+		Args: []*ExprIR{
+			{Kind: ExprLiteral, Value: "fallback"},
+			{Kind: ExprLiteral, Value: int64(2)},
+		},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+
+	if diff := cmp.Diff("env", call.Path); diff != "" {
+		t.Errorf("Path mismatch (-want +got):\n%s", diff)
+	}
+	if call.Primary == nil {
+		t.Fatal("Primary should be set")
+	}
+	if diff := cmp.Diff("HOME", *call.Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("fallback", call.Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(int64(2), call.Params["arg2"]); diff != "" {
+		t.Errorf("arg2 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildValueCall_VarRefArgsEvaluated(t *testing.T) {
+	lookup := func(name string) (any, bool) {
+		if name == "COUNT" {
+			return int64(3), true
+		}
+		return nil, false
+	}
+
+	call := buildValueCall(&DecoratorRef{
+		Name: "test.decorator",
+		Args: []*ExprIR{{Kind: ExprVarRef, VarName: "COUNT"}},
+	}, lookup)
+
+	if diff := cmp.Diff(int64(3), call.Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestResolve_VarDecl tests resolving a variable declaration.
 func TestResolve_VarDecl(t *testing.T) {
 	// Create vault first (IR Builder does this)
@@ -368,6 +416,33 @@ type mockSession struct {
 	env map[string]string
 }
 
+type captureValueDecorator struct {
+	path      string
+	lastCtx   decorator.ValueEvalContext
+	lastCalls []decorator.ValueCall
+}
+
+func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *captureValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	d.lastCtx = ctx
+	d.lastCalls = append([]decorator.ValueCall(nil), calls...)
+
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: "ok", Origin: d.path}
+	}
+
+	return results, nil
+}
+
 func (m *mockSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
 	return decorator.Result{}, nil
 }
@@ -416,6 +491,67 @@ func (m *mockSession) TransportScope() decorator.TransportScope {
 
 func (m *mockSession) Close() error {
 	return nil
+}
+
+func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
+	const path = "test.capture.ctxmeta"
+	dec := &captureValueDecorator{path: path}
+	if err := decorator.Register(path, dec); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name: "X",
+					Value: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"PRIMARY"},
+							Args: []*ExprIR{
+								{Kind: ExprLiteral, Value: "fallback"},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	planHash := []byte{9, 8, 7, 6}
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:  context.Background(),
+		PlanHash: planHash,
+		StepPath: "phase3.step",
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff(planHash, dec.lastCtx.PlanHash); diff != "" {
+		t.Errorf("PlanHash mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("phase3.step.test.capture.ctxmeta", dec.lastCtx.StepPath); diff != "" {
+		t.Errorf("StepPath mismatch (-want +got):\n%s", diff)
+	}
+
+	if len(dec.lastCalls) != 1 {
+		t.Fatalf("Expected 1 call, got %d", len(dec.lastCalls))
+	}
+	if dec.lastCalls[0].Primary == nil {
+		t.Fatal("Expected primary selector to be set")
+	}
+	if diff := cmp.Diff("PRIMARY", *dec.lastCalls[0].Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
 }
 
 // TestResolve_IfBranchPruning verifies that untaken branch expressions are not touched.

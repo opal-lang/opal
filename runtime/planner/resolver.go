@@ -144,6 +144,8 @@ type envContext struct {
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
 	Context        context.Context // Execution context
+	PlanHash       []byte          // Deterministic plan hash/salt for value resolution context
+	StepPath       string          // Step path prefix for value resolution provenance
 	Telemetry      *PlanTelemetry  // Optional telemetry sink
 	TelemetryLevel TelemetryLevel  // Telemetry level
 }
@@ -1325,15 +1327,28 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	// Build ValueCall slice for batch resolution
 	valueCalls := make([]decorator.ValueCall, len(calls))
 	for i, call := range calls {
-		valueCalls[i] = buildValueCall(call.decorator)
+		valueCalls[i] = buildValueCall(call.decorator, r.getValue)
 	}
 
 	// Build evaluation context
+	stepPath := r.config.StepPath
+	if stepPath == "" {
+		stepPath = "planner.resolve"
+	}
+	if decoratorName != "" {
+		stepPath = stepPath + "." + decoratorName
+	}
+
+	planHash := r.config.PlanHash
+	if len(planHash) == 0 {
+		planHash = r.vault.GetPlanKey()
+	}
+
 	ctx := decorator.ValueEvalContext{
 		Session:  r.session,
 		Vault:    r.vault,
-		PlanHash: nil, // TODO: Get from config
-		StepPath: "",  // TODO: Track current step path
+		PlanHash: planHash,
+		StepPath: stepPath,
 	}
 
 	// Get current transport scope
@@ -1409,7 +1424,11 @@ func matchPattern(pattern *ExprIR, value any, getValue ValueLookup) bool {
 }
 
 // buildValueCall converts a DecoratorRef to a decorator.ValueCall.
-func buildValueCall(d *DecoratorRef) decorator.ValueCall {
+func buildValueCall(d *DecoratorRef, getValue ValueLookup) decorator.ValueCall {
+	if d == nil {
+		return decorator.ValueCall{Params: map[string]any{}}
+	}
+
 	call := decorator.ValueCall{
 		Path:   d.Name,
 		Params: make(map[string]any),
@@ -1421,7 +1440,16 @@ func buildValueCall(d *DecoratorRef) decorator.ValueCall {
 		call.Primary = &primary
 	}
 
-	// TODO: Handle Args (parameterized decorators)
+	for i, arg := range d.Args {
+		if arg == nil {
+			continue
+		}
+		value, err := EvaluateExpr(arg, getValue)
+		if err != nil {
+			continue
+		}
+		call.Params[fmt.Sprintf("arg%d", i+1)] = value
+	}
 
 	return call
 }
