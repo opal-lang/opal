@@ -51,6 +51,117 @@ func TestResolve_SimpleCommand(t *testing.T) {
 	// (This is a smoke test - just verify it doesn't crash)
 }
 
+func TestResolve_CanceledContext(t *testing.T) {
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo \"hello\""}},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	session := &mockSession{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Resolve(graph, v, session, ResolveConfig{Context: ctx})
+	if err == nil {
+		t.Fatal("Expected cancellation error")
+	}
+
+	if diff := cmp.Diff("resolution canceled: context canceled", err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
+	call, err := buildValueCall(&DecoratorRef{
+		Name:     "env",
+		Selector: []string{"HOME"},
+		Args: []*ExprIR{
+			{Kind: ExprLiteral, Value: "fallback"},
+			{Kind: ExprLiteral, Value: int64(2)},
+		},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
+
+	if diff := cmp.Diff("env", call.Path); diff != "" {
+		t.Errorf("Path mismatch (-want +got):\n%s", diff)
+	}
+	if call.Primary == nil {
+		t.Fatal("Primary should be set")
+	}
+	if diff := cmp.Diff("HOME", *call.Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("fallback", call.Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(int64(2), call.Params["arg2"]); diff != "" {
+		t.Errorf("arg2 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildValueCall_VarRefArgsEvaluated(t *testing.T) {
+	lookup := func(name string) (any, bool) {
+		if name == "COUNT" {
+			return int64(3), true
+		}
+		return nil, false
+	}
+
+	call, err := buildValueCall(&DecoratorRef{
+		Name: "test.decorator",
+		Args: []*ExprIR{{Kind: ExprVarRef, VarName: "COUNT"}},
+	}, lookup)
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
+
+	if diff := cmp.Diff(int64(3), call.Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildValueCall_InvalidArgExpressionReturnsError(t *testing.T) {
+	_, err := buildValueCall(&DecoratorRef{
+		Name: "test.decorator",
+		Args: []*ExprIR{
+			{
+				Kind:  ExprBinaryOp,
+				Op:    "<",
+				Left:  &ExprIR{Kind: ExprLiteral, Value: "not-number"},
+				Right: &ExprIR{Kind: ExprLiteral, Value: int64(1)},
+			},
+		},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+
+	if err == nil {
+		t.Fatal("Expected error for invalid decorator arg expression")
+	}
+
+	want := "failed to evaluate decorator arg 1 for @test.decorator: cannot compare non-numeric values with <"
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestResolve_VarDecl tests resolving a variable declaration.
 func TestResolve_VarDecl(t *testing.T) {
 	// Create vault first (IR Builder does this)
@@ -336,6 +447,79 @@ type mockSession struct {
 	env map[string]string
 }
 
+type captureValueDecorator struct {
+	path      string
+	lastCtx   decorator.ValueEvalContext
+	lastCalls []decorator.ValueCall
+}
+
+type orderedValueDecorator struct {
+	path  string
+	order *[]string
+}
+
+type countingValueDecorator struct {
+	path       string
+	batchSizes *[]int
+}
+
+func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *captureValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	d.lastCtx = ctx
+	d.lastCalls = append([]decorator.ValueCall(nil), calls...)
+
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: "ok", Origin: d.path}
+	}
+
+	return results, nil
+}
+
+func (d *orderedValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *orderedValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	*d.order = append(*d.order, d.path)
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: d.path, Origin: d.path}
+	}
+	return results, nil
+}
+
+func (d *countingValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *countingValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	*d.batchSizes = append(*d.batchSizes, len(calls))
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: true, Origin: d.path}
+	}
+	return results, nil
+}
+
 func (m *mockSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
 	return decorator.Result{}, nil
 }
@@ -384,6 +568,111 @@ func (m *mockSession) TransportScope() decorator.TransportScope {
 
 func (m *mockSession) Close() error {
 	return nil
+}
+
+func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
+	const path = "test.capture.ctxmeta"
+	dec := &captureValueDecorator{path: path}
+	if err := decorator.Register(path, dec); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name: "X",
+					Value: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"PRIMARY"},
+							Args: []*ExprIR{
+								{Kind: ExprLiteral, Value: "fallback"},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	planHash := []byte{9, 8, 7, 6}
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:  context.Background(),
+		PlanHash: planHash,
+		StepPath: "phase3.step",
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff(planHash, dec.lastCtx.PlanHash); diff != "" {
+		t.Errorf("PlanHash mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("phase3.step.test.capture.ctxmeta", dec.lastCtx.StepPath); diff != "" {
+		t.Errorf("StepPath mismatch (-want +got):\n%s", diff)
+	}
+
+	if len(dec.lastCalls) != 1 {
+		t.Fatalf("Expected 1 call, got %d", len(dec.lastCalls))
+	}
+	if dec.lastCalls[0].Primary == nil {
+		t.Fatal("Expected primary selector to be set")
+	}
+	if diff := cmp.Diff("PRIMARY", *dec.lastCalls[0].Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveBatch_ResolvesDecoratorGroupsInSortedOrder(t *testing.T) {
+	const pathA = "test.order.a"
+	const pathB = "test.order.b"
+
+	order := []string{}
+	if err := decorator.Register(pathA, &orderedValueDecorator{path: pathA, order: &order}); err != nil {
+		t.Fatalf("Register decorator %q failed: %v", pathA, err)
+	}
+	if err := decorator.Register(pathB, &orderedValueDecorator{path: pathB, order: &order}); err != nil {
+		t.Fatalf("Register decorator %q failed: %v", pathB, err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: pathB}},
+							{Kind: ExprLiteral, Value: " "},
+							{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: pathA}},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	want := []string{pathA, pathB}
+	if diff := cmp.Diff(want, order); diff != "" {
+		t.Errorf("Decorator batch order mismatch (-want +got):\n%s", diff)
+	}
 }
 
 // TestResolve_IfBranchPruning verifies that untaken branch expressions are not touched.
@@ -1220,8 +1509,8 @@ func TestResolve_ForLoopVariableLeak(t *testing.T) {
 	// Note: Full mutation leak testing would require var assignment statements in IR
 }
 
-// TestResolve_IfBlockVariableLeak tests that variables declared inside if-blocks leak to outer scope.
-// Per SPECIFICATION.md: "Language control blocks (for, if, when, fun) - mutations leak to outer scope"
+// TestResolve_IfBlockVariableLeak verifies lexical scoping for if blocks.
+// Declarations inside taken if branches must not leak to outer scope.
 func TestResolve_IfBlockVariableLeak(t *testing.T) {
 	// Create vault
 	v := vault.NewWithPlanKey([]byte("test-key"))
@@ -1299,17 +1588,16 @@ func TestResolve_IfBlockVariableLeak(t *testing.T) {
 		Scopes: scopes,
 	}
 
-	// Resolve
+	// Resolve should fail: INNER declared in if block is not visible after the block.
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
 	_, err := Resolve(graph, v, session, config)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	if err == nil {
+		t.Fatal("Expected undefined variable error for INNER used after if block")
 	}
 
-	// INNER should be touched (it was declared in taken branch and used after)
-	if !v.IsTouched(innerExprID) {
-		t.Errorf("INNER should be touched (declared in if block, used after)")
+	if !containsStr(err.Error(), "undefined variable") {
+		t.Errorf("Error should mention undefined variable, got: %v", err)
 	}
 }
 
@@ -1611,6 +1899,87 @@ func TestResolve_WaveModel_BlockersMustResolveBeforeEvaluation(t *testing.T) {
 	}
 }
 
+func TestResolve_WaveModel_BatchesReachableFrontierBeforeBlocker(t *testing.T) {
+	const path = "test.wave.frontier"
+
+	batchSizes := []int{}
+	if err := decorator.Register(path, &countingValueDecorator{path: path, batchSizes: &batchSizes}); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	scopes := NewScopeStack()
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name: "A",
+					Value: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"alpha"},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{
+								Kind: ExprDecoratorRef,
+								Decorator: &DecoratorRef{
+									Name:     path,
+									Selector: []string{"beta"},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtBlocker,
+				Blocker: &BlockerIR{
+					Kind: BlockerIf,
+					Condition: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"guard"},
+						},
+					},
+					ThenBranch: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command:   &CommandExpr{Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo ok"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: scopes,
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	want := []int{3}
+	if diff := cmp.Diff(want, batchSizes); diff != "" {
+		t.Errorf("Batch sizes mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // containsStr checks if a string contains a substring.
 func containsStr(s, substr string) bool {
 	return strings.Contains(s, substr)
@@ -1723,20 +2092,9 @@ func TestBug_ForLoopVariableNotInScope(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// BUG CHECK: The loop variable should have been declared in vault for each iteration.
-	// If the scoping is working correctly, we should be able to look up "item" in scopes
-	// after resolution completes.
-	//
-	// Since for-loops leak variables (per spec), "item" should be defined in scopes
-	// with the value from the last iteration.
-	itemExprID, ok := scopes.Lookup("item")
-	if !ok {
-		t.Fatalf("BUG CONFIRMED: Loop variable 'item' not found in scopes after resolution")
-	}
-
-	// The exprID should be touched (used in command)
-	if !v.IsTouched(itemExprID) {
-		t.Errorf("Loop variable 'item' should be touched (used in echo command)")
+	// Lexical scope: loop variable must not leak outside the for block.
+	if _, ok := scopes.Lookup("item"); ok {
+		t.Fatalf("Loop variable 'item' should not be visible in outer scope")
 	}
 }
 
@@ -1828,16 +2186,9 @@ func TestBug_VarDeclInTakenBranchNotVisibleAfter(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// INNER should be in scopes after the if block is processed
-	// (per spec: "Language control blocks - mutations leak to outer scope")
-	innerLookupExprID, ok := scopes.Lookup("INNER")
-	if !ok {
-		t.Fatalf("Variable 'INNER' declared in if block not found in scopes after resolution")
-	}
-
-	// The exprID should match what we declared
-	if innerLookupExprID != innerExprID {
-		t.Errorf("INNER exprID mismatch: got %q, want %q", innerLookupExprID, innerExprID)
+	// Lexical scope: INNER should not leak to outer scope.
+	if _, ok := scopes.Lookup("INNER"); ok {
+		t.Fatalf("Variable 'INNER' should not be visible in outer scope")
 	}
 
 	// Verify INNER was touched (used in echo command)
@@ -1977,15 +2328,15 @@ func TestResolve_MultipleBlockersSameLevel(t *testing.T) {
 		}
 	}
 
-	// B, C, and D should be in scopes
-	if _, ok := scopes.Lookup("B"); !ok {
-		t.Errorf("B should be in scopes (leaked from blocker1)")
+	// Lexical scope: B and D are block-local and should not leak.
+	if _, ok := scopes.Lookup("B"); ok {
+		t.Errorf("B should not be visible in outer scope")
 	}
 	if _, ok := scopes.Lookup("C"); !ok {
 		t.Errorf("C should be in scopes (processed between blockers)")
 	}
-	if _, ok := scopes.Lookup("D"); !ok {
-		t.Errorf("D should be in scopes (leaked from blocker2)")
+	if _, ok := scopes.Lookup("D"); ok {
+		t.Errorf("D should not be visible in outer scope")
 	}
 }
 
@@ -2112,11 +2463,11 @@ func TestResolve_SequentialBlockers_ConditionAfterFirstBlocker(t *testing.T) {
 	if _, ok := scopes.Lookup("COND2"); !ok {
 		t.Errorf("COND2 should be in scopes (declared after blocker1)")
 	}
-	if _, ok := scopes.Lookup("B"); !ok {
-		t.Errorf("B should be in scopes (leaked from blocker1)")
+	if _, ok := scopes.Lookup("B"); ok {
+		t.Errorf("B should not be visible in outer scope")
 	}
-	if _, ok := scopes.Lookup("D"); !ok {
-		t.Errorf("D should be in scopes (leaked from blocker2)")
+	if _, ok := scopes.Lookup("D"); ok {
+		t.Errorf("D should not be visible in outer scope")
 	}
 }
 
@@ -2234,12 +2585,12 @@ func TestResolve_ThreeLevelNestedIfs_AllTrue(t *testing.T) {
 		t.Errorf("blocker3 (L3) should be taken")
 	}
 
-	// DEEP should be touched and in scopes
+	// DEEP should be touched but must not leak to outer scope.
 	if !v.IsTouched(deepExprID) {
 		t.Errorf("DEEP should be touched (all conditions true)")
 	}
-	if _, ok := scopes.Lookup("DEEP"); !ok {
-		t.Errorf("DEEP should be in scopes (leaked from innermost block)")
+	if _, ok := scopes.Lookup("DEEP"); ok {
+		t.Errorf("DEEP should not be visible in outer scope")
 	}
 }
 
@@ -2543,16 +2894,9 @@ func TestResolve_ForLoopEachIterationGetsUniqueBinding(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// After resolution, the loop variable "item" should be in scope
-	// with the value from the LAST iteration (due to flattening semantics)
-	itemExprID, ok := scopes.Lookup("item")
-	if !ok {
-		t.Fatalf("Loop variable 'item' not found in scopes after resolution")
-	}
-
-	// The exprID should be touched (used in echo command)
-	if !v.IsTouched(itemExprID) {
-		t.Errorf("Loop variable 'item' should be touched")
+	// Lexical scope: loop variable must not leak outside the for block.
+	if _, ok := scopes.Lookup("item"); ok {
+		t.Fatalf("Loop variable 'item' should not be visible in outer scope")
 	}
 
 	// The key insight: each iteration creates a NEW exprID via DeclareVariable.

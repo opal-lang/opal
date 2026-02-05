@@ -233,11 +233,13 @@ func deepCopyCommandStmt(cmd *CommandStmtIR) *CommandStmtIR {
 		return nil
 	}
 	return &CommandStmtIR{
-		Decorator: cmd.Decorator,
-		Command:   deepCopyCommandExpr(cmd.Command),
-		Args:      deepCopyArgs(cmd.Args),
-		Block:     DeepCopyStatements(cmd.Block),
-		Operator:  cmd.Operator,
+		Decorator:      cmd.Decorator,
+		Command:        deepCopyCommandExpr(cmd.Command),
+		Args:           deepCopyArgs(cmd.Args),
+		Block:          DeepCopyStatements(cmd.Block),
+		Operator:       cmd.Operator,
+		RedirectMode:   cmd.RedirectMode,
+		RedirectTarget: deepCopyCommandExpr(cmd.RedirectTarget),
 	}
 }
 

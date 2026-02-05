@@ -7,16 +7,16 @@ import (
 
 // ========== Bug Reproduction Tests ==========
 // These tests reproduce the three transport boundary bugs:
-// 1. Duplicate transport boundary check in Access()
+// 1. Duplicate transport boundary check in access()
 // 2. Lazy initialization captures transport at first reference (not resolution)
 // 3. Missing MarkResolved() method to set transport at resolution time
 
 // ========== Bug 1: Duplicate Transport Boundary Check ==========
 
 // TestBug1_DuplicateTransportCheck_RedundantValidation tests that the duplicate
-// transport boundary check in Access() is redundant and can be removed.
+// transport boundary check in access() is redundant and can be removed.
 //
-// Current behavior: Access() checks transport boundary twice (lines 466-469 and 487-490)
+// Current behavior: access() checks transport boundary twice (lines 466-469 and 487-490)
 // Expected behavior: Should only check once (before site authorization check)
 //
 // This test verifies that removing the second check doesn't break anything.
@@ -30,15 +30,15 @@ func TestBug1_DuplicateTransportCheck_RedundantValidation(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// AND: Authorized site in local transport
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: Access at authorized site
-	_, err := v.Access(exprID, "command")
+	_, err := v.access(exprID, "command")
 	// THEN: Should succeed (first check is sufficient)
 	if err != nil {
-		t.Errorf("Access() should succeed, got error: %v", err)
+		t.Errorf("access() should succeed, got error: %v", err)
 	}
 
 	// NOTE: After fix, remove second checkTransportBoundary call at line 487-490
@@ -67,21 +67,21 @@ func TestBug2_LazyInit_CapturesTransportAtFirstReference(t *testing.T) {
 
 	// AND: First reference happens in REMOTE SSH transport
 	v.EnterTransport("ssh:server1")
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: Access is called in SSH transport (first reference)
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 
 	// THEN: BUG - Should FAIL with transport boundary error, but SUCCEEDS
 	// Because checkTransportBoundary() lazily sets exprTransport to "ssh:server1"
 	// on first call, it thinks the secret was resolved in SSH context!
 	if err != nil {
-		t.Logf("GOOD: Access() correctly failed with: %v", err)
+		t.Logf("GOOD: access() correctly failed with: %v", err)
 		t.Logf("This means the bug is already fixed!")
 	} else {
-		t.Errorf("BUG REPRODUCED: Access() should fail with transport boundary error")
+		t.Errorf("BUG REPRODUCED: access() should fail with transport boundary error")
 		t.Errorf("Got value: %q (local secret leaked to SSH transport!)", value)
 		t.Errorf("Root cause: checkTransportBoundary() lazily set exprTransport to 'ssh:server1'")
 		t.Errorf("Expected: exprTransport should be set to 'local' at resolution time")
@@ -103,12 +103,12 @@ func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 
 	// AND: First reference in SSH transport
 	v.EnterTransport("ssh:server1")
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: Try to access in SSH transport (should fail - wrong transport)
-	_, err := v.Access(exprID, "command")
+	_, err := v.access(exprID, "command")
 
 	// THEN: Should FAIL with transport boundary error (resolved in local, accessing in SSH)
 	if err != nil {
@@ -119,25 +119,25 @@ func TestBug2_LazyInit_SubsequentAccessInLocalFails(t *testing.T) {
 			t.Errorf("Wrong error type: %v", err)
 		}
 	} else {
-		t.Errorf("BUG: Access() should fail with transport boundary error")
+		t.Errorf("BUG: access() should fail with transport boundary error")
 		t.Errorf("Expression resolved in 'local', accessed in 'ssh:server1'")
 	}
 
 	// AND: Second reference in LOCAL transport (where it was actually resolved)
-	v.Pop()
-	v.ExitTransport() // Back to local
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "env")
+	v.pop()
+	v.exitTransport() // Back to local
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "env")
 
 	// WHEN: Access in local transport (the CORRECT transport)
-	_, err = v.Access(exprID, "env")
+	_, err = v.access(exprID, "env")
 
 	// THEN: Should SUCCEED (local is correct)
 	if err == nil {
-		t.Logf("GOOD: Access() succeeded in local transport (the correct one)")
+		t.Logf("GOOD: access() succeeded in local transport (the correct one)")
 	} else {
-		t.Errorf("Access() should succeed in LOCAL transport, got error: %v", err)
+		t.Errorf("access() should succeed in LOCAL transport, got error: %v", err)
 	}
 }
 
@@ -199,14 +199,14 @@ func TestBug_FullScenario_LocalEnvLeaksToSSH(t *testing.T) {
 
 	// AND: Code enters SSH transport (remote server)
 	v.EnterTransport("ssh:production-server")
-	v.Push("step-1")
-	v.Push("@shell")
+	v.push("step-1")
+	v.push("@shell")
 
 	// AND: Remote shell tries to use local secret
-	v.RecordReference(exprID, "command")
+	v.recordReference(exprID, "command")
 
 	// WHEN: Remote decorator tries to access local @env secret
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 
 	// THEN: Should FAIL with transport boundary error
 	if err != nil {
@@ -245,17 +245,17 @@ func TestAfterFix_ExistingBehaviorStillWorks(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// AND: Authorized site in same transport
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// WHEN: Access at authorized site in same transport
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 	// THEN: Should still succeed
 	if err != nil {
-		t.Errorf("Access() should succeed, got error: %v", err)
+		t.Errorf("access() should succeed, got error: %v", err)
 	}
 	if value != "secret-value" {
-		t.Errorf("Access() = %q, want %q", value, "secret-value")
+		t.Errorf("access() = %q, want %q", value, "secret-value")
 	}
 }

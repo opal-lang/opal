@@ -31,14 +31,13 @@ var NAME = "test"
 		t.Fatalf("Plan failed: %v", err)
 	}
 
-	// Verify planner state (we need to access internal state for testing)
-	// For now, just verify the plan was created successfully
+	// Literal-only declarations should not create secret uses.
 	if result.Plan == nil {
 		t.Fatal("Expected plan to be created")
 	}
-
-	// TODO: Once we expose planner state or add a way to query variable metadata,
-	// verify that COUNT and NAME are marked as SessionSensitive: false
+	if len(result.Plan.SecretUses) != 0 {
+		t.Fatalf("Expected no SecretUses for literal declarations, got %d", len(result.Plan.SecretUses))
+	}
 }
 
 // TestDecoratorWithParametersDoesNotHang verifies that decorators with
