@@ -2,7 +2,6 @@ package planner
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 
@@ -58,74 +57,6 @@ func parseAndPlanWithFixedSalt(t *testing.T, source, target string) (*planfmt.Pl
 		Target:   target,
 		PlanSalt: phase1FixedSalt(),
 	})
-}
-
-func paritySecretDisplayIDs(plan *planfmt.Plan) []string {
-	if plan == nil {
-		return nil
-	}
-	ids := make([]string, len(plan.SecretUses))
-	for i, use := range plan.SecretUses {
-		ids[i] = use.DisplayID
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func collectCommandsFromNode(node planfmt.ExecutionNode, out *[]string) {
-	if node == nil {
-		return
-	}
-
-	switch n := node.(type) {
-	case *planfmt.CommandNode:
-		*out = append(*out, getCommandArg(n, "command"))
-		for _, step := range n.Block {
-			collectCommandsFromNode(step.Tree, out)
-		}
-	case *planfmt.AndNode:
-		collectCommandsFromNode(n.Left, out)
-		collectCommandsFromNode(n.Right, out)
-	case *planfmt.OrNode:
-		collectCommandsFromNode(n.Left, out)
-		collectCommandsFromNode(n.Right, out)
-	case *planfmt.SequenceNode:
-		for _, child := range n.Nodes {
-			collectCommandsFromNode(child, out)
-		}
-	case *planfmt.PipelineNode:
-		for _, child := range n.Commands {
-			collectCommandsFromNode(child, out)
-		}
-	case *planfmt.RedirectNode:
-		collectCommandsFromNode(n.Source, out)
-		collectCommandsFromNode(&n.Target, out)
-	case *planfmt.LogicNode:
-		for _, step := range n.Block {
-			collectCommandsFromNode(step.Tree, out)
-		}
-	case *planfmt.TryNode:
-		for _, step := range n.TryBlock {
-			collectCommandsFromNode(step.Tree, out)
-		}
-		for _, step := range n.CatchBlock {
-			collectCommandsFromNode(step.Tree, out)
-		}
-		for _, step := range n.FinallyBlock {
-			collectCommandsFromNode(step.Tree, out)
-		}
-	}
-}
-
-func planCommandList(plan *planfmt.Plan) []string {
-	if plan == nil {
-		return nil
-	}
-	var cmds []string
-	for _, step := range plan.Steps {
-		collectCommandsFromNode(step.Tree, &cmds)
-	}
-	return cmds
 }
 
 func treeShape(node planfmt.ExecutionNode) string {

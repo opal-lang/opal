@@ -482,18 +482,6 @@ func (r *Resolver) bindLoopVar(loopVar string, item any) {
 	}
 }
 
-// resolveBlocker resolves a blocker statement and returns the pruned result.
-// The blocker node is preserved with Taken set and untaken branch pruned.
-func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
-	blocker := stmt.Blocker
-
-	if err := r.resolveBlockerInputs(blocker); err != nil {
-		return nil, err
-	}
-
-	return r.resolveBlockerWithResolvedInputs(stmt)
-}
-
 func (r *Resolver) resolveBlockerWithResolvedInputs(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
@@ -625,11 +613,12 @@ func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 			blocker.MatchedArm = i
 
 			// Resolve the matched arm's body
-			if r.scopes != nil {
-				r.scopes.Push()
-				defer r.scopes.Pop()
-			}
-			resolved, err := r.resolveStatements(arm.Body)
+			var resolved []*StatementIR
+			err := r.withScope(func() error {
+				var err error
+				resolved, err = r.resolveStatements(arm.Body)
+				return err
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -951,11 +940,9 @@ func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
 
 	for _, arm := range blocker.Arms {
 		if matchPattern(arm.Pattern, value, r.getValue) {
-			if r.scopes != nil {
-				r.scopes.Push()
-				defer r.scopes.Pop()
-			}
-			return r.resolvePreludeStatements(arm.Body)
+			return r.withScope(func() error {
+				return r.resolvePreludeStatements(arm.Body)
+			})
 		}
 	}
 
@@ -1611,6 +1598,16 @@ func (r *Resolver) buildError() error {
 		sb.WriteString(fmt.Sprintf("  %d. %v\n", i+1, err))
 	}
 	return fmt.Errorf("%s", sb.String())
+}
+
+func (r *Resolver) withScope(run func() error) error {
+	if r.scopes == nil {
+		return run()
+	}
+
+	r.scopes.Push()
+	defer r.scopes.Pop()
+	return run()
 }
 
 // transportStringToScope converts a transport string to TransportScope.
