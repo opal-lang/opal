@@ -18,9 +18,9 @@ func planSource(t *testing.T, source string) *planfmt.Plan {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	plan, err := Plan(tree.Events, tree.Tokens, Config{})
 	if err != nil {
-		t.Fatalf("PlanNew() failed: %v", err)
+		t.Fatalf("Plan() failed: %v", err)
 	}
 	return plan
 }
@@ -193,7 +193,7 @@ var LOCAL_HOME = @env.HOME
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
 
 	if err == nil {
 		t.Fatal("Expected transport boundary error: @env.HOME should not be usable inside @test.transport")
@@ -225,7 +225,7 @@ var HOME = @env.HOME
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
 
 	// MUST fail - using transport-sensitive value across boundary
 	if err == nil {

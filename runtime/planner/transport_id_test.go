@@ -51,7 +51,7 @@ func TestPlanNew_TransportIDs(t *testing.T) {
 	if len(tree.Errors) > 0 {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{Vault: v})
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{Vault: v})
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}

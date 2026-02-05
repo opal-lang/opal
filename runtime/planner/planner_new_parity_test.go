@@ -28,7 +28,7 @@ func parseAndPlan(t *testing.T, source, target string) (*planfmt.Plan, error) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	return PlanNew(tree.Events, tree.Tokens, Config{
+	return Plan(tree.Events, tree.Tokens, Config{
 		Target: target,
 	})
 }
@@ -182,7 +182,7 @@ fun world = echo "World"`
 
 	// Plan in script mode with only functions - should produce empty plan
 	// (functions are only executed when targeted in command mode)
-	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
+	plan, err := Plan(tree.Events, tree.Tokens, Config{
 		Target: "",
 	})
 	if err != nil {
@@ -207,7 +207,7 @@ fun deploy = kubectl apply -f k8s/`
 	}
 
 	// Plan targeting "hello" function
-	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
+	plan, err := Plan(tree.Events, tree.Tokens, Config{
 		Target: "hello",
 	})
 	if err != nil {
@@ -241,7 +241,7 @@ func TestParity_TargetNotFound(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Target: "nonexistent",
 	})
 

@@ -50,7 +50,7 @@ func TestPlanNew_SimpleCommand(t *testing.T) {
 	}
 
 	// Run new planner
-	result, err := PlanNewWithObservability(events, tokens, config)
+	result, err := PlanWithObservability(events, tokens, config)
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -109,7 +109,7 @@ echo "second"`
 		Debug:     DebugOff,
 	}
 
-	result, err := PlanNewWithObservability(events, tokens, config)
+	result, err := PlanWithObservability(events, tokens, config)
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -141,7 +141,7 @@ fun goodbye = echo "Goodbye!"`
 		Debug:     DebugOff,
 	}
 
-	result, err := PlanNewWithObservability(events, tokens, config)
+	result, err := PlanWithObservability(events, tokens, config)
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestPlanNew_Observability(t *testing.T) {
 		Debug:     DebugPaths,
 	}
 
-	result, err := PlanNewWithObservability(events, tokens, config)
+	result, err := PlanWithObservability(events, tokens, config)
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestPlanNew_PlanSalt(t *testing.T) {
 		Target: "",
 	}
 
-	result, err := PlanNew(events, tokens, config)
+	result, err := Plan(events, tokens, config)
 	if err != nil {
 		t.Fatalf("PlanNew failed: %v", err)
 	}

@@ -16,7 +16,7 @@ func parsePlanNew(t *testing.T, source string, v *vault.Vault) (*PlanResult, err
 	if len(tree.Errors) > 0 {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
-	return PlanNewWithObservability(tree.Events, tree.Tokens, Config{Vault: v})
+	return PlanWithObservability(tree.Events, tree.Tokens, Config{Vault: v})
 }
 
 func TestPlanNew_TransportBoundary_EnvBlockedAcrossBoundary(t *testing.T) {

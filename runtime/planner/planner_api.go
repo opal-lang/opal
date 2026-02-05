@@ -105,13 +105,3 @@ func Plan(events []parser.Event, tokens []lexer.Token, config Config) (*planfmt.
 func PlanWithObservability(events []parser.Event, tokens []lexer.Token, config Config) (*PlanResult, error) {
 	return planCanonicalWithObservability(events, tokens, config)
 }
-
-// PlanNew is a temporary compatibility alias for Plan.
-func PlanNew(events []parser.Event, tokens []lexer.Token, config Config) (*planfmt.Plan, error) {
-	return Plan(events, tokens, config)
-}
-
-// PlanNewWithObservability is a temporary compatibility alias for PlanWithObservability.
-func PlanNewWithObservability(events []parser.Event, tokens []lexer.Token, config Config) (*PlanResult, error) {
-	return PlanWithObservability(events, tokens, config)
-}

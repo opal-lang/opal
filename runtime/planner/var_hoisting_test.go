@@ -27,7 +27,7 @@ var NAME = "Aled"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -61,7 +61,7 @@ echo "@var.NAME"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	plan, err := PlanNew(tree.Events, tree.Tokens, Config{
+	plan, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -93,7 +93,7 @@ echo "done"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -120,7 +120,7 @@ echo "@var.UNDEFINED"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -154,7 +154,7 @@ var COUNT = 5
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -182,7 +182,7 @@ var NAME = "Aled"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
@@ -211,7 +211,7 @@ echo "@var.SECOND"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -234,7 +234,7 @@ echo "@var.NAME"
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -257,7 +257,7 @@ var COUNT = 10
 	}
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{
+	_, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 
