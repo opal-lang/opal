@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -1250,8 +1251,15 @@ func (r *Resolver) batchResolve() error {
 		groups[call.decorator.Name] = append(groups[call.decorator.Name], call)
 	}
 
+	decoratorNames := make([]string, 0, len(groups))
+	for decoratorName := range groups {
+		decoratorNames = append(decoratorNames, decoratorName)
+	}
+	sort.Strings(decoratorNames)
+
 	// Resolve each group in batch
-	for decoratorName, calls := range groups {
+	for _, decoratorName := range decoratorNames {
+		calls := groups[decoratorName]
 		var duration time.Duration
 		if r.telemetry != nil && r.telemetryLevel >= TelemetryTiming {
 			start := time.Now()
@@ -1327,7 +1335,11 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	// Build ValueCall slice for batch resolution
 	valueCalls := make([]decorator.ValueCall, len(calls))
 	for i, call := range calls {
-		valueCalls[i] = buildValueCall(call.decorator, r.getValue)
+		valueCall, err := buildValueCall(call.decorator, r.getValue)
+		if err != nil {
+			return err
+		}
+		valueCalls[i] = valueCall
 	}
 
 	// Build evaluation context
@@ -1359,6 +1371,9 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	results, err := decorator.Global().ResolveValues(ctx, currentScope, valueCalls...)
 	if err != nil {
 		return fmt.Errorf("failed to resolve @%s: %w (cannot plan if cannot resolve)", decoratorName, err)
+	}
+	if len(results) != len(calls) {
+		return fmt.Errorf("internal error: resolver received %d results for %d @%s calls", len(results), len(calls), decoratorName)
 	}
 
 	// Store results in Vault
@@ -1424,9 +1439,9 @@ func matchPattern(pattern *ExprIR, value any, getValue ValueLookup) bool {
 }
 
 // buildValueCall converts a DecoratorRef to a decorator.ValueCall.
-func buildValueCall(d *DecoratorRef, getValue ValueLookup) decorator.ValueCall {
+func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall, error) {
 	if d == nil {
-		return decorator.ValueCall{Params: map[string]any{}}
+		return decorator.ValueCall{Params: map[string]any{}}, nil
 	}
 
 	call := decorator.ValueCall{
@@ -1446,12 +1461,12 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) decorator.ValueCall {
 		}
 		value, err := EvaluateExpr(arg, getValue)
 		if err != nil {
-			continue
+			return decorator.ValueCall{}, fmt.Errorf("failed to evaluate decorator arg %d for @%s: %w", i+1, call.Path, err)
 		}
 		call.Params[fmt.Sprintf("arg%d", i+1)] = value
 	}
 
-	return call
+	return call, nil
 }
 
 // buildDecoratorRaw builds a raw decorator string from a DecoratorRef.

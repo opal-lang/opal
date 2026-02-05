@@ -84,7 +84,7 @@ func TestResolve_CanceledContext(t *testing.T) {
 }
 
 func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
-	call := buildValueCall(&DecoratorRef{
+	call, err := buildValueCall(&DecoratorRef{
 		Name:     "env",
 		Selector: []string{"HOME"},
 		Args: []*ExprIR{
@@ -94,6 +94,9 @@ func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 	}, func(name string) (any, bool) {
 		return nil, false
 	})
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
 
 	if diff := cmp.Diff("env", call.Path); diff != "" {
 		t.Errorf("Path mismatch (-want +got):\n%s", diff)
@@ -121,13 +124,41 @@ func TestBuildValueCall_VarRefArgsEvaluated(t *testing.T) {
 		return nil, false
 	}
 
-	call := buildValueCall(&DecoratorRef{
+	call, err := buildValueCall(&DecoratorRef{
 		Name: "test.decorator",
 		Args: []*ExprIR{{Kind: ExprVarRef, VarName: "COUNT"}},
 	}, lookup)
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
 
 	if diff := cmp.Diff(int64(3), call.Params["arg1"]); diff != "" {
 		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildValueCall_InvalidArgExpressionReturnsError(t *testing.T) {
+	_, err := buildValueCall(&DecoratorRef{
+		Name: "test.decorator",
+		Args: []*ExprIR{
+			{
+				Kind:  ExprBinaryOp,
+				Op:    "<",
+				Left:  &ExprIR{Kind: ExprLiteral, Value: "not-number"},
+				Right: &ExprIR{Kind: ExprLiteral, Value: int64(1)},
+			},
+		},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+
+	if err == nil {
+		t.Fatal("Expected error for invalid decorator arg expression")
+	}
+
+	want := "failed to evaluate decorator arg 1 for @test.decorator: cannot compare non-numeric values with <"
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -422,6 +453,11 @@ type captureValueDecorator struct {
 	lastCalls []decorator.ValueCall
 }
 
+type orderedValueDecorator struct {
+	path  string
+	order *[]string
+}
+
 func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
 	return decorator.Descriptor{
 		Path: d.path,
@@ -440,6 +476,24 @@ func (d *captureValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ..
 		results[i] = decorator.ResolveResult{Value: "ok", Origin: d.path}
 	}
 
+	return results, nil
+}
+
+func (d *orderedValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *orderedValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	*d.order = append(*d.order, d.path)
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: d.path, Origin: d.path}
+	}
 	return results, nil
 }
 
@@ -551,6 +605,50 @@ func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
 	}
 	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["arg1"]); diff != "" {
 		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveBatch_ResolvesDecoratorGroupsInSortedOrder(t *testing.T) {
+	const pathA = "test.order.a"
+	const pathB = "test.order.b"
+
+	order := []string{}
+	if err := decorator.Register(pathA, &orderedValueDecorator{path: pathA, order: &order}); err != nil {
+		t.Fatalf("Register decorator %q failed: %v", pathA, err)
+	}
+	if err := decorator.Register(pathB, &orderedValueDecorator{path: pathB, order: &order}); err != nil {
+		t.Fatalf("Register decorator %q failed: %v", pathB, err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: pathB}},
+							{Kind: ExprLiteral, Value: " "},
+							{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: pathA}},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	want := []string{pathA, pathB}
+	if diff := cmp.Diff(want, order); diff != "" {
+		t.Errorf("Decorator batch order mismatch (-want +got):\n%s", diff)
 	}
 }
 
