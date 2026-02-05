@@ -1,8 +1,12 @@
 package planner
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/opal-lang/opal/runtime/parser"
 )
@@ -31,6 +35,128 @@ func parseAndPlan(t *testing.T, source, target string) (*planfmt.Plan, error) {
 	return Plan(tree.Events, tree.Tokens, Config{
 		Target: target,
 	})
+}
+
+func phase1FixedSalt() []byte {
+	return []byte{
+		1, 2, 3, 4, 5, 6, 7, 8,
+		9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24,
+		25, 26, 27, 28, 29, 30, 31, 32,
+	}
+}
+
+func parseAndPlanWithFixedSalt(t *testing.T, source, target string) (*planfmt.Plan, error) {
+	t.Helper()
+
+	tree := parser.Parse([]byte(source))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	return Plan(tree.Events, tree.Tokens, Config{
+		Target:   target,
+		PlanSalt: phase1FixedSalt(),
+	})
+}
+
+func paritySecretDisplayIDs(plan *planfmt.Plan) []string {
+	if plan == nil {
+		return nil
+	}
+	ids := make([]string, len(plan.SecretUses))
+	for i, use := range plan.SecretUses {
+		ids[i] = use.DisplayID
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func collectCommandsFromNode(node planfmt.ExecutionNode, out *[]string) {
+	if node == nil {
+		return
+	}
+
+	switch n := node.(type) {
+	case *planfmt.CommandNode:
+		*out = append(*out, getCommandArg(n, "command"))
+		for _, step := range n.Block {
+			collectCommandsFromNode(step.Tree, out)
+		}
+	case *planfmt.AndNode:
+		collectCommandsFromNode(n.Left, out)
+		collectCommandsFromNode(n.Right, out)
+	case *planfmt.OrNode:
+		collectCommandsFromNode(n.Left, out)
+		collectCommandsFromNode(n.Right, out)
+	case *planfmt.SequenceNode:
+		for _, child := range n.Nodes {
+			collectCommandsFromNode(child, out)
+		}
+	case *planfmt.PipelineNode:
+		for _, child := range n.Commands {
+			collectCommandsFromNode(child, out)
+		}
+	case *planfmt.RedirectNode:
+		collectCommandsFromNode(n.Source, out)
+		collectCommandsFromNode(&n.Target, out)
+	case *planfmt.LogicNode:
+		for _, step := range n.Block {
+			collectCommandsFromNode(step.Tree, out)
+		}
+	case *planfmt.TryNode:
+		for _, step := range n.TryBlock {
+			collectCommandsFromNode(step.Tree, out)
+		}
+		for _, step := range n.CatchBlock {
+			collectCommandsFromNode(step.Tree, out)
+		}
+		for _, step := range n.FinallyBlock {
+			collectCommandsFromNode(step.Tree, out)
+		}
+	}
+}
+
+func planCommandList(plan *planfmt.Plan) []string {
+	if plan == nil {
+		return nil
+	}
+	var cmds []string
+	for _, step := range plan.Steps {
+		collectCommandsFromNode(step.Tree, &cmds)
+	}
+	return cmds
+}
+
+func treeShape(node planfmt.ExecutionNode) string {
+	switch n := node.(type) {
+	case *planfmt.CommandNode:
+		return fmt.Sprintf("cmd(%s)", getCommandArg(n, "command"))
+	case *planfmt.AndNode:
+		return fmt.Sprintf("and(%s,%s)", treeShape(n.Left), treeShape(n.Right))
+	case *planfmt.OrNode:
+		return fmt.Sprintf("or(%s,%s)", treeShape(n.Left), treeShape(n.Right))
+	case *planfmt.SequenceNode:
+		parts := make([]string, len(n.Nodes))
+		for i, child := range n.Nodes {
+			parts[i] = treeShape(child)
+		}
+		return fmt.Sprintf("seq(%s)", strings.Join(parts, ","))
+	case *planfmt.PipelineNode:
+		parts := make([]string, len(n.Commands))
+		for i, child := range n.Commands {
+			parts[i] = treeShape(child)
+		}
+		return fmt.Sprintf("pipe(%s)", strings.Join(parts, ","))
+	case *planfmt.RedirectNode:
+		mode := ">"
+		if n.Mode == planfmt.RedirectAppend {
+			mode = ">>"
+		}
+		return fmt.Sprintf("redir(%s,%s,%s)", mode, treeShape(n.Source), treeShape(&n.Target))
+	default:
+		return fmt.Sprintf("unknown(%T)", node)
+	}
 }
 
 // =============================================================================
@@ -371,6 +497,122 @@ func TestParity_PlanSalt(t *testing.T) {
 	// Verify plan has salt
 	if len(plan.PlanSalt) == 0 {
 		t.Error("Expected plan salt to be set")
+	}
+}
+
+func TestParity_PreludeResolverParity_ScriptVsCommand(t *testing.T) {
+	scriptSource := `
+var ENV = "prod"
+if true {
+    var NAME = "service"
+} else {
+    var NAME = "fallback"
+}
+echo "@var.ENV:@var.NAME"
+`
+
+	commandSource := `
+var ENV = "prod"
+if true {
+    var NAME = "service"
+} else {
+    var NAME = "fallback"
+}
+fun deploy {
+    echo "@var.ENV:@var.NAME"
+}
+`
+
+	scriptPlan, err := parseAndPlanWithFixedSalt(t, scriptSource, "")
+	if err != nil {
+		t.Fatalf("Script plan failed: %v", err)
+	}
+
+	commandPlan, err := parseAndPlanWithFixedSalt(t, commandSource, "deploy")
+	if err != nil {
+		t.Fatalf("Command-mode plan failed: %v", err)
+	}
+
+	if diff := cmp.Diff(planCommandList(scriptPlan), planCommandList(commandPlan)); diff != "" {
+		t.Errorf("Prelude parity command list mismatch (-script +command):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(paritySecretDisplayIDs(scriptPlan), paritySecretDisplayIDs(commandPlan)); diff != "" {
+		t.Errorf("Prelude parity DisplayID mismatch (-script +command):\n%s", diff)
+	}
+}
+
+func TestParity_PreludeResolverParity_UndefinedVar(t *testing.T) {
+	scriptSource := `
+echo "@var.ENV"
+var ENV = "prod"
+`
+
+	commandSource := `
+fun deploy {
+    echo "@var.ENV"
+}
+var ENV = "prod"
+`
+
+	_, scriptErr := parseAndPlanWithFixedSalt(t, scriptSource, "")
+	if scriptErr == nil {
+		t.Fatal("Expected script mode undefined variable error")
+	}
+
+	_, commandErr := parseAndPlanWithFixedSalt(t, commandSource, "deploy")
+	if commandErr == nil {
+		t.Fatal("Expected command mode undefined variable error")
+	}
+
+	if diff := cmp.Diff(scriptErr.Error(), commandErr.Error()); diff != "" {
+		t.Errorf("Undefined variable error mismatch (-script +command):\n%s", diff)
+	}
+}
+
+func TestParity_OperatorPrecedenceShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		shape string
+	}{
+		{
+			name:  "and before or before semicolon",
+			src:   `a && b || c; d`,
+			shape: `seq(or(and(cmd(a),cmd(b)),cmd(c)),cmd(d))`,
+		},
+		{
+			name:  "redirect before logical operators",
+			src:   `a > out && b || c`,
+			shape: `or(and(redir(>,cmd(a),cmd(out)),cmd(b)),cmd(c))`,
+		},
+		{
+			name:  "pipe before or",
+			src:   `a | b || c`,
+			shape: `or(pipe(cmd(a),cmd(b)),cmd(c))`,
+		},
+		{
+			name:  "append redirect before semicolon",
+			src:   `a >> out; b`,
+			shape: `seq(redir(>>,cmd(a),cmd(out)),cmd(b))`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := parseAndPlanWithFixedSalt(t, tt.src, "")
+			if err != nil {
+				t.Fatalf("Plan failed: %v", err)
+			}
+			if len(plan.Steps) != 1 {
+				t.Fatalf("Expected single step for %q, got %d", tt.src, len(plan.Steps))
+			}
+
+			got := treeShape(plan.Steps[0].Tree)
+			if diff := cmp.Diff(tt.shape, got); diff != "" {
+				t.Errorf("Tree shape mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
