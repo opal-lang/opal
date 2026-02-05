@@ -9,12 +9,8 @@ import (
 	"github.com/opal-lang/opal/runtime/planner"
 )
 
-// BenchmarkPlannerComparison compares old and new planner implementations.
-// These benchmarks help validate the new pipeline before replacing the old one.
-//
-// Once the old planner is removed, update these to only test the new implementation.
-// The benchmark structure is designed for easy migration - just remove the "old_"
-// sub-benchmarks and rename "new_" to the default.
+// BenchmarkPlannerComparison benchmarks the canonical planner entrypoint across
+// representative script shapes.
 func BenchmarkPlannerComparison(b *testing.B) {
 	scenarios := map[string]string{
 		"simple_command":    `echo "Hello, World!"`,
@@ -33,29 +29,14 @@ func BenchmarkPlannerComparison(b *testing.B) {
 		}
 
 		b.Run(name, func(b *testing.B) {
-			// Old planner (to be removed)
-			b.Run("old", func(b *testing.B) {
-				b.ResetTimer()
-				b.ReportAllocs()
-				for i := 0; i < b.N; i++ {
-					_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
-					if err != nil {
-						b.Fatalf("Old planner failed: %v", err)
-					}
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
+				if err != nil {
+					b.Fatalf("Planner failed: %v", err)
 				}
-			})
-
-			// New pipeline
-			b.Run("new", func(b *testing.B) {
-				b.ResetTimer()
-				b.ReportAllocs()
-				for i := 0; i < b.N; i++ {
-					_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
-					if err != nil {
-						b.Fatalf("New planner failed: %v", err)
-					}
-				}
-			})
+			}
 		})
 	}
 }
@@ -82,7 +63,7 @@ func BenchmarkPlannerNewPipelinePhases(b *testing.B) {
 				b.ResetTimer()
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+					_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 					if err != nil {
 						b.Fatalf("Plan failed: %v", err)
 					}
@@ -107,7 +88,7 @@ func BenchmarkPlannerNewPipelinePhases(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					// This includes both Resolve and Emit
 					// We measure them together since Emit depends on Resolve output
-					_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+					_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 					if err != nil {
 						b.Fatalf("Plan failed: %v", err)
 					}
@@ -117,7 +98,7 @@ func BenchmarkPlannerNewPipelinePhases(b *testing.B) {
 	}
 }
 
-// BenchmarkPlannerNewVsBaseline compares new planner against documented baselines.
+// BenchmarkPlannerNewVsBaseline compares canonical planner against documented baselines.
 // From AGENTS.md:
 //   - Planner (simple): ~361ns/op, 392 B/op, 9 allocs/op
 //   - Planner (complex): ~4.7µs/op, 6480 B/op, 151 allocs/op
@@ -130,7 +111,7 @@ func BenchmarkPlannerNewVsBaseline(b *testing.B) {
 		b.ReportAllocs()
 		start := time.Now()
 		for i := 0; i < b.N; i++ {
-			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+			_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 			if err != nil {
 				b.Fatalf("Plan failed: %v", err)
 			}
@@ -153,7 +134,7 @@ func BenchmarkPlannerNewVsBaseline(b *testing.B) {
 		b.ReportAllocs()
 		start := time.Now()
 		for i := 0; i < b.N; i++ {
-			_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+			_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 			if err != nil {
 				b.Fatalf("Plan failed: %v", err)
 			}
@@ -168,33 +149,29 @@ func BenchmarkPlannerNewVsBaseline(b *testing.B) {
 	})
 }
 
-// BenchmarkPlannerOutputParity verifies old and new produce equivalent output.
-// Not a performance test, but ensures correctness before migration.
+// BenchmarkPlannerOutputParity checks output stability across repeated runs.
 func BenchmarkPlannerOutputParity(b *testing.B) {
-	// This uses b.N for iteration count but we're not measuring time
-	// We're verifying correctness across multiple runs
 	source := generateComplexMixedScript()
 	sourceBytes := []byte(source)
 	tree := parser.Parse(sourceBytes)
 
-	oldResult, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
+	baseline, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 	if err != nil {
-		b.Fatalf("Old planner failed: %v", err)
+		b.Fatalf("Baseline plan failed: %v", err)
 	}
 
 	for i := 0; i < b.N; i++ {
-		newResult, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{})
+		result, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{})
 		if err != nil {
-			b.Fatalf("New planner failed: %v", err)
+			b.Fatalf("Planner failed: %v", err)
 		}
 
-		// Basic parity checks
-		if len(newResult.Steps) != len(oldResult.Steps) {
-			b.Fatalf("Step count mismatch: old=%d new=%d", len(oldResult.Steps), len(newResult.Steps))
+		if len(result.Steps) != len(baseline.Steps) {
+			b.Fatalf("Step count mismatch: baseline=%d current=%d", len(baseline.Steps), len(result.Steps))
 		}
 
-		if len(newResult.SecretUses) != len(oldResult.SecretUses) {
-			b.Logf("WARNING: SecretUses count differs: old=%d new=%d", len(oldResult.SecretUses), len(newResult.SecretUses))
+		if len(result.SecretUses) != len(baseline.SecretUses) {
+			b.Logf("WARNING: SecretUses count differs: baseline=%d current=%d", len(baseline.SecretUses), len(result.SecretUses))
 		}
 	}
 }

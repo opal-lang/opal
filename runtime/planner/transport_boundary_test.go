@@ -18,9 +18,9 @@ func planSource(t *testing.T, source string) *planfmt.Plan {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	plan, err := Plan(tree.Events, tree.Tokens, Config{})
 	if err != nil {
-		t.Fatalf("PlanNew() failed: %v", err)
+		t.Fatalf("Plan() failed: %v", err)
 	}
 	return plan
 }
@@ -37,8 +37,6 @@ func planSource(t *testing.T, source string) *planfmt.Plan {
 
 // TestTransportBoundary_IsTransportDecorator verifies the helper function
 func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
-	p := &planner{}
-
 	tests := []struct {
 		name     string
 		expected bool
@@ -55,7 +53,7 @@ func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := p.isTransportDecorator(tt.name)
+			result := isTransportDecoratorName(tt.name)
 			if result != tt.expected {
 				t.Errorf("isTransportDecorator(%q) = %v, want %v", tt.name, result, tt.expected)
 			}
@@ -71,20 +69,18 @@ func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
 // TestTransportBoundary_EnvBlockedAcrossBoundary which fails if boundaries
 // aren't enforced.
 func TestTransportBoundary_DecoratorRecognition(t *testing.T) {
-	p := &planner{}
-
 	// Verify test.transport is recognized as a transport decorator
-	if !p.isTransportDecorator("@test.transport") {
+	if !isTransportDecoratorName("@test.transport") {
 		t.Error("@test.transport should be recognized as a transport decorator")
 	}
 
 	// Verify @shell is NOT a transport decorator
-	if p.isTransportDecorator("@shell") {
+	if isTransportDecoratorName("@shell") {
 		t.Error("@shell should NOT be recognized as a transport decorator")
 	}
 
 	// Verify @retry is NOT a transport decorator
-	if p.isTransportDecorator("@retry") {
+	if isTransportDecoratorName("@retry") {
 		t.Error("@retry should NOT be recognized as a transport decorator")
 	}
 }
@@ -197,7 +193,7 @@ var LOCAL_HOME = @env.HOME
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
 
 	if err == nil {
 		t.Fatal("Expected transport boundary error: @env.HOME should not be usable inside @test.transport")
@@ -229,7 +225,7 @@ var HOME = @env.HOME
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	_, err := PlanNew(tree.Events, tree.Tokens, Config{})
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
 
 	// MUST fail - using transport-sensitive value across boundary
 	if err == nil {

@@ -34,7 +34,7 @@ func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestDecoratorBlock_NestedDecorators(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestDecoratorBlock_NoArguments(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	result, err := PlanNewWithObservability(tree.Events, tree.Tokens, Config{})
+	result, err := PlanWithObservability(tree.Events, tree.Tokens, Config{})
 	if err != nil {
 		t.Fatalf("Planning failed: %v", err)
 	}

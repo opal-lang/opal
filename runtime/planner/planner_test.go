@@ -54,7 +54,7 @@ func TestSimpleShellCommand(t *testing.T) {
 	}
 
 	// Plan (script mode - no target)
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestShellCommandWithDashes(t *testing.T) {
 			}
 
 			// Plan (script mode)
-			plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+			plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -189,7 +189,7 @@ echo "Second"`)
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestFunctionDefinition(t *testing.T) {
 	}
 
 	// Command mode - target "hello"
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "hello",
 	})
 	if err != nil {
@@ -267,7 +267,7 @@ fun goodbye = echo "Goodbye"`)
 	}
 
 	// Target "goodbye" - should only plan that function
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "goodbye",
 	})
 	if err != nil {
@@ -298,7 +298,7 @@ echo "Another top level"`)
 	}
 
 	// Script mode - no target, execute all top-level commands
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -327,7 +327,7 @@ func TestEmptyPlan(t *testing.T) {
 
 	tree := parser.Parse(source)
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -348,7 +348,7 @@ echo "Third"`)
 
 	tree := parser.Parse(source)
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -376,7 +376,7 @@ func TestArgSorting(t *testing.T) {
 
 	tree := parser.Parse(source)
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -402,7 +402,7 @@ func TestTargetNotFound(t *testing.T) {
 	tree := parser.Parse(source)
 
 	// Target a function that doesn't exist
-	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "nonexistent",
 	})
 
@@ -425,7 +425,7 @@ fun deploy = echo "Deploying"`)
 	tree := parser.Parse(source)
 
 	// Target a function with a typo
-	_, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	_, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "helo", // Missing 'l'
 	})
 
@@ -451,7 +451,7 @@ func TestPlanShellCommandWithOperators(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "test",
 	})
 	if err != nil {
@@ -489,7 +489,7 @@ func TestPlanMultipleSteps(t *testing.T) {
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -523,7 +523,7 @@ echo "D"`)
 		t.Fatalf("Parse errors: %v", tree.Errors)
 	}
 
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "", // Script mode
 	})
 	if err != nil {
@@ -595,7 +595,7 @@ fun log = echo "Different log"`)
 	tree1 := parser.Parse(source1)
 	lex1 := lexer.NewLexer()
 	lex1.Init(source1)
-	plan1, err := planner.PlanNew(tree1.Events, lex1.GetTokens(), planner.Config{
+	plan1, err := planner.Plan(tree1.Events, lex1.GetTokens(), planner.Config{
 		Target: "hello",
 	})
 	if err != nil {
@@ -614,7 +614,7 @@ fun log = echo "Different log"`)
 	tree2 := parser.Parse(source2)
 	lex2 := lexer.NewLexer()
 	lex2.Init(source2)
-	plan2, err := planner.PlanNew(tree2.Events, lex2.GetTokens(), planner.Config{
+	plan2, err := planner.Plan(tree2.Events, lex2.GetTokens(), planner.Config{
 		Target:   "hello",
 		PlanSalt: plan1.PlanSalt, // Use same salt for deterministic DisplayIDs
 	})
@@ -663,7 +663,7 @@ fun log = echo "Log"`)
 	tree1 := parser.Parse(source1)
 	lex1 := lexer.NewLexer()
 	lex1.Init(source1)
-	plan1, err := planner.PlanNew(tree1.Events, lex1.GetTokens(), planner.Config{
+	plan1, err := planner.Plan(tree1.Events, lex1.GetTokens(), planner.Config{
 		Target: "hello",
 	})
 	if err != nil {
@@ -682,7 +682,7 @@ fun log = echo "Log"`)
 	tree2 := parser.Parse(source2)
 	lex2 := lexer.NewLexer()
 	lex2.Init(source2)
-	plan2, err := planner.PlanNew(tree2.Events, lex2.GetTokens(), planner.Config{
+	plan2, err := planner.Plan(tree2.Events, lex2.GetTokens(), planner.Config{
 		Target:   "hello",
 		PlanSalt: plan1.PlanSalt, // Use same salt for deterministic DisplayIDs
 	})
@@ -741,7 +741,7 @@ func TestRedirectOperators(t *testing.T) {
 			}
 
 			// Plan (script mode)
-			result, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+			result, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -837,7 +837,7 @@ func TestRedirectWithChaining(t *testing.T) {
 			}
 
 			// Plan (script mode)
-			result, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+			result, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 				Target: "",
 			})
 			if err != nil {
@@ -943,7 +943,7 @@ func TestPlannerInitialization(t *testing.T) {
 	}
 
 	// Plan with telemetry enabled
-	result, err := planner.PlanNewWithObservability(tree.Events, tree.Tokens, planner.Config{
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
 		Telemetry: planner.TelemetryBasic,
 	})
 	if err != nil {
@@ -990,7 +990,7 @@ echo "test"`)
 	}
 
 	// Plan with telemetry
-	result, err := planner.PlanNewWithObservability(tree.Events, tree.Tokens, planner.Config{
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
 		Telemetry: planner.TelemetryBasic,
 	})
 	if err != nil {
@@ -1067,7 +1067,7 @@ func TestVarDeclWithStructuredValues(t *testing.T) {
 			}
 
 			// Plan
-			result, err := planner.PlanNewWithObservability(tree.Events, tree.Tokens, planner.Config{
+			result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
 				Telemetry: planner.TelemetryBasic,
 			})
 			if err != nil {
@@ -1099,7 +1099,7 @@ echo @var.HOME
 	}
 
 	// Plan
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Target: "",
 	})
 	if err != nil {
@@ -1203,7 +1203,7 @@ echo "@var.NAME"`
 	vlt := vault.NewWithPlanKey(planKey)
 
 	// Plan with this vault
-	plan, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: vlt,
 	})
 	if err != nil {
@@ -1237,7 +1237,7 @@ echo "Key: @var.API_KEY"`
 	planKey1 := []byte("contract-plan-key-32bytes-hmac!!")
 	vault1 := vault.NewWithPlanKey(planKey1)
 
-	plan1, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: vault1,
 	})
 	if err != nil {
@@ -1246,7 +1246,7 @@ echo "Key: @var.API_KEY"`
 
 	// Simulate contract verification (re-plan with SAME PlanSalt)
 	vault2 := vault.NewWithPlanKey(plan1.PlanSalt) // Reuse PlanSalt from contract
-	plan2, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: vault2,
 	})
 	if err != nil {
@@ -1307,7 +1307,7 @@ echo "Key: @var.API_KEY"`
 	// Plan 1 with random PlanSalt
 	planKey1 := []byte("plan-key-1-32-bytes-for-hmac-123")
 	vault1 := vault.NewWithPlanKey(planKey1)
-	plan1, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: vault1,
 	})
 	if err != nil {
@@ -1317,7 +1317,7 @@ echo "Key: @var.API_KEY"`
 	// Plan 2 with different PlanSalt
 	planKey2 := []byte("plan-key-2-32-bytes-for-hmac-456")
 	vault2 := vault.NewWithPlanKey(planKey2)
-	plan2, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: vault2,
 	})
 	if err != nil {
@@ -1370,14 +1370,14 @@ echo "@var.NAME"`
 	}
 
 	// Plan without providing a vault (planner creates its own)
-	plan1, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan1, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: nil, // Planner creates vault internally
 	})
 	if err != nil {
 		t.Fatalf("Plan 1 failed: %v", err)
 	}
 
-	plan2, err := planner.PlanNew(tree.Events, tree.Tokens, planner.Config{
+	plan2, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{
 		Vault: nil, // Planner creates vault internally
 	})
 	if err != nil {
@@ -1419,7 +1419,7 @@ func TestPlanSalt_VaultWithoutPlanKey_PreservesRandomSalt(t *testing.T) {
 	// Create vault WITHOUT plan key (like Mode 4 verification might do)
 	vlt := vault.New() // No plan key set
 
-	result, err := planner.PlanNewWithObservability(tree.Events, tree.Tokens, planner.Config{
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
 		Vault: vlt, // Provide vault without plan key
 	})
 	if err != nil {
@@ -1452,4 +1452,33 @@ func TestPlanSalt_VaultWithoutPlanKey_PreservesRandomSalt(t *testing.T) {
 
 	t.Logf("✓ Vault without plan key preserves random PlanSalt")
 	t.Logf("  PlanSalt: %x", plan.PlanSalt)
+}
+
+func TestPlanSalt_VaultInvalidPlanKey_PreservesRandomSalt(t *testing.T) {
+	source := `var NAME = "test"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Provide a vault with an invalid (non-32-byte) plan key.
+	vlt := vault.NewWithPlanKey([]byte{0x01, 0x02, 0x03})
+
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+		Vault: vlt,
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	plan := result.Plan
+
+	if len(plan.PlanSalt) != 32 {
+		t.Errorf("PlanSalt should remain 32-byte random salt, got %d bytes", len(plan.PlanSalt))
+	}
+
+	if bytes.Equal(plan.PlanSalt, []byte{0x01, 0x02, 0x03}) {
+		t.Error("PlanSalt should not use invalid vault plan key")
+	}
 }
