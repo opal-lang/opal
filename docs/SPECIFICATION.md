@@ -61,7 +61,7 @@ deploy: {
 
 **Deterministic planning**: Same inputs always produce the same plan. Control flow resolves at plan-time.
 
-**Scope semantics**: All blocks can read outer values; only language control blocks (`for`, `if`, `when`, `fun`) can mutate outer scope. Execution decorator blocks (`@retry`, `@timeout`, etc.) and `try/catch` blocks use scope isolation—mutations don't leak out. See [Variable Scope](#variable-scope) for details.
+**Scope semantics**: All blocks can read outer values. Variable declarations in nested blocks (`for`, `if`, `when`, `fun`, execution decorators, and `try/catch`) are lexically scoped and do not leak to the outer scope. See [Variable Scope](#variable-scope) for details.
 
 **Scope**: Operations and task running. We're proving the model here before extending to infrastructure provisioning.
 
@@ -473,13 +473,13 @@ echo "@var.service()_backup"  # Expands to "api_backup"
    echo "@var.COUNT"  # Prints 5 (outer scope restored)
    ```
 
-5. **Metaprogramming blocks leak** - `if`, `for`, `when`, and `fun` are flattened at plan time
+5. **Metaprogramming blocks are lexically scoped** - `if`, `for`, `when`, and `fun` evaluate at plan time, but declarations inside their blocks do not leak
    ```opal
    var COUNT = 1
    if true {
        var COUNT = 2
    }
-   echo "@var.COUNT"  # Prints 2 (flattened into outer scope)
+   echo "@var.COUNT"  # Prints 1 (outer scope unchanged)
    ```
 
 ### Resolution and Pruning
@@ -644,7 +644,7 @@ Every `{ ... }` block in opal represents a **phase** - a unit of execution with 
 
 **Phase boundaries create execution order.** Each phase completes entirely before the next phase begins. This means all steps within a phase finish before any step in a subsequent phase can start. Within a phase, steps execute according to their canonical order - the order they appear after plan-time expansion.
 
-**Variable mutations follow block semantics.** Most blocks (`for`, `if`, `when`, command blocks) allow variable mutations to affect the outer scope, since their execution is deterministic at plan time. However, `try/catch` blocks and execution decorator blocks use scope isolation to maintain predictable behavior (detailed below).
+**Variable declarations follow lexical scope.** Nested blocks can read outer bindings, but declarations made inside a block remain local to that block. This applies to metaprogramming blocks (`for`, `if`, `when`, `fun`) and execution blocks (`try/catch`, decorator blocks).
 
 **Plans are verifiable contracts.** The resolved plan captures everything needed to verify execution: which steps run in what order, what commands they execute (with placeholders for resolved values), and how they handle retries or timeouts. If any of this changes between plan and execution, verification fails.
 
@@ -654,7 +654,7 @@ Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel`
 
 ### Metaprogramming Flattening
 
-Language control blocks (`if`, `for`, `when`, `fun`) are **metaprogramming constructs** - they exist only at plan-time and "disappear" in the final execution plan. The planner evaluates these constructs and flattens them into a linear sequence of commands.
+Language control blocks (`if`, `for`, `when`, `fun`) are **metaprogramming constructs** evaluated at plan-time. They determine which commands appear in the final plan, but their block scope rules remain lexical.
 
 **Example: if block flattening**
 
@@ -666,14 +666,14 @@ if @var.ENV == "prod" {
 kubectl scale --replicas=@var.REPLICAS deployment/app
 ```
 
-After planning, this becomes a flat sequence:
+After planning, the taken branch commands are selected for execution:
 ```
 var ENV = "prod"
 var REPLICAS = 3
 kubectl scale --replicas=3 deployment/app
 ```
 
-The `if` block is gone - its contents are flattened into the parent scope. This is why variables declared inside `if` blocks are visible after the block: there IS no block in the final plan.
+The `if` decision is resolved at plan-time, but declarations inside the `if` block remain block-local and are not visible after the block.
 
 **Example: for loop unrolling**
 
@@ -693,14 +693,14 @@ The loop is gone - each iteration becomes a separate command in sequence.
 
 **Why this matters for scoping:**
 
-Because metaprogramming blocks are flattened away, variables declared inside them naturally become part of the outer scope:
+Metaprogramming blocks are resolved at plan-time, but declarations remain lexical:
 
 ```opal
 var result = "unknown"
 if @var.CONDITION {
-    var result = "success"    // Redeclares in flattened scope
+    var result = "success"    // Block-local shadowing
 }
-echo @var.result              // "success" if CONDITION was true
+echo @var.result              // "unknown" (outer binding preserved)
 ```
 
 This is fundamentally different from execution blocks (`try/catch`, `@retry`, etc.) which remain in the plan and execute at runtime. See [Scope Isolation](#scope-isolation) for details on execution block scoping.
@@ -709,7 +709,7 @@ This is fundamentally different from execution blocks (`try/catch`, `@retry`, et
 
 | Block Type | Examples | When Evaluated | Scoping |
 |------------|----------|----------------|---------|
-| **Metaprogramming** | `if`, `for`, `when`, `fun` | Plan-time (disappears) | Variables leak to outer scope |
+| **Metaprogramming** | `if`, `for`, `when`, `fun` | Plan-time | Lexical block scope (no declaration leak) |
 | **Execution** | `try/catch`, `@retry`, `@timeout` | Runtime (remains in plan) | Variables isolated (no leak) |
 
 ### @parallel Output Determinism
@@ -781,7 +781,7 @@ build_all: {
 
 **Deterministic**: All `fun` bodies must have finite execution paths - no unbounded loops or dynamic fan-out beyond normal metaprogramming expansion.
 
-**Scope isolation**: `fun` bodies follow the same scope rules as other blocks - regular statements propagate mutations to outer scope, execution decorator blocks isolate scope.
+**Scope isolation**: `fun` bodies follow lexical block scope. Declarations inside a function body are local to that function unless passed explicitly through parameters/returns.
 
 ### Loops
 
@@ -862,7 +862,7 @@ The plan records all possible execution paths through try/catch blocks. At runti
 ## Scope Isolation
 
 > **Note:** This section applies only to **execution blocks** (`try/catch`, `@retry`, `@timeout`, etc.). 
-> Metaprogramming blocks (`if`, `for`, `when`, `fun`) use flattening semantics where variables leak to the outer scope.
+> Metaprogramming blocks (`if`, `for`, `when`, `fun`) are resolved at plan-time with lexical block scoping. Declarations inside those blocks do not leak to the outer scope.
 > See [Metaprogramming Flattening](#metaprogramming-flattening) for details.
 
 For execution blocks, the rule is simple: **values can flow in from the outer scope, but mutations never flow back out**. Mutations apply only within the block after they appear; the parent value is restored when the block exits.
@@ -1965,4 +1965,3 @@ var randomPass = @random.password(length=16, regenKey="db-pass-v1")
 ```
 
 **Why:** Resolved plans must be deterministic. Use Plan Seed Envelopes for randomness.
-
