@@ -283,6 +283,33 @@ echo @var.NAME`)
 	}
 }
 
+func TestBuildIR_CommandWithVarCallForm(t *testing.T) {
+	graph := buildIR(t, `var NAME = "world"
+echo @var("NAME")`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[1].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	hasVarRef := false
+	for _, part := range parts {
+		if part.Kind == ExprVarRef && part.VarName == "NAME" {
+			hasVarRef = true
+			break
+		}
+	}
+
+	if !hasVarRef {
+		t.Error("@var(\"NAME\") should normalize to VarRef(NAME)")
+	}
+}
+
 // ========== Scope Tests ==========
 
 func TestBuildIR_ScopeTracking(t *testing.T) {

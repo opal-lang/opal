@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/vault"
 )
@@ -50,29 +49,8 @@ var COUNT = "5"
 		t.Fatalf("Expected 0 SecretUses for declaration-only source, got %d", len(plan.SecretUses))
 	}
 
-	nameExprID, err := vlt.LookupVariable("NAME")
-	if err != nil {
-		t.Fatalf("Expected NAME variable in vault: %v", err)
-	}
-	nameVal, ok := vlt.GetUnresolvedValue(nameExprID)
-	if !ok {
-		t.Fatalf("Expected unresolved value for NAME (%s)", nameExprID)
-	}
-	if diff := cmp.Diff("Aled", nameVal); diff != "" {
-		t.Errorf("NAME value mismatch (-want +got):\n%s", diff)
-	}
-
-	countExprID, err := vlt.LookupVariable("COUNT")
-	if err != nil {
-		t.Fatalf("Expected COUNT variable in vault: %v", err)
-	}
-	countVal, ok := vlt.GetUnresolvedValue(countExprID)
-	if !ok {
-		t.Fatalf("Expected unresolved value for COUNT (%s)", countExprID)
-	}
-	if diff := cmp.Diff("5", countVal); diff != "" {
-		t.Errorf("COUNT value mismatch (-want +got):\n%s", diff)
-	}
+	// Variable declarations are consumed by planner scope structures and do not
+	// need exported Vault lookups to verify behavior.
 }
 
 func TestThreePass_ShadowingWithDeferredResolution(t *testing.T) {

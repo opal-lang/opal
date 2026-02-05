@@ -36,7 +36,7 @@ import (
 //	// Pass 1: Declare variables and track references
 //	vault := vault.NewWithPlanKey(planKey)
 //	exprID := vault.DeclareVariable("API_KEY", "@env.API_KEY")  // Returns hash-based ID
-//	vault.RecordReference(exprID, "command")
+//	vault.recordReference(exprID, "command")
 //
 //	// Pass 2: Store value and resolve
 //	vault.MarkTouched(exprID)
@@ -47,8 +47,8 @@ import (
 //	value, _ := vault.ResolveDisplayIDWithTransport("opal:abc123", "local")
 //
 //	// Pass 4: Finalize
-//	vault.PruneUntouched()
-//	uses := vault.BuildSecretUses()
+//	vault.pruneUntouched()
+//	uses := vault.buildSecretUses()
 //
 // # Variable Lookup
 //
@@ -59,7 +59,7 @@ import (
 //	vault.EnterDecorator("@retry")
 //
 //	// Lookup walks up trie
-//	foundID, _ := vault.LookupVariable("COUNT")  // Finds rootID from parent scope
+//	foundID, _ := vault.lookupVariable("COUNT")  // Finds rootID from parent scope
 //
 // # Rules
 //
@@ -135,8 +135,7 @@ type PathSegment struct {
 	Index int    // Instance index (-1 if not applicable)
 }
 
-// New creates a new Vault.
-func New() *Vault {
+func newVault() *Vault {
 	v := &Vault{
 		pathStack:        []PathSegment{{Name: "root", Index: -1}},
 		stepCount:        0,
@@ -161,7 +160,7 @@ func New() *Vault {
 
 // NewWithPlanKey creates a new Vault with a specific plan key for HMAC-based SiteIDs.
 func NewWithPlanKey(planKey []byte) *Vault {
-	v := New()
+	v := newVault()
 	v.planKey = planKey
 	return v
 }
@@ -174,7 +173,7 @@ func NewWithPlanKey(planKey []byte) *Vault {
 // manage their own position tracking and provide context explicitly to methods
 // like Resolve(). This is part of the planner rewrite to decouple Vault from
 // scope management.
-func (v *Vault) Push(name string) int {
+func (v *Vault) push(name string) int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -193,8 +192,8 @@ func (v *Vault) Push(name string) int {
 // Pop removes the top segment from the path stack.
 // Panics if attempting to pop root (programmer error).
 //
-// Deprecated: This method will be removed in a future version. See Push() deprecation.
-func (v *Vault) Pop() {
+// Deprecated: This method will be removed in a future version. See push() deprecation.
+func (v *Vault) pop() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -206,8 +205,8 @@ func (v *Vault) Pop() {
 // Used when entering a new step to reset decorator indices to 0.
 // The caller (planner) decides when to reset - typically when starting a new step.
 //
-// Deprecated: This method will be removed in a future version. See Push() deprecation.
-func (v *Vault) ResetCounts() {
+// Deprecated: This method will be removed in a future version. See push() deprecation.
+func (v *Vault) resetCounts() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -220,7 +219,7 @@ func (v *Vault) ResetCounts() {
 //
 // Deprecated: This method will be removed in a future version. Callers should
 // build site paths themselves and pass them to methods like Resolve().
-func (v *Vault) BuildSitePath(paramName string) string {
+func (v *Vault) buildSitePath(paramName string) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.buildSitePathLocked(paramName)
@@ -322,13 +321,9 @@ func (v *Vault) parentScopePath(scopePath string) string {
 }
 
 // LookupVariable resolves a variable name to its expression ID.
-// Walks up the scope trie from current scope to root, enabling parent → child flow.
+// Walks up the scope trie from current scope to root, enabling parent -> child flow.
 // Handles missing scopes by computing parent path directly (scopes created lazily).
-//
-// Deprecated: This method will be removed in a future version. Variable name
-// resolution will move to the IR Builder component, which will track scopes
-// and provide exprIDs directly to Vault methods.
-func (v *Vault) LookupVariable(varName string) (string, error) {
+func (v *Vault) lookupVariable(varName string) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -376,18 +371,12 @@ func (v *Vault) CheckTransportBoundary(exprID string) error {
 // - Same variable name with different values in different scopes (shadowing)
 // - Same expression shared by multiple variables (deduplication)
 // - Transport-sensitive expressions (@env.HOME differs per SSH session)
-//
-// Deprecated: This method will be removed in a future version. The IR Builder
-// will generate exprIDs and manage variable scopes, then call simpler Vault
-// methods that receive exprID and context explicitly.
 func (v *Vault) DeclareVariable(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), false)
 }
 
 // DeclareVariableTransportSensitive registers a transport-sensitive variable.
 // Transport-sensitive values cannot cross transport boundaries.
-//
-// Deprecated: See DeclareVariable() deprecation.
 func (v *Vault) DeclareVariableTransportSensitive(name, raw string) string {
 	return v.declareVariableAt(name, raw, v.currentVariableScopePath(), true)
 }
@@ -486,8 +475,8 @@ func (v *Vault) generateExprID(raw string) string {
 }
 
 // RecordReference records that an expression is used at the current site.
-// Transport boundary check is deferred to Access() time (after resolution).
-func (v *Vault) RecordReference(exprID, paramName string) error {
+// Transport boundary check is deferred to access() time (after resolution).
+func (v *Vault) recordReference(exprID, paramName string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -557,7 +546,7 @@ func (v *Vault) computeDisplayID(value any) string {
 
 // PruneUnused removes expressions that have no site references.
 // This eliminates variables that were declared but never used.
-func (v *Vault) PruneUnused() {
+func (v *Vault) pruneUnused() {
 	for id := range v.expressions {
 		if len(v.references[id]) == 0 {
 			delete(v.expressions, id)
@@ -578,7 +567,7 @@ func (v *Vault) PruneUnused() {
 //
 // Returns a deterministically sorted slice (by DisplayID, then Site) to ensure
 // stable contract hashes across runs. Map iteration order is non-deterministic.
-func (v *Vault) BuildSecretUses() []SecretUse {
+func (v *Vault) buildSecretUses() []SecretUse {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -649,7 +638,7 @@ func (v *Vault) IsTouched(exprID string) bool {
 }
 
 // PruneUntouched removes expressions not in execution path.
-func (v *Vault) PruneUntouched() {
+func (v *Vault) pruneUntouched() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -663,24 +652,16 @@ func (v *Vault) PruneUntouched() {
 }
 
 // EnterTransport enters a new transport scope.
-//
-// Deprecated: This method will be removed in a future version. Callers should
-// track transport context themselves and pass it explicitly to methods like
-// Resolve().
 func (v *Vault) EnterTransport(scope string) {
 	v.currentTransport = scope
 }
 
 // ExitTransport exits current transport scope (returns to local).
-//
-// Deprecated: See EnterTransport() deprecation.
-func (v *Vault) ExitTransport() {
+func (v *Vault) exitTransport() {
 	v.currentTransport = "local"
 }
 
 // CurrentTransport returns the current transport scope.
-//
-// Deprecated: See EnterTransport() deprecation.
 func (v *Vault) CurrentTransport() string {
 	return v.currentTransport
 }
@@ -772,16 +753,6 @@ func (v *Vault) GetDisplayID(exprID string) string {
 		return ""
 	}
 	return expr.DisplayID
-}
-
-// IsResolved checks if an expression has been resolved.
-// Safe to call - returns only resolution status, not the actual value.
-func (v *Vault) IsResolved(exprID string) bool {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-
-	expr, exists := v.expressions[exprID]
-	return exists && expr.Resolved
 }
 
 // GetPlanKey returns the plan key used for HMAC-based DisplayID generation.
@@ -897,15 +868,15 @@ func (v *Vault) checkTransportBoundary(exprID string) error {
 // Example:
 //
 //	vault.EnterDecorator("@shell")
-//	value, err := vault.Access("API_KEY", "command")  // Checks site: root/@shell[0]/params/command
-func (v *Vault) Access(exprID, paramName string) (any, error) {
+//	value, err := vault.access("API_KEY", "command")  // Checks site: root/@shell[0]/params/command
+func (v *Vault) access(exprID, paramName string) (any, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	// 0. Security: Require planKey for authorization checks
 	// Without planKey, all sites have SiteID="" which bypasses authorization
 	invariant.Precondition(len(v.planKey) > 0,
-		"Access() requires planKey for security - use NewWithPlanKey() instead of New()")
+		"access() requires non-empty planKey for security")
 
 	// 1. Get expression
 	expr, exists := v.expressions[exprID]

@@ -1138,6 +1138,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 	b.pos++ // Move past OPEN NodeDecorator
 
 	var parts []string
+	var args []*ExprIR
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -1156,6 +1157,21 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 			}
 			b.pos++
 			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			if node == parser.NodeParamList {
+				parsedArgs, err := b.buildDecoratorArgs()
+				if err == nil {
+					for _, arg := range parsedArgs {
+						if arg.Value != nil {
+							args = append(args, arg.Value)
+						}
+					}
+				}
+				continue
+			}
 		}
 
 		b.pos++
@@ -1184,11 +1200,24 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 		}
 	}
 
+	// @var("X") becomes the same VarRef as @var.X.
+	if name == "var" && len(args) > 0 {
+		if args[0] != nil && args[0].Kind == ExprLiteral {
+			if varName, ok := args[0].Value.(string); ok && varName != "" {
+				return &ExprIR{
+					Kind:    ExprVarRef,
+					VarName: varName,
+				}
+			}
+		}
+	}
+
 	return &ExprIR{
 		Kind: ExprDecoratorRef,
 		Decorator: &DecoratorRef{
 			Name:     name,
 			Selector: selector,
+			Args:     args,
 		},
 	}
 }

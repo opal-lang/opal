@@ -14,10 +14,10 @@ import (
 // ========== Attack Vector 4: Empty planKey Bypass ==========
 
 func TestAdversarial_EmptyPlanKey_PanicsOnAccess(t *testing.T) {
-	// Empty planKey would bypass authorization, but Access() now panics to prevent this
-	// MITIGATION: Added invariant in Access() to fail fast if planKey is empty
+	// Empty planKey would bypass authorization, but access() now panics to prevent this
+	// MITIGATION: Added invariant in access() to fail fast if planKey is empty
 
-	v := New() // No plan key!
+	v := newVault() // No plan key!
 
 	exprID := v.DeclareVariable("SECRET", "secret-value")
 	v.StoreUnresolvedValue(exprID, "secret-value")
@@ -25,13 +25,13 @@ func TestAdversarial_EmptyPlanKey_PanicsOnAccess(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// Authorize at one site
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// Try to access - should panic due to empty planKey
-	v.Pop()
-	v.Push("@malicious")
+	v.pop()
+	v.push("@malicious")
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -40,23 +40,23 @@ func TestAdversarial_EmptyPlanKey_PanicsOnAccess(t *testing.T) {
 			if !containsString(panicMsg, "planKey") {
 				t.Errorf("Panic should mention planKey, got: %v", r)
 			}
-			t.Logf("✓ SECURITY MITIGATION WORKING: Access() panics without planKey")
+			t.Logf("✓ SECURITY MITIGATION WORKING: access() panics without planKey")
 			t.Logf("  Panic message: %v", r)
 		} else {
-			t.Error("🚨 Access() should panic without planKey (security mitigation missing)")
+			t.Error("🚨 access() should panic without planKey (security mitigation missing)")
 		}
 	}()
 
-	v.Access(exprID, "apiKey") // Should panic
+	v.access(exprID, "apiKey") // Should panic
 }
 
 func TestAdversarial_EmptyPlanKey_SiteIDIsEmpty(t *testing.T) {
 	// Verify that empty planKey produces empty SiteID
 
-	v := New() // No plan key
+	v := newVault() // No plan key
 
-	v.Push("step-1")
-	v.Push("@shell")
+	v.push("step-1")
+	v.push("@shell")
 
 	siteID := v.computeSiteID("root/step-1/@shell[0]/params/command")
 
@@ -70,8 +70,8 @@ func TestAdversarial_WithPlanKey_SiteIDIsNotEmpty(t *testing.T) {
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	v.Push("step-1")
-	v.Push("@shell")
+	v.push("step-1")
+	v.push("@shell")
 
 	siteID := v.computeSiteID("root/step-1/@shell[0]/params/command")
 
@@ -96,18 +96,18 @@ func TestAdversarial_ResetCounts_DoesNotAllowCrossDecoratorAccess(t *testing.T) 
 	v.ResolveAllTouched()
 
 	// Authorize @shell[0]
-	v.Push("step-1")
-	v.Push("@shell") // Instance 0
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell") // Instance 0
+	v.recordReference(exprID, "command")
 	authorizedSite := v.buildSitePathLocked("command")
 	authorizedSiteID := v.computeSiteID(authorizedSite)
 
 	// Attacker resets counter to get instance 0 again
-	v.Pop() // Pop @shell
-	v.Pop() // Pop step-1
-	v.ResetCounts()
-	v.Push("step-1")
-	v.Push("@malicious") // Also instance 0 (same index as @shell!)
+	v.pop() // Pop @shell
+	v.pop() // Pop step-1
+	v.resetCounts()
+	v.push("step-1")
+	v.push("@malicious") // Also instance 0 (same index as @shell!)
 	attackSite := v.buildSitePathLocked("command")
 	attackSiteID := v.computeSiteID(attackSite)
 
@@ -126,7 +126,7 @@ func TestAdversarial_ResetCounts_DoesNotAllowCrossDecoratorAccess(t *testing.T) 
 	}
 
 	// Access should fail
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 	if err == nil {
 		t.Errorf("⚠️  SECURITY ISSUE: ResetCounts allowed cross-decorator access!")
 		t.Errorf("  Got value: %q (should have been denied)", value)
@@ -143,8 +143,8 @@ func TestAdversarial_ParamName_IsPartOfSitePath(t *testing.T) {
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
-	v.Push("step-1")
-	v.Push("@shell")
+	v.push("step-1")
+	v.push("@shell")
 
 	site1 := v.buildSitePathLocked("command")
 	site2 := v.buildSitePathLocked("apiKey")
@@ -177,15 +177,15 @@ func TestAdversarial_ParamName_EnforcedInAccess(t *testing.T) {
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command") // Authorize "command"
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command") // Authorize "command"
 
 	// Try to access with different paramName
-	value, err := v.Access(exprID, "apiKey") // Different param!
+	value, err := v.access(exprID, "apiKey") // Different param!
 
 	if err == nil {
-		t.Errorf("⚠️  SECURITY ISSUE: ParamName not enforced in Access()!")
+		t.Errorf("⚠️  SECURITY ISSUE: ParamName not enforced in access()!")
 		t.Errorf("  Authorized param: command")
 		t.Errorf("  Access param:     apiKey")
 		t.Errorf("  Got value: %q (should have been denied)", value)
@@ -209,12 +209,12 @@ func TestAdversarial_ConcurrentAccess_ThreadSafe(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// Authorize one site
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
-	authorizedSite := v.BuildSitePath("command")
-	v.Pop()
-	v.Pop()
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
+	authorizedSite := v.buildSitePath("command")
+	v.pop()
+	v.pop()
 
 	// Concurrent operations from multiple goroutines
 	// Mix of authorized and unauthorized accesses to test thread safety
@@ -236,25 +236,25 @@ func TestAdversarial_ConcurrentAccess_ThreadSafe(t *testing.T) {
 			switch stepNum % 3 {
 			case 0:
 				// Try to access (some authorized, some not)
-				v.Push("step-1")
-				v.Push("@shell")
-				v.Access(exprID, "command") // May succeed or fail, but shouldn't panic
-				v.Pop()
-				v.Pop()
+				v.push("step-1")
+				v.push("@shell")
+				v.access(exprID, "command") // May succeed or fail, but shouldn't panic
+				v.pop()
+				v.pop()
 			case 1:
 				// Try to build site paths
-				v.Push(fmt.Sprintf("step-%d", stepNum))
-				v.Push("@shell")
-				v.BuildSitePath("command")
-				v.Pop()
-				v.Pop()
+				v.push(fmt.Sprintf("step-%d", stepNum))
+				v.push("@shell")
+				v.buildSitePath("command")
+				v.pop()
+				v.pop()
 			default:
 				// Try to record references
-				v.Push(fmt.Sprintf("step-%d", stepNum))
-				v.Push("@env")
-				v.RecordReference(exprID, "HOME")
-				v.Pop()
-				v.Pop()
+				v.push(fmt.Sprintf("step-%d", stepNum))
+				v.push("@env")
+				v.recordReference(exprID, "HOME")
+				v.pop()
+				v.pop()
 			}
 
 			panicked <- false
@@ -290,14 +290,14 @@ func TestAdversarial_PathStackManipulation_BetweenRecordAndAccess(t *testing.T) 
 	v.MarkTouched(exprID)
 	v.ResolveAllTouched()
 
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command") // Authorize @shell site
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command") // Authorize @shell site
 
 	// Attacker manipulates stack
-	v.Pop()                                   // Remove @shell
-	v.Push("@malicious")                      // Add different decorator
-	value, err := v.Access(exprID, "command") // Try to access at malicious site
+	v.pop()                                   // Remove @shell
+	v.push("@malicious")                      // Add different decorator
+	value, err := v.access(exprID, "command") // Try to access at malicious site
 
 	if err == nil {
 		t.Errorf("⚠️  SECURITY ISSUE: pathStack manipulation allowed unauthorized access!")
@@ -311,7 +311,7 @@ func TestAdversarial_PathStackManipulation_BetweenRecordAndAccess(t *testing.T) 
 // ========== Attack Vector 8: Reference List Pollution ==========
 
 func TestAdversarial_ReferenceListPollution_PerformanceDegradation(t *testing.T) {
-	// Attacker adds many references to slow down Access() checks
+	// Attacker adds many references to slow down access() checks
 
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
@@ -321,24 +321,24 @@ func TestAdversarial_ReferenceListPollution_PerformanceDegradation(t *testing.T)
 	v.ResolveAllTouched()
 
 	// Add 1000 references (pollution attack)
-	v.Push("step-1")
+	v.push("step-1")
 	for i := 0; i < 1000; i++ {
-		v.Push(fmt.Sprintf("@attack-%d", i))
-		v.RecordReference(exprID, "command")
-		v.Pop()
+		v.push(fmt.Sprintf("@attack-%d", i))
+		v.recordReference(exprID, "command")
+		v.pop()
 	}
 
 	// Add legitimate reference
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// Access should still work (but might be slow)
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 	if err != nil {
 		t.Errorf("Access failed with polluted reference list: %v", err)
 	}
 	if value != "secret-value" {
-		t.Errorf("Access() = %q, want %q", value, "secret-value")
+		t.Errorf("access() = %q, want %q", value, "secret-value")
 	}
 
 	// Check reference count
@@ -397,13 +397,13 @@ func TestAdversarial_TransportBoundary_EnforcedInAccess(t *testing.T) {
 	v.ResolveAllTouched()
 
 	// Authorize in local transport
-	v.Push("step-1")
-	v.Push("@shell")
-	v.RecordReference(exprID, "command")
+	v.push("step-1")
+	v.push("@shell")
+	v.recordReference(exprID, "command")
 
 	// Try to access from different transport
 	v.EnterTransport("ssh:server")
-	value, err := v.Access(exprID, "command")
+	value, err := v.access(exprID, "command")
 
 	if err == nil {
 		t.Fatalf("⚠️  SECURITY ISSUE: Transport boundary not enforced!\n"+

@@ -1345,10 +1345,10 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	}
 
 	ctx := decorator.ValueEvalContext{
-		Session:  r.session,
-		Vault:    r.vault,
-		PlanHash: planHash,
-		StepPath: stepPath,
+		Session:     r.session,
+		LookupValue: r.getValue,
+		PlanHash:    planHash,
+		StepPath:    stepPath,
 	}
 
 	// Get current transport scope

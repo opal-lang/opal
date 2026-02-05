@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // resolveSingle is a test helper that calls Resolve with a single call and returns the result.
@@ -22,6 +21,18 @@ func resolveSingle(t *testing.T, d decorator.Value, ctx decorator.ValueEvalConte
 	}
 
 	return results[0]
+}
+
+func valueCtx(vars map[string]any) decorator.ValueEvalContext {
+	lookup := func(name string) (any, bool) {
+		v, ok := vars[name]
+		return v, ok
+	}
+
+	return decorator.ValueEvalContext{
+		Session:     decorator.NewLocalSession(),
+		LookupValue: lookup,
+	}
 }
 
 // TestVarDecoratorDescriptor verifies the decorator metadata
@@ -65,20 +76,7 @@ func TestVarDecoratorDescriptor(t *testing.T) {
 // TestVarDecoratorResolveSuccess verifies successful variable resolution
 func TestVarDecoratorResolveSuccess(t *testing.T) {
 	d := &VarDecorator{}
-
-	// Create Vault and declare variables
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	nameID := v.DeclareVariable("name", "literal:Alice")
-	v.StoreUnresolvedValue(nameID, "Alice")
-	v.MarkTouched(nameID)
-	v.ResolveAllTouched()
-	v.RecordReference(nameID, "value") // Authorize access at root/params/value
-
-	// Create context with Vault
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{"name": "Alice"})
 
 	// Test string variable
 	varName := "name"
@@ -106,18 +104,7 @@ func TestVarDecoratorResolveSuccess(t *testing.T) {
 // TestVarDecoratorResolveInt verifies integer variable resolution
 func TestVarDecoratorResolveInt(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	countID := v.DeclareVariable("count", "literal:42")
-	v.StoreUnresolvedValue(countID, "42")
-	v.MarkTouched(countID)
-	v.ResolveAllTouched()
-	v.RecordReference(countID, "value") // Authorize access
-
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{"count": int64(42)})
 
 	varName := "count"
 	call := decorator.ValueCall{
@@ -131,26 +118,15 @@ func TestVarDecoratorResolveInt(t *testing.T) {
 		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if result.Value != "42" {
-		t.Errorf("Value: got %v, want \"42\"", result.Value)
+	if result.Value != int64(42) {
+		t.Errorf("Value: got %v, want 42", result.Value)
 	}
 }
 
 // TestVarDecoratorResolveBool verifies boolean variable resolution
 func TestVarDecoratorResolveBool(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	flagID := v.DeclareVariable("flag", "literal:true")
-	v.StoreUnresolvedValue(flagID, "true")
-	v.MarkTouched(flagID)
-	v.ResolveAllTouched()
-	v.RecordReference(flagID, "value") // Authorize access
-
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{"flag": true})
 
 	varName := "flag"
 	call := decorator.ValueCall{
@@ -164,25 +140,15 @@ func TestVarDecoratorResolveBool(t *testing.T) {
 		t.Fatalf("Result error: %v", result.Error)
 	}
 
-	if result.Value != "true" {
-		t.Errorf("Value: got %v, want \"true\"", result.Value)
+	if result.Value != true {
+		t.Errorf("Value: got %v, want true", result.Value)
 	}
 }
 
 // TestVarDecoratorResolveNotFound verifies error when variable not found
 func TestVarDecoratorResolveNotFound(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	nameID := v.DeclareVariable("name", "literal:Alice")
-	v.StoreUnresolvedValue(nameID, "Alice")
-	v.MarkTouched(nameID)
-	v.ResolveAllTouched()
-
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{"name": "Alice"})
 
 	varName := "missing"
 	call := decorator.ValueCall{
@@ -212,12 +178,7 @@ func TestVarDecoratorResolveNotFound(t *testing.T) {
 // TestVarDecoratorResolveNoPrimary verifies error when no variable name provided
 func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{})
 
 	call := decorator.ValueCall{
 		Path:    "var",
@@ -246,19 +207,7 @@ func TestVarDecoratorResolveNoPrimary(t *testing.T) {
 // TestVarDecoratorTransportAgnostic verifies @var works in different transports
 func TestVarDecoratorTransportAgnostic(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
-	valueID := v.DeclareVariable("value", "literal:local")
-	v.StoreUnresolvedValue(valueID, "local")
-	v.MarkTouched(valueID)
-	v.ResolveAllTouched()
-	v.RecordReference(valueID, "value") // Authorize access
-
-	// Test with LocalSession
-	localCtx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	localCtx := valueCtx(map[string]any{"value": "local"})
 
 	varName := "value"
 	call := decorator.ValueCall{
@@ -283,13 +232,7 @@ func TestVarDecoratorTransportAgnostic(t *testing.T) {
 // TestVarDecoratorEmptyVars verifies behavior with empty variable map
 func TestVarDecoratorEmptyVars(t *testing.T) {
 	d := &VarDecorator{}
-
-	v := vault.NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!")) // Empty vault
-
-	ctx := decorator.ValueEvalContext{
-		Session: decorator.NewLocalSession(),
-		Vault:   v,
-	}
+	ctx := valueCtx(map[string]any{})
 
 	varName := "anything"
 	call := decorator.ValueCall{
@@ -313,5 +256,23 @@ func TestVarDecoratorEmptyVars(t *testing.T) {
 	expectedMsg := `variable "anything" not found in any scope`
 	if results[0].Error.Error() != expectedMsg {
 		t.Errorf("Error message: got %q, want %q", results[0].Error.Error(), expectedMsg)
+	}
+}
+
+func TestVarDecoratorResolveCallFormArg1(t *testing.T) {
+	d := &VarDecorator{}
+	ctx := valueCtx(map[string]any{"name": "Alice"})
+
+	call := decorator.ValueCall{
+		Path:   "var",
+		Params: map[string]any{"arg1": "name"},
+	}
+
+	result := resolveSingle(t, d, ctx, call)
+	if result.Error != nil {
+		t.Fatalf("Result error: %v", result.Error)
+	}
+	if result.Value != "Alice" {
+		t.Errorf("Value: got %v, want %q", result.Value, "Alice")
 	}
 }

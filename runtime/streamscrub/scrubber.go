@@ -49,7 +49,7 @@ func WithPlaceholderFunc(fn PlaceholderFunc) Option {
 //
 // Example:
 //
-//	vault := vault.New()
+//	vault := vault.NewWithPlanKey(planKey)
 //	scrubber := streamscrub.New(output, streamscrub.WithSecretProvider(vault))
 //	// Secrets automatically detected via vault
 func WithSecretProvider(provider SecretProvider) Option {

@@ -35,12 +35,9 @@ type ValueEvalContext struct {
 	// Session is the ambient execution context (env, cwd, transport)
 	Session Session
 
-	// Vault is the scope-aware variable storage (primary source of truth)
-	// All variable lookups go through Vault (no direct variable access)
-	Vault any // *vault.Vault (any to avoid circular import)
-
-	// IDFactory creates deterministic secret IDs
-	IDFactory any // TODO: Replace with actual secret.IDFactory type in Phase 2
+	// LookupValue resolves planner-scoped values by key (variable names,
+	// decorator keys). Returns (nil, false) when key is not defined.
+	LookupValue func(name string) (any, bool)
 
 	// PlanHash is the deterministic plan hash for secret ID generation
 	PlanHash []byte
