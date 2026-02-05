@@ -176,6 +176,10 @@ type decoratorCall struct {
 //   - For-loops have Iterations populated with resolved values and deep-copied bodies
 //   - Try/catch blocks are preserved as-is (runtime constructs)
 func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, config ResolveConfig) (*ResolveResult, error) {
+	if config.Context == nil {
+		config.Context = context.Background()
+	}
+
 	r := &Resolver{
 		graph:            graph,
 		vault:            v,
@@ -192,6 +196,16 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 	}
 
 	return r.resolve()
+}
+
+func (r *Resolver) checkContext() error {
+	if r.config.Context == nil {
+		return nil
+	}
+	if err := r.config.Context.Err(); err != nil {
+		return fmt.Errorf("resolution canceled: %w", err)
+	}
+	return nil
 }
 
 // getValue looks up a value by name from Vault.
@@ -270,22 +284,15 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 	var result []*StatementIR
 
 	for i := 0; i < len(stmts); i++ {
+		if err := r.checkContext(); err != nil {
+			return nil, err
+		}
 		stmt := stmts[i]
 
 		switch stmt.Kind {
 		case StmtVarDecl:
-			// Collect and resolve variable declaration
-			r.collectVarDecl(stmt.VarDecl)
-			if err := r.buildError(); err != nil {
+			if err := r.resolveVarDeclStatement(stmt); err != nil {
 				return nil, err
-			}
-			if err := r.batchResolve(); err != nil {
-				return nil, err
-			}
-			if stmt.VarDecl != nil {
-				if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
-					return nil, err
-				}
 			}
 			result = append(result, stmt)
 
@@ -341,10 +348,31 @@ func (r *Resolver) collectCommand(cmd *CommandStmtIR) {
 	}
 }
 
-// resolveBlocker resolves a blocker statement and returns the pruned result.
-// The blocker node is preserved with Taken set and untaken branch pruned.
-func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
-	blocker := stmt.Blocker
+func (r *Resolver) resolveVarDeclStatement(stmt *StatementIR) error {
+	if stmt == nil {
+		return nil
+	}
+
+	r.collectVarDecl(stmt.VarDecl)
+	if err := r.buildError(); err != nil {
+		return err
+	}
+	if err := r.batchResolve(); err != nil {
+		return err
+	}
+	if stmt.VarDecl != nil {
+		if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) resolveBlockerInputs(blocker *BlockerIR) error {
+	if blocker == nil {
+		return nil
+	}
 
 	// Collect blocker condition/collection
 	r.collectExpr(blocker.Condition, "")
@@ -352,13 +380,60 @@ func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
 		r.collectExpr(blocker.Collection, "")
 	}
 
-	// Check for errors from collection
 	if err := r.buildError(); err != nil {
-		return nil, err
+		return err
 	}
 
-	// Batch resolve expressions
-	if err := r.batchResolve(); err != nil {
+	return r.batchResolve()
+}
+
+func (r *Resolver) evaluateCondition(expr *ExprIR, description string, checkTransport bool) (any, error) {
+	if checkTransport {
+		if err := r.checkTransportBoundaryExpr(expr); err != nil {
+			return nil, err
+		}
+	}
+
+	result, err := EvaluateExpr(expr, r.getValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate %s: %w", description, err)
+	}
+
+	return result, nil
+}
+
+func (r *Resolver) evaluateBlockerCollection(blocker *BlockerIR, checkTransport bool) ([]any, error) {
+	if checkTransport {
+		if err := r.checkTransportBoundaryExpr(blocker.Collection); err != nil {
+			return nil, err
+		}
+	}
+
+	collection, err := r.evaluateCollection(blocker.Collection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
+	}
+
+	return collection, nil
+}
+
+func (r *Resolver) bindLoopVar(loopVar string, item any) {
+	loopVarRaw := fmt.Sprintf("literal:%v", item)
+	loopVarExprID := r.vault.DeclareVariable(loopVar, loopVarRaw)
+
+	r.vault.StoreUnresolvedValue(loopVarExprID, item)
+	r.vault.MarkTouched(loopVarExprID)
+	if r.scopes != nil {
+		r.scopes.Define(loopVar, loopVarExprID)
+	}
+}
+
+// resolveBlocker resolves a blocker statement and returns the pruned result.
+// The blocker node is preserved with Taken set and untaken branch pruned.
+func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
+	if err := r.resolveBlockerInputs(blocker); err != nil {
 		return nil, err
 	}
 
@@ -379,13 +454,9 @@ func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate condition
-	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
-		return nil, err
-	}
-	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	result, err := r.evaluateCondition(blocker.Condition, "if condition", true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
+		return nil, err
 	}
 
 	taken := IsTruthy(result)
@@ -417,28 +488,18 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate collection
-	if err := r.checkTransportBoundaryExpr(blocker.Collection); err != nil {
-		return nil, err
-	}
-	collection, err := r.evaluateCollection(blocker.Collection)
+	collection, err := r.evaluateBlockerCollection(blocker, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate for collection: %w", err)
+		return nil, err
 	}
 
 	// Build iterations with deep-copied bodies
 	blocker.Iterations = make([]LoopIteration, len(collection))
 	for i, item := range collection {
-		// Create exprID for this iteration's loop variable
-		loopVarRaw := fmt.Sprintf("literal:%v", item)
-		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-
-		// Store the value and update scope
-		r.vault.StoreUnresolvedValue(loopVarExprID, item)
-		r.vault.MarkTouched(loopVarExprID)
-		if r.scopes != nil {
-			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		if err := r.checkContext(); err != nil {
+			return nil, err
 		}
+		r.bindLoopVar(blocker.LoopVar, item)
 
 		// Deep-copy the body for this iteration
 		bodyCopy := DeepCopyStatements(blocker.ThenBranch)
@@ -466,13 +527,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 	blocker := stmt.Blocker
 
-	// Evaluate condition
-	if err := r.checkTransportBoundaryExpr(blocker.Condition); err != nil {
-		return nil, err
-	}
-	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	value, err := r.evaluateCondition(blocker.Condition, "when condition", true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate when condition: %w", err)
+		return nil, err
 	}
 
 	// Find first matching arm
@@ -605,6 +662,9 @@ func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
 	}
 
 	for _, stmt := range r.graph.Statements {
+		if err := r.checkContext(); err != nil {
+			return err
+		}
 		if stmt.Span.Start >= fn.Span.Start {
 			continue
 		}
@@ -618,6 +678,9 @@ func (r *Resolver) resolvePrelude(fn *FunctionIR) error {
 
 func (r *Resolver) resolvePreludeStatements(stmts []*StatementIR) error {
 	for _, stmt := range stmts {
+		if err := r.checkContext(); err != nil {
+			return err
+		}
 		if err := r.resolvePreludeStatement(stmt); err != nil {
 			return err
 		}
@@ -632,14 +695,7 @@ func (r *Resolver) resolvePreludeStatement(stmt *StatementIR) error {
 
 	switch stmt.Kind {
 	case StmtVarDecl:
-		r.collectVarDecl(stmt.VarDecl)
-		if err := r.buildError(); err != nil {
-			return err
-		}
-		if err := r.batchResolve(); err != nil {
-			return err
-		}
-		return nil
+		return r.resolveVarDeclStatement(stmt)
 	case StmtBlocker:
 		return r.resolvePreludeBlocker(stmt)
 	case StmtCommand, StmtTry:
@@ -655,19 +711,7 @@ func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
 		return nil
 	}
 
-	// Collect blocker condition/collection
-	r.collectExpr(blocker.Condition, "")
-	if blocker.Kind == BlockerFor && blocker.Collection != nil {
-		r.collectExpr(blocker.Collection, "")
-	}
-
-	// Check for errors from collection
-	if err := r.buildError(); err != nil {
-		return err
-	}
-
-	// Batch resolve expressions
-	if err := r.batchResolve(); err != nil {
+	if err := r.resolveBlockerInputs(blocker); err != nil {
 		return err
 	}
 
@@ -684,9 +728,9 @@ func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
 }
 
 func (r *Resolver) resolvePreludeIf(blocker *BlockerIR) error {
-	result, err := EvaluateExpr(blocker.Condition, r.getValue)
+	result, err := r.evaluateCondition(blocker.Condition, "if condition", false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate if condition: %w", err)
+		return err
 	}
 
 	if IsTruthy(result) {
@@ -773,20 +817,16 @@ func extractEnvDelta(params map[string]any) map[string]string {
 }
 
 func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
-	collection, err := r.evaluateCollection(blocker.Collection)
+	collection, err := r.evaluateBlockerCollection(blocker, false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate for collection: %w", err)
+		return err
 	}
 
 	for i, item := range collection {
-		loopVarRaw := fmt.Sprintf("literal:%v", item)
-		loopVarExprID := r.vault.DeclareVariable(blocker.LoopVar, loopVarRaw)
-
-		r.vault.StoreUnresolvedValue(loopVarExprID, item)
-		r.vault.MarkTouched(loopVarExprID)
-		if r.scopes != nil {
-			r.scopes.Define(blocker.LoopVar, loopVarExprID)
+		if err := r.checkContext(); err != nil {
+			return err
 		}
+		r.bindLoopVar(blocker.LoopVar, item)
 
 		if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
 			return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
@@ -797,9 +837,9 @@ func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
 }
 
 func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
-	value, err := EvaluateExpr(blocker.Condition, r.getValue)
+	value, err := r.evaluateCondition(blocker.Condition, "when condition", false)
 	if err != nil {
-		return fmt.Errorf("failed to evaluate when condition: %w", err)
+		return err
 	}
 
 	for _, arm := range blocker.Arms {

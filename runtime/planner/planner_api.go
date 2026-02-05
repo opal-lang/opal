@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // Config configures planner behavior.
 type Config struct {
 	Target    string           // Command name (e.g. "hello") or "" for script mode.
+	Context   context.Context  // Optional planning context for cancellation/deadlines.
 	IDFactory secret.IDFactory // Optional deterministic placeholder factory.
 	Vault     *vault.Vault     // Optional shared vault for value storage/scrubbing.
 	PlanSalt  []byte           // Optional deterministic salt (32 bytes) for contract verification.

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/vault"
 )
@@ -21,9 +22,6 @@ import (
 // - Correct shadowing behavior
 
 func TestThreePass_LiteralsNotResolvedInPass1(t *testing.T) {
-	// Variables should be declared but NOT resolved during Pass 1
-	// This test verifies that MarkResolved is NOT called during planVarDecl
-
 	source := []byte(`
 var NAME = "Aled"
 var COUNT = "5"
@@ -36,21 +34,45 @@ var COUNT = "5"
 
 	vlt := vault.NewWithPlanKey(make([]byte, 32))
 
-	// Create planner but don't call Plan yet - we want to inspect state after Pass 1
-	_, err := Plan(tree.Events, tree.Tokens, Config{
+	plan, err := Plan(tree.Events, tree.Tokens, Config{
 		Vault: vlt,
 	})
 	if err != nil {
 		t.Fatalf("Plan should not error: %v", err)
 	}
 
-	// After Pass 1, variables should be declared but NOT resolved
-	// We can't easily test this without exposing internal state
-	// So instead, we'll test the observable behavior: batching
+	// Observable semantics: declarations alone do not produce executable steps
+	// and do not emit SecretUses (no referenced values).
+	if len(plan.Steps) != 0 {
+		t.Fatalf("Expected 0 steps for declaration-only source, got %d", len(plan.Steps))
+	}
+	if len(plan.SecretUses) != 0 {
+		t.Fatalf("Expected 0 SecretUses for declaration-only source, got %d", len(plan.SecretUses))
+	}
 
-	// TODO: This test needs access to planner internals
-	// For now, we'll test batching behavior instead
-	t.Skip("Need to refactor to test Pass 1 state")
+	nameExprID, err := vlt.LookupVariable("NAME")
+	if err != nil {
+		t.Fatalf("Expected NAME variable in vault: %v", err)
+	}
+	nameVal, ok := vlt.GetUnresolvedValue(nameExprID)
+	if !ok {
+		t.Fatalf("Expected unresolved value for NAME (%s)", nameExprID)
+	}
+	if diff := cmp.Diff("Aled", nameVal); diff != "" {
+		t.Errorf("NAME value mismatch (-want +got):\n%s", diff)
+	}
+
+	countExprID, err := vlt.LookupVariable("COUNT")
+	if err != nil {
+		t.Fatalf("Expected COUNT variable in vault: %v", err)
+	}
+	countVal, ok := vlt.GetUnresolvedValue(countExprID)
+	if !ok {
+		t.Fatalf("Expected unresolved value for COUNT (%s)", countExprID)
+	}
+	if diff := cmp.Diff("5", countVal); diff != "" {
+		t.Errorf("COUNT value mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestThreePass_ShadowingWithDeferredResolution(t *testing.T) {

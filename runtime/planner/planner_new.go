@@ -114,7 +114,7 @@ func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token,
 	session := decorator.NewLocalSession()
 	resolveConfig := ResolveConfig{
 		TargetFunction: config.Target,
-		Context:        nil, // TODO: pass context from config if available
+		Context:        config.Context,
 		Telemetry:      telemetry,
 		TelemetryLevel: config.Telemetry,
 	}

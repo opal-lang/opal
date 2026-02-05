@@ -536,16 +536,13 @@ func (b *irBuilder) buildVarDecl() (*StatementIR, error) {
 	}, nil
 }
 
-// buildShellCommand processes a shell command.
-func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
-	b.pos++ // Move past OPEN NodeShellCommand
-
+func (b *irBuilder) buildCommandExprParts(closeNode parser.NodeKind, allowShellArgs bool) ([]*ExprIR, error) {
 	var parts []*ExprIR
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
 
-		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeShellCommand {
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == closeNode {
 			b.pos++
 			break
 		}
@@ -555,20 +552,17 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 
 			switch node {
 			case parser.NodeShellArg:
-				// Check if this arg needs a space before it
-				needsSpace := b.shellArgNeedsSpace()
-				if needsSpace {
-					parts = append(parts, &ExprIR{
-						Kind:  ExprLiteral,
-						Value: " ",
-					})
+				if allowShellArgs {
+					if b.shellArgNeedsSpace() {
+						parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: " "})
+					}
+					argParts, err := b.buildShellArg()
+					if err != nil {
+						return nil, err
+					}
+					parts = append(parts, argParts...)
+					continue
 				}
-				argParts, err := b.buildShellArg()
-				if err != nil {
-					return nil, err
-				}
-				parts = append(parts, argParts...)
-				continue
 			case parser.NodeDecorator:
 				expr := b.buildDecoratorExpr()
 				parts = append(parts, expr)
@@ -587,16 +581,25 @@ func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
 			tok := b.tokens[evt.Data]
 			symbol := tok.Symbol()
 			if symbol != "" {
-				parts = append(parts, &ExprIR{
-					Kind:  ExprLiteral,
-					Value: symbol,
-				})
+				parts = append(parts, &ExprIR{Kind: ExprLiteral, Value: symbol})
 			}
 			b.pos++
 			continue
 		}
 
 		b.pos++
+	}
+
+	return parts, nil
+}
+
+// buildShellCommand processes a shell command.
+func (b *irBuilder) buildShellCommand() (*StatementIR, error) {
+	b.pos++ // Move past OPEN NodeShellCommand
+
+	parts, err := b.buildCommandExprParts(parser.NodeShellCommand, true)
+	if err != nil {
+		return nil, err
 	}
 
 	return &StatementIR{
@@ -663,61 +666,9 @@ func (b *irBuilder) buildRedirectTarget() (*CommandExpr, error) {
 	startPos := b.pos
 	b.pos++ // Move past OPEN NodeRedirectTarget
 
-	var parts []*ExprIR
-
-	for b.pos < len(b.events) {
-		evt := b.events[b.pos]
-
-		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeRedirectTarget {
-			b.pos++
-			break
-		}
-
-		if evt.Kind == parser.EventOpen {
-			node := parser.NodeKind(evt.Data)
-			switch node {
-			case parser.NodeShellArg:
-				needsSpace := b.shellArgNeedsSpace()
-				if needsSpace {
-					parts = append(parts, &ExprIR{
-						Kind:  ExprLiteral,
-						Value: " ",
-					})
-				}
-				argParts, err := b.buildShellArg()
-				if err != nil {
-					return nil, err
-				}
-				parts = append(parts, argParts...)
-				continue
-			case parser.NodeDecorator:
-				expr := b.buildDecoratorExpr()
-				parts = append(parts, expr)
-				continue
-			case parser.NodeInterpolatedString:
-				strParts, err := b.buildInterpolatedString()
-				if err != nil {
-					return nil, err
-				}
-				parts = append(parts, strParts...)
-				continue
-			}
-		}
-
-		if evt.Kind == parser.EventToken {
-			tok := b.tokens[evt.Data]
-			symbol := tok.Symbol()
-			if symbol != "" {
-				parts = append(parts, &ExprIR{
-					Kind:  ExprLiteral,
-					Value: symbol,
-				})
-			}
-			b.pos++
-			continue
-		}
-
-		b.pos++
+	parts, err := b.buildCommandExprParts(parser.NodeRedirectTarget, true)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(parts) == 0 {
@@ -940,51 +891,7 @@ func (b *irBuilder) shellArgNeedsSpace() bool {
 func (b *irBuilder) buildShellArg() ([]*ExprIR, error) {
 	b.pos++ // Move past OPEN NodeShellArg
 
-	var parts []*ExprIR
-
-	for b.pos < len(b.events) {
-		evt := b.events[b.pos]
-
-		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeShellArg {
-			b.pos++
-			break
-		}
-
-		if evt.Kind == parser.EventOpen {
-			node := parser.NodeKind(evt.Data)
-
-			switch node {
-			case parser.NodeDecorator:
-				expr := b.buildDecoratorExpr()
-				parts = append(parts, expr)
-				continue
-			case parser.NodeInterpolatedString:
-				strParts, err := b.buildInterpolatedString()
-				if err != nil {
-					return nil, err
-				}
-				parts = append(parts, strParts...)
-				continue
-			}
-		}
-
-		if evt.Kind == parser.EventToken {
-			tok := b.tokens[evt.Data]
-			symbol := tok.Symbol()
-			if symbol != "" {
-				parts = append(parts, &ExprIR{
-					Kind:  ExprLiteral,
-					Value: symbol,
-				})
-			}
-			b.pos++
-			continue
-		}
-
-		b.pos++
-	}
-
-	return parts, nil
+	return b.buildCommandExprParts(parser.NodeShellArg, false)
 }
 
 // buildInterpolatedString processes an interpolated string.

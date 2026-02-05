@@ -51,6 +51,38 @@ func TestResolve_SimpleCommand(t *testing.T) {
 	// (This is a smoke test - just verify it doesn't crash)
 }
 
+func TestResolve_CanceledContext(t *testing.T) {
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo \"hello\""}},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	session := &mockSession{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Resolve(graph, v, session, ResolveConfig{Context: ctx})
+	if err == nil {
+		t.Fatal("Expected cancellation error")
+	}
+
+	if diff := cmp.Diff("resolution canceled: context canceled", err.Error()); diff != "" {
+		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestResolve_VarDecl tests resolving a variable declaration.
 func TestResolve_VarDecl(t *testing.T) {
 	// Create vault first (IR Builder does this)
