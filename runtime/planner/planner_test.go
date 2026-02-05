@@ -1453,3 +1453,32 @@ func TestPlanSalt_VaultWithoutPlanKey_PreservesRandomSalt(t *testing.T) {
 	t.Logf("✓ Vault without plan key preserves random PlanSalt")
 	t.Logf("  PlanSalt: %x", plan.PlanSalt)
 }
+
+func TestPlanSalt_VaultInvalidPlanKey_PreservesRandomSalt(t *testing.T) {
+	source := `var NAME = "test"`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	// Provide a vault with an invalid (non-32-byte) plan key.
+	vlt := vault.NewWithPlanKey([]byte{0x01, 0x02, 0x03})
+
+	result, err := planner.PlanWithObservability(tree.Events, tree.Tokens, planner.Config{
+		Vault: vlt,
+	})
+	if err != nil {
+		t.Fatalf("Planning failed: %v", err)
+	}
+
+	plan := result.Plan
+
+	if len(plan.PlanSalt) != 32 {
+		t.Errorf("PlanSalt should remain 32-byte random salt, got %d bytes", len(plan.PlanSalt))
+	}
+
+	if bytes.Equal(plan.PlanSalt, []byte{0x01, 0x02, 0x03}) {
+		t.Error("PlanSalt should not use invalid vault plan key")
+	}
+}

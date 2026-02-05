@@ -181,7 +181,7 @@ func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token,
 	// Set plan metadata
 	plan.Target = config.Target
 	vaultKey := vlt.GetPlanKey()
-	if vaultKey != nil {
+	if len(vaultKey) == 32 {
 		plan.PlanSalt = vaultKey
 	}
 
