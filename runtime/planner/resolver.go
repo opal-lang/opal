@@ -285,6 +285,7 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 	}
 
 	var result []*StatementIR
+	var pending []*StatementIR
 
 	for i := 0; i < len(stmts); i++ {
 		if err := r.checkContext(); err != nil {
@@ -294,37 +295,50 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 
 		switch stmt.Kind {
 		case StmtVarDecl:
-			if err := r.resolveVarDeclStatement(stmt); err != nil {
+			r.collectVarDecl(stmt.VarDecl)
+			if err := r.buildError(); err != nil {
 				return nil, err
 			}
+			pending = append(pending, stmt)
 			result = append(result, stmt)
 
 		case StmtCommand:
-			// Collect expressions in command
 			r.collectCommand(stmt.Command)
 			if err := r.buildError(); err != nil {
 				return nil, err
 			}
-			if err := r.batchResolve(); err != nil {
-				return nil, err
-			}
-			if err := r.checkTransportBoundaryCommand(stmt.Command); err != nil {
-				return nil, err
-			}
-			if err := r.resolveCommandBlock(stmt.Command); err != nil {
-				return nil, err
-			}
+			pending = append(pending, stmt)
 			result = append(result, stmt)
 
 		case StmtBlocker:
-			// Collect blocker condition, resolve, evaluate, then recurse into taken branch
-			resolvedBlocker, err := r.resolveBlocker(stmt)
+			r.collectBlockerInputs(stmt.Blocker)
+			if err := r.buildError(); err != nil {
+				return nil, err
+			}
+
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
+			resolvedBlocker, err := r.resolveBlockerWithResolvedInputs(stmt)
 			if err != nil {
 				return nil, err
 			}
 			result = append(result, resolvedBlocker)
 
 		case StmtTry:
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
 			// Try/catch is a runtime construct - resolve all branches
 			resolvedTry, err := r.resolveTry(stmt)
 			if err != nil {
@@ -332,6 +346,13 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 			}
 			result = append(result, resolvedTry)
 		}
+	}
+
+	if err := r.batchResolve(); err != nil {
+		return nil, err
+	}
+	if err := r.finalizePendingStatements(pending); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -372,9 +393,35 @@ func (r *Resolver) resolveVarDeclStatement(stmt *StatementIR) error {
 	return nil
 }
 
-func (r *Resolver) resolveBlockerInputs(blocker *BlockerIR) error {
+func (r *Resolver) finalizePendingStatements(stmts []*StatementIR) error {
+	for _, stmt := range stmts {
+		if stmt == nil {
+			continue
+		}
+
+		switch stmt.Kind {
+		case StmtVarDecl:
+			if stmt.VarDecl != nil {
+				if err := r.checkTransportBoundaryExpr(stmt.VarDecl.Value); err != nil {
+					return err
+				}
+			}
+		case StmtCommand:
+			if err := r.checkTransportBoundaryCommand(stmt.Command); err != nil {
+				return err
+			}
+			if err := r.resolveCommandBlock(stmt.Command); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) collectBlockerInputs(blocker *BlockerIR) {
 	if blocker == nil {
-		return nil
+		return
 	}
 
 	// Collect blocker condition/collection
@@ -382,6 +429,10 @@ func (r *Resolver) resolveBlockerInputs(blocker *BlockerIR) error {
 	if blocker.Kind == BlockerFor && blocker.Collection != nil {
 		r.collectExpr(blocker.Collection, "")
 	}
+}
+
+func (r *Resolver) resolveBlockerInputs(blocker *BlockerIR) error {
+	r.collectBlockerInputs(blocker)
 
 	if err := r.buildError(); err != nil {
 		return err
@@ -440,6 +491,12 @@ func (r *Resolver) resolveBlocker(stmt *StatementIR) (*StatementIR, error) {
 		return nil, err
 	}
 
+	return r.resolveBlockerWithResolvedInputs(stmt)
+}
+
+func (r *Resolver) resolveBlockerWithResolvedInputs(stmt *StatementIR) (*StatementIR, error) {
+	blocker := stmt.Blocker
+
 	// Evaluate the blocker
 	switch blocker.Kind {
 	case BlockerIf:
@@ -467,6 +524,10 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 
 	// Resolve taken branch, prune untaken branch
 	if taken {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		resolved, err := r.resolveStatements(blocker.ThenBranch)
 		if err != nil {
 			return nil, err
@@ -475,6 +536,10 @@ func (r *Resolver) resolveIfBlocker(stmt *StatementIR) (*StatementIR, error) {
 		blocker.ElseBranch = nil // Prune untaken branch
 	} else {
 		if blocker.ElseBranch != nil {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 			resolved, err := r.resolveStatements(blocker.ElseBranch)
 			if err != nil {
 				return nil, err
@@ -502,15 +567,30 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		if err := r.checkContext(); err != nil {
 			return nil, err
 		}
-		r.bindLoopVar(blocker.LoopVar, item)
 
-		// Deep-copy the body for this iteration
-		bodyCopy := DeepCopyStatements(blocker.ThenBranch)
+		var resolvedBody []*StatementIR
+		err := func() error {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 
-		// Resolve the copied body (may contain nested blockers)
-		resolvedBody, err := r.resolveStatements(bodyCopy)
+			r.bindLoopVar(blocker.LoopVar, item)
+
+			// Deep-copy the body for this iteration
+			bodyCopy := DeepCopyStatements(blocker.ThenBranch)
+
+			// Resolve the copied body (may contain nested blockers)
+			var err error
+			resolvedBody, err = r.resolveStatements(bodyCopy)
+			if err != nil {
+				return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			}
+
+			return nil
+		}()
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			return nil, err
 		}
 
 		blocker.Iterations[i] = LoopIteration{
@@ -545,6 +625,10 @@ func (r *Resolver) resolveWhenBlocker(stmt *StatementIR) (*StatementIR, error) {
 			blocker.MatchedArm = i
 
 			// Resolve the matched arm's body
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 			resolved, err := r.resolveStatements(arm.Body)
 			if err != nil {
 				return nil, err
@@ -737,10 +821,18 @@ func (r *Resolver) resolvePreludeIf(blocker *BlockerIR) error {
 	}
 
 	if IsTruthy(result) {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		return r.resolvePreludeStatements(blocker.ThenBranch)
 	}
 
 	if blocker.ElseBranch != nil {
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
 		return r.resolvePreludeStatements(blocker.ElseBranch)
 	}
 
@@ -829,10 +921,22 @@ func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
 		if err := r.checkContext(); err != nil {
 			return err
 		}
-		r.bindLoopVar(blocker.LoopVar, item)
+		err := func() error {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 
-		if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
-			return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			r.bindLoopVar(blocker.LoopVar, item)
+
+			if err := r.resolvePreludeStatements(blocker.ThenBranch); err != nil {
+				return fmt.Errorf("failed to resolve for-loop iteration %d: %w", i, err)
+			}
+
+			return nil
+		}()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -847,6 +951,10 @@ func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
 
 	for _, arm := range blocker.Arms {
 		if matchPattern(arm.Pattern, value, r.getValue) {
+			if r.scopes != nil {
+				r.scopes.Push()
+				defer r.scopes.Pop()
+			}
 			return r.resolvePreludeStatements(arm.Body)
 		}
 	}

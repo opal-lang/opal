@@ -523,22 +523,18 @@ fun deploy {
 }
 `
 
-	scriptPlan, err := parseAndPlanWithFixedSalt(t, scriptSource, "")
-	if err != nil {
-		t.Fatalf("Script plan failed: %v", err)
+	_, scriptErr := parseAndPlanWithFixedSalt(t, scriptSource, "")
+	if scriptErr == nil {
+		t.Fatal("Expected script mode undefined variable error for NAME")
 	}
 
-	commandPlan, err := parseAndPlanWithFixedSalt(t, commandSource, "deploy")
-	if err != nil {
-		t.Fatalf("Command-mode plan failed: %v", err)
+	_, commandErr := parseAndPlanWithFixedSalt(t, commandSource, "deploy")
+	if commandErr == nil {
+		t.Fatal("Expected command mode undefined variable error for NAME")
 	}
 
-	if diff := cmp.Diff(planCommandList(scriptPlan), planCommandList(commandPlan)); diff != "" {
-		t.Errorf("Prelude parity command list mismatch (-script +command):\n%s", diff)
-	}
-
-	if diff := cmp.Diff(paritySecretDisplayIDs(scriptPlan), paritySecretDisplayIDs(commandPlan)); diff != "" {
-		t.Errorf("Prelude parity DisplayID mismatch (-script +command):\n%s", diff)
+	if diff := cmp.Diff(scriptErr.Error(), commandErr.Error()); diff != "" {
+		t.Errorf("Prelude parity error mismatch (-script +command):\n%s", diff)
 	}
 }
 

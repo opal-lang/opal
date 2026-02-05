@@ -1312,7 +1312,9 @@ func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 			switch node {
 			case parser.NodeBlock:
 				if thenBranch == nil {
+					b.scopes.Push()
 					stmts, err := b.buildBlock()
+					b.scopes.Pop()
 					if err != nil {
 						return nil, err
 					}
@@ -1411,6 +1413,8 @@ func (b *irBuilder) buildBlock() ([]*StatementIR, error) {
 // buildElseClause processes an else clause.
 func (b *irBuilder) buildElseClause() ([]*StatementIR, error) {
 	b.pos++ // Move past OPEN NodeElse
+	b.scopes.Push()
+	defer b.scopes.Pop()
 
 	var stmts []*StatementIR
 
@@ -1503,7 +1507,9 @@ func (b *irBuilder) buildForStmt() (*StatementIR, error) {
 
 			switch node {
 			case parser.NodeBlock:
+				b.scopes.Push()
 				stmts, err := b.buildBlock()
+				b.scopes.Pop()
 				if err != nil {
 					return nil, err
 				}
@@ -1591,6 +1597,8 @@ func (b *irBuilder) buildWhenStmt() (*StatementIR, error) {
 // buildWhenArm processes a single when arm (pattern -> body).
 func (b *irBuilder) buildWhenArm() (*WhenArmIR, error) {
 	b.pos++ // Move past OPEN NodeWhenArm
+	b.scopes.Push()
+	defer b.scopes.Pop()
 
 	var pattern *ExprIR
 	var body []*StatementIR

@@ -458,6 +458,11 @@ type orderedValueDecorator struct {
 	order *[]string
 }
 
+type countingValueDecorator struct {
+	path       string
+	batchSizes *[]int
+}
+
 func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
 	return decorator.Descriptor{
 		Path: d.path,
@@ -493,6 +498,24 @@ func (d *orderedValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ..
 	results := make([]decorator.ResolveResult, len(calls))
 	for i := range calls {
 		results[i] = decorator.ResolveResult{Value: d.path, Origin: d.path}
+	}
+	return results, nil
+}
+
+func (d *countingValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: d.path,
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeAny,
+		},
+	}
+}
+
+func (d *countingValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	*d.batchSizes = append(*d.batchSizes, len(calls))
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: true, Origin: d.path}
 	}
 	return results, nil
 }
@@ -1486,8 +1509,8 @@ func TestResolve_ForLoopVariableLeak(t *testing.T) {
 	// Note: Full mutation leak testing would require var assignment statements in IR
 }
 
-// TestResolve_IfBlockVariableLeak tests that variables declared inside if-blocks leak to outer scope.
-// Per SPECIFICATION.md: "Language control blocks (for, if, when, fun) - mutations leak to outer scope"
+// TestResolve_IfBlockVariableLeak verifies lexical scoping for if blocks.
+// Declarations inside taken if branches must not leak to outer scope.
 func TestResolve_IfBlockVariableLeak(t *testing.T) {
 	// Create vault
 	v := vault.NewWithPlanKey([]byte("test-key"))
@@ -1565,17 +1588,16 @@ func TestResolve_IfBlockVariableLeak(t *testing.T) {
 		Scopes: scopes,
 	}
 
-	// Resolve
+	// Resolve should fail: INNER declared in if block is not visible after the block.
 	session := &mockSession{}
 	config := ResolveConfig{Context: context.Background()}
 	_, err := Resolve(graph, v, session, config)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+	if err == nil {
+		t.Fatal("Expected undefined variable error for INNER used after if block")
 	}
 
-	// INNER should be touched (it was declared in taken branch and used after)
-	if !v.IsTouched(innerExprID) {
-		t.Errorf("INNER should be touched (declared in if block, used after)")
+	if !containsStr(err.Error(), "undefined variable") {
+		t.Errorf("Error should mention undefined variable, got: %v", err)
 	}
 }
 
@@ -1877,6 +1899,87 @@ func TestResolve_WaveModel_BlockersMustResolveBeforeEvaluation(t *testing.T) {
 	}
 }
 
+func TestResolve_WaveModel_BatchesReachableFrontierBeforeBlocker(t *testing.T) {
+	const path = "test.wave.frontier"
+
+	batchSizes := []int{}
+	if err := decorator.Register(path, &countingValueDecorator{path: path, batchSizes: &batchSizes}); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	scopes := NewScopeStack()
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtVarDecl,
+				VarDecl: &VarDeclIR{
+					Name: "A",
+					Value: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"alpha"},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{
+								Kind: ExprDecoratorRef,
+								Decorator: &DecoratorRef{
+									Name:     path,
+									Selector: []string{"beta"},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Kind: StmtBlocker,
+				Blocker: &BlockerIR{
+					Kind: BlockerIf,
+					Condition: &ExprIR{
+						Kind: ExprDecoratorRef,
+						Decorator: &DecoratorRef{
+							Name:     path,
+							Selector: []string{"guard"},
+						},
+					},
+					ThenBranch: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command:   &CommandExpr{Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo ok"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: scopes,
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	want := []int{3}
+	if diff := cmp.Diff(want, batchSizes); diff != "" {
+		t.Errorf("Batch sizes mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // containsStr checks if a string contains a substring.
 func containsStr(s, substr string) bool {
 	return strings.Contains(s, substr)
@@ -1989,20 +2092,9 @@ func TestBug_ForLoopVariableNotInScope(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// BUG CHECK: The loop variable should have been declared in vault for each iteration.
-	// If the scoping is working correctly, we should be able to look up "item" in scopes
-	// after resolution completes.
-	//
-	// Since for-loops leak variables (per spec), "item" should be defined in scopes
-	// with the value from the last iteration.
-	itemExprID, ok := scopes.Lookup("item")
-	if !ok {
-		t.Fatalf("BUG CONFIRMED: Loop variable 'item' not found in scopes after resolution")
-	}
-
-	// The exprID should be touched (used in command)
-	if !v.IsTouched(itemExprID) {
-		t.Errorf("Loop variable 'item' should be touched (used in echo command)")
+	// Lexical scope: loop variable must not leak outside the for block.
+	if _, ok := scopes.Lookup("item"); ok {
+		t.Fatalf("Loop variable 'item' should not be visible in outer scope")
 	}
 }
 
@@ -2094,16 +2186,9 @@ func TestBug_VarDeclInTakenBranchNotVisibleAfter(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// INNER should be in scopes after the if block is processed
-	// (per spec: "Language control blocks - mutations leak to outer scope")
-	innerLookupExprID, ok := scopes.Lookup("INNER")
-	if !ok {
-		t.Fatalf("Variable 'INNER' declared in if block not found in scopes after resolution")
-	}
-
-	// The exprID should match what we declared
-	if innerLookupExprID != innerExprID {
-		t.Errorf("INNER exprID mismatch: got %q, want %q", innerLookupExprID, innerExprID)
+	// Lexical scope: INNER should not leak to outer scope.
+	if _, ok := scopes.Lookup("INNER"); ok {
+		t.Fatalf("Variable 'INNER' should not be visible in outer scope")
 	}
 
 	// Verify INNER was touched (used in echo command)
@@ -2243,15 +2328,15 @@ func TestResolve_MultipleBlockersSameLevel(t *testing.T) {
 		}
 	}
 
-	// B, C, and D should be in scopes
-	if _, ok := scopes.Lookup("B"); !ok {
-		t.Errorf("B should be in scopes (leaked from blocker1)")
+	// Lexical scope: B and D are block-local and should not leak.
+	if _, ok := scopes.Lookup("B"); ok {
+		t.Errorf("B should not be visible in outer scope")
 	}
 	if _, ok := scopes.Lookup("C"); !ok {
 		t.Errorf("C should be in scopes (processed between blockers)")
 	}
-	if _, ok := scopes.Lookup("D"); !ok {
-		t.Errorf("D should be in scopes (leaked from blocker2)")
+	if _, ok := scopes.Lookup("D"); ok {
+		t.Errorf("D should not be visible in outer scope")
 	}
 }
 
@@ -2378,11 +2463,11 @@ func TestResolve_SequentialBlockers_ConditionAfterFirstBlocker(t *testing.T) {
 	if _, ok := scopes.Lookup("COND2"); !ok {
 		t.Errorf("COND2 should be in scopes (declared after blocker1)")
 	}
-	if _, ok := scopes.Lookup("B"); !ok {
-		t.Errorf("B should be in scopes (leaked from blocker1)")
+	if _, ok := scopes.Lookup("B"); ok {
+		t.Errorf("B should not be visible in outer scope")
 	}
-	if _, ok := scopes.Lookup("D"); !ok {
-		t.Errorf("D should be in scopes (leaked from blocker2)")
+	if _, ok := scopes.Lookup("D"); ok {
+		t.Errorf("D should not be visible in outer scope")
 	}
 }
 
@@ -2500,12 +2585,12 @@ func TestResolve_ThreeLevelNestedIfs_AllTrue(t *testing.T) {
 		t.Errorf("blocker3 (L3) should be taken")
 	}
 
-	// DEEP should be touched and in scopes
+	// DEEP should be touched but must not leak to outer scope.
 	if !v.IsTouched(deepExprID) {
 		t.Errorf("DEEP should be touched (all conditions true)")
 	}
-	if _, ok := scopes.Lookup("DEEP"); !ok {
-		t.Errorf("DEEP should be in scopes (leaked from innermost block)")
+	if _, ok := scopes.Lookup("DEEP"); ok {
+		t.Errorf("DEEP should not be visible in outer scope")
 	}
 }
 
@@ -2809,16 +2894,9 @@ func TestResolve_ForLoopEachIterationGetsUniqueBinding(t *testing.T) {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	// After resolution, the loop variable "item" should be in scope
-	// with the value from the LAST iteration (due to flattening semantics)
-	itemExprID, ok := scopes.Lookup("item")
-	if !ok {
-		t.Fatalf("Loop variable 'item' not found in scopes after resolution")
-	}
-
-	// The exprID should be touched (used in echo command)
-	if !v.IsTouched(itemExprID) {
-		t.Errorf("Loop variable 'item' should be touched")
+	// Lexical scope: loop variable must not leak outside the for block.
+	if _, ok := scopes.Lookup("item"); ok {
+		t.Fatalf("Loop variable 'item' should not be visible in outer scope")
 	}
 
 	// The key insight: each iteration creates a NEW exprID via DeclareVariable.
