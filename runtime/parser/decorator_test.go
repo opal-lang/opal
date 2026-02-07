@@ -7,6 +7,7 @@ import (
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/types"
 	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // Test decorator implementations for parser tests
@@ -64,6 +65,65 @@ func init() {
 	}
 	if err := decorator.Register("deploy", &DeployDecorator{}); err != nil {
 		panic(err)
+	}
+}
+
+func TestDecoratorParamsWithValidation_DeprecatedParamRemapUpdatesProvidedParams(t *testing.T) {
+	lex := lexer.NewLexer()
+	lex.Init([]byte(`(legacy="value")`))
+
+	p := &parser{
+		tokens:   lex.GetTokens(),
+		config:   &ParserConfig{},
+		events:   make([]Event, 0, 8),
+		errors:   make([]ParseError, 0, 1),
+		warnings: make([]ParseWarning, 0, 1),
+	}
+
+	schema := types.DecoratorSchema{
+		Parameters: map[string]types.ParamSchema{
+			"current": {
+				Name: "current",
+				Type: types.TypeString,
+			},
+		},
+		ParameterOrder:       []string{"current"},
+		DeprecatedParameters: map[string]string{"legacy": "current"},
+	}
+
+	providedParams := map[string]bool{}
+	p.decoratorParamsWithValidation("compat", schema, providedParams)
+
+	if len(p.errors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", p.errors)
+	}
+
+	if len(p.warnings) != 1 {
+		t.Fatalf("warning count mismatch: want 1, got %d", len(p.warnings))
+	}
+
+	if p.warnings[0].Message != "parameter 'legacy' is deprecated for @compat" {
+		t.Fatalf("warning message mismatch: got %q", p.warnings[0].Message)
+	}
+
+	if p.warnings[0].Suggestion != "Use 'current' instead" {
+		t.Fatalf("warning suggestion mismatch: got %q", p.warnings[0].Suggestion)
+	}
+
+	wantProvided := map[string]bool{"current": true}
+	if diff := cmp.Diff(wantProvided, providedParams); diff != "" {
+		t.Fatalf("provided params mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestDecoratorParameterValue_AllowsNewlineAfterEquals(t *testing.T) {
+	tree := ParseString(`@env(
+	property=
+	"HOME"
+)`)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
 	}
 }
 
@@ -273,6 +333,71 @@ func TestDecoratorParameters(t *testing.T) {
 				{Kind: EventToken, Data: 5}, // "HOME"
 				{Kind: EventClose, Data: uint32(NodeParam)},
 				{Kind: EventToken, Data: 6}, // )
+				{Kind: EventClose, Data: uint32(NodeParamList)},
+				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name: "multiline named params",
+			input: `@env(
+	property="HOME",
+	default="/tmp"
+)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
+				{Kind: EventOpen, Data: uint32(NodeDecorator)},
+				{Kind: EventToken, Data: 0}, // @
+				{Kind: EventToken, Data: 1}, // env
+				{Kind: EventOpen, Data: uint32(NodeParamList)},
+				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 4}, // property
+				{Kind: EventToken, Data: 5}, // =
+				{Kind: EventToken, Data: 6}, // "HOME"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 7}, // ,
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 9},  // default
+				{Kind: EventToken, Data: 10}, // =
+				{Kind: EventToken, Data: 11}, // "/tmp"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 13}, // )
+				{Kind: EventClose, Data: uint32(NodeParamList)},
+				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name: "multiline named params trailing comma",
+			input: `@env(
+	property="HOME",
+	default="/tmp",
+)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
+				{Kind: EventOpen, Data: uint32(NodeDecorator)},
+				{Kind: EventToken, Data: 0}, // @
+				{Kind: EventToken, Data: 1}, // env
+				{Kind: EventOpen, Data: uint32(NodeParamList)},
+				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 4}, // property
+				{Kind: EventToken, Data: 5}, // =
+				{Kind: EventToken, Data: 6}, // "HOME"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 7}, // ,
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 9},  // default
+				{Kind: EventToken, Data: 10}, // =
+				{Kind: EventToken, Data: 11}, // "/tmp"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 12}, // ,
+				{Kind: EventToken, Data: 14}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
 				{Kind: EventStepExit, Data: 0}, // Step boundary
@@ -1378,6 +1503,16 @@ func TestDecoratorObjectParameter(t *testing.T) {
 			name:  "empty object",
 			input: `@config.myconfig(settings={})`,
 		},
+		{
+			name: "multiline object with trailing commas",
+			input: `@config.myconfig(settings={
+	timeout: "5m",
+	retries: 3,
+	nested: {
+		enabled: true,
+	},
+})`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1424,6 +1559,13 @@ func TestDecoratorArrayParameter(t *testing.T) {
 		{
 			name:  "empty array",
 			input: `@deploy.test(hosts=[])`,
+		},
+		{
+			name: "multiline array with trailing comma",
+			input: `@deploy.production(hosts=[
+	"web1",
+	"web2",
+])`,
 		},
 	}
 
