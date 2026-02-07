@@ -279,6 +279,71 @@ func TestDecoratorParameters(t *testing.T) {
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
+		{
+			name: "multiline named params",
+			input: `@env(
+	property="HOME",
+	default="/tmp"
+)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
+				{Kind: EventOpen, Data: uint32(NodeDecorator)},
+				{Kind: EventToken, Data: 0}, // @
+				{Kind: EventToken, Data: 1}, // env
+				{Kind: EventOpen, Data: uint32(NodeParamList)},
+				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 4}, // property
+				{Kind: EventToken, Data: 5}, // =
+				{Kind: EventToken, Data: 6}, // "HOME"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 7}, // ,
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 9},  // default
+				{Kind: EventToken, Data: 10}, // =
+				{Kind: EventToken, Data: 11}, // "/tmp"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 13}, // )
+				{Kind: EventClose, Data: uint32(NodeParamList)},
+				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
+		{
+			name: "multiline named params trailing comma",
+			input: `@env(
+	property="HOME",
+	default="/tmp",
+)`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0}, // Step boundary
+				{Kind: EventOpen, Data: uint32(NodeDecorator)},
+				{Kind: EventToken, Data: 0}, // @
+				{Kind: EventToken, Data: 1}, // env
+				{Kind: EventOpen, Data: uint32(NodeParamList)},
+				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 4}, // property
+				{Kind: EventToken, Data: 5}, // =
+				{Kind: EventToken, Data: 6}, // "HOME"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 7}, // ,
+				{Kind: EventOpen, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 9},  // default
+				{Kind: EventToken, Data: 10}, // =
+				{Kind: EventToken, Data: 11}, // "/tmp"
+				{Kind: EventClose, Data: uint32(NodeParam)},
+				{Kind: EventToken, Data: 12}, // ,
+				{Kind: EventToken, Data: 14}, // )
+				{Kind: EventClose, Data: uint32(NodeParamList)},
+				{Kind: EventClose, Data: uint32(NodeDecorator)},
+				{Kind: EventStepExit, Data: 0}, // Step boundary
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1378,6 +1443,16 @@ func TestDecoratorObjectParameter(t *testing.T) {
 			name:  "empty object",
 			input: `@config.myconfig(settings={})`,
 		},
+		{
+			name: "multiline object with trailing commas",
+			input: `@config.myconfig(settings={
+	timeout: "5m",
+	retries: 3,
+	nested: {
+		enabled: true,
+	},
+})`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1424,6 +1499,13 @@ func TestDecoratorArrayParameter(t *testing.T) {
 		{
 			name:  "empty array",
 			input: `@deploy.test(hosts=[])`,
+		},
+		{
+			name: "multiline array with trailing comma",
+			input: `@deploy.production(hosts=[
+	"web1",
+	"web2",
+])`,
 		},
 	}
 
