@@ -322,6 +322,71 @@ func TestParseEventStructure(t *testing.T) {
 	}
 }
 
+func TestFunctionDefaultValueValidation(t *testing.T) {
+	t.Run("newline immediately after equals", func(t *testing.T) {
+		tree := ParseString(`fun greet(
+	name =
+	"World"
+) {}`)
+
+		if len(tree.Errors) != 0 {
+			t.Fatalf("expected no parse errors, got %v", tree.Errors)
+		}
+
+		hasWorldLiteral := false
+		for _, evt := range tree.Events {
+			if evt.Kind != EventToken {
+				continue
+			}
+			tok := tree.Tokens[evt.Data]
+			if tok.Type == lexer.STRING && string(tok.Text) == "\"World\"" {
+				hasWorldLiteral = true
+				break
+			}
+		}
+
+		if !hasWorldLiteral {
+			t.Fatal("expected default value literal to be parsed")
+		}
+	})
+
+	t.Run("missing value before right paren", func(t *testing.T) {
+		tree := ParseString(`fun greet(name = ) {}`)
+
+		if len(tree.Errors) != 1 {
+			t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)
+		}
+
+		got := struct {
+			Message    string
+			Context    string
+			Got        lexer.TokenType
+			Suggestion string
+		}{
+			Message:    tree.Errors[0].Message,
+			Context:    tree.Errors[0].Context,
+			Got:        tree.Errors[0].Got,
+			Suggestion: tree.Errors[0].Suggestion,
+		}
+
+		want := struct {
+			Message    string
+			Context    string
+			Got        lexer.TokenType
+			Suggestion string
+		}{
+			Message:    "missing default parameter value",
+			Context:    "function parameter default value",
+			Got:        lexer.RPAREN,
+			Suggestion: "Add a value after '='",
+		}
+
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("default value error mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
 // TestParseBasics verifies basic parsing functionality
 func TestParseBasics(t *testing.T) {
 	tests := []struct {

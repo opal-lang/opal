@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### 2026-02-07
 - Parser now accepts multi-line decorator parameter lists and multi-line array/object literals in expression contexts
 - Fixed deprecated decorator-parameter remapping so parser tracks the replacement parameter key correctly
+- Parser now allows newline after `=` before function default values and decorator parameter values
 
 ### 2026-02-05
 - Changed planner APIs so `planner.Plan`/`planner.PlanWithObservability` are canonical and removed the legacy planner path

@@ -451,10 +451,17 @@ func (p *parser) defaultValue() {
 	if p.at(lexer.EQUALS) {
 		p.token()
 	}
+	p.skipNewlines()
 
 	// Parse expression (for now, just consume one token - string literal, number, etc.)
 	// TODO: Full expression parsing in later iteration
-	if !p.at(lexer.EOF) && !p.at(lexer.RPAREN) && !p.at(lexer.COMMA) && !p.at(lexer.NEWLINE) {
+	if p.at(lexer.EOF) || p.at(lexer.RPAREN) || p.at(lexer.COMMA) {
+		p.errorWithDetails(
+			"missing default parameter value",
+			"function parameter default value",
+			"Add a value after '='",
+		)
+	} else {
 		p.token()
 	}
 
@@ -2190,6 +2197,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 		}
 
 		// Parse and validate parameter value
+		p.skipNewlines()
 		valueToken := p.current()
 
 		// Check if this is a simple literal or a complex expression (object/array)

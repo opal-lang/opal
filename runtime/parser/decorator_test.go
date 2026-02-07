@@ -116,6 +116,17 @@ func TestDecoratorParamsWithValidation_DeprecatedParamRemapUpdatesProvidedParams
 	}
 }
 
+func TestDecoratorParameterValue_AllowsNewlineAfterEquals(t *testing.T) {
+	tree := ParseString(`@env(
+	property=
+	"HOME"
+)`)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+}
+
 // TestDecoratorDetection tests that parser recognizes registered decorators
 func TestDecoratorDetection(t *testing.T) {
 	tests := []struct {
