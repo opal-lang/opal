@@ -46,9 +46,28 @@ func init() {
 }
 
 func TestPlanNew_DecoratorArgTypes(t *testing.T) {
-	// Single-line syntax - parser doesn't support multi-line decorator args yet
 	// Arguments must be sorted alphabetically for plan validation
-	source := `@types.test(boolVal=true, durationVal=5s, floatVal=1.25, intArray=[1, 2], intVal=3, objectVal={name: "api", count: 2, meta: {enabled: true}}, stringArray=["alpha", "beta"]) { echo "ok" }`
+	source := `@types.test(
+		boolVal=true,
+		durationVal=5s,
+		floatVal=1.25,
+		intArray=[
+			1,
+			2,
+		],
+		intVal=3,
+		objectVal={
+			name: "api",
+			count: 2,
+			meta: {
+				enabled: true,
+			},
+		},
+		stringArray=[
+			"alpha",
+			"beta",
+		],
+	) { echo "ok" }`
 
 	tree := parser.ParseString(source)
 	if len(tree.Errors) > 0 {

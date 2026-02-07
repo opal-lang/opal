@@ -353,10 +353,17 @@ func (p *parser) paramList() {
 
 	// Expect '('
 	p.expect(lexer.LPAREN, "parameter list")
+	p.skipNewlines()
 
 	// Parse parameters (comma-separated)
 	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RPAREN) || p.at(lexer.EOF) {
+			break
+		}
+
 		p.param()
+		p.skipNewlines()
 
 		// If there's a comma, consume it and continue
 		if !p.at(lexer.COMMA) {
@@ -364,6 +371,7 @@ func (p *parser) paramList() {
 			break
 		}
 		p.token()
+		p.skipNewlines()
 	}
 
 	// Expect ')'
@@ -443,10 +451,17 @@ func (p *parser) defaultValue() {
 	if p.at(lexer.EQUALS) {
 		p.token()
 	}
+	p.skipNewlines()
 
 	// Parse expression (for now, just consume one token - string literal, number, etc.)
 	// TODO: Full expression parsing in later iteration
-	if !p.at(lexer.EOF) && !p.at(lexer.RPAREN) && !p.at(lexer.COMMA) {
+	if p.at(lexer.EOF) || p.at(lexer.RPAREN) || p.at(lexer.COMMA) {
+		p.errorWithDetails(
+			"missing default parameter value",
+			"function parameter default value",
+			"Add a value after '='",
+		)
+	} else {
 		p.token()
 	}
 
@@ -1590,15 +1605,23 @@ func (p *parser) primary() {
 func (p *parser) arrayLiteral() {
 	kind := p.start(NodeArrayLiteral)
 	p.expect(lexer.LSQUARE, "array literal") // Consume '['
+	p.skipNewlines()
 
 	// Parse elements
 	for !p.at(lexer.RSQUARE) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RSQUARE) || p.at(lexer.EOF) {
+			break
+		}
+
 		// Parse element expression
 		p.expression()
+		p.skipNewlines()
 
 		// Check for comma or end of array
 		if p.at(lexer.COMMA) {
 			p.token() // Consume comma
+			p.skipNewlines()
 			// Allow trailing comma before ]
 			if p.at(lexer.RSQUARE) {
 				break
@@ -1618,15 +1641,23 @@ func (p *parser) arrayLiteral() {
 func (p *parser) objectLiteral() {
 	kind := p.start(NodeObjectLiteral)
 	p.expect(lexer.LBRACE, "object literal") // Consume '{'
+	p.skipNewlines()
 
 	// Parse fields
 	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RBRACE) || p.at(lexer.EOF) {
+			break
+		}
+
 		// Parse field: key: value
 		p.objectField()
+		p.skipNewlines()
 
 		// Check for comma or end of object
 		if p.at(lexer.COMMA) {
 			p.token() // Consume comma
+			p.skipNewlines()
 			// Allow trailing comma before }
 			if p.at(lexer.RBRACE) {
 				break
@@ -1661,6 +1692,7 @@ func (p *parser) objectField() {
 		return
 	}
 	p.token() // Consume ':'
+	p.skipNewlines()
 
 	// Parse value expression
 	p.expression()
@@ -2033,6 +2065,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 
 	paramListKind := p.start(NodeParamList)
 	p.token() // Consume (
+	p.skipNewlines()
 
 	// Get ordered parameters for positional mapping
 	orderedParams := schema.GetOrderedParameters()
@@ -2041,6 +2074,11 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 
 	// Parse parameters until we hit )
 	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RPAREN) || p.at(lexer.EOF) {
+			break
+		}
+
 		paramKind := p.start(NodeParam)
 
 		// Determine if this is a named or positional parameter
@@ -2087,6 +2125,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 					// Check if it's a deprecated parameter name
 					if schema.DeprecatedParameters != nil {
 						if newName, isDeprecated := schema.DeprecatedParameters[paramName]; isDeprecated {
+							oldParamName := paramName
 							// Emit warning about deprecated parameter name
 							p.warningWithDetails(
 								fmt.Sprintf("parameter '%s' is deprecated for @%s", paramName, decoratorName),
@@ -2097,8 +2136,8 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 							paramName = newName
 							paramSchema, paramExists = schema.Parameters[paramName]
 							// Update providedParams to use new name
-							delete(providedParams, paramName) // Remove old name
-							providedParams[newName] = true    // Add new name
+							delete(providedParams, oldParamName) // Remove old name
+							providedParams[newName] = true       // Add new name
 						}
 					}
 
@@ -2158,6 +2197,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 		}
 
 		// Parse and validate parameter value
+		p.skipNewlines()
 		valueToken := p.current()
 
 		// Check if this is a simple literal or a complex expression (object/array)
@@ -2189,15 +2229,18 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 		}
 
 		p.finish(paramKind)
+		p.skipNewlines()
 
 		// Check for comma (more parameters)
 		if p.at(lexer.COMMA) {
 			p.token() // Consume comma
+			p.skipNewlines()
 		} else if !p.at(lexer.RPAREN) {
 			p.errorUnexpected("',' or ')'")
 			break
 		}
 	}
+	p.skipNewlines()
 
 	if !p.at(lexer.RPAREN) {
 		p.errorExpected(lexer.RPAREN, "')'")
@@ -3106,6 +3149,13 @@ func (p *parser) current() lexer.Token {
 func (p *parser) advance() {
 	if p.pos < len(p.tokens) {
 		p.pos++
+	}
+}
+
+// skipNewlines advances past consecutive newline separator tokens.
+func (p *parser) skipNewlines() {
+	for p.at(lexer.NEWLINE) {
+		p.advance()
 	}
 }
 
