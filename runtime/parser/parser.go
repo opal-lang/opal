@@ -2118,6 +2118,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 					// Check if it's a deprecated parameter name
 					if schema.DeprecatedParameters != nil {
 						if newName, isDeprecated := schema.DeprecatedParameters[paramName]; isDeprecated {
+							oldParamName := paramName
 							// Emit warning about deprecated parameter name
 							p.warningWithDetails(
 								fmt.Sprintf("parameter '%s' is deprecated for @%s", paramName, decoratorName),
@@ -2128,8 +2129,8 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 							paramName = newName
 							paramSchema, paramExists = schema.Parameters[paramName]
 							// Update providedParams to use new name
-							delete(providedParams, paramName) // Remove old name
-							providedParams[newName] = true    // Add new name
+							delete(providedParams, oldParamName) // Remove old name
+							providedParams[newName] = true       // Add new name
 						}
 					}
 

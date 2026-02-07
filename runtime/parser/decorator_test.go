@@ -7,6 +7,7 @@ import (
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/types"
 	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
+	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // Test decorator implementations for parser tests
@@ -64,6 +65,54 @@ func init() {
 	}
 	if err := decorator.Register("deploy", &DeployDecorator{}); err != nil {
 		panic(err)
+	}
+}
+
+func TestDecoratorParamsWithValidation_DeprecatedParamRemapUpdatesProvidedParams(t *testing.T) {
+	lex := lexer.NewLexer()
+	lex.Init([]byte(`(legacy="value")`))
+
+	p := &parser{
+		tokens:   lex.GetTokens(),
+		config:   &ParserConfig{},
+		events:   make([]Event, 0, 8),
+		errors:   make([]ParseError, 0, 1),
+		warnings: make([]ParseWarning, 0, 1),
+	}
+
+	schema := types.DecoratorSchema{
+		Parameters: map[string]types.ParamSchema{
+			"current": {
+				Name: "current",
+				Type: types.TypeString,
+			},
+		},
+		ParameterOrder:       []string{"current"},
+		DeprecatedParameters: map[string]string{"legacy": "current"},
+	}
+
+	providedParams := map[string]bool{}
+	p.decoratorParamsWithValidation("compat", schema, providedParams)
+
+	if len(p.errors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", p.errors)
+	}
+
+	if len(p.warnings) != 1 {
+		t.Fatalf("warning count mismatch: want 1, got %d", len(p.warnings))
+	}
+
+	if p.warnings[0].Message != "parameter 'legacy' is deprecated for @compat" {
+		t.Fatalf("warning message mismatch: got %q", p.warnings[0].Message)
+	}
+
+	if p.warnings[0].Suggestion != "Use 'current' instead" {
+		t.Fatalf("warning suggestion mismatch: got %q", p.warnings[0].Suggestion)
+	}
+
+	wantProvided := map[string]bool{"current": true}
+	if diff := cmp.Diff(wantProvided, providedParams); diff != "" {
+		t.Fatalf("provided params mismatch (-want +got):\n%s", diff)
 	}
 }
 

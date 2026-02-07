@@ -8,16 +8,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### 2026-02-07
 - Parser now accepts multi-line decorator parameter lists and multi-line array/object literals in expression contexts
+- Fixed deprecated decorator-parameter remapping so parser tracks the replacement parameter key correctly
+
+### 2026-02-05
+- Changed planner APIs so `planner.Plan`/`planner.PlanWithObservability` are canonical and removed the legacy planner path
+- Changed planner resolution hardening around wave execution, including deterministic decorator batch ordering and stricter decorator argument error propagation
+- Changed metaprogramming blocks (`if`, `when`, `for`, `fun`) to lexical declaration scoping so block-local declarations do not leak outward
+- Removed deprecated planner-era Vault text-resolution pathways and narrowed executor/decorator contracts around DisplayID resolution
+
+### 2026-02-04
+- Added extended plan value types (`Float`, `Duration`, `Array`, `Map`) with deterministic canonicalization for contract hashing
+- Added `PlanSalt`-driven contract stability so plan hashing can remain stable across non-semantic code movement
+- Added planner resolution telemetry for decorator batches and variable declaration/reference activity
 
 ### 2026-02-03
 - Added transport table and per-command transport IDs to plan format for contract verification
 - Enforced session-aware @env resolution for idempotent transports, with boundary checks for non-idempotent blocks
 
-### 2025-11-30
-- Added `if`/`else if`/`else` control flow to planner with plan-time condition evaluation
-- Planner now supports comparison operators (`==`, `!=`) in conditions
-- Branch pruning: untaken branches are not planned, variables in them never resolved
-- Parser enhanced to parse decorator expressions in condition context
+### 2026-02-02
+- Added redirect operator support (`>` and `>>`) to the new planner pipeline and emitted execution trees
+- Added planfmt binary/canonical round-trip support for `RedirectNode` and `LogicNode`
+- Added inline array literal collections in `for` loop headers (for example `for x in ["a", "b"]`)
+
+### 2026-01-31
+- Added the three-phase planner pipeline (`BuildIR -> Resolve -> Emit`) with parity coverage against legacy planner behavior
+
+### 2026-01-27
+- Added `TryNode` plan/emission support for `try`/`catch`/`finally` execution trees
+
+### 2026-01-13
+- Fixed DisplayID scope binding for redeclared variables and clarified planner scope behavior docs
+
+### 2026-01-05
+- Changed resolver output from a flat work queue to a pruned execution tree for richer dry-run/control-flow output
+
+### 2026-01-03
+- Added wave-based resolver for expression/decorator resolution with blocker-aware branch pruning
+
+### 2025-12-29
+- Added IR builder for planner rewrite to construct execution graphs from parser events
+- Fixed range-pattern evaluation to correctly handle ranges starting at `0`
+
+### 2025-12-27
+- Added planner expression IR and execution graph foundations for the planner rewrite
+- Added stateless `Vault.Resolve(text, transport, site)` for explicit-context planner resolution
+
+### 2025-12-01
+- Added plan-time `if`/`else if`/`else` branch evaluation with untaken-branch pruning
+- Added comparison operator support (`==`, `!=`) in planner conditions
+- Parser now recognizes decorator expressions in condition contexts
 
 ### 2025-11-29
 - Added transport boundary enforcement for decorator isolation (`@env` blocked at boundaries, `@var` can cross)
