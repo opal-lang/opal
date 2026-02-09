@@ -1,0 +1,115 @@
+package executor
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/sdk"
+	_ "github.com/opal-lang/opal/runtime/decorators"
+)
+
+func monitoredFactory() (sessionFactory, map[string]*decorator.SessionStats) {
+	stats := map[string]*decorator.SessionStats{}
+	var mu sync.Mutex
+
+	factory := func(transportID string) (decorator.Session, error) {
+		var base decorator.Session = decorator.NewLocalSession()
+		if transportID != "local" {
+			base = &transportScopedSession{id: transportID, session: base}
+		}
+
+		monitored := decorator.NewMonitoredSession(base)
+		mu.Lock()
+		stats[transportID] = monitored.Stats()
+		mu.Unlock()
+		return monitored, nil
+	}
+
+	return factory, stats
+}
+
+func TestExecuteClosesSessionsOnSuccess(t *testing.T) {
+	factory, stats := monitoredFactory()
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.SequenceNode{Nodes: []sdk.TreeNode{
+			&sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo local"}},
+			&sdk.CommandNode{Name: "@shell", TransportID: "transport:A", Args: map[string]any{"command": "echo remote"}},
+		}},
+	}}
+
+	result, err := Execute(context.Background(), steps, Config{sessionFactory: factory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, stats["local"].CloseCalls); diff != "" {
+		t.Fatalf("local close calls mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, stats["transport:A"].CloseCalls); diff != "" {
+		t.Fatalf("transport:A close calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecuteClosesSessionsOnFailure(t *testing.T) {
+	factory, stats := monitoredFactory()
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.SequenceNode{Nodes: []sdk.TreeNode{
+			&sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo local"}},
+			&sdk.CommandNode{Name: "@shell", TransportID: "transport:A", Args: map[string]any{"command": "exit 7"}},
+		}},
+	}}
+
+	result, err := Execute(context.Background(), steps, Config{sessionFactory: factory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(7, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, stats["local"].CloseCalls); diff != "" {
+		t.Fatalf("local close calls mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, stats["transport:A"].CloseCalls); diff != "" {
+		t.Fatalf("transport:A close calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
+	factory, stats := monitoredFactory()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.CommandNode{
+			Name:        "@shell",
+			TransportID: "transport:A",
+			Args:        map[string]any{"command": "sleep 5"},
+		},
+	}}
+
+	result, err := Execute(ctx, steps, Config{sessionFactory: factory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(true, result.ExitCode != 0); diff != "" {
+		t.Fatalf("expected non-zero exit code on cancellation (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, stats["transport:A"].CloseCalls); diff != "" {
+		t.Fatalf("transport:A close calls mismatch (-want +got):\n%s", diff)
+	}
+}

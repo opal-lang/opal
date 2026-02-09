@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-09
+- Changed executor internals to a single tree-runner path with transport-scoped session selection and command `TransportID` routing
+- Added run-scoped transport session reuse with per-transport env/workdir freeze and guaranteed session cleanup on success, failure, and cancellation
+- Added concrete execution semantics for `@retry`, `@timeout`, and `@parallel`, including timeout cancellation propagation and sandboxed parallel branch isolation
+
 ### 2026-02-07
 - Parser now accepts multi-line decorator parameter lists and multi-line array/object literals in expression contexts
 - Fixed deprecated decorator-parameter remapping so parser tracks the replacement parameter key correctly
