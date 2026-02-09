@@ -1,7 +1,9 @@
 package decorators
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
 )
@@ -35,10 +37,56 @@ type timeoutNode struct {
 }
 
 // Execute implements the ExecNode interface.
-// Stub implementation: just executes without timeout for now.
 func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	// TODO: Implement actual timeout logic with context cancellation
-	return n.next.Execute(ctx)
+	if n.next == nil {
+		return decorator.Result{ExitCode: 0}, nil
+	}
+
+	duration, err := n.duration()
+	if err != nil {
+		return decorator.Result{ExitCode: decorator.ExitFailure}, err
+	}
+
+	parent := ctx.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(parent, duration)
+	defer cancel()
+
+	result, execErr := n.next.Execute(ctx.WithContext(timeoutCtx))
+	if timeoutCtx.Err() != nil {
+		return decorator.Result{ExitCode: decorator.ExitCanceled}, timeoutCtx.Err()
+	}
+
+	return result, execErr
+}
+
+func (n *timeoutNode) duration() (time.Duration, error) {
+	raw, ok := n.params["duration"]
+	if !ok {
+		return 0, fmt.Errorf("@timeout requires duration parameter")
+	}
+
+	switch v := raw.(type) {
+	case time.Duration:
+		if v <= 0 {
+			return 0, fmt.Errorf("@timeout duration must be > 0")
+		}
+		return v, nil
+	case string:
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			return 0, fmt.Errorf("invalid @timeout duration %q: %w", v, err)
+		}
+		if parsed <= 0 {
+			return 0, fmt.Errorf("@timeout duration must be > 0")
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("@timeout duration must be duration string")
+	}
 }
 
 // Register @timeout decorator with the global registry

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opal-lang/opal/core/decorator"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -110,4 +111,33 @@ func TestContextWithMethodsPreservePipes(t *testing.T) {
 	withWd := withPipes.WithWorkdir("/tmp")
 	assert.Equal(t, stdin, withWd.Stdin())
 	assert.Equal(t, stdout, withWd.StdoutPipe())
+}
+
+func TestContextArgDurationParsesString(t *testing.T) {
+	ctx := newExecutionContext(map[string]interface{}{"duration": "150ms"}, nil, context.Background())
+	assert.Equal(t, 150*time.Millisecond, ctx.ArgDuration("duration"))
+}
+
+func TestContextArgDurationReturnsZeroForInvalid(t *testing.T) {
+	ctx := newExecutionContext(map[string]interface{}{"duration": "invalid"}, nil, context.Background())
+	assert.Equal(t, time.Duration(0), ctx.ArgDuration("duration"))
+}
+
+func TestContextTransportUsesTransportSession(t *testing.T) {
+	exec := &executor{sessions: newSessionRuntime(func(transportID string) (decorator.Session, error) {
+		base := decorator.NewLocalSession()
+		if transportID == "local" {
+			return base, nil
+		}
+		return &transportScopedSession{id: transportID, session: base}, nil
+	})}
+
+	ctx := newExecutionContext(map[string]interface{}{}, exec, context.Background())
+	transportCtx := ctx.(*executionContext).withTransportID("transport:A")
+
+	transport, ok := transportCtx.Transport().(*sessionTransport)
+	if !ok {
+		t.Fatalf("expected sessionTransport, got %T", transportCtx.Transport())
+	}
+	assert.Equal(t, "transport:A", transport.session.ID())
 }

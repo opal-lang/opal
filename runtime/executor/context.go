@@ -16,13 +16,14 @@ import (
 // executionContext implements sdk.ExecutionContext
 // All fields are immutable - modifications create new contexts
 type executionContext struct {
-	executor   *executor
-	args       map[string]interface{} // Decorator arguments (from sdk.Command)
-	ctx        context.Context
-	environ    map[string]string // Immutable snapshot
-	workdir    string            // Immutable snapshot
-	stdin      io.Reader         // Piped input (nil if not piped)
-	stdoutPipe io.Writer         // Piped output (nil if not piped)
+	executor    *executor
+	args        map[string]interface{} // Decorator arguments (from sdk.Command)
+	ctx         context.Context
+	transportID string
+	environ     map[string]string // Immutable snapshot
+	workdir     string            // Immutable snapshot
+	stdin       io.Reader         // Piped input (nil if not piped)
+	stdoutPipe  io.Writer         // Piped output (nil if not piped)
 }
 
 // newExecutionContext creates a new execution context for a decorator
@@ -39,13 +40,14 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 	}
 
 	return &executionContext{
-		executor:   exec,
-		args:       args,
-		ctx:        ctx,
-		environ:    captureEnviron(), // Immutable snapshot
-		workdir:    wd,               // Immutable snapshot
-		stdin:      nil,              // Root context has no piped input
-		stdoutPipe: nil,              // Root context has no piped output
+		executor:    exec,
+		args:        args,
+		ctx:         ctx,
+		transportID: "local",
+		environ:     captureEnviron(), // Immutable snapshot
+		workdir:     wd,               // Immutable snapshot
+		stdin:       nil,              // Root context has no piped input
+		stdoutPipe:  nil,              // Root context has no piped output
 	}
 }
 
@@ -101,12 +103,25 @@ func (e *executionContext) ArgBool(key string) bool {
 	return false
 }
 
-// ArgDuration retrieves a duration argument
-// TODO: Implement when SDK supports Duration type
+// ArgDuration retrieves a duration argument.
 func (e *executionContext) ArgDuration(key string) time.Duration {
-	// For now, durations are stored as strings and parsed
-	// This will be updated when SDK adds Duration support
-	_ = key
+	if val, ok := e.args[key]; ok {
+		switch v := val.(type) {
+		case time.Duration:
+			return v
+		case string:
+			parsed, err := time.ParseDuration(v)
+			if err == nil {
+				return parsed
+			}
+		case int64:
+			return time.Duration(v)
+		case int:
+			return time.Duration(v)
+		case float64:
+			return time.Duration(v)
+		}
+	}
 	return 0
 }
 
@@ -136,13 +151,14 @@ func (e *executionContext) WithContext(ctx context.Context) sdk.ExecutionContext
 	invariant.NotNil(ctx, "context")
 
 	return &executionContext{
-		executor:   e.executor,
-		args:       e.args,
-		ctx:        ctx,
-		environ:    e.environ,    // Share immutable snapshot
-		workdir:    e.workdir,    // Share immutable snapshot
-		stdin:      e.stdin,      // Preserve pipes
-		stdoutPipe: e.stdoutPipe, // Preserve pipes
+		executor:    e.executor,
+		args:        e.args,
+		ctx:         ctx,
+		transportID: e.transportID,
+		environ:     e.environ,    // Share immutable snapshot
+		workdir:     e.workdir,    // Share immutable snapshot
+		stdin:       e.stdin,      // Preserve pipes
+		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
 }
 
@@ -158,13 +174,14 @@ func (e *executionContext) WithEnviron(env map[string]string) sdk.ExecutionConte
 	}
 
 	return &executionContext{
-		executor:   e.executor,
-		args:       e.args,
-		ctx:        e.ctx,
-		environ:    envCopy,
-		workdir:    e.workdir,
-		stdin:      e.stdin,      // Preserve pipes
-		stdoutPipe: e.stdoutPipe, // Preserve pipes
+		executor:    e.executor,
+		args:        e.args,
+		ctx:         e.ctx,
+		transportID: e.transportID,
+		environ:     envCopy,
+		workdir:     e.workdir,
+		stdin:       e.stdin,      // Preserve pipes
+		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
 }
 
@@ -202,13 +219,14 @@ func (e *executionContext) WithWorkdir(dir string) sdk.ExecutionContext {
 	resolved = filepath.Clean(resolved)
 
 	return &executionContext{
-		executor:   e.executor,
-		args:       e.args,
-		ctx:        e.ctx,
-		environ:    e.environ,
-		workdir:    resolved,
-		stdin:      e.stdin,      // Preserve pipes
-		stdoutPipe: e.stdoutPipe, // Preserve pipes
+		executor:    e.executor,
+		args:        e.args,
+		ctx:         e.ctx,
+		transportID: e.transportID,
+		environ:     e.environ,
+		workdir:     resolved,
+		stdin:       e.stdin,      // Preserve pipes
+		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
 }
 
@@ -233,13 +251,44 @@ func (e *executionContext) Clone(
 	invariant.NotNil(args, "args")
 
 	return &executionContext{
-		executor:   e.executor,
-		args:       args,
-		ctx:        e.ctx,      // INHERIT parent context
-		environ:    e.environ,  // INHERIT environment
-		workdir:    e.workdir,  // INHERIT workdir
-		stdin:      stdin,      // NEW (may be nil)
-		stdoutPipe: stdoutPipe, // NEW (may be nil)
+		executor:    e.executor,
+		args:        args,
+		ctx:         e.ctx, // INHERIT parent context
+		transportID: e.transportID,
+		environ:     e.environ,  // INHERIT environment
+		workdir:     e.workdir,  // INHERIT workdir
+		stdin:       stdin,      // NEW (may be nil)
+		stdoutPipe:  stdoutPipe, // NEW (may be nil)
+	}
+}
+
+func (e *executionContext) withTransportID(transportID string) *executionContext {
+	if transportID == "" {
+		transportID = "local"
+	}
+
+	return &executionContext{
+		executor:    e.executor,
+		args:        e.args,
+		ctx:         e.ctx,
+		transportID: transportID,
+		environ:     e.environ,
+		workdir:     e.workdir,
+		stdin:       e.stdin,
+		stdoutPipe:  e.stdoutPipe,
+	}
+}
+
+func (e *executionContext) withPipes(stdin io.Reader, stdout io.Writer) *executionContext {
+	return &executionContext{
+		executor:    e.executor,
+		args:        e.args,
+		ctx:         e.ctx,
+		transportID: e.transportID,
+		environ:     e.environ,
+		workdir:     e.workdir,
+		stdin:       stdin,
+		stdoutPipe:  stdout,
 	}
 }
 
@@ -247,9 +296,17 @@ func (e *executionContext) Clone(
 // For local execution, this returns a LocalTransport.
 // Decorators like @ssh.connect wrap ExecutionContext and return their own transport.
 func (e *executionContext) Transport() interface{} {
-	// Return LocalTransport for local execution
-	// Future: decorators like @ssh.connect will wrap context and return SSHTransport
-	return &sdkexec.LocalTransport{}
+	if e.executor == nil || e.executor.sessions == nil {
+		return &sdkexec.LocalTransport{}
+	}
+
+	baseSession, err := e.executor.sessions.SessionFor(e.transportID)
+	if err != nil {
+		return &sdkexec.LocalTransport{}
+	}
+
+	session := sessionForExecutionContext(baseSession, e)
+	return newSessionTransport(session)
 }
 
 // captureEnviron captures current environment as immutable snapshot
