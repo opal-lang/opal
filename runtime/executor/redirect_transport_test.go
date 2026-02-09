@@ -87,3 +87,48 @@ func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
 		t.Fatalf("sink output mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestRedirectSinkInheritsWrapperTransportContext(t *testing.T) {
+	registerSessionBoundaryDecorator(t)
+
+	sink := &captureSink{}
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.CommandNode{
+			Name: "@test.session.boundary",
+			Args: map[string]any{"id": "transport:boundary"},
+			Block: []sdk.Step{{
+				ID: 2,
+				Tree: &sdk.RedirectNode{
+					Source: &sdk.CommandNode{
+						Name: "@shell",
+						Args: map[string]any{"command": "echo routed"},
+					},
+					Sink: sink,
+					Mode: sdk.RedirectOverwrite,
+				},
+			}},
+		},
+	}}
+
+	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, sink.openCount); diff != "" {
+		t.Fatalf("sink open count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"transport:boundary"}, sink.transportIDs); diff != "" {
+		t.Fatalf("transport context mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"transport:boundary"}, sink.sessionIDs); diff != "" {
+		t.Fatalf("session routing mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("routed\n", sink.output.String()); diff != "" {
+		t.Fatalf("sink output mismatch (-want +got):\n%s", diff)
+	}
+}

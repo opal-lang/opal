@@ -48,15 +48,15 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 
 func sourceTransportID(node sdk.TreeNode) string {
 	if node == nil {
-		return "local"
+		return ""
 	}
 
 	switch n := node.(type) {
 	case *sdk.CommandNode:
-		return normalizedTransportID(n.TransportID)
+		return n.TransportID
 	case *sdk.PipelineNode:
 		if len(n.Commands) == 0 {
-			return "local"
+			return ""
 		}
 		return sourceTransportID(n.Commands[0])
 	case *sdk.RedirectNode:
@@ -67,10 +67,10 @@ func sourceTransportID(node sdk.TreeNode) string {
 		return sourceTransportID(n.Left)
 	case *sdk.SequenceNode:
 		if len(n.Nodes) == 0 {
-			return "local"
+			return ""
 		}
 		return sourceTransportID(n.Nodes[0])
 	default:
-		return "local"
+		return ""
 	}
 }

@@ -15,6 +15,8 @@ import (
 
 type sessionIDCheckDecorator struct{}
 
+type sessionBoundaryDecorator struct{}
+
 func (d *sessionIDCheckDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("test.sessionid.check").
 		Summary("Checks active session identifier").
@@ -22,11 +24,31 @@ func (d *sessionIDCheckDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
+func (d *sessionBoundaryDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.session.boundary").
+		Summary("Runs a block with an overridden session transport ID").
+		Roles(decorator.RoleWrapper).
+		ParamString("id", "Session identifier to use in the block").
+		Required().
+		Done().
+		Block(decorator.BlockRequired).
+		Build()
+}
+
 func (d *sessionIDCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return &sessionIDCheckNode{params: params}
 }
 
+func (d *sessionBoundaryDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return &sessionBoundaryNode{next: next, params: params}
+}
+
 type sessionIDCheckNode struct {
+	params map[string]any
+}
+
+type sessionBoundaryNode struct {
+	next   decorator.ExecNode
 	params map[string]any
 }
 
@@ -39,7 +61,24 @@ func (n *sessionIDCheckNode) Execute(ctx decorator.ExecContext) (decorator.Resul
 	return decorator.Result{ExitCode: 0}, nil
 }
 
-var registerSessionIDCheckDecoratorOnce sync.Once
+func (n *sessionBoundaryNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+	if n.next == nil {
+		return decorator.Result{ExitCode: 0}, nil
+	}
+
+	id, _ := n.params["id"].(string)
+	if id == "" {
+		return decorator.Result{ExitCode: 1}, fmt.Errorf("missing session id")
+	}
+
+	child := ctx.WithSession(&transportScopedSession{id: id, session: ctx.Session})
+	return n.next.Execute(child)
+}
+
+var (
+	registerSessionIDCheckDecoratorOnce  sync.Once
+	registerSessionBoundaryDecoratorOnce sync.Once
+)
 
 func registerSessionIDCheckDecorator(t *testing.T) {
 	t.Helper()
@@ -49,6 +88,17 @@ func registerSessionIDCheckDecorator(t *testing.T) {
 	})
 	if registerErr != nil {
 		t.Fatalf("register test.sessionid.check: %v", registerErr)
+	}
+}
+
+func registerSessionBoundaryDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerSessionBoundaryDecoratorOnce.Do(func() {
+		registerErr = decorator.Register("test.session.boundary", &sessionBoundaryDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.session.boundary: %v", registerErr)
 	}
 }
 
@@ -63,6 +113,34 @@ func TestExecuteRoutesSessionByTransportID(t *testing.T) {
 			&sdk.CommandNode{Name: "@test.sessionid.check", TransportID: "transport:A", Args: map[string]any{"expect": "transport:A"}},
 			&sdk.CommandNode{Name: "@test.sessionid.check", TransportID: "transport:B", Args: map[string]any{"expect": "transport:B"}},
 		}},
+	}}
+
+	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
+	registerSessionIDCheckDecorator(t)
+	registerSessionBoundaryDecorator(t)
+
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.CommandNode{
+			Name: "@test.session.boundary",
+			Args: map[string]any{"id": "transport:boundary"},
+			Block: []sdk.Step{{
+				ID: 2,
+				Tree: &sdk.CommandNode{
+					Name: "@test.sessionid.check",
+					Args: map[string]any{"expect": "transport:boundary"},
+				},
+			}},
+		},
 	}}
 
 	result, err := Execute(context.Background(), steps, Config{}, testVault())

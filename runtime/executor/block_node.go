@@ -35,6 +35,9 @@ func (n *blockNode) childContext(ctx decorator.ExecContext) sdk.ExecutionContext
 		child = typed.withPipes(ctx.Stdin, ctx.Stdout)
 	}
 	if ctx.Session != nil {
+		if typed, ok := child.(*executionContext); ok {
+			child = typed.withTransportID(normalizedTransportID(ctx.Session.ID()))
+		}
 		child = child.WithEnviron(ctx.Session.Env())
 		child = child.WithWorkdir(ctx.Session.Cwd())
 	}

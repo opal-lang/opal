@@ -34,8 +34,19 @@ func withExecutionTransport(execCtx sdk.ExecutionContext, transportID string) sd
 	if !ok {
 		return execCtx
 	}
+	if transportID == "" {
+		return execCtx
+	}
 
 	return ec.withTransportID(normalizedTransportID(transportID))
+}
+
+func executionTransportID(execCtx sdk.ExecutionContext) string {
+	ec, ok := execCtx.(*executionContext)
+	if !ok {
+		return "local"
+	}
+	return normalizedTransportID(ec.transportID)
 }
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
@@ -85,7 +96,7 @@ func (e *executor) executeDecorator(
 
 	if e.vault != nil {
 		var err error
-		params, err = e.resolveDisplayIDs(params, cmd.Name, cmd.TransportID)
+		params, err = e.resolveDisplayIDs(params, cmd.Name, executionTransportID(execCtx))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving secrets: %v\n", err)
 			return 1
@@ -105,7 +116,7 @@ func (e *executor) executeDecorator(
 		node = next
 	}
 
-	baseSession, sessionErr := e.sessions.SessionFor(cmd.TransportID)
+	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
 	if sessionErr != nil {
 		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
 		return 1
