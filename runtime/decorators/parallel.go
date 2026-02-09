@@ -62,9 +62,12 @@ func (n *parallelNode) Execute(ctx decorator.ExecContext) (decorator.Result, err
 	failureMode := n.failureMode()
 
 	runCtx := ctx.Context
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	cancel := func() {}
 	if failureMode == "fail_fast" {
-		runCtx, cancel = context.WithCancel(ctx.Context)
+		runCtx, cancel = context.WithCancel(runCtx)
 	}
 	defer cancel()
 

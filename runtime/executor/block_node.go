@@ -12,15 +12,7 @@ type blockNode struct {
 }
 
 func (n *blockNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	child := n.execCtx.WithContext(ctx.Context)
-	if typed, ok := child.(*executionContext); ok {
-		child = typed.withPipes(ctx.Stdin, ctx.Stdout)
-	}
-	if ctx.Session != nil {
-		child = child.WithEnviron(ctx.Session.Env())
-		child = child.WithWorkdir(ctx.Session.Cwd())
-	}
-
+	child := n.childContext(ctx)
 	exitCode, err := child.ExecuteBlock(n.steps)
 	return decorator.Result{ExitCode: exitCode}, err
 }
@@ -32,6 +24,12 @@ func (n *blockNode) BranchCount() int {
 func (n *blockNode) ExecuteBranch(index int, ctx decorator.ExecContext) (decorator.Result, error) {
 	invariant.Precondition(index >= 0 && index < len(n.steps), "branch index out of bounds: %d", index)
 
+	child := n.childContext(ctx)
+	exitCode, err := child.ExecuteBlock([]sdk.Step{n.steps[index]})
+	return decorator.Result{ExitCode: exitCode}, err
+}
+
+func (n *blockNode) childContext(ctx decorator.ExecContext) sdk.ExecutionContext {
 	child := n.execCtx.WithContext(ctx.Context)
 	if typed, ok := child.(*executionContext); ok {
 		child = typed.withPipes(ctx.Stdin, ctx.Stdout)
@@ -40,7 +38,5 @@ func (n *blockNode) ExecuteBranch(index int, ctx decorator.ExecContext) (decorat
 		child = child.WithEnviron(ctx.Session.Env())
 		child = child.WithWorkdir(ctx.Session.Cwd())
 	}
-
-	exitCode, err := child.ExecuteBlock([]sdk.Step{n.steps[index]})
-	return decorator.Result{ExitCode: exitCode}, err
+	return child
 }
