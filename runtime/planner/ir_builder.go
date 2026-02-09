@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
 	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
 )
@@ -742,6 +744,7 @@ func (b *irBuilder) buildDecoratorStmt() (*StatementIR, error) {
 	}
 
 	decoratorName := "@" + strings.Join(nameParts, ".")
+	args = canonicalizeDecoratorArgsForStatement(decoratorName, args)
 
 	return &StatementIR{
 		Kind:         StmtCommand,
@@ -771,9 +774,6 @@ func (b *irBuilder) buildDecoratorArgs() ([]ArgIR, error) {
 			arg, err := b.buildDecoratorArg()
 			if err != nil {
 				return nil, err
-			}
-			if arg.Name == "" {
-				arg.Name = fmt.Sprintf("arg%d", len(args)+1)
 			}
 			args = append(args, arg)
 			continue
@@ -1193,6 +1193,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 	if len(parts) > 1 {
 		selector = parts[1:]
 	}
+	argNames = canonicalizeDecoratorArgNames(name, argNames, len(selector) > 0)
 
 	// @var.X becomes a VarRef
 	if name == "var" && len(selector) > 0 {
@@ -1223,6 +1224,143 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 			ArgNames: argNames,
 		},
 	}
+}
+
+func canonicalizeDecoratorArgsForStatement(decoratorName string, args []ArgIR) []ArgIR {
+	if len(args) == 0 {
+		return args
+	}
+
+	rawNames := make([]string, len(args))
+	for i, arg := range args {
+		rawNames[i] = arg.Name
+	}
+
+	canonical := canonicalizeDecoratorArgNames(decoratorName, rawNames, false)
+	result := make([]ArgIR, len(args))
+	copy(result, args)
+	for i := range result {
+		result[i].Name = canonical[i]
+	}
+
+	return result
+}
+
+func canonicalizeDecoratorArgNames(path string, rawNames []string, hasPrimary bool) []string {
+	if len(rawNames) == 0 {
+		return nil
+	}
+
+	schema, ok := decoratorSchema(path)
+	if !ok {
+		result := make([]string, len(rawNames))
+		copy(result, rawNames)
+		return result
+	}
+
+	return canonicalizeNamesWithSchema(rawNames, schema, hasPrimary)
+}
+
+func decoratorSchema(path string) (types.DecoratorSchema, bool) {
+	trimmed := strings.TrimPrefix(path, "@")
+	if trimmed == "" {
+		return types.DecoratorSchema{}, false
+	}
+
+	entry, ok := decorator.Global().Lookup(trimmed)
+	if !ok {
+		return types.DecoratorSchema{}, false
+	}
+
+	schema := entry.Impl.Descriptor().Schema
+	if schema.Path == "" && len(schema.Parameters) == 0 && schema.PrimaryParameter == "" {
+		return types.DecoratorSchema{}, false
+	}
+
+	return schema, true
+}
+
+func canonicalizeNamesWithSchema(rawNames []string, schema types.DecoratorSchema, hasPrimary bool) []string {
+	result := make([]string, len(rawNames))
+	copy(result, rawNames)
+
+	ordered := plannerPositionalBindingOrder(schema.GetOrderedParameters())
+	namedReservations := make(map[string]bool)
+	for _, rawName := range rawNames {
+		if rawName == "" {
+			continue
+		}
+		namedReservations[canonicalParamName(schema, rawName)] = true
+	}
+
+	provided := make(map[string]bool)
+	filled := make(map[int]bool)
+	if hasPrimary && schema.PrimaryParameter != "" {
+		provided[schema.PrimaryParameter] = true
+		for i, param := range ordered {
+			if param.Name == schema.PrimaryParameter {
+				filled[i] = true
+				break
+			}
+		}
+	}
+
+	nextPos := 0
+	for i, rawName := range rawNames {
+		if rawName != "" {
+			name := canonicalParamName(schema, rawName)
+			result[i] = name
+			provided[name] = true
+			for pos, param := range ordered {
+				if param.Name == name {
+					filled[pos] = true
+					break
+				}
+			}
+			continue
+		}
+
+		for nextPos < len(ordered) {
+			candidate := ordered[nextPos]
+			if !filled[nextPos] && !provided[candidate.Name] && !namedReservations[candidate.Name] {
+				result[i] = candidate.Name
+				filled[nextPos] = true
+				provided[candidate.Name] = true
+				nextPos++
+				break
+			}
+			nextPos++
+		}
+	}
+
+	return result
+}
+
+func canonicalParamName(schema types.DecoratorSchema, name string) string {
+	if replacement, ok := schema.DeprecatedParameters[name]; ok {
+		return replacement
+	}
+	return name
+}
+
+func plannerPositionalBindingOrder(params []types.ParamSchema) []types.ParamSchema {
+	if len(params) == 0 {
+		return nil
+	}
+
+	ordered := make([]types.ParamSchema, 0, len(params))
+	for _, param := range params {
+		if param.Required {
+			ordered = append(ordered, param)
+		}
+	}
+	for _, param := range params {
+		if !param.Required {
+			ordered = append(ordered, param)
+		}
+	}
+
+	return ordered
 }
 
 // buildIdentifierExpr processes an identifier expression.

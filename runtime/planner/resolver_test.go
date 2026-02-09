@@ -89,7 +89,6 @@ func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 		Selector: []string{"HOME"},
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: "fallback"},
-			{Kind: ExprLiteral, Value: int64(2)},
 		},
 	}, func(name string) (any, bool) {
 		return nil, false
@@ -108,23 +107,20 @@ func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff("fallback", call.Params["arg1"]); diff != "" {
-		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff(int64(2), call.Params["arg2"]); diff != "" {
-		t.Errorf("arg2 mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff("fallback", call.Params["default"]); diff != "" {
+		t.Errorf("default mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestBuildValueCall_PreservesNamedAndPositionalKeys(t *testing.T) {
+func TestBuildValueCall_CanonicalizesNamedAndPositionalKeys(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
 		Name: "retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
-			{Kind: ExprLiteral, Value: int64(3)},
-			{Kind: ExprLiteral, Value: int64(4)},
+			{Kind: ExprLiteral, Value: "3s"},
+			{Kind: ExprLiteral, Value: "linear"},
 		},
-		ArgNames: []string{"b", "arg2", "arg3"},
+		ArgNames: []string{"times", "", "backoff"},
 	}, func(name string) (any, bool) {
 		return nil, false
 	})
@@ -132,24 +128,24 @@ func TestBuildValueCall_PreservesNamedAndPositionalKeys(t *testing.T) {
 		t.Fatalf("buildValueCall failed: %v", err)
 	}
 
-	if diff := cmp.Diff(int64(2), call.Params["b"]); diff != "" {
-		t.Errorf("b mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff(int64(2), call.Params["times"]); diff != "" {
+		t.Errorf("times mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(int64(3), call.Params["arg2"]); diff != "" {
-		t.Errorf("arg2 mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff("3s", call.Params["delay"]); diff != "" {
+		t.Errorf("delay mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(int64(4), call.Params["arg3"]); diff != "" {
-		t.Errorf("arg3 mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff("linear", call.Params["backoff"]); diff != "" {
+		t.Errorf("backoff mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestBuildValueCall_IgnoresPositionalLikeArgNameOverrides(t *testing.T) {
+func TestBuildValueCall_UsesPositionalWhenArgNameMissing(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
 		Name: "retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
 		},
-		ArgNames: []string{"arg9"},
+		ArgNames: []string{""},
 	}, func(name string) (any, bool) {
 		return nil, false
 	})
@@ -157,11 +153,33 @@ func TestBuildValueCall_IgnoresPositionalLikeArgNameOverrides(t *testing.T) {
 		t.Fatalf("buildValueCall failed: %v", err)
 	}
 
-	if diff := cmp.Diff(int64(2), call.Params["arg1"]); diff != "" {
-		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff(int64(2), call.Params["times"]); diff != "" {
+		t.Errorf("times mismatch (-want +got):\n%s", diff)
 	}
-	if _, exists := call.Params["arg9"]; exists {
-		t.Fatal("arg9 should not be used as override key")
+	if _, exists := call.Params["arg1"]; exists {
+		t.Fatal("arg1 should be normalized to canonical parameter name")
+	}
+}
+
+func TestBuildValueCall_CanonicalizesVarCallFormToPrimary(t *testing.T) {
+	call, err := buildValueCall(&DecoratorRef{
+		Name: "var",
+		Args: []*ExprIR{{Kind: ExprLiteral, Value: "COUNT"}},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
+
+	if call.Primary == nil {
+		t.Fatal("Primary should be set")
+	}
+	if diff := cmp.Diff("COUNT", *call.Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+	if len(call.Params) != 0 {
+		t.Fatalf("params should be empty, got %v", call.Params)
 	}
 }
 
@@ -513,12 +531,18 @@ type countingValueDecorator struct {
 }
 
 func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
-	return decorator.Descriptor{
-		Path: d.path,
-		Capabilities: decorator.Capabilities{
-			TransportScope: decorator.TransportScopeAny,
-		},
-	}
+	return decorator.NewDescriptor(d.path).
+		Summary("Capture resolver value-call metadata for tests").
+		Roles(decorator.RoleProvider).
+		PrimaryParamString("primary", "Primary selector value").
+		Done().
+		ParamString("fallback", "Fallback value").
+		Done().
+		TransportScope(decorator.TransportScopeAny).
+		Pure().
+		Idempotent().
+		Block(decorator.BlockForbidden).
+		Build()
 }
 
 func (d *captureValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
@@ -675,8 +699,8 @@ func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
 	if diff := cmp.Diff("PRIMARY", *dec.lastCalls[0].Primary); diff != "" {
 		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["arg1"]); diff != "" {
-		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["fallback"]); diff != "" {
+		t.Errorf("fallback mismatch (-want +got):\n%s", diff)
 	}
 }
 

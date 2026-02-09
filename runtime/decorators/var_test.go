@@ -259,7 +259,7 @@ func TestVarDecoratorEmptyVars(t *testing.T) {
 	}
 }
 
-func TestVarDecoratorResolveCallFormArg1(t *testing.T) {
+func TestVarDecoratorResolveCallFormArg1Rejected(t *testing.T) {
 	d := &VarDecorator{}
 	ctx := valueCtx(map[string]any{"name": "Alice"})
 
@@ -269,10 +269,10 @@ func TestVarDecoratorResolveCallFormArg1(t *testing.T) {
 	}
 
 	result := resolveSingle(t, d, ctx, call)
-	if result.Error != nil {
-		t.Fatalf("Result error: %v", result.Error)
+	if result.Error == nil {
+		t.Fatal("expected error")
 	}
-	if result.Value != "Alice" {
-		t.Errorf("Value: got %v, want %q", result.Value, "Alice")
+	if got, want := result.Error.Error(), "@var requires a variable name"; got != want {
+		t.Errorf("Error mismatch: got %q, want %q", got, want)
 	}
 }

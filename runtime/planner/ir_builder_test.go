@@ -219,8 +219,8 @@ func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
 	}
 
 	arg := args[0]
-	if arg.Name != "arg1" {
-		t.Errorf("Arg.Name = %q, want %q", arg.Name, "arg1")
+	if arg.Name != "property" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "property")
 	}
 	if arg.Value == nil {
 		t.Fatal("Arg.Value is nil")
@@ -246,7 +246,7 @@ func TestBuildIR_VarDecl_DecoratorRef_MixedArgNamesPreserved(t *testing.T) {
 	}
 
 	dec := stmt.VarDecl.Value.Decorator
-	if diff := cmp.Diff([]string{"delay", "arg2", "backoff"}, dec.ArgNames); diff != "" {
+	if diff := cmp.Diff([]string{"delay", "times", "backoff"}, dec.ArgNames); diff != "" {
 		t.Errorf("Decorator.ArgNames mismatch (-want +got):\n%s", diff)
 	}
 }
