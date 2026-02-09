@@ -49,10 +49,9 @@ func TestContextCancellationStopsExecution(t *testing.T) {
 // TestTimeoutPropagatesThroughRedirects verifies that context timeout
 // is respected even when executing redirects.
 func TestTimeoutPropagatesThroughRedirects(t *testing.T) {
-	t.Skip("TODO: Implement after redirect timeout support is added")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
+	outPath := t.TempDir() + "/test-redirect-timeout.txt"
 
 	// Redirect with infinite output
 	steps := []sdk.Step{{
@@ -64,7 +63,7 @@ func TestTimeoutPropagatesThroughRedirects(t *testing.T) {
 					"command": "yes", // Infinite output
 				},
 			},
-			Sink: &sdk.FsPathSink{Path: "/tmp/test-redirect-timeout.txt"},
+			Sink: &sdk.FsPathSink{Path: outPath},
 			Mode: sdk.RedirectOverwrite,
 		},
 	}}
@@ -128,8 +127,6 @@ func TestPipelineCancellationStopsAllCommands(t *testing.T) {
 // TestNestedDecoratorCancellation verifies that cancellation propagates
 // through nested decorators (e.g., @retry { @timeout { @shell } }).
 func TestNestedDecoratorCancellation(t *testing.T) {
-	t.Skip("TODO: Implement after nested decorator support is verified")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -139,7 +136,7 @@ func TestNestedDecoratorCancellation(t *testing.T) {
 		Tree: &sdk.CommandNode{
 			Name: "@retry",
 			Args: map[string]interface{}{
-				"max_attempts": int64(5),
+				"times": int64(5),
 			},
 			Block: []sdk.Step{{
 				ID: 2,

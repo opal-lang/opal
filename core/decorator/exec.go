@@ -18,6 +18,15 @@ type ExecNode interface {
 	Execute(ctx ExecContext) (Result, error)
 }
 
+// BranchExecutor is an optional extension for block-aware execution nodes.
+// It allows wrapper decorators (like @parallel) to execute top-level block
+// branches independently while keeping executor internals generic.
+type BranchExecutor interface {
+	ExecNode
+	BranchCount() int
+	ExecuteBranch(index int, ctx ExecContext) (Result, error)
+}
+
 // ExecContext provides the execution context for command execution.
 type ExecContext struct {
 	// Context is the parent context for cancellation and deadlines
@@ -44,4 +53,24 @@ type ExecContext struct {
 	// Opal runtime creates parent span automatically
 	// Decorators can create child spans for internal tracking
 	Trace Span
+}
+
+// WithContext returns a copy with a new cancellation/deadline context.
+func (c ExecContext) WithContext(ctx context.Context) ExecContext {
+	c.Context = ctx
+	return c
+}
+
+// WithSession returns a copy with a new ambient session.
+func (c ExecContext) WithSession(session Session) ExecContext {
+	c.Session = session
+	return c
+}
+
+// WithIO returns a copy with overridden stdio streams.
+func (c ExecContext) WithIO(stdin io.Reader, stdout, stderr io.Writer) ExecContext {
+	c.Stdin = stdin
+	c.Stdout = stdout
+	c.Stderr = stderr
+	return c
 }
