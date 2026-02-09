@@ -161,6 +161,29 @@ func TestDecoratorParameterValue_AllowsNewlineAfterEquals(t *testing.T) {
 	}
 }
 
+func TestCollectNamedReservations_OnlyAtTopLevelArgStart(t *testing.T) {
+	lex := lexer.NewLexer()
+	lex.Init([]byte(`(x + y = z, times=3, delay=2s)`))
+
+	schema := types.DecoratorSchema{
+		Parameters: map[string]types.ParamSchema{
+			"times": {Name: "times", Type: types.TypeInt},
+			"delay": {Name: "delay", Type: types.TypeDuration},
+			"y":     {Name: "y", Type: types.TypeString},
+		},
+	}
+
+	reserved := collectNamedReservations(lex.GetTokens(), 1, schema)
+
+	want := map[string]bool{
+		"times": true,
+		"delay": true,
+	}
+	if diff := cmp.Diff(want, reserved); diff != "" {
+		t.Errorf("reserved mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestDecoratorDetection tests that parser recognizes registered decorators
 func TestDecoratorDetection(t *testing.T) {
 	tests := []struct {

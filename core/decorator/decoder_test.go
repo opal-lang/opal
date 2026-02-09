@@ -158,6 +158,56 @@ func TestNormalizeArgsTooManyPositional(t *testing.T) {
 	}
 }
 
+func TestNormalizeArgsRejectsPositionalGapWithoutNamedReservations(t *testing.T) {
+	schema := NewDescriptor("retry").
+		ParamInt("times", "Retry attempts").
+		Done().
+		ParamDuration("delay", "Retry delay").
+		Done().
+		Build().Schema
+
+	_, _, err := NormalizeArgs(schema, nil, map[string]any{"arg2": "5s"})
+	if err == nil {
+		t.Fatal("NormalizeArgs() error = nil, want error")
+	}
+
+	want := "invalid positional argument index: missing arg1"
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestNormalizeArgsAllowsPositionalGapCoveredByNamedArg(t *testing.T) {
+	schema := NewDescriptor("retry").
+		ParamInt("times", "Retry attempts").
+		Done().
+		ParamDuration("delay", "Retry delay").
+		Done().
+		Build().Schema
+
+	raw := map[string]any{
+		"times": 3,
+		"arg2":  "5s",
+	}
+
+	canonical, warnings, err := NormalizeArgs(schema, nil, raw)
+	if err != nil {
+		t.Fatalf("NormalizeArgs() error = %v", err)
+	}
+
+	if len(warnings) != 0 {
+		t.Fatalf("warnings length = %d, want 0", len(warnings))
+	}
+
+	want := map[string]any{
+		"times": 3,
+		"delay": "5s",
+	}
+	if diff := cmp.Diff(want, canonical); diff != "" {
+		t.Errorf("canonical args mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestNormalizeArgsDeprecatedParameterName(t *testing.T) {
 	schema := NewDescriptor("parallel").
 		ParamInt("maxConcurrency", "Deprecated parameter").

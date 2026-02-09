@@ -2278,6 +2278,7 @@ func collectNamedReservations(tokens []lexer.Token, start int, schema types.Deco
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
+	atArgStart := true
 
 	for i := start; i < len(tokens); i++ {
 		tok := tokens[i]
@@ -2286,14 +2287,26 @@ func collectNamedReservations(tokens []lexer.Token, start int, schema types.Deco
 			break
 		}
 
-		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && tok.Type == lexer.IDENTIFIER {
-			if i+1 < len(tokens) && tokens[i+1].Type == lexer.EQUALS {
-				paramName := string(tok.Text)
-				if replacement, ok := schema.DeprecatedParameters[paramName]; ok {
-					paramName = replacement
-				}
-				reserved[paramName] = true
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+			switch tok.Type {
+			case lexer.NEWLINE:
+				continue
+			case lexer.COMMA:
+				atArgStart = true
+				continue
 			}
+
+			if atArgStart && tok.Type == lexer.IDENTIFIER {
+				if i+1 < len(tokens) && tokens[i+1].Type == lexer.EQUALS {
+					paramName := string(tok.Text)
+					if replacement, ok := schema.DeprecatedParameters[paramName]; ok {
+						paramName = replacement
+					}
+					reserved[paramName] = true
+				}
+			}
+
+			atArgStart = false
 		}
 
 		switch tok.Type {

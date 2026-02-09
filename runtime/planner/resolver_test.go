@@ -143,6 +143,28 @@ func TestBuildValueCall_PreservesNamedAndPositionalKeys(t *testing.T) {
 	}
 }
 
+func TestBuildValueCall_IgnoresPositionalLikeArgNameOverrides(t *testing.T) {
+	call, err := buildValueCall(&DecoratorRef{
+		Name: "retry",
+		Args: []*ExprIR{
+			{Kind: ExprLiteral, Value: int64(2)},
+		},
+		ArgNames: []string{"arg9"},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
+
+	if diff := cmp.Diff(int64(2), call.Params["arg1"]); diff != "" {
+		t.Errorf("arg1 mismatch (-want +got):\n%s", diff)
+	}
+	if _, exists := call.Params["arg9"]; exists {
+		t.Fatal("arg9 should not be used as override key")
+	}
+}
+
 func TestBuildValueCall_VarRefArgsEvaluated(t *testing.T) {
 	lookup := func(name string) (any, bool) {
 		if name == "COUNT" {

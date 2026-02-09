@@ -24,6 +24,11 @@ type Decoder struct {
 	validator  *types.Validator
 }
 
+type positionalArg struct {
+	index int
+	value any
+}
+
 func CompileDecoder(schema types.DecoratorSchema) *Decoder {
 	params := schema.Parameters
 	if params == nil {
@@ -99,11 +104,8 @@ func (d *Decoder) NormalizeArgs(primary *string, raw map[string]any) (map[string
 		raw = map[string]any{}
 	}
 
-	type positionalArg struct {
-		index int
-		value any
-	}
 	positionals := make([]positionalArg, 0)
+	namedCount := 0
 
 	for key, value := range raw {
 		if index, ok := parsePositionalArgKey(key); ok {
@@ -129,11 +131,16 @@ func (d *Decoder) NormalizeArgs(primary *string, raw map[string]any) (map[string
 		}
 
 		canonical[targetName] = value
+		namedCount++
 	}
 
 	sort.Slice(positionals, func(i, j int) bool {
 		return positionals[i].index < positionals[j].index
 	})
+
+	if err := validatePositionalIndexes(positionals, namedCount); err != nil {
+		return nil, nil, err
+	}
 
 	for _, positional := range positionals {
 		found := ""
@@ -153,6 +160,39 @@ func (d *Decoder) NormalizeArgs(primary *string, raw map[string]any) (map[string
 	}
 
 	return canonical, warnings, nil
+}
+
+func validatePositionalIndexes(positionals []positionalArg, namedCount int) error {
+	if len(positionals) == 0 {
+		return nil
+	}
+
+	present := make(map[int]bool, len(positionals))
+	maxIndex := 0
+	for _, positional := range positionals {
+		present[positional.index] = true
+		if positional.index > maxIndex {
+			maxIndex = positional.index
+		}
+	}
+
+	missingCount := 0
+	firstMissing := 0
+	for i := 1; i <= maxIndex; i++ {
+		if present[i] {
+			continue
+		}
+		missingCount++
+		if firstMissing == 0 {
+			firstMissing = i
+		}
+	}
+
+	if missingCount > namedCount {
+		return fmt.Errorf("invalid positional argument index: missing arg%d", firstMissing)
+	}
+
+	return nil
 }
 
 func (d *Decoder) ValidateArgs(canonical map[string]any) ([]DecodeWarning, error) {
