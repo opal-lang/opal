@@ -1139,6 +1139,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 
 	var parts []string
 	var args []*ExprIR
+	var argNames []string
 
 	for b.pos < len(b.events) {
 		evt := b.events[b.pos]
@@ -1167,6 +1168,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 					for _, arg := range parsedArgs {
 						if arg.Value != nil {
 							args = append(args, arg.Value)
+							argNames = append(argNames, arg.Name)
 						}
 					}
 				}
@@ -1218,6 +1220,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 			Name:     name,
 			Selector: selector,
 			Args:     args,
+			ArgNames: argNames,
 		},
 	}
 }

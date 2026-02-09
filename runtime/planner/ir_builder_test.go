@@ -233,6 +233,24 @@ func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
 	}
 }
 
+func TestBuildIR_VarDecl_DecoratorRef_MixedArgNamesPreserved(t *testing.T) {
+	graph := buildIR(t, `var X = @retry(delay=2s, 3, backoff="constant")`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.VarDecl == nil || stmt.VarDecl.Value == nil || stmt.VarDecl.Value.Decorator == nil {
+		t.Fatal("decorator expression is nil")
+	}
+
+	dec := stmt.VarDecl.Value.Decorator
+	if diff := cmp.Diff([]string{"delay", "arg2", "backoff"}, dec.ArgNames); diff != "" {
+		t.Errorf("Decorator.ArgNames mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildIR_MultipleStatements(t *testing.T) {
 	graph := buildIR(t, `var X = 1
  echo "hello"

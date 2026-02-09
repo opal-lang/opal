@@ -73,3 +73,54 @@ func TestTimeoutUsesParentDeadlineWhenSooner(t *testing.T) {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestTimeoutRejectsMissingDuration(t *testing.T) {
+	dec := &TimeoutDecorator{}
+	node := dec.Wrap(&testExecNode{execute: func(ctx decorator.ExecContext) (decorator.Result, error) {
+		return decorator.Result{ExitCode: 0}, nil
+	}}, map[string]any{})
+
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected missing duration error")
+	}
+	if diff := cmp.Diff(decorator.ExitFailure, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("missing required parameter \"duration\"", err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestTimeoutRejectsNonDurationType(t *testing.T) {
+	dec := &TimeoutDecorator{}
+	node := dec.Wrap(&testExecNode{execute: func(ctx decorator.ExecContext) (decorator.Result, error) {
+		return decorator.Result{ExitCode: 0}, nil
+	}}, map[string]any{"duration": 5})
+
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected duration type error")
+	}
+	if diff := cmp.Diff(decorator.ExitFailure, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("parameter \"duration\" expects duration", err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestTimeoutSupportsPositionalArgumentDecode(t *testing.T) {
+	dec := &TimeoutDecorator{}
+	node := dec.Wrap(&testExecNode{execute: func(ctx decorator.ExecContext) (decorator.Result, error) {
+		return decorator.Result{ExitCode: 0}, nil
+	}}, map[string]any{"arg1": "1s"})
+
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("unexpected timeout error: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+}

@@ -359,6 +359,7 @@ func deepCopyExpr(expr *ExprIR) *ExprIR {
 			Name:     expr.Decorator.Name,
 			Selector: append([]string(nil), expr.Decorator.Selector...),
 			Args:     deepCopyExprs(expr.Decorator.Args),
+			ArgNames: append([]string(nil), expr.Decorator.ArgNames...),
 		}
 	}
 	return result
