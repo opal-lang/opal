@@ -42,6 +42,10 @@ func (d *ConfigDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decor
 // DeployDecorator is a test decorator that accepts array parameters
 type DeployDecorator struct{}
 
+// RequiredShiftDecorator is a test decorator for positional binding order.
+// It intentionally declares an optional parameter before a required one.
+type RequiredShiftDecorator struct{}
+
 func (d *DeployDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("deploy").
 		Summary("Test deployment decorator").
@@ -58,12 +62,42 @@ func (d *DeployDecorator) Wrap(next decorator.ExecNode, params map[string]any) d
 	return next // Pass through for test
 }
 
+func (d *RequiredShiftDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("required_shift").
+		Summary("Test required positional binding").
+		Roles(decorator.RoleProvider).
+		ParamString("a", "Optional parameter declared first").
+		Done().
+		ParamInt("b", "Required parameter").
+		Required().
+		Done().
+		ParamString("c", "Optional parameter declared last").
+		Done().
+		Returns(types.TypeString, "Test value").
+		Build()
+}
+
+func (d *RequiredShiftDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{
+			Value:  "ok",
+			Origin: "required_shift",
+			Error:  nil,
+		}
+	}
+	return results, nil
+}
+
 func init() {
 	// Register test decorators for parser tests
 	if err := decorator.Register("config", &ConfigDecorator{}); err != nil {
 		panic(err)
 	}
 	if err := decorator.Register("deploy", &DeployDecorator{}); err != nil {
+		panic(err)
+	}
+	if err := decorator.Register("required_shift", &RequiredShiftDecorator{}); err != nil {
 		panic(err)
 	}
 }
@@ -124,6 +158,29 @@ func TestDecoratorParameterValue_AllowsNewlineAfterEquals(t *testing.T) {
 
 	if len(tree.Errors) != 0 {
 		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+}
+
+func TestCollectNamedReservations_OnlyAtTopLevelArgStart(t *testing.T) {
+	lex := lexer.NewLexer()
+	lex.Init([]byte(`(x + y = z, times=3, delay=2s)`))
+
+	schema := types.DecoratorSchema{
+		Parameters: map[string]types.ParamSchema{
+			"times": {Name: "times", Type: types.TypeInt},
+			"delay": {Name: "delay", Type: types.TypeDuration},
+			"y":     {Name: "y", Type: types.TypeString},
+		},
+	}
+
+	reserved := collectNamedReservations(lex.GetTokens(), 1, schema)
+
+	want := map[string]bool{
+		"times": true,
+		"delay": true,
+	}
+	if diff := cmp.Diff(want, reserved); diff != "" {
+		t.Errorf("reserved mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -1326,6 +1383,11 @@ func TestPositionalParameters(t *testing.T) {
 			input:     `@retry(delay=2s, backoff="linear", 3) { echo "test" }`,
 			wantError: false,
 		},
+		{
+			name:      "mixed - positional first equivalent to named anywhere",
+			input:     `@retry(2s, times=3) { echo "test" }`,
+			wantError: false,
+		},
 
 		// === Edge Cases ===
 		{
@@ -1335,10 +1397,10 @@ func TestPositionalParameters(t *testing.T) {
 			wantMessage: "too many positional arguments",
 		},
 		{
-			name:        "duplicate parameter - positional and named",
+			name:        "positional skips named reservation",
 			input:       `@retry(3, times=5) { echo "test" }`,
 			wantError:   true,
-			wantMessage: "duplicate parameter 'times'",
+			wantMessage: "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
 		},
 		{
 			name:           "named then positional fills next slot",
@@ -1425,6 +1487,25 @@ func TestPositionalParameters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPositionalParameters_RequiredShiftLeft(t *testing.T) {
+	tree := Parse([]byte(`@required_shift(3)`))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("unexpected errors: %v", tree.Errors)
+	}
+}
+
+func TestPositionalParameters_RequiredShiftLeftTypeValidation(t *testing.T) {
+	tree := Parse([]byte(`@required_shift("abc")`))
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected error but got none")
+	}
+
+	err := tree.Errors[0]
+	if diff := cmp.Diff("parameter 'b' expects integer, got string", err.Message); diff != "" {
+		t.Errorf("message mismatch (-want +got):\n%s", diff)
 	}
 }
 

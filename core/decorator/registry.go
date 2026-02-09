@@ -14,8 +14,9 @@ type Registry struct {
 
 // Entry represents a registered decorator.
 type Entry struct {
-	Impl  Decorator // The decorator implementation
-	Roles []Role    // Auto-inferred from implemented interfaces
+	Impl    Decorator // The decorator implementation
+	Roles   []Role    // Auto-inferred from implemented interfaces
+	decoder *Decoder
 }
 
 // NewRegistry creates a new decorator registry.
@@ -51,10 +52,12 @@ func (r *Registry) register(path string, impl Decorator) error {
 
 	// Auto-infer roles from implemented interfaces
 	roles := inferRoles(impl)
+	compiledDecoder := CompileDecoder(impl.Descriptor().Schema)
 
 	r.entries[path] = Entry{
-		Impl:  impl,
-		Roles: roles,
+		Impl:    impl,
+		Roles:   roles,
+		decoder: compiledDecoder,
 	}
 
 	return nil
@@ -185,11 +188,50 @@ func (r *Registry) ResolveValues(
 		)
 	}
 
-	// Step 4: TODO - Validate parameters (enum, range, pattern from schema)
-	// This will be implemented when we have proper schema validation
+	// Step 4: Normalize + validate parameters per call (strict, schema-driven)
+	normalizedCalls := make([]ValueCall, len(calls))
+	for i, call := range calls {
+		if desc.Schema.Path == "" && len(desc.Schema.Parameters) == 0 && desc.Schema.PrimaryParameter == "" {
+			normalizedCalls[i] = call
+			continue
+		}
+
+		canonical, _, err := entry.decoder.NormalizeArgs(call.Primary, call.Params)
+		if err != nil {
+			return nil, fmt.Errorf("invalid parameters for decorator %q call %d: %w", decoratorPath, i, err)
+		}
+
+		if _, err := entry.decoder.ValidateArgs(canonical); err != nil {
+			return nil, fmt.Errorf("invalid parameters for decorator %q call %d: %w", decoratorPath, i, err)
+		}
+
+		normalized := ValueCall{
+			Path:   call.Path,
+			Params: canonical,
+		}
+
+		if desc.Schema.PrimaryParameter != "" {
+			rawPrimary, ok := canonical[desc.Schema.PrimaryParameter]
+			if ok {
+				primaryValue, ok := rawPrimary.(string)
+				if !ok {
+					return nil, fmt.Errorf(
+						"invalid parameters for decorator %q call %d: primary parameter %q must be string",
+						decoratorPath,
+						i,
+						desc.Schema.PrimaryParameter,
+					)
+				}
+				normalized.Primary = &primaryValue
+				delete(normalized.Params, desc.Schema.PrimaryParameter)
+			}
+		}
+
+		normalizedCalls[i] = normalized
+	}
 
 	// Step 5: Call decorator's Resolve method (batch)
-	results, err := valueDecorator.Resolve(ctx, calls...)
+	results, err := valueDecorator.Resolve(ctx, normalizedCalls...)
 	if err != nil {
 		return nil, err
 	}

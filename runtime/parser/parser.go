@@ -2067,8 +2067,10 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 	p.token() // Consume (
 	p.skipNewlines()
 
-	// Get ordered parameters for positional mapping
+	// Get positional binding order (required parameters shift left)
 	orderedParams := schema.GetOrderedParameters()
+	positionalParams := positionalBindingOrder(orderedParams)
+	namedReservations := collectNamedReservations(p.tokens, p.pos, schema)
 	filledPositions := make(map[int]bool)
 	nextPositionIndex := 0
 
@@ -2108,8 +2110,8 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 					)
 				}
 
-				// Find this parameter's position in orderedParams
-				for pos, param := range orderedParams {
+				// Find this parameter's position in positionalParams
+				for pos, param := range positionalParams {
 					if param.Name == paramName {
 						filledPositions[pos] = true
 						break
@@ -2157,9 +2159,9 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 		if !isNamed {
 			// Find next unfilled position
 			found := false
-			for nextPositionIndex < len(orderedParams) {
-				candidate := orderedParams[nextPositionIndex]
-				if !filledPositions[nextPositionIndex] && !providedParams[candidate.Name] {
+			for nextPositionIndex < len(positionalParams) {
+				candidate := positionalParams[nextPositionIndex]
+				if !filledPositions[nextPositionIndex] && !providedParams[candidate.Name] && !namedReservations[candidate.Name] {
 					// Use this position
 					paramSchema = candidate
 					paramName = candidate.Name
@@ -2176,7 +2178,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 				p.errorWithDetails(
 					"too many positional arguments",
 					"decorator parameters",
-					fmt.Sprintf("@%s accepts %d positional parameters", decoratorName, len(orderedParams)),
+					fmt.Sprintf("@%s accepts %d positional parameters", decoratorName, len(positionalParams)),
 				)
 				p.finish(paramKind)
 				break
@@ -2249,6 +2251,87 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 	}
 	p.token() // Consume )
 	p.finish(paramListKind)
+}
+
+func positionalBindingOrder(params []types.ParamSchema) []types.ParamSchema {
+	if len(params) == 0 {
+		return nil
+	}
+
+	ordered := make([]types.ParamSchema, 0, len(params))
+	for _, param := range params {
+		if param.Required {
+			ordered = append(ordered, param)
+		}
+	}
+	for _, param := range params {
+		if !param.Required {
+			ordered = append(ordered, param)
+		}
+	}
+
+	return ordered
+}
+
+func collectNamedReservations(tokens []lexer.Token, start int, schema types.DecoratorSchema) map[string]bool {
+	reserved := make(map[string]bool)
+	parenDepth := 0
+	braceDepth := 0
+	bracketDepth := 0
+	atArgStart := true
+
+	for i := start; i < len(tokens); i++ {
+		tok := tokens[i]
+
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && tok.Type == lexer.RPAREN {
+			break
+		}
+
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+			switch tok.Type {
+			case lexer.NEWLINE:
+				continue
+			case lexer.COMMA:
+				atArgStart = true
+				continue
+			}
+
+			if atArgStart && tok.Type == lexer.IDENTIFIER {
+				if i+1 < len(tokens) && tokens[i+1].Type == lexer.EQUALS {
+					paramName := string(tok.Text)
+					if replacement, ok := schema.DeprecatedParameters[paramName]; ok {
+						paramName = replacement
+					}
+					reserved[paramName] = true
+				}
+			}
+
+			atArgStart = false
+		}
+
+		switch tok.Type {
+		case lexer.LPAREN:
+			parenDepth++
+		case lexer.RPAREN:
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case lexer.LBRACE:
+			braceDepth++
+		case lexer.RBRACE:
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case lexer.LSQUARE:
+			bracketDepth++
+		case lexer.RSQUARE:
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		}
+	}
+
+	return reserved
 }
 
 // validateParameterType checks if the token type matches the expected parameter type

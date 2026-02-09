@@ -46,6 +46,7 @@ type DecoratorRef struct {
 	Name     string    // Decorator name: "env", "aws", "var", "shell", etc.
 	Selector []string  // Property path: ["HOME"], ["secret", "api_key"]
 	Args     []*ExprIR // For parameterized decorators: @retry(3, "1s")
+	ArgNames []string  // Argument keys aligned with Args (named keys or positional argN)
 }
 
 // SourceSpan identifies a range in source code for error messages.

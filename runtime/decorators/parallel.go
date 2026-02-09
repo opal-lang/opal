@@ -20,7 +20,7 @@ func (d *ParallelDecorator) Descriptor() decorator.Descriptor {
 		Roles(decorator.RoleWrapper).
 		ParamInt("maxConcurrency", "Maximum concurrent tasks (0=unlimited)").
 		Min(0).
-		Default(0).
+		Default(int64(0)).
 		Examples("0", "5", "10").
 		Done().
 		ParamEnum("onFailure", "Failure behavior for parallel branches").
@@ -42,6 +42,11 @@ type parallelNode struct {
 	params map[string]any
 }
 
+type parallelConfig struct {
+	MaxConcurrency int64  `decorator:"maxConcurrency"`
+	OnFailure      string `decorator:"onFailure"`
+}
+
 // Execute implements the ExecNode interface.
 func (n *parallelNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
 	if n.next == nil {
@@ -58,8 +63,20 @@ func (n *parallelNode) Execute(ctx decorator.ExecContext) (decorator.Result, err
 		return decorator.Result{ExitCode: 0}, nil
 	}
 
-	maxConcurrency := n.maxConcurrency(branchCount)
-	failureMode := n.failureMode()
+	cfg, _, err := decorator.DecodeInto[parallelConfig](
+		(&ParallelDecorator{}).Descriptor().Schema,
+		nil,
+		n.params,
+	)
+	if err != nil {
+		return decorator.Result{ExitCode: decorator.ExitFailure}, err
+	}
+
+	maxConcurrency := branchCount
+	if cfg.MaxConcurrency > 0 && cfg.MaxConcurrency < int64(branchCount) {
+		maxConcurrency = int(cfg.MaxConcurrency)
+	}
+	failureMode := cfg.OnFailure
 
 	runCtx := ctx.Context
 	if runCtx == nil {
@@ -134,39 +151,6 @@ func (n *parallelNode) Execute(ctx decorator.ExecContext) (decorator.Result, err
 	}
 
 	return decorator.Result{ExitCode: 0}, nil
-}
-
-func (n *parallelNode) maxConcurrency(branchCount int) int {
-	raw, ok := n.params["maxConcurrency"]
-	if !ok {
-		return branchCount
-	}
-
-	var parsed int
-	switch v := raw.(type) {
-	case int:
-		parsed = v
-	case int64:
-		parsed = int(v)
-	case float64:
-		parsed = int(v)
-	default:
-		parsed = 0
-	}
-
-	if parsed <= 0 || parsed > branchCount {
-		return branchCount
-	}
-
-	return parsed
-}
-
-func (n *parallelNode) failureMode() string {
-	mode, _ := n.params["onFailure"].(string)
-	if mode == "wait_all" {
-		return mode
-	}
-	return "fail_fast"
 }
 
 // Register @parallel decorator with the global registry

@@ -168,3 +168,69 @@ func TestParallelHonorsMaxConcurrency(t *testing.T) {
 		t.Fatalf("max concurrency mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestParallelRejectsInvalidMaxConcurrencyType(t *testing.T) {
+	dec := &ParallelDecorator{}
+	next := &testBranchNode{branches: []func(ctx decorator.ExecContext) (decorator.Result, error){
+		func(ctx decorator.ExecContext) (decorator.Result, error) {
+			return decorator.Result{ExitCode: 0}, nil
+		},
+	}}
+
+	node := dec.Wrap(next, map[string]any{"maxConcurrency": "two"})
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected maxConcurrency type error")
+	}
+	if diff := cmp.Diff(decorator.ExitFailure, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("parameter \"maxConcurrency\" expects integer", err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParallelSupportsPositionalArgumentDecode(t *testing.T) {
+	dec := &ParallelDecorator{}
+	var active atomic.Int64
+	var maxSeen atomic.Int64
+
+	branches := []func(ctx decorator.ExecContext) (decorator.Result, error){
+		func(ctx decorator.ExecContext) (decorator.Result, error) {
+			current := active.Add(1)
+			for {
+				seen := maxSeen.Load()
+				if current <= seen || maxSeen.CompareAndSwap(seen, current) {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+			active.Add(-1)
+			return decorator.Result{ExitCode: 0}, nil
+		},
+		func(ctx decorator.ExecContext) (decorator.Result, error) {
+			current := active.Add(1)
+			for {
+				seen := maxSeen.Load()
+				if current <= seen || maxSeen.CompareAndSwap(seen, current) {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+			active.Add(-1)
+			return decorator.Result{ExitCode: 0}, nil
+		},
+	}
+
+	node := dec.Wrap(&testBranchNode{branches: branches}, map[string]any{"arg1": int64(1), "arg2": "wait_all"})
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("parallel execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(int64(1), maxSeen.Load()); diff != "" {
+		t.Fatalf("max concurrency mismatch (-want +got):\n%s", diff)
+	}
+}

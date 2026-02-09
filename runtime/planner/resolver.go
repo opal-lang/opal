@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1558,10 +1559,40 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 		if err != nil {
 			return decorator.ValueCall{}, fmt.Errorf("failed to evaluate decorator arg %d for @%s: %w", i+1, call.Path, err)
 		}
-		call.Params[fmt.Sprintf("arg%d", i+1)] = value
+
+		paramName := fmt.Sprintf("arg%d", i+1)
+		if i < len(d.ArgNames) {
+			candidate := d.ArgNames[i]
+			if candidate != "" {
+				if _, positional := parsePositionalArgKey(candidate); !positional {
+					paramName = candidate
+				}
+			}
+		}
+
+		if _, exists := call.Params[paramName]; exists {
+			return decorator.ValueCall{}, fmt.Errorf("duplicate decorator argument %q for @%s", paramName, call.Path)
+		}
+		call.Params[paramName] = value
 	}
 
 	return call, nil
+}
+
+func parsePositionalArgKey(key string) (int, bool) {
+	if !strings.HasPrefix(key, "arg") {
+		return 0, false
+	}
+	if len(key) <= 3 {
+		return 0, false
+	}
+
+	index, err := strconv.Atoi(key[3:])
+	if err != nil || index <= 0 {
+		return 0, false
+	}
+
+	return index, true
 }
 
 // buildDecoratorRaw builds a raw decorator string from a DecoratorRef.

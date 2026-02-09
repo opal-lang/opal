@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added run-scoped transport session reuse with per-transport env/workdir freeze and guaranteed session cleanup on success, failure, and cancellation
 - Added concrete execution semantics for `@retry`, `@timeout`, and `@parallel`, including timeout cancellation propagation and sandboxed parallel branch isolation
 - Fixed nested block execution to inherit wrapper session transport identity so commands, secret resolution, and redirects stay on the intended transport boundary
+- Changed decorator argument binding to deterministic required-first slot filling so mixed named+positional forms bind by next unfilled parameter (including named-before-positional forms)
 
 ### 2026-02-07
 - Parser now accepts multi-line decorator parameter lists and multi-line array/object literals in expression contexts
