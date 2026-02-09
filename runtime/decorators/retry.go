@@ -21,7 +21,7 @@ func (d *RetryDecorator) Descriptor() decorator.Descriptor {
 		ParamInt("times", "Number of retry attempts").
 		Min(1).
 		Max(100).
-		Default(3).
+		Default(int64(3)).
 		Examples("3", "5", "10").
 		Done().
 		ParamDuration("delay", "Initial delay between retries").
@@ -47,15 +47,30 @@ type retryNode struct {
 	params map[string]any
 }
 
+type retryConfig struct {
+	Times   int64         `decorator:"times"`
+	Delay   time.Duration `decorator:"delay"`
+	Backoff string        `decorator:"backoff"`
+}
+
 // Execute implements the ExecNode interface.
 func (n *retryNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
 	if n.next == nil {
 		return decorator.Result{ExitCode: 0}, nil
 	}
 
-	attempts := n.attempts()
-	delay := n.delay()
-	backoff := n.backoff()
+	cfg, _, err := decorator.DecodeInto[retryConfig](
+		(&RetryDecorator{}).Descriptor().Schema,
+		nil,
+		n.params,
+	)
+	if err != nil {
+		return decorator.Result{ExitCode: decorator.ExitFailure}, err
+	}
+
+	attempts := int(cfg.Times)
+	delay := cfg.Delay
+	backoff := cfg.Backoff
 
 	var lastResult decorator.Result
 	var lastErr error
@@ -83,59 +98,6 @@ func (n *retryNode) Execute(ctx decorator.ExecContext) (decorator.Result, error)
 	}
 
 	return lastResult, lastErr
-}
-
-func (n *retryNode) attempts() int {
-	raw, ok := n.params["times"]
-	if !ok {
-		return 3
-	}
-
-	switch v := raw.(type) {
-	case int:
-		if v > 0 {
-			return v
-		}
-	case int64:
-		if v > 0 {
-			return int(v)
-		}
-	case float64:
-		if v > 0 {
-			return int(v)
-		}
-	}
-
-	return 3
-}
-
-func (n *retryNode) delay() time.Duration {
-	raw, ok := n.params["delay"]
-	if !ok {
-		return time.Second
-	}
-
-	switch v := raw.(type) {
-	case time.Duration:
-		return v
-	case string:
-		parsed, err := time.ParseDuration(v)
-		if err == nil {
-			return parsed
-		}
-	}
-
-	return time.Second
-}
-
-func (n *retryNode) backoff() string {
-	mode, _ := n.params["backoff"].(string)
-	switch mode {
-	case "constant", "linear", "exponential":
-		return mode
-	default:
-		return "exponential"
-	}
 }
 
 func retryDelay(base time.Duration, backoff string, attempt int) time.Duration {

@@ -962,6 +962,41 @@ services: @parallel {
 deploy: @cmd.build && @cmd.test && @cmd.apply
 ```
 
+### Decorator Argument Binding
+
+Decorator arguments use one binding model:
+
+- Named arguments bind by parameter name.
+- Positional arguments are unnamed arguments that bind to the next unbound slot.
+- Slot order is: required parameters first (in declaration order), then optional parameters (in declaration order).
+- Named and positional forms can be mixed in any order.
+
+Binding algorithm (deterministic):
+
+1. Build slot order using required-first ordering.
+2. Reserve all parameters that appear as named arguments (source position does not matter).
+3. Process arguments in source order (left-to-right).
+4. For named arguments: bind by name; error if that parameter is already bound.
+5. For positional arguments: bind to the next unbound, unreserved slot in slot order.
+6. Error on duplicate assignment (same parameter bound twice) or extra positional arguments.
+
+This differs from many mainstream languages that require all positional arguments to appear before named arguments.
+
+Examples:
+
+```opal
+@example(b=2, 3, 4)   # equivalent to: @example(a=3, b=2, c=4)
+
+# If declaration order is: a(optional), b(required), c(optional)
+@example(3)           # equivalent to: @example(b=3)
+
+# Named first is valid; positional fills the next unbound slot
+@example(b=2, 3)      # equivalent to: @example(a=3, b=2)
+
+# Duplicate assignment is rejected
+@example(b=2, b=3)    # ERROR: duplicate parameter 'b'
+```
+
 ### Value Decorators and Remote Execution
 
 **IMPORTANT**: `@env` reads from the **current session's environment**, which changes based on context (local, remote, container).
@@ -1923,17 +1958,18 @@ kubectl scale deployment/@var.SERVICE --replicas=3  # Opal syntax
 
 **❌ Error:**
 ```opal
-@retry(3, delay=2s, 5)  # Positional after named
+@retry(times=3, times=5)  # Duplicate assignment to times
 ```
 
 **✅ Correct:**
 ```opal
-@retry(3, 5, delay=2s)           # Positional first
-@retry(attempts=3, delay=2s)     # All named
-@retry(3, delay=2s)              # Mixed (positional first)
+@retry(3, delay=2s)                      # times=3, delay=2s
+@retry(delay=2s, 3, backoff="constant") # times=3, delay=2s, backoff="constant"
+@retry(times=3, delay=2s)                # All named
 ```
 
-**Why:** Positional arguments must come before named arguments.
+**Why:** Positional arguments are unnamed parameters. They fill the next unbound slot
+using required-first positional order, while named arguments can appear anywhere.
 
 ### Forgetting Block Terminator for Variable Interpolation
 

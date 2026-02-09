@@ -36,15 +36,27 @@ type timeoutNode struct {
 	params map[string]any
 }
 
+type timeoutConfig struct {
+	Duration time.Duration `decorator:"duration"`
+}
+
 // Execute implements the ExecNode interface.
 func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
 	if n.next == nil {
 		return decorator.Result{ExitCode: 0}, nil
 	}
 
-	duration, err := n.duration()
+	cfg, _, err := decorator.DecodeInto[timeoutConfig](
+		(&TimeoutDecorator{}).Descriptor().Schema,
+		nil,
+		n.params,
+	)
 	if err != nil {
 		return decorator.Result{ExitCode: decorator.ExitFailure}, err
+	}
+
+	if cfg.Duration <= 0 {
+		return decorator.Result{ExitCode: decorator.ExitFailure}, fmt.Errorf("@timeout duration must be > 0")
 	}
 
 	parent := ctx.Context
@@ -52,7 +64,7 @@ func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 		parent = context.Background()
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(parent, duration)
+	timeoutCtx, cancel := context.WithTimeout(parent, cfg.Duration)
 	defer cancel()
 
 	result, execErr := n.next.Execute(ctx.WithContext(timeoutCtx))
@@ -61,32 +73,6 @@ func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 	}
 
 	return result, execErr
-}
-
-func (n *timeoutNode) duration() (time.Duration, error) {
-	raw, ok := n.params["duration"]
-	if !ok {
-		return 0, fmt.Errorf("@timeout requires duration parameter")
-	}
-
-	switch v := raw.(type) {
-	case time.Duration:
-		if v <= 0 {
-			return 0, fmt.Errorf("@timeout duration must be > 0")
-		}
-		return v, nil
-	case string:
-		parsed, err := time.ParseDuration(v)
-		if err != nil {
-			return 0, fmt.Errorf("invalid @timeout duration %q: %w", v, err)
-		}
-		if parsed <= 0 {
-			return 0, fmt.Errorf("@timeout duration must be > 0")
-		}
-		return parsed, nil
-	default:
-		return 0, fmt.Errorf("@timeout duration must be duration string")
-	}
 }
 
 // Register @timeout decorator with the global registry

@@ -865,6 +865,43 @@ echo "Hello, World!"  // Becomes: @shell("echo \"Hello, World!\"")
 - Control parallelism and concurrency
 - Inject values and interpolate variables
 
+### Decorator Argument Binding Algorithm
+
+Decorator argument binding is deterministic and shared across parser/planner/runtime.
+
+```text
+inputs:
+  schema parameters in declaration order
+  call arguments (named + positional)
+
+slotOrder = requiredParameters(declarationOrder) + optionalParameters(declarationOrder)
+
+# Reserve all explicitly named parameters first (order in source does not matter)
+namedReserved = set(namedArgumentNames)
+
+bound = {}
+
+for each argument in source order:
+  if argument is named:
+    if argument.name in bound:
+      error "duplicate parameter '<name>'"
+    bound[argument.name] = argument.value
+    continue
+
+  # positional argument
+  slot = first parameter in slotOrder where
+         parameter not in bound and
+         parameter not in namedReserved
+  if no slot:
+    error "too many positional arguments"
+  bound[slot] = argument.value
+
+validate bound against schema (required, type, range, enum, etc.)
+```
+
+This allows named arguments anywhere while keeping positional binding stable:
+`@example(b=2, 3)` and `@example(3, b=2)` are equivalent.
+
 ### Examples: Operators vs Newlines
 
 **Example 1: Operators (Opal controls)**

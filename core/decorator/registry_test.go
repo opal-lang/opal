@@ -1,6 +1,7 @@
 package decorator
 
 import (
+	"fmt"
 	"io"
 	"testing"
 )
@@ -28,6 +29,24 @@ func TestAutoInference(t *testing.T) {
 
 	if entry.Roles[0] != RoleProvider {
 		t.Errorf("expected RoleProvider, got %v", entry.Roles[0])
+	}
+}
+
+func TestRegisterCompilesDecoderCache(t *testing.T) {
+	r := NewRegistry()
+
+	dec := &mockValueDecorator{path: "cache.test"}
+	if err := r.register("cache.test", dec); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+
+	entry, ok := r.Lookup("cache.test")
+	if !ok {
+		t.Fatal("decorator not found")
+	}
+
+	if entry.decoder == nil {
+		t.Fatal("entry decoder cache is nil")
 	}
 }
 
@@ -450,6 +469,38 @@ func (m *mockMultiRoleDecorator) OpenWrite(ctx ExecContext, appendMode bool, opt
 	return nil, nil // Stub
 }
 
+type mockSchemaValueDecorator struct {
+	path string
+}
+
+func (m *mockSchemaValueDecorator) Descriptor() Descriptor {
+	return NewDescriptor(m.path).
+		Summary("schema-backed mock value decorator").
+		PrimaryParamString("name", "Name value").
+		Done().
+		ParamString("default", "Fallback value").
+		Default("fallback").
+		Done().
+		Build()
+}
+
+func (m *mockSchemaValueDecorator) Resolve(ctx ValueEvalContext, calls ...ValueCall) ([]ResolveResult, error) {
+	results := make([]ResolveResult, len(calls))
+	for i, call := range calls {
+		name := ""
+		if call.Primary != nil {
+			name = *call.Primary
+		}
+		fallback, _ := call.Params["default"].(string)
+		results[i] = ResolveResult{
+			Value:  fmt.Sprintf("%s|%s", name, fallback),
+			Origin: "mock.schema",
+			Error:  nil,
+		}
+	}
+	return results, nil
+}
+
 // Mock decorator with transport scope for testing
 type mockScopedValueDecorator struct {
 	path  string
@@ -672,6 +723,74 @@ func TestResolveValueScopeAllowed(t *testing.T) {
 	_, err = r.ResolveValue(ctx, call, TransportScopeSSH)
 	if err != nil {
 		t.Errorf("ResolveValue in SSH failed: %v", err)
+	}
+}
+
+func TestResolveValueNormalizesPrimaryAndAppliesDefaults(t *testing.T) {
+	r := NewRegistry()
+
+	dec := &mockSchemaValueDecorator{path: "strict"}
+	r.register("strict", dec)
+
+	ctx := ValueEvalContext{Session: NewLocalSession()}
+	call := ValueCall{
+		Path:   "strict",
+		Params: map[string]any{"arg1": "HOME"},
+	}
+
+	resolved, err := r.ResolveValue(ctx, call, TransportScopeLocal)
+	if err != nil {
+		t.Fatalf("ResolveValue failed: %v", err)
+	}
+
+	if resolved.Value != "HOME|fallback" {
+		t.Errorf("Value: got %v, want %q", resolved.Value, "HOME|fallback")
+	}
+}
+
+func TestResolveValueRejectsUnknownParameter(t *testing.T) {
+	r := NewRegistry()
+
+	dec := &mockSchemaValueDecorator{path: "strict"}
+	r.register("strict", dec)
+
+	ctx := ValueEvalContext{Session: NewLocalSession()}
+	call := ValueCall{
+		Path:   "strict",
+		Params: map[string]any{"arg1": "HOME", "unknown": "value"},
+	}
+
+	_, err := r.ResolveValue(ctx, call, TransportScopeLocal)
+	if err == nil {
+		t.Fatal("expected unknown parameter error")
+	}
+
+	expectedMsg := `invalid parameters for decorator "strict" call 0: unknown parameter "unknown"`
+	if err.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
+	}
+}
+
+func TestResolveValueRejectsPrimaryTypeMismatch(t *testing.T) {
+	r := NewRegistry()
+
+	dec := &mockSchemaValueDecorator{path: "strict"}
+	r.register("strict", dec)
+
+	ctx := ValueEvalContext{Session: NewLocalSession()}
+	call := ValueCall{
+		Path:   "strict",
+		Params: map[string]any{"arg1": 123},
+	}
+
+	_, err := r.ResolveValue(ctx, call, TransportScopeLocal)
+	if err == nil {
+		t.Fatal("expected primary type mismatch error")
+	}
+
+	expectedMsg := `invalid parameters for decorator "strict" call 0: parameter "name" expects string`
+	if err.Error() != expectedMsg {
+		t.Errorf("Error message: got %q, want %q", err.Error(), expectedMsg)
 	}
 }
 

@@ -84,3 +84,42 @@ func TestRetryRespectsCancellation(t *testing.T) {
 		t.Fatalf("attempt count mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestRetryRejectsInvalidTimesType(t *testing.T) {
+	dec := &RetryDecorator{}
+	node := dec.Wrap(&testExecNode{execute: func(ctx decorator.ExecContext) (decorator.Result, error) {
+		return decorator.Result{ExitCode: 0}, nil
+	}}, map[string]any{"times": 2.5})
+
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected retry type error")
+	}
+	if diff := cmp.Diff(decorator.ExitFailure, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("parameter \"times\" expects integer", err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRetrySupportsPositionalArgumentDecode(t *testing.T) {
+	dec := &RetryDecorator{}
+	var attempts atomic.Int64
+
+	node := dec.Wrap(&testExecNode{execute: func(ctx decorator.ExecContext) (decorator.Result, error) {
+		attempts.Add(1)
+		return decorator.Result{ExitCode: 9}, nil
+	}}, map[string]any{"arg1": int64(2), "arg2": "1ms", "arg3": "constant"})
+
+	result, err := node.Execute(decorator.ExecContext{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("retry execute failed: %v", err)
+	}
+	if diff := cmp.Diff(9, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(int64(2), attempts.Load()); diff != "" {
+		t.Fatalf("attempt count mismatch (-want +got):\n%s", diff)
+	}
+}
