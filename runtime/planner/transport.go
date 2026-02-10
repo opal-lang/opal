@@ -96,15 +96,19 @@ func transportValueBytes(value any) ([]byte, error) {
 
 func evaluateArgs(args []ArgIR, getValue ValueLookup) (map[string]any, error) {
 	params := make(map[string]any, len(args))
-	for _, arg := range args {
+	for i, arg := range args {
+		argName := arg.Name
+		if argName == "" {
+			argName = fmt.Sprintf("arg%d", i+1)
+		}
 		if arg.Value == nil {
-			return nil, fmt.Errorf("transport arg %q has no value", arg.Name)
+			return nil, fmt.Errorf("transport arg %q has no value", argName)
 		}
 		val, err := EvaluateExpr(arg.Value, getValue)
 		if err != nil {
-			return nil, fmt.Errorf("evaluate transport arg %q: %w", arg.Name, err)
+			return nil, fmt.Errorf("evaluate transport arg %q: %w", argName, err)
 		}
-		params[arg.Name] = val
+		params[argName] = val
 	}
 	return params, nil
 }

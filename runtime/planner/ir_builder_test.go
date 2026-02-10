@@ -202,7 +202,7 @@ func TestBuildIR_DecoratorArg_IdentifierValue(t *testing.T) {
 }
 
 func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
-	graph := buildIR(t, `@env(HOME)`)
+	graph := buildIR(t, `@env("HOME")`)
 
 	if len(graph.Statements) != 1 {
 		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
@@ -219,8 +219,8 @@ func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
 	}
 
 	arg := args[0]
-	if arg.Name != "arg1" {
-		t.Errorf("Arg.Name = %q, want %q", arg.Name, "arg1")
+	if arg.Name != "property" {
+		t.Errorf("Arg.Name = %q, want %q", arg.Name, "property")
 	}
 	if arg.Value == nil {
 		t.Fatal("Arg.Value is nil")
@@ -246,8 +246,41 @@ func TestBuildIR_VarDecl_DecoratorRef_MixedArgNamesPreserved(t *testing.T) {
 	}
 
 	dec := stmt.VarDecl.Value.Decorator
-	if diff := cmp.Diff([]string{"delay", "arg2", "backoff"}, dec.ArgNames); diff != "" {
+	if diff := cmp.Diff([]string{"delay", "times", "backoff"}, dec.ArgNames); diff != "" {
 		t.Errorf("Decorator.ArgNames mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_VarDecl_DecoratorRef_CallFormCanonicalizesArgNames(t *testing.T) {
+	graph := buildIR(t, `var X = @env("HOME")`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.VarDecl == nil || stmt.VarDecl.Value == nil || stmt.VarDecl.Value.Decorator == nil {
+		t.Fatal("decorator expression is nil")
+	}
+
+	dec := stmt.VarDecl.Value.Decorator
+	if diff := cmp.Diff("env", dec.Name); diff != "" {
+		t.Errorf("Decorator.Name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"property"}, dec.ArgNames); diff != "" {
+		t.Errorf("Decorator.ArgNames mismatch (-want +got):\n%s", diff)
+	}
+	if len(dec.Args) != 1 {
+		t.Fatalf("len(Decorator.Args) = %d, want 1", len(dec.Args))
+	}
+	if dec.Args[0] == nil {
+		t.Fatal("Decorator.Args[0] is nil")
+	}
+	if diff := cmp.Diff(ExprLiteral, dec.Args[0].Kind); diff != "" {
+		t.Errorf("Decorator.Args[0].Kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("HOME", dec.Args[0].Value); diff != "" {
+		t.Errorf("Decorator.Args[0].Value mismatch (-want +got):\n%s", diff)
 	}
 }
 
