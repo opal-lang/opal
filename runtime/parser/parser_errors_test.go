@@ -2,6 +2,8 @@ package parser
 
 import (
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestParseErrors verifies error recovery for invalid syntax
@@ -215,5 +217,20 @@ fun alsoBroken(a String, b String, c String {
 
 	if functionCount != 3 {
 		t.Errorf("Expected 3 function nodes, got %d", functionCount)
+	}
+}
+
+func TestFunctionParamGoStyleTypeLookaheadRejectsExtraIdentifier(t *testing.T) {
+	tree := ParseString(`fun greet(name String alias String) {}`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	err := tree.Errors[0]
+	if diff := cmp.Diff("missing parameter type annotation", err.Message); diff != "" {
+		t.Fatalf("error message mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("function parameter", err.Context); diff != "" {
+		t.Fatalf("error context mismatch (-want +got):\n%s", diff)
 	}
 }

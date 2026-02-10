@@ -467,7 +467,20 @@ func (p *parser) param() {
 }
 
 func (p *parser) hasGoStyleTypeAnnotation() bool {
-	return p.at(lexer.IDENTIFIER)
+	if !p.at(lexer.IDENTIFIER) {
+		return false
+	}
+
+	if p.pos+1 >= len(p.tokens) {
+		return true
+	}
+
+	switch p.tokens[p.pos+1].Type {
+	case lexer.COMMA, lexer.RPAREN, lexer.EQUALS, lexer.NEWLINE, lexer.LBRACE, lexer.EOF:
+		return true
+	default:
+		return false
+	}
 }
 
 // hasGroupedTypeAhead checks whether a trailing parameter group provides a type,

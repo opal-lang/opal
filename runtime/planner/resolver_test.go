@@ -84,6 +84,19 @@ func TestResolve_CanceledContext(t *testing.T) {
 	}
 }
 
+func TestResolve_RequiresVault(t *testing.T) {
+	graph := &ExecutionGraph{Scopes: NewScopeStack()}
+
+	_, err := Resolve(graph, nil, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if diff := cmp.Diff("vault is required", err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
 		Name:     "env",
@@ -1394,6 +1407,33 @@ func TestResolve_FunctionArgsTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestResolve_FunctionArgsAcceptDurationLiteral(t *testing.T) {
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "delay", Type: "Duration"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: durationLiteral("5m")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
 func TestResolve_FunctionParamDefaultTypeMismatch(t *testing.T) {
 	v := vault.NewWithPlanKey([]byte("test-key"))
 
@@ -1687,6 +1727,57 @@ deploy(token = "super-secret-token")`)
 	}
 	if containsStr(trace.Label, "super-secret-token") {
 		t.Fatalf("trace label leaked raw secret: %q", trace.Label)
+	}
+}
+
+func TestResolve_FunctionCallTraceRedactsStructuredArgumentValues(t *testing.T) {
+	source := `fun deploy(cfg Object) {
+	echo "ok"
+}
+
+deploy(cfg = {token: "super-secret-token", nested: {key: "very-secret"}})`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v1 := vault.NewWithPlanKey([]byte("test-key"))
+	result1, err := Resolve(graph, v1, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(result1.Statements) != 1 || result1.Statements[0].CallTrace == nil {
+		t.Fatalf("expected one call trace statement")
+	}
+	label1 := result1.Statements[0].CallTrace.Label
+
+	v2 := vault.NewWithPlanKey([]byte("test-key"))
+	result2, err := Resolve(graph, v2, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("second resolve failed: %v", err)
+	}
+	if len(result2.Statements) != 1 || result2.Statements[0].CallTrace == nil {
+		t.Fatalf("expected one call trace statement")
+	}
+	label2 := result2.Statements[0].CallTrace.Label
+
+	if !containsStr(label1, "cfg=opal:") {
+		t.Fatalf("trace label = %q, want cfg=opal:<hash>", label1)
+	}
+	if containsStr(label1, "super-secret-token") || containsStr(label1, "very-secret") {
+		t.Fatalf("trace label leaked structured secret contents: %q", label1)
+	}
+	if containsStr(label1, "map[") {
+		t.Fatalf("trace label leaked raw map formatting: %q", label1)
+	}
+	if diff := cmp.Diff(label1, label2); diff != "" {
+		t.Fatalf("trace labels must be deterministic (-first +second):\n%s", diff)
 	}
 }
 

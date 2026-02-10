@@ -188,6 +188,9 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 	if config.Context == nil {
 		config.Context = context.Background()
 	}
+	if v == nil {
+		return nil, fmt.Errorf("vault is required")
+	}
 
 	r := &Resolver{
 		graph:            graph,
@@ -200,9 +203,7 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		envAllowed:       true,
 	}
 
-	if v != nil {
-		v.EnterTransport(localTransportID(v.GetPlanKey()))
-	}
+	v.EnterTransport(localTransportID(v.GetPlanKey()))
 
 	return r.resolve()
 }
@@ -844,7 +845,7 @@ func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*Statement
 		return nil, err
 	}
 
-	resolvedArgs, err := r.evaluateFunctionCallArgs(call)
+	resolvedArgs, argExprs, err := r.evaluateFunctionCallArgs(call)
 	if err != nil {
 		return nil, err
 	}
@@ -862,7 +863,7 @@ func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*Statement
 
 	var expanded []*StatementIR
 	err = r.withScope(func() error {
-		if err := r.bindFunctionArgumentsWithArgs(fn, resolvedArgs); err != nil {
+		if err := r.bindFunctionArgumentsWithArgs(fn, resolvedArgs, argExprs); err != nil {
 			return err
 		}
 		resolved, err := r.resolveStatements(DeepCopyStatements(fn.Body))
@@ -933,7 +934,24 @@ func (r *Resolver) formatTraceValue(value any) string {
 		}
 		return r.symbolForValue(v)
 	default:
+		if isStructuredTraceValue(value) {
+			return r.symbolForValue(value)
+		}
 		return fmt.Sprintf("%v", value)
+	}
+}
+
+func isStructuredTraceValue(value any) bool {
+	t := reflect.TypeOf(value)
+	if t == nil {
+		return false
+	}
+
+	switch t.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -978,25 +996,32 @@ func (r *Resolver) buildInvocationScopes(fn *FunctionIR) *ScopeStack {
 	return invocation
 }
 
-func (r *Resolver) evaluateFunctionCallArgs(call *FunctionCallStmtIR) ([]FunctionArg, error) {
+func (r *Resolver) evaluateFunctionCallArgs(call *FunctionCallStmtIR) ([]FunctionArg, map[string]*ExprIR, error) {
 	if call == nil || len(call.Args) == 0 {
-		return nil, nil
+		return nil, map[string]*ExprIR{}, nil
 	}
 
 	resolved := make([]FunctionArg, 0, len(call.Args))
+	rawArgExprs := make(map[string]*ExprIR, len(call.Args))
 	for i, arg := range call.Args {
+		rawKey := fmt.Sprintf("arg%d", i+1)
+		if arg.Name != "" {
+			rawKey = arg.Name
+		}
+		rawArgExprs[rawKey] = arg.Value
+
 		value, err := EvaluateExpr(arg.Value, r.getValue)
 		if err != nil {
 			label := fmt.Sprintf("arg%d", i+1)
 			if arg.Name != "" {
 				label = arg.Name
 			}
-			return nil, fmt.Errorf("failed to evaluate function call argument %q for %q: %w", label, call.Name, err)
+			return nil, nil, fmt.Errorf("failed to evaluate function call argument %q for %q: %w", label, call.Name, err)
 		}
 		resolved = append(resolved, FunctionArg{Name: arg.Name, Value: value})
 	}
 
-	return resolved, nil
+	return resolved, rawArgExprs, nil
 }
 
 func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
@@ -1210,19 +1235,20 @@ func (r *Resolver) validateCommandModeTopLevel() error {
 }
 
 type functionParamBinding struct {
-	Name       string
-	Type       types.ParamType
-	Validate   bool
-	HasDefault bool
-	Default    any
-	IsRequired bool
+	Name        string
+	Type        types.ParamType
+	Validate    bool
+	HasDefault  bool
+	Default     any
+	DefaultExpr *ExprIR
+	IsRequired  bool
 }
 
 func (r *Resolver) bindFunctionArguments(fn *FunctionIR) error {
-	return r.bindFunctionArgumentsWithArgs(fn, r.config.FunctionArgs)
+	return r.bindFunctionArgumentsWithArgs(fn, r.config.FunctionArgs, nil)
 }
 
-func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []FunctionArg) error {
+func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []FunctionArg, argExprs map[string]*ExprIR) error {
 	if fn == nil {
 		return nil
 	}
@@ -1249,12 +1275,19 @@ func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []Function
 		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
 	}
 
+	canonicalExprs, err := normalizeFunctionArgExprs(schema, argExprs)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
 	for _, binding := range bindings {
 		value, exists := canonical[binding.Name]
+		sourceExpr := canonicalExprs[binding.Name]
 		if !exists {
 			if binding.HasDefault {
 				value = binding.Default
 				canonical[binding.Name] = value
+				sourceExpr = binding.DefaultExpr
 			} else if binding.IsRequired {
 				return fmt.Errorf("invalid arguments for function %q: missing required parameter %q", fn.Name, binding.Name)
 			} else {
@@ -1266,10 +1299,37 @@ func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []Function
 			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeLabel(binding.Type))
 		}
 
-		r.bindFunctionParam(binding.Name, value)
+		r.bindFunctionParam(binding.Name, value, sourceExpr)
 	}
 
 	return nil
+}
+
+func normalizeFunctionArgExprs(schema types.DecoratorSchema, raw map[string]*ExprIR) (map[string]*ExprIR, error) {
+	if len(raw) == 0 {
+		return map[string]*ExprIR{}, nil
+	}
+
+	rawAny := make(map[string]any, len(raw))
+	for key, expr := range raw {
+		rawAny[key] = expr
+	}
+
+	canonical, _, err := decorator.NormalizeArgs(schema, nil, rawAny)
+	if err != nil {
+		return nil, err
+	}
+
+	normalized := make(map[string]*ExprIR, len(canonical))
+	for key, value := range canonical {
+		expr, ok := value.(*ExprIR)
+		if !ok || expr == nil {
+			continue
+		}
+		normalized[key] = expr
+	}
+
+	return normalized, nil
 }
 
 func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSchema, []functionParamBinding, error) {
@@ -1322,12 +1382,13 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 		schema.ParameterOrder = append(schema.ParameterOrder, param.Name)
 
 		bindings = append(bindings, functionParamBinding{
-			Name:       param.Name,
-			Type:       expectedType,
-			Validate:   validateType,
-			HasDefault: hasDefault,
-			Default:    defaultValue,
-			IsRequired: !hasDefault,
+			Name:        param.Name,
+			Type:        expectedType,
+			Validate:    validateType,
+			HasDefault:  hasDefault,
+			Default:     defaultValue,
+			DefaultExpr: param.Default,
+			IsRequired:  !hasDefault,
 		})
 	}
 
@@ -1401,6 +1462,9 @@ func isFunctionParamType(value any, expected types.ParamType) bool {
 		case string:
 			_, err := types.ParseDuration(duration)
 			return err == nil
+		case durationLiteral:
+			_, err := types.ParseDuration(string(duration))
+			return err == nil
 		case types.Duration:
 			return true
 		case time.Duration:
@@ -1447,13 +1511,45 @@ func functionTypeLabel(expected types.ParamType) string {
 	}
 }
 
-func (r *Resolver) bindFunctionParam(name string, value any) {
+func (r *Resolver) bindFunctionParam(name string, value any, sourceExpr *ExprIR) {
+	if sourceExpr != nil {
+		if sourceExprID, ok := r.lookupBindingExprID(sourceExpr); ok {
+			if r.scopes != nil {
+				r.scopes.Define(name, sourceExprID)
+			}
+			return
+		}
+	}
+
 	raw := fmt.Sprintf("literal:%v", value)
-	exprID := r.vault.DeclareVariable(name, raw)
+
+	exprID := ""
+	if sourceExpr != nil && r.isExprTransportSensitive(sourceExpr) {
+		exprID = r.vault.DeclareVariableTransportSensitive(name, raw)
+	} else {
+		exprID = r.vault.DeclareVariable(name, raw)
+	}
 	r.vault.StoreUnresolvedValue(exprID, value)
 	r.vault.MarkTouched(exprID)
 	if r.scopes != nil {
 		r.scopes.Define(name, exprID)
+	}
+}
+
+func (r *Resolver) lookupBindingExprID(sourceExpr *ExprIR) (string, bool) {
+	if sourceExpr == nil {
+		return "", false
+	}
+
+	switch sourceExpr.Kind {
+	case ExprVarRef:
+		return r.lookupScopeExprID(sourceExpr.VarName)
+	case ExprDecoratorRef:
+		key := decoratorKey(sourceExpr.Decorator)
+		exprID, exists := r.decoratorExprIDs[key]
+		return exprID, exists
+	default:
+		return "", false
 	}
 }
 
