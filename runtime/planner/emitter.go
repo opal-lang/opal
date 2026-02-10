@@ -137,12 +137,45 @@ func (e *Emitter) emitStatements(stmts []*StatementIR) ([]planfmt.Step, error) {
 				return nil, err
 			}
 			steps = append(steps, trySteps...)
+
+		case StmtCallTrace:
+			callSteps, err := e.emitCallTrace(stmt.CallTrace)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, callSteps...)
 		}
 
 		i++
 	}
 
 	return steps, nil
+}
+
+func (e *Emitter) emitCallTrace(trace *CallTraceStmtIR) ([]planfmt.Step, error) {
+	if trace == nil || len(trace.Block) == 0 {
+		return nil, nil
+	}
+
+	nestedSteps, err := e.emitStatements(trace.Block)
+	if err != nil {
+		return nil, err
+	}
+	if len(nestedSteps) == 0 {
+		return nil, nil
+	}
+
+	step := planfmt.Step{
+		ID: e.nextStepID,
+		Tree: &planfmt.LogicNode{
+			Kind:      "call",
+			Condition: trace.Label,
+			Block:     nestedSteps,
+		},
+	}
+	e.nextStepID++
+
+	return []planfmt.Step{step}, nil
 }
 
 // emitCommandChain emits a chain of commands (possibly connected by operators) as a single Step.

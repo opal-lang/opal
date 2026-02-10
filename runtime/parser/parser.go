@@ -61,12 +61,13 @@ func Parse(source []byte, opts ...ParserOpt) *ParseTree {
 	}
 
 	p := &parser{
-		tokens:      tokens,
-		pos:         0,
-		events:      make([]Event, 0, eventCap),
-		errors:      make([]ParseError, 0, 4), // Most parses have 0-4 errors
-		config:      config,
-		debugEvents: debugEvents,
+		tokens:        tokens,
+		pos:           0,
+		events:        make([]Event, 0, eventCap),
+		errors:        make([]ParseError, 0, 4), // Most parses have 0-4 errors
+		config:        config,
+		debugEvents:   debugEvents,
+		functionNames: collectTopLevelFunctionNames(tokens),
 	}
 
 	// Parse the file
@@ -133,12 +134,13 @@ func ParseTokens(source []byte, tokens []lexer.Token, opts ...ParserOpt) *ParseT
 	}
 
 	p := &parser{
-		tokens:      tokens,
-		pos:         0,
-		events:      make([]Event, 0, eventCap),
-		errors:      make([]ParseError, 0, 4),
-		config:      config,
-		debugEvents: debugEvents,
+		tokens:        tokens,
+		pos:           0,
+		events:        make([]Event, 0, eventCap),
+		errors:        make([]ParseError, 0, 4),
+		config:        config,
+		debugEvents:   debugEvents,
+		functionNames: collectTopLevelFunctionNames(tokens),
 	}
 
 	// Parse the file
@@ -172,13 +174,44 @@ func ParseTokens(source []byte, tokens []lexer.Token, opts ...ParserOpt) *ParseT
 
 // parser is the internal parser state
 type parser struct {
-	tokens      []lexer.Token
-	pos         int
-	events      []Event
-	errors      []ParseError
-	warnings    []ParseWarning
-	config      *ParserConfig
-	debugEvents []DebugEvent
+	tokens        []lexer.Token
+	pos           int
+	events        []Event
+	errors        []ParseError
+	warnings      []ParseWarning
+	config        *ParserConfig
+	debugEvents   []DebugEvent
+	functionNames map[string]struct{}
+}
+
+func collectTopLevelFunctionNames(tokens []lexer.Token) map[string]struct{} {
+	names := make(map[string]struct{})
+	braceDepth := 0
+
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		switch tok.Type {
+		case lexer.LBRACE:
+			braceDepth++
+		case lexer.RBRACE:
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case lexer.FUN:
+			if braceDepth != 0 {
+				continue
+			}
+			next := i + 1
+			for next < len(tokens) && tokens[next].Type == lexer.NEWLINE {
+				next++
+			}
+			if next < len(tokens) && tokens[next].Type == lexer.IDENTIFIER {
+				names[string(tokens[next].Text)] = struct{}{}
+			}
+		}
+	}
+
+	return names
 }
 
 // recordDebugEvent records debug events when debug tracing is enabled
@@ -268,8 +301,7 @@ func (p *parser) file() {
 			// Decorator at top level (script mode)
 			p.decorator()
 		} else if p.at(lexer.IDENTIFIER) {
-			// Shell command at top level
-			p.shellCommand()
+			p.identifierStatement()
 		} else {
 			// Unknown token, skip for now
 			p.advance()
@@ -303,6 +335,10 @@ func (p *parser) function() {
 
 	// Consume function name
 	if p.at(lexer.IDENTIFIER) {
+		if p.functionNames == nil {
+			p.functionNames = make(map[string]struct{})
+		}
+		p.functionNames[string(p.current().Text)] = struct{}{}
 		p.token()
 	}
 
@@ -384,7 +420,14 @@ func (p *parser) paramList() {
 	}
 }
 
-// param parses a single parameter: IDENTIFIER (: Type)? (= expression)?
+// param parses a single parameter.
+//
+// Function parameters require explicit type annotations.
+// Supported forms:
+//   - name Type
+//   - name: Type
+//   - name Type = expression
+//   - name: Type = expression
 func (p *parser) param() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("enter_param", "parsing parameter")
@@ -397,9 +440,18 @@ func (p *parser) param() {
 		p.token()
 	}
 
-	// Parse optional type annotation
-	if p.at(lexer.COLON) {
+	// Parse required type annotation
+	hasType := false
+	if p.at(lexer.COLON) || p.hasGoStyleTypeAnnotation() {
 		p.typeAnnotation()
+		hasType = true
+	}
+	if !hasType && !p.hasGroupedTypeAhead() {
+		p.errorWithDetails(
+			"missing parameter type annotation",
+			"function parameter",
+			"Use typed parameters: fun deploy(env String) { ... }",
+		)
 	}
 
 	// Parse optional default value
@@ -414,7 +466,66 @@ func (p *parser) param() {
 	}
 }
 
-// typeAnnotation parses a type annotation: : Type
+func (p *parser) hasGoStyleTypeAnnotation() bool {
+	return p.at(lexer.IDENTIFIER)
+}
+
+// hasGroupedTypeAhead checks whether a trailing parameter group provides a type,
+// allowing forms like: fun f(name, alias String)
+func (p *parser) hasGroupedTypeAhead() bool {
+	if !p.at(lexer.COMMA) {
+		return false
+	}
+
+	parenDepth := 0
+	braceDepth := 0
+	bracketDepth := 0
+
+	for i := p.pos + 1; i < len(p.tokens); i++ {
+		tok := p.tokens[i]
+
+		switch tok.Type {
+		case lexer.LPAREN:
+			parenDepth++
+		case lexer.RPAREN:
+			if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+				return false
+			}
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case lexer.LBRACE:
+			braceDepth++
+		case lexer.RBRACE:
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case lexer.LSQUARE:
+			bracketDepth++
+		case lexer.RSQUARE:
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		}
+
+		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
+			continue
+		}
+
+		if tok.Type != lexer.IDENTIFIER || i+1 >= len(p.tokens) {
+			continue
+		}
+
+		next := p.tokens[i+1].Type
+		if next == lexer.COLON || next == lexer.IDENTIFIER {
+			return true
+		}
+	}
+
+	return false
+}
+
+// typeAnnotation parses a type annotation: : Type or Type
 func (p *parser) typeAnnotation() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("enter_typeAnnotation", "parsing type annotation")
@@ -422,15 +533,13 @@ func (p *parser) typeAnnotation() {
 
 	kind := p.start(NodeTypeAnnotation)
 
-	// Consume ':'
+	// Optional ':' for legacy style (name: Type)
 	if p.at(lexer.COLON) {
 		p.token()
 	}
 
 	// Consume type name
-	if p.at(lexer.IDENTIFIER) {
-		p.token()
-	}
+	p.expect(lexer.IDENTIFIER, "type annotation")
 
 	p.finish(kind)
 
@@ -604,25 +713,7 @@ func (p *parser) statement() {
 			}
 		}
 	} else if p.at(lexer.IDENTIFIER) {
-		// Check if this is an assignment statement or shell command
-		// Look ahead to see if next token is an assignment operator
-		nextPos := p.pos + 1
-		if nextPos < len(p.tokens) {
-			nextType := p.tokens[nextPos].Type
-			if nextType == lexer.PLUS_ASSIGN ||
-				nextType == lexer.MINUS_ASSIGN ||
-				nextType == lexer.MULTIPLY_ASSIGN ||
-				nextType == lexer.DIVIDE_ASSIGN ||
-				nextType == lexer.MODULO_ASSIGN {
-				p.assignmentStmt()
-			} else {
-				// Shell command
-				p.shellCommand()
-			}
-		} else {
-			// No next token, treat as shell command
-			p.shellCommand()
-		}
+		p.identifierStatement()
 	} else if !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
 		// Unknown statement - error recovery
 		if p.config.debug >= DebugDetailed {
@@ -1503,6 +1594,135 @@ func (p *parser) assignmentStmt() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("exit_assignment", "assignment statement complete")
 	}
+}
+
+func (p *parser) identifierStatement() {
+	if p.isFunctionCallSyntax() {
+		functionName := string(p.current().Text)
+		if !p.isKnownFunction(functionName) {
+			p.errorWithDetails(
+				fmt.Sprintf("unknown function %q", functionName),
+				"function call",
+				fmt.Sprintf("Define it with fun %s(...) { ... } or run a shell command by adding a space: %s (...)", functionName, functionName),
+			)
+		}
+		p.functionCall()
+		return
+	}
+
+	// Check if this is an assignment statement or shell command
+	// Look ahead to see if next token is an assignment operator
+	nextPos := p.pos + 1
+	if nextPos < len(p.tokens) {
+		nextType := p.tokens[nextPos].Type
+		if nextType == lexer.PLUS_ASSIGN ||
+			nextType == lexer.MINUS_ASSIGN ||
+			nextType == lexer.MULTIPLY_ASSIGN ||
+			nextType == lexer.DIVIDE_ASSIGN ||
+			nextType == lexer.MODULO_ASSIGN {
+			p.assignmentStmt()
+		} else {
+			p.shellCommand()
+		}
+		return
+	}
+
+	p.shellCommand()
+}
+
+func (p *parser) isFunctionCallSyntax() bool {
+	if !p.at(lexer.IDENTIFIER) {
+		return false
+	}
+
+	nextPos := p.pos + 1
+	if nextPos >= len(p.tokens) {
+		return false
+	}
+
+	nextToken := p.tokens[nextPos]
+	if nextToken.Type != lexer.LPAREN {
+		return false
+	}
+
+	current := p.current()
+	return nextToken.Position.Offset == current.Position.Offset+len(current.Text)
+}
+
+func (p *parser) isKnownFunction(name string) bool {
+	if p.functionNames == nil {
+		return false
+	}
+	_, exists := p.functionNames[name]
+	return exists
+}
+
+// functionCall parses a function call statement: name(arg1, key=value)
+func (p *parser) functionCall() {
+	kind := p.start(NodeFunctionCall)
+
+	// Function name
+	p.token()
+
+	paramListKind := p.start(NodeParamList)
+	if !p.expect(lexer.LPAREN, "function call arguments") {
+		p.finish(paramListKind)
+		p.finish(kind)
+		return
+	}
+	p.skipNewlines()
+
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RPAREN) || p.at(lexer.EOF) {
+			break
+		}
+
+		argKind := p.start(NodeParam)
+
+		// Named argument: key = expr
+		if p.at(lexer.IDENTIFIER) {
+			nextPos := p.pos + 1
+			if nextPos < len(p.tokens) && p.tokens[nextPos].Type == lexer.EQUALS {
+				p.token() // key
+				p.token() // =
+				p.skipNewlines()
+
+				if p.at(lexer.COMMA) || p.at(lexer.RPAREN) || p.at(lexer.EOF) {
+					p.errorWithDetails(
+						"missing argument value",
+						"function call argument",
+						"Add a value after '='",
+					)
+				} else {
+					p.expression()
+				}
+			} else {
+				p.expression()
+			}
+		} else {
+			p.expression()
+		}
+
+		p.finish(argKind)
+		p.skipNewlines()
+
+		if p.at(lexer.COMMA) {
+			p.token()
+			p.skipNewlines()
+		} else if !p.at(lexer.RPAREN) {
+			p.errorWithDetails(
+				"expected ',' or ')' in function call",
+				"function call arguments",
+				"Separate arguments with ',' and close with ')'",
+			)
+			break
+		}
+	}
+
+	p.expect(lexer.RPAREN, "function call arguments")
+	p.finish(paramListKind)
+	p.finish(kind)
 }
 
 // expression parses an expression
@@ -3294,7 +3514,7 @@ func (p *parser) errorExpected(expected lexer.TokenType, context string) {
 	switch expected {
 	case lexer.RPAREN:
 		err.Suggestion = "Add ')' to close the " + context
-		err.Example = "fun greet(name) {}"
+		err.Example = "fun greet(name String) {}"
 	case lexer.RBRACE:
 		err.Suggestion = "Add '}' to close the " + context
 		err.Example = "fun greet() { echo \"hello\" }"
@@ -3308,7 +3528,7 @@ func (p *parser) errorExpected(expected lexer.TokenType, context string) {
 			err.Example = "fun greet() {}"
 		case "parameter":
 			err.Suggestion = "Add a parameter name"
-			err.Example = "fun greet(name) {}"
+			err.Example = "fun greet(name String) {}"
 		}
 	}
 

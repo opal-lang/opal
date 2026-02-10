@@ -20,6 +20,15 @@ No state files. No "desired state" to maintain. The plan is your contract.
 - **Unified**: Deployments, infrastructure, and operations in one tool
 - **Secure**: Secrets never logged or exposed
 
+## Language Model
+
+Opal is intentionally a two-lane system:
+
+- **Shell lane (runtime work):** Commands, pipes, redirects, and operator chains execute with shell semantics.
+- **Metaprogramming lane (plan-time structure):** `fun`, `if`, `for`, `when`, and decorators shape and validate what will execute.
+
+This is a departure from plain shell scripting by design. Opal keeps shell as the execution substrate, then adds typed plan-time contracts and deterministic expansion on top.
+
 ## Quick Start
 
 Define your tasks:
@@ -56,8 +65,14 @@ opal deploy
 fun build = npm run build
 fun test = npm test
 
+# Typed metaprogramming contracts for reusable tasks
+fun deploy(env String, replicas Int = 3) {
+    kubectl apply -f k8s/@var.env/
+    kubectl scale deployment/app --replicas=@var.replicas
+}
+
 # Shell commands with operators
-fun deploy = {
+fun rollout = {
     kubectl apply -f k8s/ && kubectl rollout status deployment/app
 }
 

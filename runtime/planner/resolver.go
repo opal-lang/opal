@@ -3,11 +3,13 @@ package planner
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
 	"github.com/opal-lang/opal/runtime/vault"
 )
 
@@ -129,12 +131,15 @@ type Resolver struct {
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
 	errors           []error           // Collected errors
+	callStack        []string          // Active function call stack (for depth guard)
 
 	// @env allowance context (non-idempotent transports forbid @env)
 	envAllowed      bool
 	envBlockedBy    string
 	envContextStack []envContext
 }
+
+const maxFunctionCallDepth = 256
 
 type envContext struct {
 	allowed   bool
@@ -144,6 +149,7 @@ type envContext struct {
 // ResolveConfig configures the resolution process.
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
+	FunctionArgs   []FunctionArg   // Optional command-mode function arguments
 	Context        context.Context // Execution context
 	PlanHash       []byte          // Deterministic plan hash/salt for value resolution context
 	StepPath       string          // Step path prefix for value resolution provenance
@@ -258,6 +264,13 @@ func (r *Resolver) resolve() (*ResolveResult, error) {
 		if err := r.resolvePrelude(r.activeFunction); err != nil {
 			return nil, err
 		}
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
+		if err := r.bindFunctionArguments(r.activeFunction); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve the statement list, returning the pruned tree
@@ -345,6 +358,25 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 				return nil, err
 			}
 			result = append(result, resolvedTry)
+
+		case StmtFunctionCall:
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
+			expanded, err := r.resolveFunctionCallStatement(stmt)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, expanded...)
+
+		case StmtCallTrace:
+			// Call traces are produced by resolver function expansion and already resolved.
+			result = append(result, stmt)
 		}
 	}
 
@@ -413,6 +445,11 @@ func (r *Resolver) finalizePendingStatements(stmts []*StatementIR) error {
 			if err := r.resolveCommandBlock(stmt.Command); err != nil {
 				return err
 			}
+		case StmtFunctionCall:
+			// Function calls are expanded during resolveStatements.
+			// Pending statements should not contain function calls.
+		case StmtCallTrace:
+			// Call trace blocks are already resolved before this point.
 		}
 	}
 
@@ -774,11 +811,192 @@ func (r *Resolver) resolvePreludeStatement(stmt *StatementIR) error {
 		return r.resolveVarDeclStatement(stmt)
 	case StmtBlocker:
 		return r.resolvePreludeBlocker(stmt)
-	case StmtCommand, StmtTry:
+	case StmtCommand, StmtTry, StmtFunctionCall, StmtCallTrace:
 		return nil
 	default:
 		return nil
 	}
+}
+
+func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*StatementIR, error) {
+	if stmt == nil || stmt.FunctionCall == nil {
+		return nil, nil
+	}
+
+	call := stmt.FunctionCall
+	fn, ok := r.graph.Functions[call.Name]
+	if !ok {
+		return nil, fmt.Errorf("function %q not found", call.Name)
+	}
+
+	if len(r.callStack) >= maxFunctionCallDepth {
+		path := append(append([]string{}, r.callStack...), call.Name)
+		return nil, fmt.Errorf("function call depth exceeded (%d): %s", maxFunctionCallDepth, strings.Join(path, " -> "))
+	}
+
+	for _, arg := range call.Args {
+		r.collectExpr(arg.Value, "")
+	}
+	if err := r.buildError(); err != nil {
+		return nil, err
+	}
+	if err := r.batchResolve(); err != nil {
+		return nil, err
+	}
+
+	resolvedArgs, err := r.evaluateFunctionCallArgs(call)
+	if err != nil {
+		return nil, err
+	}
+
+	r.callStack = append(r.callStack, call.Name)
+	defer func() {
+		r.callStack = r.callStack[:len(r.callStack)-1]
+	}()
+
+	prevScopes := r.scopes
+	r.scopes = r.buildInvocationScopes(fn)
+	defer func() {
+		r.scopes = prevScopes
+	}()
+
+	var expanded []*StatementIR
+	err = r.withScope(func() error {
+		if err := r.bindFunctionArgumentsWithArgs(fn, resolvedArgs); err != nil {
+			return err
+		}
+		resolved, err := r.resolveStatements(DeepCopyStatements(fn.Body))
+		if err != nil {
+			return err
+		}
+		expanded = resolved
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(expanded) == 0 {
+		return nil, nil
+	}
+
+	trace := &StatementIR{
+		Kind: StmtCallTrace,
+		CallTrace: &CallTraceStmtIR{
+			Label: r.formatFunctionCallTrace(call.Name, resolvedArgs),
+			Block: expanded,
+		},
+	}
+
+	return []*StatementIR{trace}, nil
+}
+
+func (r *Resolver) formatFunctionCallTrace(name string, args []FunctionArg) string {
+	if name == "" {
+		return "()"
+	}
+
+	if len(args) == 0 {
+		return fmt.Sprintf("%s()", name)
+	}
+
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		valueStr := r.formatTraceValue(arg.Value)
+		if arg.Name != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s", arg.Name, valueStr))
+			continue
+		}
+		parts = append(parts, valueStr)
+	}
+
+	return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
+}
+
+func (r *Resolver) formatTraceValue(value any) string {
+	if r == nil || r.vault == nil {
+		return fmt.Sprintf("%v", value)
+	}
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return ""
+		}
+		if strings.HasPrefix(v, "opal:") {
+			return v
+		}
+		return r.symbolForValue(v)
+	case []byte:
+		if len(v) == 0 {
+			return ""
+		}
+		return r.symbolForValue(v)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+func (r *Resolver) symbolForValue(value any) string {
+	raw := fmt.Sprintf("trace:%T:%v", value, value)
+	exprID := r.vault.TrackExpression(raw)
+	r.vault.StoreUnresolvedValue(exprID, value)
+	r.vault.MarkTouched(exprID)
+	r.vault.ResolveAllTouched()
+
+	if symbol := r.vault.GetDisplayID(exprID); symbol != "" {
+		return symbol
+	}
+
+	return fmt.Sprintf("%v", value)
+}
+
+func (r *Resolver) buildInvocationScopes(fn *FunctionIR) *ScopeStack {
+	if fn == nil || fn.Scopes == nil {
+		if r.scopes != nil {
+			return r.scopes.Clone()
+		}
+		if r.graph != nil && r.graph.Scopes != nil {
+			return r.graph.Scopes.Clone()
+		}
+		return NewScopeStack()
+	}
+
+	invocation := fn.Scopes.Clone()
+	if invocation == nil {
+		invocation = NewScopeStack()
+	}
+
+	if r.scopes == nil || len(r.scopes.scopes) == 0 || len(invocation.scopes) == 0 {
+		return invocation
+	}
+
+	for name, exprID := range r.scopes.scopes[0] {
+		invocation.scopes[0][name] = exprID
+	}
+
+	return invocation
+}
+
+func (r *Resolver) evaluateFunctionCallArgs(call *FunctionCallStmtIR) ([]FunctionArg, error) {
+	if call == nil || len(call.Args) == 0 {
+		return nil, nil
+	}
+
+	resolved := make([]FunctionArg, 0, len(call.Args))
+	for i, arg := range call.Args {
+		value, err := EvaluateExpr(arg.Value, r.getValue)
+		if err != nil {
+			label := fmt.Sprintf("arg%d", i+1)
+			if arg.Name != "" {
+				label = arg.Name
+			}
+			return nil, fmt.Errorf("failed to evaluate function call argument %q for %q: %w", label, call.Name, err)
+		}
+		resolved = append(resolved, FunctionArg{Name: arg.Name, Value: value})
+	}
+
+	return resolved, nil
 }
 
 func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
@@ -952,6 +1170,11 @@ func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
 // selectStatements chooses which statements to process based on mode.
 func (r *Resolver) selectStatements() []*StatementIR {
 	if r.config.TargetFunction != "" {
+		if err := r.validateCommandModeTopLevel(); err != nil {
+			r.errors = append(r.errors, err)
+			return nil
+		}
+
 		// Command mode: only the target function
 		fn, ok := r.graph.Functions[r.config.TargetFunction]
 		if !ok {
@@ -971,6 +1194,267 @@ func (r *Resolver) selectStatements() []*StatementIR {
 	r.activeFunction = nil
 	r.scopes = r.graph.Scopes
 	return r.graph.Statements
+}
+
+func (r *Resolver) validateCommandModeTopLevel() error {
+	for _, stmt := range r.graph.Statements {
+		if stmt == nil {
+			continue
+		}
+		switch stmt.Kind {
+		case StmtCommand, StmtFunctionCall:
+			return fmt.Errorf("command mode does not allow top-level execution statements")
+		}
+	}
+	return nil
+}
+
+type functionParamBinding struct {
+	Name       string
+	Type       types.ParamType
+	Validate   bool
+	HasDefault bool
+	Default    any
+	IsRequired bool
+}
+
+func (r *Resolver) bindFunctionArguments(fn *FunctionIR) error {
+	return r.bindFunctionArgumentsWithArgs(fn, r.config.FunctionArgs)
+}
+
+func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []FunctionArg) error {
+	if fn == nil {
+		return nil
+	}
+
+	if len(fn.Params) == 0 {
+		if len(args) > 0 {
+			return fmt.Errorf("function %q does not accept arguments", fn.Name)
+		}
+		return nil
+	}
+
+	schema, bindings, err := r.buildFunctionParamSchema(fn)
+	if err != nil {
+		return err
+	}
+
+	raw, err := buildFunctionRawArgs(args)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
+	canonical, _, err := decorator.NormalizeArgs(schema, nil, raw)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
+	for _, binding := range bindings {
+		value, exists := canonical[binding.Name]
+		if !exists {
+			if binding.HasDefault {
+				value = binding.Default
+				canonical[binding.Name] = value
+			} else if binding.IsRequired {
+				return fmt.Errorf("invalid arguments for function %q: missing required parameter %q", fn.Name, binding.Name)
+			} else {
+				continue
+			}
+		}
+
+		if binding.Validate && !isFunctionParamType(value, binding.Type) {
+			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeLabel(binding.Type))
+		}
+
+		r.bindFunctionParam(binding.Name, value)
+	}
+
+	return nil
+}
+
+func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSchema, []functionParamBinding, error) {
+	schema := types.DecoratorSchema{
+		Path:           fn.Name,
+		Parameters:     make(map[string]types.ParamSchema),
+		ParameterOrder: make([]string, 0, len(fn.Params)),
+	}
+
+	bindings := make([]functionParamBinding, 0, len(fn.Params))
+
+	for _, param := range fn.Params {
+		if _, exists := schema.Parameters[param.Name]; exists {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q has duplicate parameter %q", fn.Name, param.Name)
+		}
+
+		expectedType, hasExplicitType, err := parseFunctionParamType(param.Type)
+		if err != nil {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q: %w", fn.Name, param.Name, err)
+		}
+		if !hasExplicitType {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q is missing type annotation", fn.Name, param.Name)
+		}
+
+		hasDefault := false
+		var defaultValue any
+		if param.Default != nil {
+			defaultValue, err = EvaluateExpr(param.Default, r.getValue)
+			if err != nil {
+				return types.DecoratorSchema{}, nil, fmt.Errorf("failed to evaluate default for parameter %q in function %q: %w", param.Name, fn.Name, err)
+			}
+			hasDefault = true
+		}
+
+		validateType := true
+		if hasDefault && !isFunctionParamType(defaultValue, expectedType) {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("invalid default for parameter %q in function %q: expects %s", param.Name, fn.Name, functionTypeLabel(expectedType))
+		}
+
+		paramSchema := types.ParamSchema{
+			Name:     param.Name,
+			Required: !hasDefault,
+			Default:  defaultValue,
+		}
+		if validateType {
+			paramSchema.Type = expectedType
+		}
+
+		schema.Parameters[param.Name] = paramSchema
+		schema.ParameterOrder = append(schema.ParameterOrder, param.Name)
+
+		bindings = append(bindings, functionParamBinding{
+			Name:       param.Name,
+			Type:       expectedType,
+			Validate:   validateType,
+			HasDefault: hasDefault,
+			Default:    defaultValue,
+			IsRequired: !hasDefault,
+		})
+	}
+
+	return schema, bindings, nil
+}
+
+func buildFunctionRawArgs(args []FunctionArg) (map[string]any, error) {
+	raw := make(map[string]any, len(args))
+	for i, arg := range args {
+		if arg.Name == "" {
+			raw[fmt.Sprintf("arg%d", i+1)] = arg.Value
+			continue
+		}
+		if _, exists := raw[arg.Name]; exists {
+			return nil, fmt.Errorf("duplicate argument %q", arg.Name)
+		}
+		raw[arg.Name] = arg.Value
+	}
+	return raw, nil
+}
+
+func parseFunctionParamType(raw string) (types.ParamType, bool, error) {
+	if raw == "" {
+		return "", false, nil
+	}
+
+	switch strings.ToLower(raw) {
+	case "string":
+		return types.TypeString, true, nil
+	case "int", "integer":
+		return types.TypeInt, true, nil
+	case "float":
+		return types.TypeFloat, true, nil
+	case "bool", "boolean":
+		return types.TypeBool, true, nil
+	case "duration":
+		return types.TypeDuration, true, nil
+	case "array":
+		return types.TypeArray, true, nil
+	case "map", "object":
+		return types.TypeObject, true, nil
+	default:
+		return "", false, fmt.Errorf("unsupported type annotation %q", raw)
+	}
+}
+
+func isFunctionParamType(value any, expected types.ParamType) bool {
+	switch expected {
+	case types.TypeString:
+		_, ok := value.(string)
+		return ok
+	case types.TypeBool:
+		_, ok := value.(bool)
+		return ok
+	case types.TypeInt:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k >= reflect.Int && k <= reflect.Int64
+	case types.TypeFloat:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k == reflect.Float32 || k == reflect.Float64
+	case types.TypeDuration:
+		switch duration := value.(type) {
+		case string:
+			_, err := types.ParseDuration(duration)
+			return err == nil
+		case types.Duration:
+			return true
+		case time.Duration:
+			return true
+		default:
+			return false
+		}
+	case types.TypeObject:
+		v := reflect.ValueOf(value)
+		if !v.IsValid() || v.Kind() != reflect.Map {
+			return false
+		}
+		return v.Type().Key().Kind() == reflect.String
+	case types.TypeArray:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k == reflect.Array || k == reflect.Slice
+	default:
+		return false
+	}
+}
+
+func functionTypeLabel(expected types.ParamType) string {
+	switch expected {
+	case types.TypeString:
+		return "string"
+	case types.TypeInt:
+		return "integer"
+	case types.TypeFloat:
+		return "float"
+	case types.TypeBool:
+		return "boolean"
+	case types.TypeDuration:
+		return "duration"
+	case types.TypeObject:
+		return "object"
+	case types.TypeArray:
+		return "array"
+	default:
+		return string(expected)
+	}
+}
+
+func (r *Resolver) bindFunctionParam(name string, value any) {
+	raw := fmt.Sprintf("literal:%v", value)
+	exprID := r.vault.DeclareVariable(name, raw)
+	r.vault.StoreUnresolvedValue(exprID, value)
+	r.vault.MarkTouched(exprID)
+	if r.scopes != nil {
+		r.scopes.Define(name, exprID)
+	}
 }
 
 // collectVarDecl handles variable declaration - stores value by variable name for condition evaluation.

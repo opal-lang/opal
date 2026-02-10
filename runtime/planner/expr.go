@@ -81,6 +81,10 @@ type ValueLookup func(name string) (any, bool)
 //
 // For ExprBinaryOp, recursively evaluates operands and applies the operator.
 func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
+	if expr == nil {
+		return nil, &EvalError{Message: "missing expression"}
+	}
+
 	switch expr.Kind {
 	case ExprLiteral:
 		// Handle array literals: []*ExprIR → []any (evaluated)
@@ -132,6 +136,10 @@ func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
 
 // evaluateBinaryOp evaluates a binary operation.
 func evaluateBinaryOp(expr *ExprIR, getValue ValueLookup) (any, error) {
+	if expr.Left == nil || expr.Right == nil {
+		return nil, &EvalError{Message: "incomplete binary expression", Span: expr.Span}
+	}
+
 	left, err := EvaluateExpr(expr.Left, getValue)
 	if err != nil {
 		return nil, err
@@ -167,6 +175,62 @@ func evaluateBinaryOp(expr *ExprIR, getValue ValueLookup) (any, error) {
 	}
 
 	switch expr.Op {
+	case "+":
+		if a, ok := left.(string); ok {
+			if b, ok := right.(string); ok {
+				return a + b, nil
+			}
+		}
+		if aInt, bInt, ok := toInt64Pair(left, right); ok {
+			return aInt + bInt, nil
+		}
+		if aFloat, bFloat, ok := toFloat64Pair(left, right); ok {
+			return aFloat + bFloat, nil
+		}
+		return nil, &EvalError{Message: "cannot add values", Span: expr.Span}
+
+	case "-":
+		if aInt, bInt, ok := toInt64Pair(left, right); ok {
+			return aInt - bInt, nil
+		}
+		if aFloat, bFloat, ok := toFloat64Pair(left, right); ok {
+			return aFloat - bFloat, nil
+		}
+		return nil, &EvalError{Message: "cannot subtract non-numeric values", Span: expr.Span}
+
+	case "*":
+		if aInt, bInt, ok := toInt64Pair(left, right); ok {
+			return aInt * bInt, nil
+		}
+		if aFloat, bFloat, ok := toFloat64Pair(left, right); ok {
+			return aFloat * bFloat, nil
+		}
+		return nil, &EvalError{Message: "cannot multiply non-numeric values", Span: expr.Span}
+
+	case "/":
+		if aInt, bInt, ok := toInt64Pair(left, right); ok {
+			if bInt == 0 {
+				return nil, &EvalError{Message: "division by zero", Span: expr.Span}
+			}
+			return aInt / bInt, nil
+		}
+		if aFloat, bFloat, ok := toFloat64Pair(left, right); ok {
+			if bFloat == 0 {
+				return nil, &EvalError{Message: "division by zero", Span: expr.Span}
+			}
+			return aFloat / bFloat, nil
+		}
+		return nil, &EvalError{Message: "cannot divide non-numeric values", Span: expr.Span}
+
+	case "%":
+		if aInt, bInt, ok := toInt64Pair(left, right); ok {
+			if bInt == 0 {
+				return nil, &EvalError{Message: "division by zero", Span: expr.Span}
+			}
+			return aInt % bInt, nil
+		}
+		return nil, &EvalError{Message: "cannot modulo non-integer values", Span: expr.Span}
+
 	case "==":
 		return compareEqual(left, right), nil
 	case "!=":

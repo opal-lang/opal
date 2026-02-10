@@ -28,10 +28,12 @@ type ParamIR struct {
 type StatementKind int
 
 const (
-	StmtCommand StatementKind = iota // Shell command or decorator invocation
-	StmtVarDecl                      // Variable declaration
-	StmtBlocker                      // Control flow (if/when/for)
-	StmtTry                          // Try/catch/finally error handling
+	StmtCommand      StatementKind = iota // Shell command or decorator invocation
+	StmtVarDecl                           // Variable declaration
+	StmtBlocker                           // Control flow (if/when/for)
+	StmtTry                               // Try/catch/finally error handling
+	StmtFunctionCall                      // Function call statement
+	StmtCallTrace                         // Call provenance wrapper (display-only)
 )
 
 // StatementIR represents a statement in the execution graph.
@@ -41,10 +43,12 @@ type StatementIR struct {
 	CreatesScope bool // True for decorator blocks, try/catch
 
 	// Exactly one of these is set based on Kind
-	Command *CommandStmtIR // For StmtCommand
-	VarDecl *VarDeclIR     // For StmtVarDecl
-	Blocker *BlockerIR     // For StmtBlocker
-	Try     *TryIR         // For StmtTry
+	Command      *CommandStmtIR      // For StmtCommand
+	VarDecl      *VarDeclIR          // For StmtVarDecl
+	Blocker      *BlockerIR          // For StmtBlocker
+	Try          *TryIR              // For StmtTry
+	FunctionCall *FunctionCallStmtIR // For StmtFunctionCall
+	CallTrace    *CallTraceStmtIR    // For StmtCallTrace
 }
 
 // CommandStmtIR represents a command statement.
@@ -56,6 +60,19 @@ type CommandStmtIR struct {
 	Operator       string         // "&&", "||", "|", ";" - chain to next command
 	RedirectMode   string         // ">", ">>" - redirect mode (empty if no redirect)
 	RedirectTarget *CommandExpr   // For redirect operators, the target path (nil otherwise)
+}
+
+// FunctionCallStmtIR represents a function call statement.
+type FunctionCallStmtIR struct {
+	Name string  // Function name
+	Args []ArgIR // Call arguments (positional and named)
+}
+
+// CallTraceStmtIR wraps expanded statements with function-call provenance.
+// This is display-only metadata and does not affect execution semantics.
+type CallTraceStmtIR struct {
+	Label string         // e.g. deploy(token=opal:abc123) in rendered output
+	Block []*StatementIR // Fully resolved expanded statements
 }
 
 // ArgIR represents a decorator argument.
@@ -224,8 +241,32 @@ func DeepCopyStatement(stmt *StatementIR) *StatementIR {
 		result.Blocker = deepCopyBlocker(stmt.Blocker)
 	case StmtTry:
 		result.Try = deepCopyTry(stmt.Try)
+	case StmtFunctionCall:
+		result.FunctionCall = deepCopyFunctionCallStmt(stmt.FunctionCall)
+	case StmtCallTrace:
+		result.CallTrace = deepCopyCallTraceStmt(stmt.CallTrace)
 	}
 	return result
+}
+
+func deepCopyCallTraceStmt(trace *CallTraceStmtIR) *CallTraceStmtIR {
+	if trace == nil {
+		return nil
+	}
+	return &CallTraceStmtIR{
+		Label: trace.Label,
+		Block: DeepCopyStatements(trace.Block),
+	}
+}
+
+func deepCopyFunctionCallStmt(call *FunctionCallStmtIR) *FunctionCallStmtIR {
+	if call == nil {
+		return nil
+	}
+	return &FunctionCallStmtIR{
+		Name: call.Name,
+		Args: deepCopyArgs(call.Args),
+	}
 }
 
 func deepCopyCommandStmt(cmd *CommandStmtIR) *CommandStmtIR {

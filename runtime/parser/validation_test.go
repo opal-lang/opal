@@ -9,9 +9,11 @@ func TestValidateScriptMode(t *testing.T) {
 
 echo "Starting deployment"
 
-fun deploy(service) {
+fun deploy(service String) {
   kubectl apply -f deployment.yaml
-}`
+}
+
+deploy("api")`
 
 	tree := Parse([]byte(input))
 
@@ -59,6 +61,28 @@ fun test() { echo "test" }`,
 			input:     `deploy`,
 			shouldErr: true,
 			reason:    "command mode is for definitions only, no execution",
+		},
+		{
+			name: "top-level function call rejected",
+			input: `fun deploy(service String) {
+	echo "hello"
+}
+
+deploy("api")`,
+			shouldErr: true,
+			reason:    "command mode is for definitions only, no top-level function call execution",
+		},
+		{
+			name: "function call inside function definition allowed",
+			input: `fun helper(service String) {
+	echo "hello"
+}
+
+fun deploy(service String) {
+	helper(@var.service)
+}`,
+			shouldErr: false,
+			reason:    "command mode allows function calls inside definitions",
 		},
 	}
 
