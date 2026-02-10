@@ -1262,12 +1262,25 @@ func canonicalizeDecoratorArgNames(path string, rawNames []string, hasPrimary bo
 }
 
 func decoratorSchema(path string) (types.DecoratorSchema, bool) {
-	trimmed := strings.TrimPrefix(path, "@")
-	if trimmed == "" {
-		return types.DecoratorSchema{}, false
-	}
+	candidates := []string{path, strings.TrimPrefix(path, "@")}
+	seen := map[string]struct{}{}
 
-	entry, ok := decorator.Global().Lookup(trimmed)
+	var entry decorator.Entry
+	ok := false
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+
+		entry, ok = decorator.Global().Lookup(candidate)
+		if ok {
+			break
+		}
+	}
 	if !ok {
 		return types.DecoratorSchema{}, false
 	}
