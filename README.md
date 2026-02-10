@@ -29,6 +29,16 @@ Opal is intentionally a two-lane system:
 
 This is a departure from plain shell scripting by design. Opal keeps shell as the execution substrate, then adds typed plan-time contracts and deterministic expansion on top.
 
+## North Star
+
+Opal is one operations language: start with commands, scale to full contract-driven workflows.
+
+The thesis is a single language for infra changes, run scripts, and day-2 operations without split-brain tooling.
+
+Design check for new features:
+
+Does this make operations more describable in one language without losing practical escape hatches?
+
 ## Quick Start
 
 Define your tasks:
