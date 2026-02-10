@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1561,13 +1560,8 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 		}
 
 		paramName := fmt.Sprintf("arg%d", i+1)
-		if i < len(d.ArgNames) {
-			candidate := d.ArgNames[i]
-			if candidate != "" {
-				if _, positional := parsePositionalArgKey(candidate); !positional {
-					paramName = candidate
-				}
-			}
+		if i < len(d.ArgNames) && d.ArgNames[i] != "" {
+			paramName = d.ArgNames[i]
 		}
 
 		if _, exists := call.Params[paramName]; exists {
@@ -1576,23 +1570,48 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 		call.Params[paramName] = value
 	}
 
-	return call, nil
+	normalized, err := normalizeValueCall(call)
+	if err != nil {
+		return decorator.ValueCall{}, err
+	}
+
+	return normalized, nil
 }
 
-func parsePositionalArgKey(key string) (int, bool) {
-	if !strings.HasPrefix(key, "arg") {
-		return 0, false
-	}
-	if len(key) <= 3 {
-		return 0, false
+func normalizeValueCall(call decorator.ValueCall) (decorator.ValueCall, error) {
+	entry, ok := decorator.Global().Lookup(call.Path)
+	if !ok {
+		return call, nil
 	}
 
-	index, err := strconv.Atoi(key[3:])
-	if err != nil || index <= 0 {
-		return 0, false
+	schema := entry.Impl.Descriptor().Schema
+	if schema.Path == "" && len(schema.Parameters) == 0 && schema.PrimaryParameter == "" {
+		return call, nil
 	}
 
-	return index, true
+	canonical, _, err := decorator.NormalizeArgs(schema, call.Primary, call.Params)
+	if err != nil {
+		return decorator.ValueCall{}, fmt.Errorf("invalid parameters for @%s: %w", call.Path, err)
+	}
+
+	normalized := decorator.ValueCall{
+		Path:   call.Path,
+		Params: canonical,
+	}
+
+	if schema.PrimaryParameter != "" {
+		rawPrimary, ok := canonical[schema.PrimaryParameter]
+		if ok {
+			primaryValue, ok := rawPrimary.(string)
+			if !ok {
+				return decorator.ValueCall{}, fmt.Errorf("invalid parameters for @%s: primary parameter %q must be string", call.Path, schema.PrimaryParameter)
+			}
+			normalized.Primary = &primaryValue
+			delete(normalized.Params, schema.PrimaryParameter)
+		}
+	}
+
+	return normalized, nil
 }
 
 // buildDecoratorRaw builds a raw decorator string from a DecoratorRef.

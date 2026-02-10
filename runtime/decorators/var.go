@@ -67,17 +67,6 @@ func (d *VarDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 		var varName string
 		if call.Primary != nil {
 			varName = *call.Primary
-		} else if raw, ok := call.Params["arg1"]; ok {
-			name, ok := raw.(string)
-			if !ok {
-				results[i] = decorator.ResolveResult{
-					Value:  nil,
-					Origin: "var.<unknown>",
-					Error:  fmt.Errorf("@var arg1 must be a string"),
-				}
-				continue
-			}
-			varName = name
 		}
 
 		if varName == "" {
