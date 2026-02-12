@@ -105,6 +105,9 @@ const (
 	NodeObjectLiteral // Object literal: {key: value, ...}
 	NodeObjectField   // Object field: key: value
 	NodeArrayLiteral  // Array literal: [expr, expr, ...]
+
+	// Function calls - added at end to preserve existing node numbers
+	NodeFunctionCall // Function call statement: name(...)
 )
 
 // ErrorCode represents a structured error code for schema validation errors

@@ -2,6 +2,8 @@ package parser
 
 import (
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestParseErrors verifies error recovery for invalid syntax
@@ -14,7 +16,7 @@ func TestParseErrors(t *testing.T) {
 	}{
 		{
 			name:        "missing closing parenthesis",
-			input:       "fun greet(name {}",
+			input:       "fun greet(name String {",
 			wantErrors:  true,
 			description: "should report missing )",
 		},
@@ -32,9 +34,9 @@ func TestParseErrors(t *testing.T) {
 		},
 		{
 			name:        "trailing comma in parameters",
-			input:       "fun greet(name,) {}",
-			wantErrors:  false, // Parser might accept this, semantic analysis rejects
-			description: "parser accepts, semantic analysis should reject",
+			input:       "fun greet(name String,) {}",
+			wantErrors:  false, // Parser accepts trailing comma in parameter list
+			description: "parser accepts trailing comma",
 		},
 		{
 			name:        "missing function body",
@@ -80,7 +82,7 @@ func TestErrorMessages(t *testing.T) {
 	}{
 		{
 			name:           "missing closing parenthesis",
-			input:          "fun greet(name {}",
+			input:          "fun greet(name String {",
 			wantMessage:    "missing ')'",
 			wantContext:    "parameter list",
 			wantSuggestion: "Add ')' to close the parameter list",
@@ -136,14 +138,14 @@ func TestErrorMessages(t *testing.T) {
 
 // TestMultipleErrors verifies parser reports multiple errors in one pass
 func TestMultipleErrors(t *testing.T) {
-	input := `fun first(name {
+	input := `fun first(name String {
   echo "hello"
 }
 
 fun second() {
   echo "world"
 
-fun third(x, y {
+fun third(x String, y String {
   echo "test"
 }`
 
@@ -172,7 +174,7 @@ fun third(x, y {
 
 // TestErrorRecoveryProducesUsableTree verifies parser produces usable events even with errors
 func TestErrorRecoveryProducesUsableTree(t *testing.T) {
-	input := `fun broken(x, y {
+	input := `fun broken(x String, y String {
   echo "test"
 }
 
@@ -180,7 +182,7 @@ fun good() {
   echo "works"
 }
 
-fun alsoBroken(a, b, c {
+fun alsoBroken(a String, b String, c String {
   echo "more"
 }`
 
@@ -215,5 +217,20 @@ fun alsoBroken(a, b, c {
 
 	if functionCount != 3 {
 		t.Errorf("Expected 3 function nodes, got %d", functionCount)
+	}
+}
+
+func TestFunctionParamGoStyleTypeLookaheadRejectsExtraIdentifier(t *testing.T) {
+	tree := ParseString(`fun greet(name String alias String) {}`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	err := tree.Errors[0]
+	if diff := cmp.Diff("missing parameter type annotation", err.Message); diff != "" {
+		t.Fatalf("error message mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("function parameter", err.Context); diff != "" {
+		t.Fatalf("error context mismatch (-want +got):\n%s", diff)
 	}
 }

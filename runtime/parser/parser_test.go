@@ -91,8 +91,8 @@ func TestParseEventStructure(t *testing.T) {
 			},
 		},
 		{
-			name:  "function with single parameter",
-			input: "fun greet(name) {}",
+			name:  "function with go-style typed parameter",
+			input: "fun greet(name String) {}",
 			events: []Event{
 				{EventOpen, 0},  // Source
 				{EventOpen, 1},  // Function
@@ -102,12 +102,15 @@ func TestParseEventStructure(t *testing.T) {
 				{EventToken, 2}, // (
 				{EventOpen, 4},  // Param
 				{EventToken, 3}, // name
+				{EventOpen, 5},  // TypeAnnotation
+				{EventToken, 4}, // String
+				{EventClose, 5}, // TypeAnnotation
 				{EventClose, 4}, // Param
-				{EventToken, 4}, // )
+				{EventToken, 5}, // )
 				{EventClose, 2}, // ParamList
 				{EventOpen, 3},  // Block
-				{EventToken, 5}, // {
-				{EventToken, 6}, // }
+				{EventToken, 6}, // {
+				{EventToken, 7}, // }
 				{EventClose, 3}, // Block
 				{EventClose, 1}, // Function
 				{EventClose, 0}, // Source
@@ -141,8 +144,8 @@ func TestParseEventStructure(t *testing.T) {
 			},
 		},
 		{
-			name:  "function with default parameter",
-			input: `fun greet(name = "World") {}`,
+			name:  "function with typed default parameter",
+			input: `fun greet(name String = "World") {}`,
 			events: []Event{
 				{EventOpen, 0},  // Source
 				{EventOpen, 1},  // Function
@@ -152,16 +155,19 @@ func TestParseEventStructure(t *testing.T) {
 				{EventToken, 2}, // (
 				{EventOpen, 4},  // Param
 				{EventToken, 3}, // name
-				{EventOpen, 6},  // DefaultValue (new node kind)
-				{EventToken, 4}, // =
-				{EventToken, 5}, // "World"
+				{EventOpen, 5},  // TypeAnnotation
+				{EventToken, 4}, // String
+				{EventClose, 5}, // TypeAnnotation
+				{EventOpen, 6},  // DefaultValue
+				{EventToken, 5}, // =
+				{EventToken, 6}, // "World"
 				{EventClose, 6}, // DefaultValue
 				{EventClose, 4}, // Param
-				{EventToken, 6}, // )
+				{EventToken, 7}, // )
 				{EventClose, 2}, // ParamList
 				{EventOpen, 3},  // Block
-				{EventToken, 7}, // {
-				{EventToken, 8}, // }
+				{EventToken, 8}, // {
+				{EventToken, 9}, // }
 				{EventClose, 3}, // Block
 				{EventClose, 1}, // Function
 				{EventClose, 0}, // Source
@@ -169,38 +175,37 @@ func TestParseEventStructure(t *testing.T) {
 		},
 		{
 			name:  "function with typed parameter and default value",
-			input: `fun greet(name: String = "World") {}`,
+			input: `fun greet(name String = "World") {}`,
 			events: []Event{
-				{EventOpen, 0},   // Source
-				{EventOpen, 1},   // Function
-				{EventToken, 0},  // fun
-				{EventToken, 1},  // greet
-				{EventOpen, 2},   // ParamList
-				{EventToken, 2},  // (
-				{EventOpen, 4},   // Param
-				{EventToken, 3},  // name
-				{EventOpen, 5},   // TypeAnnotation
-				{EventToken, 4},  // :
-				{EventToken, 5},  // String
-				{EventClose, 5},  // TypeAnnotation
-				{EventOpen, 6},   // DefaultValue
-				{EventToken, 6},  // =
-				{EventToken, 7},  // "World"
-				{EventClose, 6},  // DefaultValue
-				{EventClose, 4},  // Param
-				{EventToken, 8},  // )
-				{EventClose, 2},  // ParamList
-				{EventOpen, 3},   // Block
-				{EventToken, 9},  // {
-				{EventToken, 10}, // }
-				{EventClose, 3},  // Block
-				{EventClose, 1},  // Function
-				{EventClose, 0},  // Source
+				{EventOpen, 0},  // Source
+				{EventOpen, 1},  // Function
+				{EventToken, 0}, // fun
+				{EventToken, 1}, // greet
+				{EventOpen, 2},  // ParamList
+				{EventToken, 2}, // (
+				{EventOpen, 4},  // Param
+				{EventToken, 3}, // name
+				{EventOpen, 5},  // TypeAnnotation
+				{EventToken, 4}, // String
+				{EventClose, 5}, // TypeAnnotation
+				{EventOpen, 6},  // DefaultValue
+				{EventToken, 5}, // =
+				{EventToken, 6}, // "World"
+				{EventClose, 6}, // DefaultValue
+				{EventClose, 4}, // Param
+				{EventToken, 7}, // )
+				{EventClose, 2}, // ParamList
+				{EventOpen, 3},  // Block
+				{EventToken, 8}, // {
+				{EventToken, 9}, // }
+				{EventClose, 3}, // Block
+				{EventClose, 1}, // Function
+				{EventClose, 0}, // Source
 			},
 		},
 		{
-			name:  "function with two untyped parameters",
-			input: `fun greet(first, last) {}`,
+			name:  "function with grouped go-style parameter type",
+			input: `fun greet(first, last String) {}`,
 			events: []Event{
 				{EventOpen, 0},  // Source
 				{EventOpen, 1},  // Function
@@ -214,20 +219,23 @@ func TestParseEventStructure(t *testing.T) {
 				{EventToken, 4}, // ,
 				{EventOpen, 4},  // Param
 				{EventToken, 5}, // last
+				{EventOpen, 5},  // TypeAnnotation
+				{EventToken, 6}, // String
+				{EventClose, 5}, // TypeAnnotation
 				{EventClose, 4}, // Param
-				{EventToken, 6}, // )
+				{EventToken, 7}, // )
 				{EventClose, 2}, // ParamList
 				{EventOpen, 3},  // Block
-				{EventToken, 7}, // {
-				{EventToken, 8}, // }
+				{EventToken, 8}, // {
+				{EventToken, 9}, // }
 				{EventClose, 3}, // Block
 				{EventClose, 1}, // Function
 				{EventClose, 0}, // Source
 			},
 		},
 		{
-			name:  "function with mixed typed and untyped parameters",
-			input: `fun deploy(env: String, replicas = 3) {}`,
+			name:  "function with typed parameters and defaults",
+			input: `fun deploy(env String, replicas Int = 3) {}`,
 			events: []Event{
 				{EventOpen, 0},   // Source
 				{EventOpen, 1},   // Function
@@ -238,13 +246,15 @@ func TestParseEventStructure(t *testing.T) {
 				{EventOpen, 4},   // Param
 				{EventToken, 3},  // env
 				{EventOpen, 5},   // TypeAnnotation
-				{EventToken, 4},  // :
-				{EventToken, 5},  // String
+				{EventToken, 4},  // String
 				{EventClose, 5},  // TypeAnnotation
 				{EventClose, 4},  // Param
-				{EventToken, 6},  // ,
+				{EventToken, 5},  // ,
 				{EventOpen, 4},   // Param
-				{EventToken, 7},  // replicas
+				{EventToken, 6},  // replicas
+				{EventOpen, 5},   // TypeAnnotation
+				{EventToken, 7},  // Int
+				{EventClose, 5},  // TypeAnnotation
 				{EventOpen, 6},   // DefaultValue
 				{EventToken, 8},  // =
 				{EventToken, 9},  // 3
@@ -262,7 +272,7 @@ func TestParseEventStructure(t *testing.T) {
 		},
 		{
 			name:  "function with all parameter variations",
-			input: `fun deploy(env: String, replicas: Int = 3, verbose) {}`,
+			input: `fun deploy(env String, replicas Int = 3, verbose Bool) {}`,
 			events: []Event{
 				{EventOpen, 0},   // Source
 				{EventOpen, 1},   // Function
@@ -273,31 +283,32 @@ func TestParseEventStructure(t *testing.T) {
 				{EventOpen, 4},   // Param
 				{EventToken, 3},  // env
 				{EventOpen, 5},   // TypeAnnotation
-				{EventToken, 4},  // :
-				{EventToken, 5},  // String
+				{EventToken, 4},  // String
 				{EventClose, 5},  // TypeAnnotation
 				{EventClose, 4},  // Param
-				{EventToken, 6},  // ,
+				{EventToken, 5},  // ,
 				{EventOpen, 4},   // Param
-				{EventToken, 7},  // replicas
+				{EventToken, 6},  // replicas
 				{EventOpen, 5},   // TypeAnnotation
-				{EventToken, 8},  // :
-				{EventToken, 9},  // Int
+				{EventToken, 7},  // Int
 				{EventClose, 5},  // TypeAnnotation
 				{EventOpen, 6},   // DefaultValue
-				{EventToken, 10}, // =
-				{EventToken, 11}, // 3
+				{EventToken, 8},  // =
+				{EventToken, 9},  // 3
 				{EventClose, 6},  // DefaultValue
 				{EventClose, 4},  // Param
-				{EventToken, 12}, // ,
+				{EventToken, 10}, // ,
 				{EventOpen, 4},   // Param
-				{EventToken, 13}, // verbose
+				{EventToken, 11}, // verbose
+				{EventOpen, 5},   // TypeAnnotation
+				{EventToken, 12}, // Bool
+				{EventClose, 5},  // TypeAnnotation
 				{EventClose, 4},  // Param
-				{EventToken, 14}, // )
+				{EventToken, 13}, // )
 				{EventClose, 2},  // ParamList
 				{EventOpen, 3},   // Block
-				{EventToken, 15}, // {
-				{EventToken, 16}, // }
+				{EventToken, 14}, // {
+				{EventToken, 15}, // }
 				{EventClose, 3},  // Block
 				{EventClose, 1},  // Function
 				{EventClose, 0},  // Source
@@ -325,7 +336,7 @@ func TestParseEventStructure(t *testing.T) {
 func TestFunctionDefaultValueValidation(t *testing.T) {
 	t.Run("newline immediately after equals", func(t *testing.T) {
 		tree := ParseString(`fun greet(
-	name =
+	name String =
 	"World"
 ) {}`)
 
@@ -351,7 +362,7 @@ func TestFunctionDefaultValueValidation(t *testing.T) {
 	})
 
 	t.Run("missing value before right paren", func(t *testing.T) {
-		tree := ParseString(`fun greet(name = ) {}`)
+		tree := ParseString(`fun greet(name String = ) {}`)
 
 		if len(tree.Errors) != 1 {
 			t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)

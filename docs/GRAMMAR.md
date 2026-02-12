@@ -94,11 +94,11 @@ declaration = function_decl
 ```ebnf
 function_decl = "fun" identifier param_list? ("=" expression | block)
 
-param_list = "(" (param ("," param)*)? ")"
+param_list = "(" (param_group ("," param_group)*)? ")"
 
-param = identifier type_annotation? default_value?
+param_group = identifier ("," identifier)* type_annotation default_value?
 
-type_annotation = ":" type_name
+type_annotation = [":"] type_name
 
 default_value = "=" expression
 
@@ -108,9 +108,10 @@ type_name = "String" | "Int" | "Float" | "Bool" | "Duration" | "Array" | "Map"
 **Examples**:
 ```opal
 fun deploy = kubectl apply -f k8s/
-fun greet(name) = echo "Hello @var.name"
-fun build(module, target = "dist") { ... }
+fun greet(name String) = echo "Hello @var.name"
+fun build(module String, target String = "dist") { ... }
 fun deploy(env: String, replicas: Int = 3) { ... }
+fun notify(primary, backup String, urgent Bool = false) { ... }
 ```
 
 **Semantic Notes** (calling conventions):
@@ -366,15 +367,13 @@ comment = "//" [^\n]* "\n"
 
 ### Type System
 
-**Optional typing** (TypeScript-style):
-- Variables untyped by default
-- Function parameters can have type annotations
-- Type checking at plan-time when types specified
-- Future: `--strict-types` flag
+**Typed function contracts + dynamic variables:**
+- Function parameters are typed (required in `fun` signatures)
+- Variables are untyped by default
+- Function argument type checking happens at plan-time
 
 **Type inference**:
 - From literals: `var x = 3` → Int
-- From defaults: `fun f(x = "hi")` → x is String
 - From decorators: `@env.PORT` → String (can be converted)
 
 ## Plan File Format

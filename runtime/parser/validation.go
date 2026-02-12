@@ -89,12 +89,21 @@ func validateCommandMode(t *ParseTree) error {
 				depth++
 
 				// Top-level is depth 2 (Source -> Statement)
-				// NodeVarDecl and NodeFunction are allowed
-				if depth == 2 && nodeKind == NodeShellCommand {
-					return &ValidationError{
-						Mode:    ModeCommand,
-						Message: "command mode does not allow top-level shell commands",
-						Context: "command mode is for definitions only (like just/make)",
+				// NodeVarDecl and NodeFunction are allowed.
+				if depth == 2 {
+					switch nodeKind {
+					case NodeShellCommand:
+						return &ValidationError{
+							Mode:    ModeCommand,
+							Message: "command mode does not allow top-level shell commands",
+							Context: "command mode is for definitions only (like just/make)",
+						}
+					case NodeFunctionCall:
+						return &ValidationError{
+							Mode:    ModeCommand,
+							Message: "command mode does not allow top-level function calls",
+							Context: "command mode is for definitions only (like just/make)",
+						}
 					}
 				}
 			}

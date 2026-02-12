@@ -124,6 +124,7 @@ func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token,
 
 	resolveConfig := ResolveConfig{
 		TargetFunction: config.Target,
+		FunctionArgs:   config.Args,
 		Context:        config.Context,
 		PlanHash:       planHash,
 		StepPath:       stepPath,

@@ -12,7 +12,7 @@ var replicas = 3
 echo "Starting deployment"
 kubectl get pods
 
-fun deploy(service) {
+fun deploy(service String) {
   echo "Deploying service"
   kubectl apply -f deployment.yaml
 }

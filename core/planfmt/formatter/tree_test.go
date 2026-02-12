@@ -133,6 +133,47 @@ func TestFormatTree_WithOperators(t *testing.T) {
 	}
 }
 
+func TestFormatTree_WithCallTrace(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "call",
+					Condition: "deploy(prod, token=opal:abc123)",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo ok"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	FormatTree(&buf, plan, false)
+
+	output := buf.String()
+	if !strings.Contains(output, "deploy(prod, token=opal:abc123)") {
+		t.Fatalf("Expected call trace label, got:\n%s", output)
+	}
+	if strings.Contains(output, "call deploy(prod, token=opal:abc123)") {
+		t.Fatalf("Expected signature-only call trace label, got:\n%s", output)
+	}
+	if !strings.Contains(output, "@shell echo ok") {
+		t.Fatalf("Expected nested command in call trace, got:\n%s", output)
+	}
+	if strings.Contains(output, "super-secret") {
+		t.Fatalf("Output leaked redacted value:\n%s", output)
+	}
+}
+
 func TestFormatTree_WithPipeline(t *testing.T) {
 	plan := &planfmt.Plan{
 		Target: "test",

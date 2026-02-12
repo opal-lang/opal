@@ -304,6 +304,128 @@ func TestBuildIR_MultipleStatements(t *testing.T) {
 	}
 }
 
+func TestBuildIR_TopLevelFunctionCallStatement(t *testing.T) {
+	graph := buildIR(t, `fun helper(name String) {
+	echo @var.name
+}
+
+helper("api")`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if diff := cmp.Diff(StmtFunctionCall, stmt.Kind); diff != "" {
+		t.Fatalf("statement kind mismatch (-want +got):\n%s", diff)
+	}
+	if stmt.FunctionCall == nil {
+		t.Fatal("FunctionCall is nil")
+	}
+	if diff := cmp.Diff("helper", stmt.FunctionCall.Name); diff != "" {
+		t.Fatalf("function name mismatch (-want +got):\n%s", diff)
+	}
+	if len(stmt.FunctionCall.Args) != 1 {
+		t.Fatalf("len(FunctionCall.Args) = %d, want 1", len(stmt.FunctionCall.Args))
+	}
+	if diff := cmp.Diff("", stmt.FunctionCall.Args[0].Name); diff != "" {
+		t.Fatalf("arg name mismatch (-want +got):\n%s", diff)
+	}
+	if stmt.FunctionCall.Args[0].Value == nil {
+		t.Fatal("FunctionCall.Args[0].Value is nil")
+	}
+	if diff := cmp.Diff("api", stmt.FunctionCall.Args[0].Value.Value); diff != "" {
+		t.Fatalf("arg value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_FunctionCallInFunctionBody(t *testing.T) {
+	graph := buildIR(t, `fun helper(name String) {
+	echo @var.name
+}
+
+fun deploy(name String) {
+	helper(@var.name)
+}`)
+
+	deployFn, ok := graph.Functions["deploy"]
+	if !ok {
+		t.Fatal("deploy function not found")
+	}
+	if len(deployFn.Body) != 1 {
+		t.Fatalf("len(deploy.Body) = %d, want 1", len(deployFn.Body))
+	}
+	if diff := cmp.Diff(StmtFunctionCall, deployFn.Body[0].Kind); diff != "" {
+		t.Fatalf("statement kind mismatch (-want +got):\n%s", diff)
+	}
+	if deployFn.Body[0].FunctionCall == nil {
+		t.Fatal("FunctionCall is nil")
+	}
+	if diff := cmp.Diff("helper", deployFn.Body[0].FunctionCall.Name); diff != "" {
+		t.Fatalf("function name mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_FunctionCallNamedAndPositionalArgs(t *testing.T) {
+	graph := buildIR(t, `fun deploy(env String, retries Int = 2) {
+	echo @var.env
+}
+
+deploy(retries = 5, "prod")`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	call := graph.Statements[0].FunctionCall
+	if call == nil {
+		t.Fatal("FunctionCall is nil")
+	}
+	if len(call.Args) != 2 {
+		t.Fatalf("len(FunctionCall.Args) = %d, want 2", len(call.Args))
+	}
+
+	if diff := cmp.Diff("retries", call.Args[0].Name); diff != "" {
+		t.Fatalf("first arg name mismatch (-want +got):\n%s", diff)
+	}
+	if call.Args[0].Value == nil {
+		t.Fatal("FunctionCall.Args[0].Value is nil")
+	}
+	if diff := cmp.Diff(int64(5), call.Args[0].Value.Value); diff != "" {
+		t.Fatalf("first arg value mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("", call.Args[1].Name); diff != "" {
+		t.Fatalf("second arg name mismatch (-want +got):\n%s", diff)
+	}
+	if call.Args[1].Value == nil {
+		t.Fatal("FunctionCall.Args[1].Value is nil")
+	}
+	if diff := cmp.Diff("prod", call.Args[1].Value.Value); diff != "" {
+		t.Fatalf("second arg value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_FunctionParamDefaultValueParsesExpressionValue(t *testing.T) {
+	graph := buildIR(t, `fun deploy(token String = "super-secret-token") {
+	echo "ok"
+}`)
+
+	fn, ok := graph.Functions["deploy"]
+	if !ok {
+		t.Fatal("deploy function not found")
+	}
+	if len(fn.Params) != 1 {
+		t.Fatalf("len(params) = %d, want 1", len(fn.Params))
+	}
+	if fn.Params[0].Default == nil {
+		t.Fatal("default expression is nil")
+	}
+	if diff := cmp.Diff("super-secret-token", fn.Params[0].Default.Value); diff != "" {
+		t.Fatalf("default value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildIR_CommandWithVarRef(t *testing.T) {
 	// Test direct @var.NAME usage (not inside string)
 	graph := buildIR(t, `var NAME = "world"

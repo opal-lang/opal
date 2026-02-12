@@ -209,6 +209,27 @@ func TestFormatDiff(t *testing.T) {
 			want: `No differences found.
 `,
 		},
+		{
+			name: "call trace modified",
+			expected: &planfmt.Plan{
+				Target: "deploy",
+				Steps: []planfmt.Step{
+					{ID: 1, Tree: &planfmt.LogicNode{Kind: "call", Condition: "deploy(prod)"}},
+				},
+			},
+			actual: &planfmt.Plan{
+				Target: "deploy",
+				Steps: []planfmt.Step{
+					{ID: 1, Tree: &planfmt.LogicNode{Kind: "call", Condition: "deploy(prod, token=opal:abc123)"}},
+				},
+			},
+			want: `Modified steps:
+  step 1:
+    - deploy(prod)
+    + deploy(prod, token=opal:abc123)
+
+`,
+		},
 	}
 
 	for _, tt := range tests {

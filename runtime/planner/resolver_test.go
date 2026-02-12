@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
 	_ "github.com/opal-lang/opal/runtime/decorators" // Register decorators for resolver
+	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/vault"
 )
 
@@ -80,6 +81,19 @@ func TestResolve_CanceledContext(t *testing.T) {
 
 	if diff := cmp.Diff("resolution canceled: context canceled", err.Error()); diff != "" {
 		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_RequiresVault(t *testing.T) {
+	graph := &ExecutionGraph{Scopes: NewScopeStack()}
+
+	_, err := Resolve(graph, nil, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if diff := cmp.Diff("vault is required", err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -1074,6 +1088,737 @@ func TestResolve_FunctionNotFound(t *testing.T) {
 	}
 	if !containsStr(err.Error(), "not found") {
 		t.Errorf("Error should mention 'not found', got: %v", err)
+	}
+}
+
+func TestResolve_CommandModeRejectsTopLevelExecution(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "top-level shell command",
+			src: `echo "oops"
+
+fun deploy() {
+	echo "ok"
+}`,
+			want: "command mode does not allow top-level execution statements",
+		},
+		{
+			name: "top-level function call",
+			src: `fun helper(name String) {
+	echo @var.name
+}
+
+helper("prod")
+
+fun deploy() {
+	echo "ok"
+}`,
+			want: "command mode does not allow top-level execution statements",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.ParseString(tt.src)
+			if len(tree.Errors) > 0 {
+				t.Fatalf("parse errors: %v", tree.Errors)
+			}
+
+			graph, err := BuildIR(tree.Events, tree.Tokens)
+			if err != nil {
+				t.Fatalf("BuildIR failed: %v", err)
+			}
+
+			v := vault.NewWithPlanKey([]byte("test-key"))
+			_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{
+				Context:        context.Background(),
+				TargetFunction: "deploy",
+			})
+			if err == nil {
+				t.Fatalf("expected error")
+			}
+
+			if !containsStr(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestResolve_FunctionCallInheritsCallerFunctionScopeBindings(t *testing.T) {
+	tree := parser.ParseString(`fun helper() {
+	echo @var.temp
+}
+
+fun deploy() {
+	var temp = "secret"
+	helper()
+}
+
+deploy()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(result.Statements) == 0 {
+		t.Fatalf("expected resolved statements")
+	}
+	if hasFunctionCallStatements(result.Statements) {
+		t.Fatalf("expected function calls to be fully expanded")
+	}
+}
+
+func TestResolve_FunctionCallInNestedScopeInheritsCallerBindings(t *testing.T) {
+	tree := parser.ParseString(`fun helper() {
+	echo @var.region
+}
+
+fun deploy() {
+	try {
+		var region = "us-east-1"
+		helper()
+	} catch {
+		echo "recover"
+	}
+}
+
+deploy()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) == 0 {
+		t.Fatalf("expected resolved statements")
+	}
+	if hasFunctionCallStatements(result.Statements) {
+		t.Fatalf("expected function calls to be fully expanded")
+	}
+}
+
+func TestResolve_RecursiveFunctionCallWithBaseCase(t *testing.T) {
+	tree := parser.ParseString(`fun countdown(n Int) {
+	if @var.n == 0 {
+		echo "done"
+	} else {
+		countdown(@var.n - 1)
+	}
+}
+
+countdown(2)`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) == 0 {
+		t.Fatalf("expected resolved statements")
+	}
+	if hasFunctionCallStatements(result.Statements) {
+		t.Fatalf("expected function calls to be fully expanded")
+	}
+}
+
+func TestResolve_RecursiveFunctionCallDepthGuard(t *testing.T) {
+	tree := parser.ParseString(`fun loop() {
+	loop()
+}
+
+loop()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatalf("expected recursion depth error")
+	}
+	if !containsStr(err.Error(), "function call depth exceeded") {
+		t.Fatalf("error = %q, want function call depth exceeded", err.Error())
+	}
+}
+
+func hasFunctionCallStatements(stmts []*StatementIR) bool {
+	for _, stmt := range stmts {
+		if stmt == nil {
+			continue
+		}
+		if stmt.Kind == StmtFunctionCall {
+			return true
+		}
+		if stmt.Kind == StmtCallTrace && stmt.CallTrace != nil {
+			if hasFunctionCallStatements(stmt.CallTrace.Block) {
+				return true
+			}
+		}
+		if stmt.Kind == StmtBlocker && stmt.Blocker != nil {
+			if hasFunctionCallStatements(stmt.Blocker.ThenBranch) {
+				return true
+			}
+			if hasFunctionCallStatements(stmt.Blocker.ElseBranch) {
+				return true
+			}
+			for _, arm := range stmt.Blocker.Arms {
+				if hasFunctionCallStatements(arm.Body) {
+					return true
+				}
+			}
+			for _, iter := range stmt.Blocker.Iterations {
+				if hasFunctionCallStatements(iter.Body) {
+					return true
+				}
+			}
+		}
+		if stmt.Kind == StmtTry && stmt.Try != nil {
+			if hasFunctionCallStatements(stmt.Try.TryBlock) || hasFunctionCallStatements(stmt.Try.CatchBlock) || hasFunctionCallStatements(stmt.Try.FinallyBlock) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestResolve_FunctionArgsMissingRequired(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "env", Type: "String"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": missing required parameter "env"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsUnknownParameter(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "env", Type: "String"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Name: "region", Value: "us-east-1"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": unknown parameter "region"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsDuplicateNamed(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "env", Type: "String"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Name: "env", Value: "prod"},
+			{Name: "env", Value: "staging"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": duplicate argument "env"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsTypeMismatch(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "retries", Type: "Int"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "three"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "retries" expects integer`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsAcceptDurationLiteral(t *testing.T) {
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "delay", Type: "Duration"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: durationLiteral("5m")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionParamDefaultTypeMismatch(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{
+						Name: "retries",
+						Type: "Int",
+						Default: &ExprIR{
+							Kind:  ExprLiteral,
+							Value: "bad-default",
+						},
+					},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid default for parameter "retries" in function "deploy": expects integer`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsMissingTypeAnnotation(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{
+						Name: "retries",
+						Default: &ExprIR{
+							Kind:  ExprLiteral,
+							Value: int64(2),
+						},
+					},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Name: "retries", Value: "three"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `function "deploy" parameter "retries" is missing type annotation`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_GroupedGoStyleParameterTypeAppliesToAllParameters(t *testing.T) {
+	tree := parser.ParseString(`fun deploy(name, alias String) { echo "ok" }`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	fn, exists := graph.Functions["deploy"]
+	if !exists {
+		t.Fatal("expected deploy function in graph")
+	}
+
+	if diff := cmp.Diff("String", fn.Params[0].Type); diff != "" {
+		t.Fatalf("first parameter type mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("String", fn.Params[1].Type); diff != "" {
+		t.Fatalf("second parameter type mismatch (-want +got):\n%s", diff)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "primary"},
+			{Value: "secondary"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionArgsMixedBindingWithDefaults(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "env", Type: "String"},
+					{
+						Name: "retries",
+						Type: "Int",
+						Default: &ExprIR{
+							Kind:  ExprLiteral,
+							Value: int64(2),
+						},
+					},
+				},
+				Body: []*StatementIR{
+					{
+						Kind: StmtCommand,
+						Command: &CommandStmtIR{
+							Decorator: "@shell",
+							Command: &CommandExpr{
+								Parts: []*ExprIR{
+									{Kind: ExprLiteral, Value: "echo "},
+									{Kind: ExprVarRef, VarName: "env"},
+									{Kind: ExprLiteral, Value: " "},
+									{Kind: ExprVarRef, VarName: "retries"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "production"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_ScriptModeFunctionCallExpandsToStatements(t *testing.T) {
+	tree := parser.ParseString(`fun helper(name String) {
+	echo @var.name
+}
+
+helper("prod")`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context: context.Background(),
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) != 1 {
+		t.Fatalf("len(result.Statements) = %d, want 1", len(result.Statements))
+	}
+
+	stmt := result.Statements[0]
+	if diff := cmp.Diff(StmtCallTrace, stmt.Kind); diff != "" {
+		t.Fatalf("statement kind mismatch (-want +got):\n%s", diff)
+	}
+	if stmt.CallTrace == nil {
+		t.Fatal("call trace is nil")
+	}
+	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(opal:") {
+		t.Fatalf("call trace label = %q, want helper(opal:...)", stmt.CallTrace.Label)
+	}
+	if len(stmt.CallTrace.Block) != 1 {
+		t.Fatalf("len(call trace block) = %d, want 1", len(stmt.CallTrace.Block))
+	}
+	if diff := cmp.Diff(StmtCommand, stmt.CallTrace.Block[0].Kind); diff != "" {
+		t.Fatalf("nested statement kind mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_CommandModeNestedFunctionCallExpandsInTarget(t *testing.T) {
+	tree := parser.ParseString(`fun helper(name String) {
+	echo @var.name
+}
+
+fun deploy(env String) {
+	helper(@var.env)
+}`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "prod"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) != 1 {
+		t.Fatalf("len(result.Statements) = %d, want 1", len(result.Statements))
+	}
+
+	stmt := result.Statements[0]
+	if diff := cmp.Diff(StmtCallTrace, stmt.Kind); diff != "" {
+		t.Fatalf("statement kind mismatch (-want +got):\n%s", diff)
+	}
+	if stmt.CallTrace == nil {
+		t.Fatal("call trace is nil")
+	}
+	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(opal:") {
+		t.Fatalf("call trace label = %q, want helper(opal:...)", stmt.CallTrace.Label)
+	}
+	if len(stmt.CallTrace.Block) != 1 {
+		t.Fatalf("len(call trace block) = %d, want 1", len(stmt.CallTrace.Block))
+	}
+	if diff := cmp.Diff(StmtCommand, stmt.CallTrace.Block[0].Kind); diff != "" {
+		t.Fatalf("nested statement kind mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionCallTraceUsesDisplayIDForNamedArgumentValue(t *testing.T) {
+	tree := parser.ParseString(`fun deploy(token String) {
+	echo "ok"
+}
+
+deploy(token = "super-secret-token")`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) != 1 {
+		t.Fatalf("len(result.Statements) = %d, want 1", len(result.Statements))
+	}
+	trace := result.Statements[0].CallTrace
+	if trace == nil {
+		t.Fatalf("expected call trace statement")
+	}
+	if !containsStr(trace.Label, "token=opal:") {
+		t.Fatalf("trace label = %q, want token=opal:<hash>", trace.Label)
+	}
+	if containsStr(trace.Label, "super-secret-token") {
+		t.Fatalf("trace label leaked raw secret: %q", trace.Label)
+	}
+}
+
+func TestResolve_FunctionCallTraceRedactsStructuredArgumentValues(t *testing.T) {
+	source := `fun deploy(cfg Object) {
+	echo "ok"
+}
+
+deploy(cfg = {token: "super-secret-token", nested: {key: "very-secret"}})`
+
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v1 := vault.NewWithPlanKey([]byte("test-key"))
+	result1, err := Resolve(graph, v1, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(result1.Statements) != 1 || result1.Statements[0].CallTrace == nil {
+		t.Fatalf("expected one call trace statement")
+	}
+	label1 := result1.Statements[0].CallTrace.Label
+
+	v2 := vault.NewWithPlanKey([]byte("test-key"))
+	result2, err := Resolve(graph, v2, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("second resolve failed: %v", err)
+	}
+	if len(result2.Statements) != 1 || result2.Statements[0].CallTrace == nil {
+		t.Fatalf("expected one call trace statement")
+	}
+	label2 := result2.Statements[0].CallTrace.Label
+
+	if !containsStr(label1, "cfg=opal:") {
+		t.Fatalf("trace label = %q, want cfg=opal:<hash>", label1)
+	}
+	if containsStr(label1, "super-secret-token") || containsStr(label1, "very-secret") {
+		t.Fatalf("trace label leaked structured secret contents: %q", label1)
+	}
+	if containsStr(label1, "map[") {
+		t.Fatalf("trace label leaked raw map formatting: %q", label1)
+	}
+	if diff := cmp.Diff(label1, label2); diff != "" {
+		t.Fatalf("trace labels must be deterministic (-first +second):\n%s", diff)
 	}
 }
 

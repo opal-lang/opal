@@ -15,12 +15,20 @@ import (
 // Config configures planner behavior.
 type Config struct {
 	Target    string           // Command name (e.g. "hello") or "" for script mode.
+	Args      []FunctionArg    // Optional target function arguments (positional + named).
 	Context   context.Context  // Optional planning context for cancellation/deadlines.
 	IDFactory secret.IDFactory // Optional deterministic placeholder factory.
 	Vault     *vault.Vault     // Optional shared vault for value storage/scrubbing.
 	PlanSalt  []byte           // Optional deterministic salt (32 bytes) for contract verification.
 	Telemetry TelemetryLevel   // Telemetry level (production-safe).
 	Debug     DebugLevel       // Debug level (development only).
+}
+
+// FunctionArg represents one target function argument.
+// Empty Name means positional argument.
+type FunctionArg struct {
+	Name  string
+	Value any
 }
 
 // TelemetryLevel controls telemetry collection.

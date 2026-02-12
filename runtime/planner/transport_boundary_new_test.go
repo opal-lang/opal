@@ -54,6 +54,45 @@ var LOCAL_HOME = @env.HOME
 	}
 }
 
+func TestPlanNew_TransportBoundary_FunctionArgPreservesTransportSensitivity(t *testing.T) {
+	source := `
+fun deploy(home String) {
+    @test.transport {
+        echo @var.home
+    }
+}
+
+var LOCAL_HOME = @env.HOME
+deploy(@var.LOCAL_HOME)
+`
+
+	planKey := []byte("plan-key-transport-boundary-0000")
+	v := vault.NewWithPlanKey(planKey)
+
+	_, err := parsePlanNew(t, source, v)
+	if err == nil {
+		t.Fatal("Expected transport boundary error, got nil")
+	}
+
+	refVault := vault.NewWithPlanKey(planKey)
+	refVault.EnterTransport(localTransportID(planKey))
+	exprID := refVault.DeclareVariableTransportSensitive("LOCAL_HOME", "@env.HOME")
+	transportID, transportErr := deriveTransportID(planKey, "@test.transport", nil, localTransportID(planKey))
+	if transportErr != nil {
+		t.Fatalf("derive transport ID failed: %v", transportErr)
+	}
+	expected := fmt.Sprintf(
+		"failed to resolve: transport boundary violation: expression %q declared in %q, cannot use in %q",
+		exprID,
+		localTransportID(planKey),
+		transportID,
+	)
+
+	if diff := cmp.Diff(expected, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestPlanNew_TransportBoundary_VarFromLiteralAllowedAcrossBoundary(t *testing.T) {
 	source := `
 var VERSION = "1.0.0"

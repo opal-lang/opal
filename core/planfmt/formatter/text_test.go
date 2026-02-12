@@ -107,6 +107,17 @@ func TestFormatStep(t *testing.T) {
 			expected: `for region in ["us","eu"] -> region = us (iteration 1)`,
 		},
 		{
+			name: "call trace logic",
+			step: planfmt.Step{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "call",
+					Condition: "deploy(prod, token=opal:abc123)",
+				},
+			},
+			expected: `deploy(prod, token=opal:abc123)`,
+		},
+		{
 			name: "retry decorator",
 			step: planfmt.Step{
 				ID: 1,

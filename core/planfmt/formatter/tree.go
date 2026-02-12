@@ -321,6 +321,12 @@ func renderLogicNode(logic *planfmt.LogicNode) string {
 	if logic == nil {
 		return ""
 	}
+	if logic.Kind == "call" {
+		if logic.Condition != "" {
+			return logic.Condition
+		}
+		return "()"
+	}
 	if logic.Condition != "" && logic.Result != "" {
 		return fmt.Sprintf("%s %s -> %s", logic.Kind, logic.Condition, logic.Result)
 	}
