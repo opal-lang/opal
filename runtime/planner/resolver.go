@@ -3,11 +3,13 @@ package planner
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
 	"github.com/opal-lang/opal/runtime/vault"
 )
 
@@ -129,12 +131,15 @@ type Resolver struct {
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
 	errors           []error           // Collected errors
+	callStack        []string          // Active function call stack (for depth guard)
 
 	// @env allowance context (non-idempotent transports forbid @env)
 	envAllowed      bool
 	envBlockedBy    string
 	envContextStack []envContext
 }
+
+const maxFunctionCallDepth = 256
 
 type envContext struct {
 	allowed   bool
@@ -144,6 +149,7 @@ type envContext struct {
 // ResolveConfig configures the resolution process.
 type ResolveConfig struct {
 	TargetFunction string          // Empty = script mode, non-empty = command mode
+	FunctionArgs   []FunctionArg   // Optional command-mode function arguments
 	Context        context.Context // Execution context
 	PlanHash       []byte          // Deterministic plan hash/salt for value resolution context
 	StepPath       string          // Step path prefix for value resolution provenance
@@ -182,6 +188,9 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 	if config.Context == nil {
 		config.Context = context.Background()
 	}
+	if v == nil {
+		return nil, fmt.Errorf("vault is required")
+	}
 
 	r := &Resolver{
 		graph:            graph,
@@ -194,9 +203,7 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		envAllowed:       true,
 	}
 
-	if v != nil {
-		v.EnterTransport(localTransportID(v.GetPlanKey()))
-	}
+	v.EnterTransport(localTransportID(v.GetPlanKey()))
 
 	return r.resolve()
 }
@@ -256,6 +263,13 @@ func (r *Resolver) resolve() (*ResolveResult, error) {
 
 	if r.activeFunction != nil {
 		if err := r.resolvePrelude(r.activeFunction); err != nil {
+			return nil, err
+		}
+		if r.scopes != nil {
+			r.scopes.Push()
+			defer r.scopes.Pop()
+		}
+		if err := r.bindFunctionArguments(r.activeFunction); err != nil {
 			return nil, err
 		}
 	}
@@ -345,6 +359,25 @@ func (r *Resolver) resolveStatements(stmts []*StatementIR) ([]*StatementIR, erro
 				return nil, err
 			}
 			result = append(result, resolvedTry)
+
+		case StmtFunctionCall:
+			if err := r.batchResolve(); err != nil {
+				return nil, err
+			}
+			if err := r.finalizePendingStatements(pending); err != nil {
+				return nil, err
+			}
+			pending = nil
+
+			expanded, err := r.resolveFunctionCallStatement(stmt)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, expanded...)
+
+		case StmtCallTrace:
+			// Call traces are produced by resolver function expansion and already resolved.
+			result = append(result, stmt)
 		}
 	}
 
@@ -413,6 +446,11 @@ func (r *Resolver) finalizePendingStatements(stmts []*StatementIR) error {
 			if err := r.resolveCommandBlock(stmt.Command); err != nil {
 				return err
 			}
+		case StmtFunctionCall:
+			// Function calls are expanded during resolveStatements.
+			// Pending statements should not contain function calls.
+		case StmtCallTrace:
+			// Call trace blocks are already resolved before this point.
 		}
 	}
 
@@ -774,11 +812,222 @@ func (r *Resolver) resolvePreludeStatement(stmt *StatementIR) error {
 		return r.resolveVarDeclStatement(stmt)
 	case StmtBlocker:
 		return r.resolvePreludeBlocker(stmt)
-	case StmtCommand, StmtTry:
+	case StmtCommand, StmtTry, StmtFunctionCall, StmtCallTrace:
 		return nil
 	default:
 		return nil
 	}
+}
+
+func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*StatementIR, error) {
+	if stmt == nil || stmt.FunctionCall == nil {
+		return nil, nil
+	}
+
+	call := stmt.FunctionCall
+	fn, ok := r.graph.Functions[call.Name]
+	if !ok {
+		return nil, fmt.Errorf("function %q not found", call.Name)
+	}
+
+	if len(r.callStack) >= maxFunctionCallDepth {
+		path := append(append([]string{}, r.callStack...), call.Name)
+		return nil, fmt.Errorf("function call depth exceeded (%d): %s", maxFunctionCallDepth, strings.Join(path, " -> "))
+	}
+
+	for _, arg := range call.Args {
+		r.collectExpr(arg.Value, "")
+	}
+	if err := r.buildError(); err != nil {
+		return nil, err
+	}
+	if err := r.batchResolve(); err != nil {
+		return nil, err
+	}
+
+	resolvedArgs, argExprs, err := r.evaluateFunctionCallArgs(call)
+	if err != nil {
+		return nil, err
+	}
+
+	r.callStack = append(r.callStack, call.Name)
+	defer func() {
+		r.callStack = r.callStack[:len(r.callStack)-1]
+	}()
+
+	prevScopes := r.scopes
+	r.scopes = r.buildInvocationScopes(fn)
+	defer func() {
+		r.scopes = prevScopes
+	}()
+
+	var expanded []*StatementIR
+	err = r.withScope(func() error {
+		if err := r.bindFunctionArgumentsWithArgs(fn, resolvedArgs, argExprs); err != nil {
+			return err
+		}
+		resolved, err := r.resolveStatements(DeepCopyStatements(fn.Body))
+		if err != nil {
+			return err
+		}
+		expanded = resolved
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(expanded) == 0 {
+		return nil, nil
+	}
+
+	trace := &StatementIR{
+		Kind: StmtCallTrace,
+		CallTrace: &CallTraceStmtIR{
+			Label: r.formatFunctionCallTrace(call.Name, resolvedArgs),
+			Block: expanded,
+		},
+	}
+
+	return []*StatementIR{trace}, nil
+}
+
+func (r *Resolver) formatFunctionCallTrace(name string, args []FunctionArg) string {
+	if name == "" {
+		return "()"
+	}
+
+	if len(args) == 0 {
+		return fmt.Sprintf("%s()", name)
+	}
+
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		valueStr := r.formatTraceValue(arg.Value)
+		if arg.Name != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s", arg.Name, valueStr))
+			continue
+		}
+		parts = append(parts, valueStr)
+	}
+
+	return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
+}
+
+func (r *Resolver) formatTraceValue(value any) string {
+	if r == nil || r.vault == nil {
+		return fmt.Sprintf("%v", value)
+	}
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return ""
+		}
+		if strings.HasPrefix(v, "opal:") {
+			return v
+		}
+		return r.symbolForValue(v)
+	case []byte:
+		if len(v) == 0 {
+			return ""
+		}
+		return r.symbolForValue(v)
+	default:
+		if isStructuredTraceValue(value) {
+			return r.symbolForValue(value)
+		}
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+func isStructuredTraceValue(value any) bool {
+	t := reflect.TypeOf(value)
+	if t == nil {
+		return false
+	}
+
+	switch t.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Resolver) symbolForValue(value any) string {
+	raw := fmt.Sprintf("trace:%T:%v", value, value)
+	exprID := r.vault.TrackExpression(raw)
+	r.vault.StoreUnresolvedValue(exprID, value)
+	r.vault.MarkTouched(exprID)
+	r.vault.ResolveAllTouched()
+
+	if symbol := r.vault.GetDisplayID(exprID); symbol != "" {
+		return symbol
+	}
+
+	return fmt.Sprintf("%v", value)
+}
+
+func (r *Resolver) buildInvocationScopes(fn *FunctionIR) *ScopeStack {
+	if fn == nil || fn.Scopes == nil {
+		if r.scopes != nil {
+			return r.scopes.Clone()
+		}
+		if r.graph != nil && r.graph.Scopes != nil {
+			return r.graph.Scopes.Clone()
+		}
+		return NewScopeStack()
+	}
+
+	invocation := fn.Scopes.Clone()
+	if invocation == nil {
+		invocation = NewScopeStack()
+	}
+
+	if r.scopes == nil || len(r.scopes.scopes) == 0 || len(invocation.scopes) == 0 {
+		return invocation
+	}
+
+	if invocation.scopes[0] == nil {
+		invocation.scopes[0] = make(map[string]string)
+	}
+
+	for _, scope := range r.scopes.scopes {
+		for name, exprID := range scope {
+			invocation.scopes[0][name] = exprID
+		}
+	}
+
+	return invocation
+}
+
+func (r *Resolver) evaluateFunctionCallArgs(call *FunctionCallStmtIR) ([]FunctionArg, map[string]*ExprIR, error) {
+	if call == nil || len(call.Args) == 0 {
+		return nil, map[string]*ExprIR{}, nil
+	}
+
+	resolved := make([]FunctionArg, 0, len(call.Args))
+	rawArgExprs := make(map[string]*ExprIR, len(call.Args))
+	for i, arg := range call.Args {
+		rawKey := fmt.Sprintf("arg%d", i+1)
+		if arg.Name != "" {
+			rawKey = arg.Name
+		}
+		rawArgExprs[rawKey] = arg.Value
+
+		value, err := EvaluateExpr(arg.Value, r.getValue)
+		if err != nil {
+			label := fmt.Sprintf("arg%d", i+1)
+			if arg.Name != "" {
+				label = arg.Name
+			}
+			return nil, nil, fmt.Errorf("failed to evaluate function call argument %q for %q: %w", label, call.Name, err)
+		}
+		resolved = append(resolved, FunctionArg{Name: arg.Name, Value: value})
+	}
+
+	return resolved, rawArgExprs, nil
 }
 
 func (r *Resolver) resolvePreludeBlocker(stmt *StatementIR) error {
@@ -952,6 +1201,11 @@ func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
 // selectStatements chooses which statements to process based on mode.
 func (r *Resolver) selectStatements() []*StatementIR {
 	if r.config.TargetFunction != "" {
+		if err := r.validateCommandModeTopLevel(); err != nil {
+			r.errors = append(r.errors, err)
+			return nil
+		}
+
 		// Command mode: only the target function
 		fn, ok := r.graph.Functions[r.config.TargetFunction]
 		if !ok {
@@ -971,6 +1225,338 @@ func (r *Resolver) selectStatements() []*StatementIR {
 	r.activeFunction = nil
 	r.scopes = r.graph.Scopes
 	return r.graph.Statements
+}
+
+func (r *Resolver) validateCommandModeTopLevel() error {
+	for _, stmt := range r.graph.Statements {
+		if stmt == nil {
+			continue
+		}
+		switch stmt.Kind {
+		case StmtCommand, StmtFunctionCall:
+			return fmt.Errorf("command mode does not allow top-level execution statements")
+		}
+	}
+	return nil
+}
+
+type functionParamBinding struct {
+	Name        string
+	Type        types.ParamType
+	Validate    bool
+	HasDefault  bool
+	Default     any
+	DefaultExpr *ExprIR
+	IsRequired  bool
+}
+
+func (r *Resolver) bindFunctionArguments(fn *FunctionIR) error {
+	return r.bindFunctionArgumentsWithArgs(fn, r.config.FunctionArgs, nil)
+}
+
+func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []FunctionArg, argExprs map[string]*ExprIR) error {
+	if fn == nil {
+		return nil
+	}
+
+	if len(fn.Params) == 0 {
+		if len(args) > 0 {
+			return fmt.Errorf("function %q does not accept arguments", fn.Name)
+		}
+		return nil
+	}
+
+	schema, bindings, err := r.buildFunctionParamSchema(fn)
+	if err != nil {
+		return err
+	}
+
+	raw, err := buildFunctionRawArgs(args)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
+	canonical, _, err := decorator.NormalizeArgs(schema, nil, raw)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
+	canonicalExprs, err := normalizeFunctionArgExprs(schema, argExprs)
+	if err != nil {
+		return fmt.Errorf("invalid arguments for function %q: %w", fn.Name, err)
+	}
+
+	for _, binding := range bindings {
+		value, exists := canonical[binding.Name]
+		sourceExpr := canonicalExprs[binding.Name]
+		if !exists {
+			if binding.HasDefault {
+				value = binding.Default
+				canonical[binding.Name] = value
+				sourceExpr = binding.DefaultExpr
+			} else if binding.IsRequired {
+				return fmt.Errorf("invalid arguments for function %q: missing required parameter %q", fn.Name, binding.Name)
+			} else {
+				continue
+			}
+		}
+
+		if binding.Validate && !isFunctionParamType(value, binding.Type) {
+			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeLabel(binding.Type))
+		}
+
+		r.bindFunctionParam(binding.Name, value, sourceExpr)
+	}
+
+	return nil
+}
+
+func normalizeFunctionArgExprs(schema types.DecoratorSchema, raw map[string]*ExprIR) (map[string]*ExprIR, error) {
+	if len(raw) == 0 {
+		return map[string]*ExprIR{}, nil
+	}
+
+	rawAny := make(map[string]any, len(raw))
+	for key, expr := range raw {
+		rawAny[key] = expr
+	}
+
+	canonical, _, err := decorator.NormalizeArgs(schema, nil, rawAny)
+	if err != nil {
+		return nil, err
+	}
+
+	normalized := make(map[string]*ExprIR, len(canonical))
+	for key, value := range canonical {
+		expr, ok := value.(*ExprIR)
+		if !ok || expr == nil {
+			continue
+		}
+		normalized[key] = expr
+	}
+
+	return normalized, nil
+}
+
+func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSchema, []functionParamBinding, error) {
+	schema := types.DecoratorSchema{
+		Path:           fn.Name,
+		Parameters:     make(map[string]types.ParamSchema),
+		ParameterOrder: make([]string, 0, len(fn.Params)),
+	}
+
+	bindings := make([]functionParamBinding, 0, len(fn.Params))
+
+	for _, param := range fn.Params {
+		if _, exists := schema.Parameters[param.Name]; exists {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q has duplicate parameter %q", fn.Name, param.Name)
+		}
+
+		expectedType, hasExplicitType, err := parseFunctionParamType(param.Type)
+		if err != nil {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q: %w", fn.Name, param.Name, err)
+		}
+		if !hasExplicitType {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q is missing type annotation", fn.Name, param.Name)
+		}
+
+		hasDefault := false
+		var defaultValue any
+		if param.Default != nil {
+			defaultValue, err = EvaluateExpr(param.Default, r.getValue)
+			if err != nil {
+				return types.DecoratorSchema{}, nil, fmt.Errorf("failed to evaluate default for parameter %q in function %q: %w", param.Name, fn.Name, err)
+			}
+			hasDefault = true
+		}
+
+		validateType := true
+		if hasDefault && !isFunctionParamType(defaultValue, expectedType) {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("invalid default for parameter %q in function %q: expects %s", param.Name, fn.Name, functionTypeLabel(expectedType))
+		}
+
+		paramSchema := types.ParamSchema{
+			Name:     param.Name,
+			Required: !hasDefault,
+			Default:  defaultValue,
+		}
+		if validateType {
+			paramSchema.Type = expectedType
+		}
+
+		schema.Parameters[param.Name] = paramSchema
+		schema.ParameterOrder = append(schema.ParameterOrder, param.Name)
+
+		bindings = append(bindings, functionParamBinding{
+			Name:        param.Name,
+			Type:        expectedType,
+			Validate:    validateType,
+			HasDefault:  hasDefault,
+			Default:     defaultValue,
+			DefaultExpr: param.Default,
+			IsRequired:  !hasDefault,
+		})
+	}
+
+	return schema, bindings, nil
+}
+
+func buildFunctionRawArgs(args []FunctionArg) (map[string]any, error) {
+	raw := make(map[string]any, len(args))
+	for i, arg := range args {
+		if arg.Name == "" {
+			raw[fmt.Sprintf("arg%d", i+1)] = arg.Value
+			continue
+		}
+		if _, exists := raw[arg.Name]; exists {
+			return nil, fmt.Errorf("duplicate argument %q", arg.Name)
+		}
+		raw[arg.Name] = arg.Value
+	}
+	return raw, nil
+}
+
+func parseFunctionParamType(raw string) (types.ParamType, bool, error) {
+	if raw == "" {
+		return "", false, nil
+	}
+
+	switch strings.ToLower(raw) {
+	case "string":
+		return types.TypeString, true, nil
+	case "int", "integer":
+		return types.TypeInt, true, nil
+	case "float":
+		return types.TypeFloat, true, nil
+	case "bool", "boolean":
+		return types.TypeBool, true, nil
+	case "duration":
+		return types.TypeDuration, true, nil
+	case "array":
+		return types.TypeArray, true, nil
+	case "map", "object":
+		return types.TypeObject, true, nil
+	default:
+		return "", false, fmt.Errorf("unsupported type annotation %q", raw)
+	}
+}
+
+func isFunctionParamType(value any, expected types.ParamType) bool {
+	switch expected {
+	case types.TypeString:
+		_, ok := value.(string)
+		return ok
+	case types.TypeBool:
+		_, ok := value.(bool)
+		return ok
+	case types.TypeInt:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k >= reflect.Int && k <= reflect.Int64
+	case types.TypeFloat:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k == reflect.Float32 || k == reflect.Float64
+	case types.TypeDuration:
+		switch duration := value.(type) {
+		case string:
+			_, err := types.ParseDuration(duration)
+			return err == nil
+		case durationLiteral:
+			_, err := types.ParseDuration(string(duration))
+			return err == nil
+		case types.Duration:
+			return true
+		case time.Duration:
+			return true
+		default:
+			return false
+		}
+	case types.TypeObject:
+		v := reflect.ValueOf(value)
+		if !v.IsValid() || v.Kind() != reflect.Map {
+			return false
+		}
+		return v.Type().Key().Kind() == reflect.String
+	case types.TypeArray:
+		t := reflect.TypeOf(value)
+		if t == nil {
+			return false
+		}
+		k := t.Kind()
+		return k == reflect.Array || k == reflect.Slice
+	default:
+		return false
+	}
+}
+
+func functionTypeLabel(expected types.ParamType) string {
+	switch expected {
+	case types.TypeString:
+		return "string"
+	case types.TypeInt:
+		return "integer"
+	case types.TypeFloat:
+		return "float"
+	case types.TypeBool:
+		return "boolean"
+	case types.TypeDuration:
+		return "duration"
+	case types.TypeObject:
+		return "object"
+	case types.TypeArray:
+		return "array"
+	default:
+		return string(expected)
+	}
+}
+
+func (r *Resolver) bindFunctionParam(name string, value any, sourceExpr *ExprIR) {
+	if sourceExpr != nil {
+		if sourceExprID, ok := r.lookupBindingExprID(sourceExpr); ok {
+			if r.scopes != nil {
+				r.scopes.Define(name, sourceExprID)
+			}
+			return
+		}
+	}
+
+	raw := fmt.Sprintf("literal:%v", value)
+
+	exprID := ""
+	if sourceExpr != nil && r.isExprTransportSensitive(sourceExpr) {
+		exprID = r.vault.DeclareVariableTransportSensitive(name, raw)
+	} else {
+		exprID = r.vault.DeclareVariable(name, raw)
+	}
+	r.vault.StoreUnresolvedValue(exprID, value)
+	r.vault.MarkTouched(exprID)
+	if r.scopes != nil {
+		r.scopes.Define(name, exprID)
+	}
+}
+
+func (r *Resolver) lookupBindingExprID(sourceExpr *ExprIR) (string, bool) {
+	if sourceExpr == nil {
+		return "", false
+	}
+
+	switch sourceExpr.Kind {
+	case ExprVarRef:
+		return r.lookupScopeExprID(sourceExpr.VarName)
+	case ExprDecoratorRef:
+		key := decoratorKey(sourceExpr.Decorator)
+		exprID, exists := r.decoratorExprIDs[key]
+		return exprID, exists
+	default:
+		return "", false
+	}
 }
 
 // collectVarDecl handles variable declaration - stores value by variable name for condition evaluation.

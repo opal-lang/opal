@@ -175,20 +175,22 @@ deploy: {
 
 `fun` enables **template-based code reuse** at plan-time. Command definitions can be parameterized and called with different arguments.
 
+Think of this as a deliberate language boundary: Opal metaprogramming shapes the plan, then shell commands perform the runtime work. This can feel different from plain shell at first, but it enables deterministic plans and contract-grade validation.
+
 **IMPORTANT**: `fun` definitions must be at the top level. You cannot define `fun` inside `for` loops, `if` statements, or other control flow constructs. Define template functions first, then call them inside loops.
 
 ```opal
 var MODULES = ["cli", "runtime"]
 
 # ✅ CORRECT: Define template functions at top level
-fun build_module(module) {
+fun build_module(module String) {
     @workdir(@var.module) {
         npm ci
         npm run build
     }
 }
 
-fun test_module(module, retries=2) {
+fun test_module(module String, retries Int = 2) {
     @workdir(@var.module) {
         @retry(attempts=@var.retries, delay=5s) { npm test }
     }
@@ -219,9 +221,9 @@ fun build_all {
 
 **Metaprogramming semantics**:
 - **Plan-time expansion**: `for` loops and `@var.NAME` resolve during plan construction
-- **Parameter binding**: All parameters resolve to concrete values when `@cmd.function_name()` is called
-- **Template inlining**: `@cmd.fun_name(args...)` expands to the `fun` body with parameters substituted
-- **Template expansion**: `@cmd.function_name()` calls expand function templates with parameters
+- **Parameter binding**: Function arguments resolve to concrete values at plan-time
+- **Template inlining**: Function calls expand to `fun` bodies with parameter substitution
+- **Template expansion**: Calls expand into concrete plan steps before execution
 - **Static command names**: After metaprogramming expansion, all command names are concrete identifiers
 - **No runtime reflection**: All metaprogramming happens at plan-time, execution is deterministic
 
@@ -229,7 +231,7 @@ fun build_all {
 ```opal
 # Assignment form (concise one-liners)
 fun deploy = kubectl apply -f k8s/
-fun greet(name) = echo "Hello, @var.name!"
+fun greet(name String) = echo "Hello, @var.name!"
 
 # Block form (multi-line)
 fun complex {
@@ -237,7 +239,7 @@ fun complex {
     kubectl rollout status deployment/app
 }
 
-fun build_module(module, target="dist") {
+fun build_module(module String, target String = "dist") {
     @workdir(@var.module) {
         npm ci
         npm run build --output=@var.target
@@ -245,32 +247,33 @@ fun build_module(module, target="dist") {
 }
 ```
 
-**Parameter types** (optional, TypeScript-style):
+**Function parameter typing (required):**
 
-Type annotations are optional and enable plan-time type checking when specified:
+Function parameters are explicitly typed. This keeps metaprogramming contracts clear and validated before execution.
 
 ```opal
-# Untyped (simple, flexible)
-fun greet(name) {
-    echo "Hello @var.name"
-}
-
-# Typed (explicit validation)
-fun deploy(env: String, replicas: Int = 3, timeout: Duration = 30s) {
+# Go-style type syntax
+fun deploy(env String, replicas Int = 3, timeout Duration = 30s) {
     kubectl scale deployment/app --replicas=@var.replicas
 }
 
-# Mixed (practical)
-fun build(module, target = "dist", verbose: Bool = false) {
+# Grouped Go-style shorthand
+fun notify(primary, backup String, urgent Bool = false) {
+    echo "notify @var.primary and @var.backup"
+}
+
+# Colon-style syntax is also valid
+fun build(module: String, target: String = "dist", verbose: Bool = false) {
     npm run build -- --target=@var.target
 }
 ```
 
 **Parameter syntax**:
-- `name` - required, untyped (no validation)
-- `name: String` - required, typed (validated at plan-time)
-- `name = "default"` - optional, untyped (type inferred from default)
-- `name: String = "default"` - optional, typed with explicit type
+- `name Type` - required, typed (Go-style)
+- `name: Type` - required, typed (colon-style)
+- `name Type = default` - optional, typed with default
+- `name: Type = default` - optional, typed with default
+- `a, b Type` - grouped shorthand (both parameters share the same type)
 
 **Supported types**:
 - `String` - text values
@@ -282,10 +285,9 @@ fun build(module, target = "dist", verbose: Bool = false) {
 - `Map` - key-value pairs
 
 **Type checking**:
-- Types are validated at plan-time when values are resolved
-- Untyped parameters accept any value
-- Type mismatches produce clear error messages before execution
-- Future: `--strict-types` flag for requiring all parameters to be typed
+- All function parameters are validated at plan-time
+- Missing type annotations are rejected
+- Type mismatches produce clear errors before execution
 
 **Command mode CLI flags**:
 
@@ -293,7 +295,7 @@ In command mode, parameters with defaults become CLI flags:
 
 ```opal
 # Definition
-fun deploy(env: String, replicas: Int = 3, timeout: Duration = 30s) {
+fun deploy(env String, replicas Int = 3, timeout Duration = 30s) {
     kubectl scale deployment/app --replicas=@var.replicas
 }
 ```
@@ -308,7 +310,7 @@ opal deploy production --timeout=60s --replicas=10
 **Example expansion**:
 ```opal
 # Template function definition
-fun test_module(module) {
+fun test_module(module String) {
     @workdir(@var.module) { go test ./... }
 }
 
@@ -504,7 +506,7 @@ echo "Home: @env.HOME"  # @env.HOME is touched → resolved
 
 ### Types
 
-Variables are untyped by default (TypeScript-style):
+Variables are untyped by default:
 
 ```opal
 var port = 3000              # Inferred as int
@@ -515,7 +517,7 @@ var timeout = 30s            # Inferred as duration
 
 **Supported types:** `String | Bool | Int | Float | Duration | Array | Map`
 
-**Future:** Optional type annotations for function parameters and `--strict-types` flag.
+**Function parameters:** always typed in `fun` signatures and validated at plan-time.
 
 ### Shell Variables vs Opal Variables
 
@@ -749,10 +751,10 @@ fun deploy = kubectl apply -f k8s/
 fun hello = echo "Hello World!"
 
 // Parameterized one-liners
-fun greet(name) = echo "Hello, @var.name!"
+fun greet(name String) = echo "Hello, @var.name!"
 
 // Multi-line block form
-fun build_module(module, target="dist") {
+fun build_module(module String, target String = "dist") {
     @workdir(@var.module) {
         npm ci
         npm run build --output=@var.target
@@ -760,7 +762,7 @@ fun build_module(module, target="dist") {
 }
 
 // Template function for reuse
-fun test_module(module) {
+fun test_module(module String) {
     @workdir(@var.module) { go test ./... }
 }
 
@@ -777,7 +779,7 @@ build_all: {
 
 **DAG constraint**: Command calls must form a directed acyclic graph. Recursive calls or cycles result in plan generation errors.
 
-**Parameter binding**: Arguments are bound to their resolved values at plan-time. Default values are supported and must be plan-time expressions.
+**Parameter binding**: Arguments are bound to their resolved values at plan-time. Function parameters are typed and defaults must be plan-time expressions.
 
 **Deterministic**: All `fun` bodies must have finite execution paths - no unbounded loops or dynamic fan-out beyond normal metaprogramming expansion.
 
@@ -1924,7 +1926,7 @@ for module in @var.MODULES {
 **✅ Correct:**
 ```opal
 # Define template function at top level
-fun build_module(module) {
+fun build_module(module String) {
     @workdir(@var.module) {
         npm run build
     }

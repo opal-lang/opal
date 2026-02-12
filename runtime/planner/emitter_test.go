@@ -268,6 +268,57 @@ func TestEmit_Target(t *testing.T) {
 	}
 }
 
+func TestEmit_CallTraceStatement(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCallTrace,
+				CallTrace: &CallTraceStmtIR{
+					Label: "deploy(prod, retries=5)",
+					Block: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command:   &CommandExpr{Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo \"hello\""}}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "deploy")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.LogicNode", plan.Steps[0].Tree)
+	}
+	if diff := cmp.Diff("call", logic.Kind); diff != "" {
+		t.Fatalf("logic kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("deploy(prod, retries=5)", logic.Condition); diff != "" {
+		t.Fatalf("call label mismatch (-want +got):\n%s", diff)
+	}
+	if len(logic.Block) != 1 {
+		t.Fatalf("len(logic block) = %d, want 1", len(logic.Block))
+	}
+	if _, ok := logic.Block[0].Tree.(*planfmt.CommandNode); !ok {
+		t.Fatalf("logic block[0] tree is %T, want *planfmt.CommandNode", logic.Block[0].Tree)
+	}
+}
+
 // TestEmit_PlanSalt tests that PlanSalt is set.
 func TestEmit_PlanSalt(t *testing.T) {
 	result := &ResolveResult{

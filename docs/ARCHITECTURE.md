@@ -70,6 +70,13 @@ User writes natural syntax  →  Parser converts to value decorators and executi
 
 Opal has two distinct layers that work together:
 
+**Language boundary (intentional):**
+- Plan-time metaprogramming (`fun`, `if`, `for`, `when`, decorators) defines and validates execution contracts.
+- Runtime shell execution performs the actual work (commands, operators, pipelines, redirects).
+- Function signatures are typed plan-time interfaces; shell command syntax stays shell-native.
+
+This boundary is a deliberate departure from plain shell scripts: Opal wraps and enhances shell with deterministic planning instead of replacing shell semantics.
+
 **Metaprogramming constructs** decide execution structure:
 
 *Plan-time deterministic:*

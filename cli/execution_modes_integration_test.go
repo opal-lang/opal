@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -313,6 +315,80 @@ fun deploy = echo "Deploying MODIFIED application"
 	})
 }
 
+func TestCallTraceContractModes(t *testing.T) {
+	opalBin := buildOpalBinary(t)
+	defer os.Remove(opalBin)
+
+	t.Run("Mode3_ContractContainsSignatureTraceWithDisplayID", func(t *testing.T) {
+		testFile := createTestFile(t, `
+fun helper(token String) {
+  echo "done"
+}
+
+fun deploy(token String = "super-secret-token") {
+  helper(token = @var.token)
+}
+`)
+		defer os.Remove(testFile)
+
+		cmd := exec.Command(opalBin, "-f", testFile, "deploy", "--dry-run", "--resolve")
+		contractBytes, err := cmd.Output()
+		require.NoError(t, err)
+
+		target, _, plan, err := planfmt.ReadContract(bytes.NewReader(contractBytes))
+		require.NoError(t, err)
+		assert.Equal(t, "deploy", target)
+		require.Len(t, plan.Steps, 1)
+
+		logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+		require.True(t, ok, "expected logic node for call trace")
+		assert.Equal(t, "call", logic.Kind)
+		assert.Regexp(t, `^helper\(token=opal:[A-Za-z0-9_-]+\)$`, logic.Condition)
+		assert.NotContains(t, logic.Condition, "super-secret-token")
+	})
+
+	t.Run("Mode4_ContractDiffShowsSignatureOnly", func(t *testing.T) {
+		originalFile := createTestFile(t, `
+fun helper(token String) {
+  echo "done"
+}
+
+fun deploy(token String = "super-secret-token") {
+  helper(token = @var.token)
+}
+`)
+		defer os.Remove(originalFile)
+
+		planFile := filepath.Join(t.TempDir(), "deploy.plan")
+		cmd := exec.Command(opalBin, "-f", originalFile, "deploy", "--dry-run", "--resolve")
+		planData, err := cmd.Output()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(planFile, planData, 0o644))
+
+		modifiedFile := createTestFile(t, `
+fun helper2(token String) {
+  echo "done"
+}
+
+fun deploy(token String = "super-secret-token") {
+  helper2(token = @var.token)
+}
+`)
+		defer os.Remove(modifiedFile)
+
+		cmd = exec.Command(opalBin, "--plan", planFile, "-f", modifiedFile)
+		output, err := cmd.CombinedOutput()
+		assert.Error(t, err, "contract verification should fail for changed call target")
+
+		out := string(output)
+		assert.Contains(t, out, "Modified steps:")
+		assert.Contains(t, out, "helper(")
+		assert.Contains(t, out, "helper2(")
+		assert.NotContains(t, out, "call helper", "diff output should show signature only")
+		assert.NotContains(t, out, "super-secret-token", "diff output must scrub raw secret")
+	})
+}
+
 // Helper: Build opal binary for testing
 func buildOpalBinary(t *testing.T) string {
 	t.Helper()
@@ -426,15 +502,49 @@ echo "Line 2"
 		// Verify command mode still works (1 arg = command mode)
 		scriptFile := createTestFile(t, `
 fun hello = echo "Hello from function"
-
-echo "Top level command"
 `)
 		defer os.Remove(scriptFile)
 
 		// Command mode - should execute only the function
 		output := runOpal(t, opalBin, "-f", scriptFile, "hello")
 		assert.Equal(t, "Hello from function\n", output)
-		assert.NotContains(t, output, "Top level", "Top-level should not execute in command mode")
+	})
+
+	t.Run("CommandModeRejectsTopLevelExecution", func(t *testing.T) {
+		scriptFile := createTestFile(t, `
+fun hello = echo "Hello from function"
+
+echo "Top level command"
+`)
+		defer os.Remove(scriptFile)
+
+		cmd := exec.Command(opalBin, "-f", scriptFile, "hello")
+		output, err := cmd.CombinedOutput()
+		assert.Error(t, err, "Should fail when command mode has top-level execution")
+		assert.Contains(t, string(output), "command mode does not allow top-level execution statements")
+	})
+
+	t.Run("CommandModeDryRunShowsSignatureTraceAndRedaction", func(t *testing.T) {
+		scriptFile := createTestFile(t, `
+fun helper(token String) {
+  echo "done"
+}
+
+fun deploy(token String = "super-secret-token") {
+  helper(token = @var.token)
+}
+`)
+		defer os.Remove(scriptFile)
+
+		output := runOpal(t, opalBin, "-f", scriptFile, "deploy", "--dry-run", "--no-color")
+
+		lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+		require.Len(t, lines, 3)
+		assert.Equal(t, "deploy:", lines[0])
+		assert.Regexp(t, `^└─ helper\(token=opal:[A-Za-z0-9_-]+\)$`, lines[1])
+		assert.Equal(t, `   └─ @shell echo "done"`, lines[2])
+		assert.NotContains(t, output, "super-secret-token", "Dry-run output must scrub raw secrets")
+		assert.NotContains(t, output, "call helper", "Display should render signature only, no 'call' prefix")
 	})
 
 	t.Run("ShebangPreventsCommandMode", func(t *testing.T) {

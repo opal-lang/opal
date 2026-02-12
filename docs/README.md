@@ -14,6 +14,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 - **[SPECIFICATION.md](SPECIFICATION.md)** - Complete language guide with examples
   - Mental model: source → plan → contract → execute
+  - Language boundary: plan-time metaprogramming wraps and validates runtime shell
   - Syntax, decorators, control flow, variables
   - Planning modes and contract verification
   - Real-world deployment examples

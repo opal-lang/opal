@@ -10,16 +10,27 @@ import (
 	"github.com/opal-lang/opal/runtime/parser"
 )
 
-// getPlanDecorator extracts the decorator name from a CommandNode
+// getPlanDecorator extracts the first command decorator name from a plan tree.
 func getPlanDecorator(tree planfmt.ExecutionNode) string {
 	if tree == nil {
 		return ""
 	}
-	cmd, ok := tree.(*planfmt.CommandNode)
-	if !ok {
+	switch n := tree.(type) {
+	case *planfmt.CommandNode:
+		return n.Decorator
+	case *planfmt.LogicNode:
+		if len(n.Block) == 0 {
+			return ""
+		}
+		return getPlanDecorator(n.Block[0].Tree)
+	case *planfmt.TryNode:
+		if len(n.TryBlock) == 0 {
+			return ""
+		}
+		return getPlanDecorator(n.TryBlock[0].Tree)
+	default:
 		return ""
 	}
-	return cmd.Decorator
 }
 
 // parseAndPlan is a helper that parses source and runs the new planner
@@ -304,6 +315,76 @@ func TestParity_TargetNotFound(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("Expected error for non-existent target")
+	}
+}
+
+func TestParity_ScriptModeTopLevelFunctionCallExecutes(t *testing.T) {
+	source := `fun helper(name String) {
+	echo @var.name
+}
+
+helper("prod")`
+
+	plan, err := parseAndPlan(t, source, "")
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Fatalf("Expected LogicNode call trace, got %T", plan.Steps[0].Tree)
+	}
+	if diff := cmp.Diff("call", logic.Kind); diff != "" {
+		t.Fatalf("call trace kind mismatch (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(logic.Condition, "helper") {
+		t.Fatalf("Expected call trace to reference helper, got %q", logic.Condition)
+	}
+
+	if diff := cmp.Diff("@shell", getPlanDecorator(plan.Steps[0].Tree)); diff != "" {
+		t.Fatalf("step decorator mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParity_CommandModeTargetFunctionCallExecutes(t *testing.T) {
+	source := `fun helper(name String) {
+	echo @var.name
+}
+
+fun deploy(env String = "prod") {
+	helper(@var.env)
+}`
+
+	plan, err := parseAndPlan(t, source, "deploy")
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
+	}
+
+	if diff := cmp.Diff("deploy", plan.Target); diff != "" {
+		t.Fatalf("plan target mismatch (-want +got):\n%s", diff)
+	}
+
+	logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
+	if !ok {
+		t.Fatalf("Expected LogicNode call trace, got %T", plan.Steps[0].Tree)
+	}
+	if diff := cmp.Diff("call", logic.Kind); diff != "" {
+		t.Fatalf("call trace kind mismatch (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(logic.Condition, "helper") {
+		t.Fatalf("Expected call trace to reference helper, got %q", logic.Condition)
+	}
+
+	if diff := cmp.Diff("@shell", getPlanDecorator(plan.Steps[0].Tree)); diff != "" {
+		t.Fatalf("step decorator mismatch (-want +got):\n%s", diff)
 	}
 }
 

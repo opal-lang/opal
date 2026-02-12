@@ -286,6 +286,75 @@ func TestCanonicalCommandOrder(t *testing.T) {
 	// }
 }
 
+func TestCallTraceEncodingDeterministic(t *testing.T) {
+	p1 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "call",
+					Condition: "deploy(prod, token=opal:abc123)",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "two"}},
+									{Key: "a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "one"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p2 := &planfmt.Plan{
+		Target: "deploy",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.LogicNode{
+					Kind:      "call",
+					Condition: "deploy(prod, token=opal:abc123)",
+					Block: []planfmt.Step{
+						{
+							ID: 2,
+							Tree: &planfmt.CommandNode{
+								Decorator: "@shell",
+								Args: []planfmt.Arg{
+									{Key: "a", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "one"}},
+									{Key: "b", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "two"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf1, buf2 bytes.Buffer
+	hash1, err := planfmt.Write(&buf1, p1)
+	if err != nil {
+		t.Fatalf("Write p1 failed: %v", err)
+	}
+	hash2, err := planfmt.Write(&buf2, p2)
+	if err != nil {
+		t.Fatalf("Write p2 failed: %v", err)
+	}
+
+	if !bytes.Equal(buf1.Bytes(), buf2.Bytes()) {
+		t.Fatalf("call trace encoding is not deterministic")
+	}
+	if hash1 != hash2 {
+		t.Fatalf("call trace hashes mismatch: %x vs %x", hash1, hash2)
+	}
+}
+
 // TestSecretUsesOrderDeterministic verifies that SecretUses are always sorted
 // in the same order regardless of declaration order (critical for contract verification).
 // This test ensures block scoping doesn't introduce non-determinism.

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-10
+- Changed `fun` parameter contracts to require explicit types at plan-time validation
+- Added grouped Go-style function parameter type syntax (`name, alias String`) while preserving colon-style annotations (`name: String`)
+- Clarified language boundary docs: plan-time metaprogramming wraps and validates runtime shell execution
+
 ### 2026-02-09
 - Changed executor internals to a single tree-runner path with transport-scoped session selection and command `TransportID` routing
 - Added run-scoped transport session reuse with per-transport env/workdir freeze and guaranteed session cleanup on success, failure, and cancellation
