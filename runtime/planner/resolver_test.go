@@ -1149,7 +1149,7 @@ fun deploy() {
 	}
 }
 
-func TestResolve_FunctionLocalVarsDoNotLeakAcrossFunctionCalls(t *testing.T) {
+func TestResolve_FunctionCallInheritsCallerFunctionScopeBindings(t *testing.T) {
 	tree := parser.ParseString(`fun helper() {
 	echo @var.temp
 }
@@ -1170,12 +1170,53 @@ deploy()`)
 	}
 
 	v := vault.NewWithPlanKey([]byte("test-key"))
-	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
-	if err == nil {
-		t.Fatalf("expected undefined variable error")
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
 	}
-	if !containsStr(err.Error(), "undefined variable") {
-		t.Fatalf("error = %q, want undefined variable", err.Error())
+	if len(result.Statements) == 0 {
+		t.Fatalf("expected resolved statements")
+	}
+	if hasFunctionCallStatements(result.Statements) {
+		t.Fatalf("expected function calls to be fully expanded")
+	}
+}
+
+func TestResolve_FunctionCallInNestedScopeInheritsCallerBindings(t *testing.T) {
+	tree := parser.ParseString(`fun helper() {
+	echo @var.region
+}
+
+fun deploy() {
+	try {
+		var region = "us-east-1"
+		helper()
+	} catch {
+		echo "recover"
+	}
+}
+
+deploy()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if len(result.Statements) == 0 {
+		t.Fatalf("expected resolved statements")
+	}
+	if hasFunctionCallStatements(result.Statements) {
+		t.Fatalf("expected function calls to be fully expanded")
 	}
 }
 

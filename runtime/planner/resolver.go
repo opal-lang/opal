@@ -989,8 +989,14 @@ func (r *Resolver) buildInvocationScopes(fn *FunctionIR) *ScopeStack {
 		return invocation
 	}
 
-	for name, exprID := range r.scopes.scopes[0] {
-		invocation.scopes[0][name] = exprID
+	if invocation.scopes[0] == nil {
+		invocation.scopes[0] = make(map[string]string)
+	}
+
+	for _, scope := range r.scopes.scopes {
+		for name, exprID := range scope {
+			invocation.scopes[0][name] = exprID
+		}
 	}
 
 	return invocation
