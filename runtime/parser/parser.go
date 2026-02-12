@@ -202,7 +202,7 @@ func collectTopLevelFunctionNames(tokens []lexer.Token) map[string]struct{} {
 				continue
 			}
 			next := i + 1
-			for next < len(tokens) && tokens[next].Type == lexer.NEWLINE {
+			for next < len(tokens) && (tokens[next].Type == lexer.NEWLINE || tokens[next].Type == lexer.COMMENT) {
 				next++
 			}
 			if next < len(tokens) && tokens[next].Type == lexer.IDENTIFIER {

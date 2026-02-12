@@ -48,6 +48,57 @@ if true {
 	}
 }
 
+func TestFunctionCall_ParsesShorthandFunctionDefinition(t *testing.T) {
+	input := `fun greet() = echo "hello"
+greet()`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeFunctionCall)); diff != "" {
+		t.Fatalf("function call node count mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeFunction)); diff != "" {
+		t.Fatalf("function declaration node count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestFunctionCall_ParsesShorthandFunctionWithForwardReference(t *testing.T) {
+	input := `greet()
+
+fun greet() = echo "hello"`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeFunctionCall)); diff != "" {
+		t.Fatalf("function call node count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestFunctionCall_ParsesShorthandFunctionWithLineComments(t *testing.T) {
+	input := `fun greet() = echo "hello"
+# greeting
+greet()`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeFunctionCall)); diff != "" {
+		t.Fatalf("function call node count mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFunctionCall_ParsesForwardReferenceCall(t *testing.T) {
 	input := `deploy("prod")
 
