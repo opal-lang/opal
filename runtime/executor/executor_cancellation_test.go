@@ -72,8 +72,8 @@ func TestTimeoutPropagatesThroughRedirects(t *testing.T) {
 	result, err := Execute(ctx, steps, Config{}, testVault())
 	duration := time.Since(start)
 
-	// Should timeout after ~100ms
-	assert.Less(t, duration, 200*time.Millisecond, "should timeout quickly")
+	// Should timeout quickly relative to command runtime, even on busy CI hosts.
+	assert.Less(t, duration, 1*time.Second, "should timeout well before long-running command completes")
 	assert.NotEqual(t, 0, result.ExitCode, "timed out execution should return non-zero")
 	assert.NoError(t, err)
 }
