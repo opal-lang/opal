@@ -24,7 +24,9 @@ const (
 
 	// Language structure
 	FUN       // fun - command definition
+	STRUCT    // struct - user-defined type declaration
 	VAR       // var
+	AS        // as - explicit cast operator
 	AT        // @
 	DOT       // .
 	DOTDOTDOT // ... (range operator for for loops and when patterns)
@@ -32,6 +34,7 @@ const (
 	EQUALS    // =
 	COMMA     // ,
 	ARROW     // -> (for when patterns)
+	QUESTION  // ?
 
 	// Brackets and braces
 	LPAREN  // (
@@ -86,6 +89,7 @@ const (
 	STRING     // "string" or 'string' content
 	DURATION   // 30s, 5m, 1h30m, 500ms
 	BOOLEAN    // true, false
+	NONE       // none
 
 	// Comments
 	COMMENT // # single line comment
@@ -184,6 +188,8 @@ func (t Token) Symbol() string {
 		return "..."
 	case ARROW:
 		return "->"
+	case QUESTION:
+		return "?"
 	case AT:
 		return "@"
 	case LPAREN:
@@ -239,8 +245,12 @@ func (t TokenType) String() string {
 		return "FINALLY"
 	case FUN:
 		return "FUN"
+	case STRUCT:
+		return "STRUCT"
 	case VAR:
 		return "VAR"
+	case AS:
+		return "AS"
 	case AT:
 		return "AT"
 	case DOT:
@@ -255,6 +265,8 @@ func (t TokenType) String() string {
 		return "COMMA"
 	case ARROW:
 		return "ARROW"
+	case QUESTION:
+		return "QUESTION"
 	case LPAREN:
 		return "LPAREN"
 	case RPAREN:
@@ -332,6 +344,8 @@ func (t TokenType) String() string {
 		return "DURATION"
 	case BOOLEAN:
 		return "BOOLEAN"
+	case NONE:
+		return "NONE"
 	case COMMENT:
 		return "COMMENT"
 	default:
@@ -342,10 +356,12 @@ func (t TokenType) String() string {
 // Keywords maps string literals to their corresponding token types
 var Keywords = map[string]TokenType{
 	"fun":     FUN,
+	"struct":  STRUCT,
 	"for":     FOR,
 	"in":      IN,
 	"if":      IF,
 	"else":    ELSE,
+	"as":      AS,
 	"when":    WHEN,
 	"try":     TRY,
 	"catch":   CATCH,
@@ -353,6 +369,7 @@ var Keywords = map[string]TokenType{
 	"var":     VAR,
 	"true":    BOOLEAN,
 	"false":   BOOLEAN,
+	"none":    NONE,
 }
 
 // SingleCharTokens maps single characters to their token types
@@ -362,6 +379,7 @@ var SingleCharTokens = map[byte]TokenType{
 	':':  COLON,
 	'=':  EQUALS,
 	',':  COMMA,
+	'?':  QUESTION,
 	'(':  LPAREN,
 	')':  RPAREN,
 	'{':  LBRACE,

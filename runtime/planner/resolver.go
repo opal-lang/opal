@@ -1308,12 +1308,18 @@ func (r *Resolver) validateCommandModeTopLevel() error {
 
 type functionParamBinding struct {
 	Name        string
-	Type        types.ParamType
-	Validate    bool
+	Type        functionParamTypeSpec
 	HasDefault  bool
 	Default     any
 	DefaultExpr *ExprIR
 	IsRequired  bool
+}
+
+type functionParamTypeSpec struct {
+	Kind       types.ParamType
+	Optional   bool
+	StructName string
+	StructDef  *StructTypeIR
 }
 
 func (r *Resolver) bindFunctionArguments(fn *FunctionIR) error {
@@ -1367,8 +1373,8 @@ func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []Function
 			}
 		}
 
-		if binding.Validate && !isFunctionParamType(value, binding.Type) {
-			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeLabel(binding.Type))
+		if !r.isFunctionParamType(value, binding.Type) {
+			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeSpecLabel(binding.Type))
 		}
 
 		r.bindFunctionParam(binding.Name, value, sourceExpr)
@@ -1418,7 +1424,7 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q has duplicate parameter %q", fn.Name, param.Name)
 		}
 
-		expectedType, hasExplicitType, err := parseFunctionParamType(param.Type)
+		expectedType, hasExplicitType, err := r.parseFunctionParamType(param.Type)
 		if err != nil {
 			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q: %w", fn.Name, param.Name, err)
 		}
@@ -1436,9 +1442,8 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 			hasDefault = true
 		}
 
-		validateType := true
-		if hasDefault && !isFunctionParamType(defaultValue, expectedType) {
-			return types.DecoratorSchema{}, nil, fmt.Errorf("invalid default for parameter %q in function %q: expects %s", param.Name, fn.Name, functionTypeLabel(expectedType))
+		if hasDefault && !r.isFunctionParamType(defaultValue, expectedType) {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("invalid default for parameter %q in function %q: expects %s", param.Name, fn.Name, functionTypeSpecLabel(expectedType))
 		}
 
 		paramSchema := types.ParamSchema{
@@ -1446,8 +1451,8 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 			Required: !hasDefault,
 			Default:  defaultValue,
 		}
-		if validateType {
-			paramSchema.Type = expectedType
+		if !expectedType.Optional {
+			paramSchema.Type = expectedType.Kind
 		}
 
 		schema.Parameters[param.Name] = paramSchema
@@ -1456,7 +1461,6 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 		bindings = append(bindings, functionParamBinding{
 			Name:        param.Name,
 			Type:        expectedType,
-			Validate:    validateType,
 			HasDefault:  hasDefault,
 			Default:     defaultValue,
 			DefaultExpr: param.Default,
@@ -1482,33 +1486,58 @@ func buildFunctionRawArgs(args []FunctionArg) (map[string]any, error) {
 	return raw, nil
 }
 
-func parseFunctionParamType(raw string) (types.ParamType, bool, error) {
+func (r *Resolver) parseFunctionParamType(raw string) (functionParamTypeSpec, bool, error) {
 	if raw == "" {
-		return "", false, nil
+		return functionParamTypeSpec{}, false, nil
 	}
 
-	switch strings.ToLower(raw) {
+	optional := strings.HasSuffix(raw, "?")
+	baseType := strings.TrimSuffix(raw, "?")
+
+	if baseType == "" {
+		return functionParamTypeSpec{}, false, fmt.Errorf("unsupported type annotation %q", raw)
+	}
+
+	switch strings.ToLower(baseType) {
 	case "string":
-		return types.TypeString, true, nil
+		return functionParamTypeSpec{Kind: types.TypeString, Optional: optional}, true, nil
 	case "int", "integer":
-		return types.TypeInt, true, nil
+		return functionParamTypeSpec{Kind: types.TypeInt, Optional: optional}, true, nil
 	case "float":
-		return types.TypeFloat, true, nil
+		return functionParamTypeSpec{Kind: types.TypeFloat, Optional: optional}, true, nil
 	case "bool", "boolean":
-		return types.TypeBool, true, nil
+		return functionParamTypeSpec{Kind: types.TypeBool, Optional: optional}, true, nil
 	case "duration":
-		return types.TypeDuration, true, nil
+		return functionParamTypeSpec{Kind: types.TypeDuration, Optional: optional}, true, nil
 	case "array":
-		return types.TypeArray, true, nil
+		return functionParamTypeSpec{Kind: types.TypeArray, Optional: optional}, true, nil
 	case "map", "object":
-		return types.TypeObject, true, nil
+		return functionParamTypeSpec{Kind: types.TypeObject, Optional: optional}, true, nil
 	default:
-		return "", false, fmt.Errorf("unsupported type annotation %q", raw)
+		if r.graph != nil && r.graph.Types != nil {
+			if decl, ok := r.graph.Types[baseType]; ok {
+				return functionParamTypeSpec{
+					Kind:       types.TypeObject,
+					Optional:   optional,
+					StructName: baseType,
+					StructDef:  decl,
+				}, true, nil
+			}
+		}
+		return functionParamTypeSpec{}, false, fmt.Errorf("unsupported type annotation %q", raw)
 	}
 }
 
-func isFunctionParamType(value any, expected types.ParamType) bool {
-	switch expected {
+func (r *Resolver) isFunctionParamType(value any, expected functionParamTypeSpec) bool {
+	if value == nil {
+		return expected.Optional
+	}
+
+	if expected.StructDef != nil {
+		return r.isStructValue(value, expected.StructDef)
+	}
+
+	switch expected.Kind {
 	case types.TypeString:
 		_, ok := value.(string)
 		return ok
@@ -1560,6 +1589,60 @@ func isFunctionParamType(value any, expected types.ParamType) bool {
 	default:
 		return false
 	}
+}
+
+func (r *Resolver) isStructValue(value any, decl *StructTypeIR) bool {
+	if decl == nil {
+		return false
+	}
+
+	mapValue, ok := toAnyObject(value)
+	if !ok {
+		return false
+	}
+
+	fields := make(map[string]StructFieldIR, len(decl.Fields))
+	for _, field := range decl.Fields {
+		fields[field.Name] = field
+	}
+
+	for key := range mapValue {
+		if _, exists := fields[key]; !exists {
+			return false
+		}
+	}
+
+	for _, field := range decl.Fields {
+		spec, hasType, err := r.parseFunctionParamType(field.Type)
+		if err != nil || !hasType {
+			return false
+		}
+
+		fieldValue, exists := mapValue[field.Name]
+		if !exists {
+			if field.Default != nil || spec.Optional {
+				continue
+			}
+			return false
+		}
+
+		if !r.isFunctionParamType(fieldValue, spec) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func functionTypeSpecLabel(expected functionParamTypeSpec) string {
+	label := functionTypeLabel(expected.Kind)
+	if expected.StructName != "" {
+		label = expected.StructName
+	}
+	if expected.Optional {
+		return label + " or none"
+	}
+	return label
 }
 
 func functionTypeLabel(expected types.ParamType) string {
@@ -1833,6 +1916,9 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 		// Recursively collect operands
 		r.collectExpr(expr.Left, "")
 		r.collectExpr(expr.Right, "")
+
+	case ExprTypeCast:
+		r.collectExpr(expr.Left, "")
 	}
 }
 
@@ -1931,6 +2017,9 @@ func (r *Resolver) checkTransportBoundaryExpr(expr *ExprIR) error {
 		}
 		return r.checkTransportBoundaryExpr(expr.Right)
 
+	case ExprTypeCast:
+		return r.checkTransportBoundaryExpr(expr.Left)
+
 	default:
 		return nil
 	}
@@ -1965,6 +2054,9 @@ func (r *Resolver) isExprTransportSensitive(expr *ExprIR) bool {
 	case ExprBinaryOp:
 		// Check if either operand is transport-sensitive
 		return r.isExprTransportSensitive(expr.Left) || r.isExprTransportSensitive(expr.Right)
+
+	case ExprTypeCast:
+		return r.isExprTransportSensitive(expr.Left)
 
 	default:
 		return false

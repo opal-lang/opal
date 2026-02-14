@@ -488,6 +488,9 @@ func (l *Lexer) lexToken() Token {
 	case ',':
 		l.advanceChar()
 		return Token{Type: COMMA, Text: nil, Position: start}
+	case '?':
+		l.advanceChar()
+		return Token{Type: QUESTION, Text: nil, Position: start, HasSpaceBefore: hadWhitespace}
 	case ';':
 		l.advanceChar()
 		return Token{Type: SEMICOLON, Text: nil, Position: start}
