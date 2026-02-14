@@ -399,6 +399,8 @@ func (p *parser) structDecl() {
 
 	p.skipNewlines()
 	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		prevPos := p.pos
+
 		p.skipNewlines()
 		if p.at(lexer.RBRACE) || p.at(lexer.EOF) {
 			break
@@ -410,6 +412,10 @@ func (p *parser) structDecl() {
 		if p.at(lexer.COMMA) {
 			p.token()
 			p.skipNewlines()
+		}
+
+		if p.pos == prevPos && !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+			p.advance()
 		}
 	}
 
@@ -1839,9 +1845,9 @@ func (p *parser) binaryExpr(minPrec int) {
 		p.finish(kind)
 	}
 
-	for p.isCastOperator() {
+	for p.at(lexer.AS) {
 		kind := p.start(NodeTypeCast)
-		p.token() // Consume 'as'
+		p.token() // Consume AS keyword
 		p.expect(lexer.IDENTIFIER, "type cast")
 		if p.at(lexer.QUESTION) {
 			p.token()
@@ -1888,7 +1894,7 @@ func (p *parser) primary() {
 	}
 
 	switch {
-	case p.at(lexer.INTEGER), p.at(lexer.FLOAT), p.at(lexer.BOOLEAN), p.isNoneLiteral():
+	case p.at(lexer.INTEGER), p.at(lexer.FLOAT), p.at(lexer.BOOLEAN), p.at(lexer.NONE):
 		// Literal
 		kind := p.start(NodeLiteral)
 		p.token()
@@ -1925,14 +1931,6 @@ func (p *parser) primary() {
 			p.advance()
 		}
 	}
-}
-
-func (p *parser) isNoneLiteral() bool {
-	return p.at(lexer.IDENTIFIER) && string(p.current().Text) == "none"
-}
-
-func (p *parser) isCastOperator() bool {
-	return p.at(lexer.IDENTIFIER) && string(p.current().Text) == "as"
 }
 
 // arrayLiteral parses an array literal: [expr, expr, ...]

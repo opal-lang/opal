@@ -1759,6 +1759,42 @@ func TestResolve_FunctionArgsStructTypeRejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestResolve_FunctionArgsStructTypeAcceptsStringMap(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "env", Type: "String"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: map[string]string{"env": "prod"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
 func TestResolve_GroupedGoStyleParameterTypeAppliesToAllParameters(t *testing.T) {
 	tree := parser.ParseString(`fun deploy(name, alias String) { echo "ok" }`)
 	if len(tree.Errors) > 0 {

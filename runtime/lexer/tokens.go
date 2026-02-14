@@ -26,6 +26,7 @@ const (
 	FUN       // fun - command definition
 	STRUCT    // struct - user-defined type declaration
 	VAR       // var
+	AS        // as - explicit cast operator
 	AT        // @
 	DOT       // .
 	DOTDOTDOT // ... (range operator for for loops and when patterns)
@@ -88,6 +89,7 @@ const (
 	STRING     // "string" or 'string' content
 	DURATION   // 30s, 5m, 1h30m, 500ms
 	BOOLEAN    // true, false
+	NONE       // none
 
 	// Comments
 	COMMENT // # single line comment
@@ -247,6 +249,8 @@ func (t TokenType) String() string {
 		return "STRUCT"
 	case VAR:
 		return "VAR"
+	case AS:
+		return "AS"
 	case AT:
 		return "AT"
 	case DOT:
@@ -340,6 +344,8 @@ func (t TokenType) String() string {
 		return "DURATION"
 	case BOOLEAN:
 		return "BOOLEAN"
+	case NONE:
+		return "NONE"
 	case COMMENT:
 		return "COMMENT"
 	default:
@@ -355,6 +361,7 @@ var Keywords = map[string]TokenType{
 	"in":      IN,
 	"if":      IF,
 	"else":    ELSE,
+	"as":      AS,
 	"when":    WHEN,
 	"try":     TRY,
 	"catch":   CATCH,
@@ -362,6 +369,7 @@ var Keywords = map[string]TokenType{
 	"var":     VAR,
 	"true":    BOOLEAN,
 	"false":   BOOLEAN,
+	"none":    NONE,
 }
 
 // SingleCharTokens maps single characters to their token types

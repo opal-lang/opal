@@ -2338,11 +2338,8 @@ func (b *irBuilder) buildTypeCastExprWithLeft(left *ExprIR) *ExprIR {
 
 		if evt.Kind == parser.EventToken {
 			tok := b.tokens[evt.Data]
-			if tok.Type == lexer.IDENTIFIER {
-				text := string(tok.Text)
-				if text != "as" && typeName == "" {
-					typeName = text
-				}
+			if tok.Type == lexer.IDENTIFIER && typeName == "" {
+				typeName = string(tok.Text)
 			}
 			if tok.Type == lexer.QUESTION {
 				optional = true
@@ -2568,10 +2565,9 @@ func tokenToValue(tok lexer.Token) any {
 		return durationLiteral(tok.Symbol())
 	case lexer.BOOLEAN:
 		return string(tok.Text) == "true"
+	case lexer.NONE:
+		return nil
 	case lexer.IDENTIFIER:
-		if string(tok.Text) == "none" {
-			return nil
-		}
 		return tok.Symbol()
 	default:
 		return tok.Symbol()

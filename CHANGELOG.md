@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added explicit expression casts (`expr as Type` and `expr as Type?`) with planner-time cast validation and runtime IR support
 - Added top-level `struct Name { ... }` declarations and struct-typed function parameter validation
 - Removed colon-style type annotation syntax (`name: Type`) in favor of canonical `name Type`
+- Reserved `none` and `as` as language keywords (no identifier fallback)
 
 ### 2026-02-10
 - Changed `fun` parameter contracts to require explicit types at plan-time validation

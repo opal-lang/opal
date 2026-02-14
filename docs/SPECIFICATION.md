@@ -132,6 +132,7 @@ Absence semantics:
 - `none` is the language absence literal
 - non-optional typed parameters reject `none`
 - optional typed parameters (`Type?`) accept `none`
+- `none` and `as` are reserved language keywords
 
 Arithmetic type rules:
 

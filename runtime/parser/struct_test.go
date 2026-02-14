@@ -2,6 +2,7 @@ package parser
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -58,6 +59,22 @@ func TestParseFunctionColonTypeSyntaxRejected(t *testing.T) {
 
 	if diff := cmp.Diff(true, found); diff != "" {
 		t.Fatalf("expected missing-type parse error (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseStructMalformedFieldDoesNotHang(t *testing.T) {
+	done := make(chan struct{})
+
+	go func() {
+		_ = ParseString(`struct Config { = 1 }`)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("ParseString hung on malformed struct field")
 	}
 }
 

@@ -1596,7 +1596,7 @@ func (r *Resolver) isStructValue(value any, decl *StructTypeIR) bool {
 		return false
 	}
 
-	mapValue, ok := value.(map[string]any)
+	mapValue, ok := toAnyObject(value)
 	if !ok {
 		return false
 	}

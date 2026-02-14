@@ -36,7 +36,7 @@ digit      = "0".."9" ;
 ### Keywords
 
 ```ebnf
-"fun" | "struct" | "var" | "if" | "else" | "for" | "in" | "when" | "try" | "catch" | "finally"
+"fun" | "struct" | "var" | "if" | "else" | "for" | "in" | "when" | "try" | "catch" | "finally" | "as" | "none"
 ```
 
 ### Literals
