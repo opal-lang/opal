@@ -936,7 +936,7 @@ func (r *Resolver) detectCallCycle(name string, args []FunctionArg) (string, boo
 		cycleFrames = append(cycleFrames, callFrame{name: name, args: args})
 		parts := make([]string, 0, len(cycleFrames))
 		for _, cycleFrame := range cycleFrames {
-			parts = append(parts, formatCallSignature(cycleFrame.name, cycleFrame.args))
+			parts = append(parts, r.formatFunctionCallTrace(cycleFrame.name, cycleFrame.args))
 		}
 
 		return strings.Join(parts, " -> "), true
@@ -948,9 +948,9 @@ func (r *Resolver) detectCallCycle(name string, args []FunctionArg) (string, boo
 func (r *Resolver) formatCallPath(name string, args []FunctionArg) string {
 	parts := make([]string, 0, len(r.callFrames)+1)
 	for _, frame := range r.callFrames {
-		parts = append(parts, formatCallSignature(frame.name, frame.args))
+		parts = append(parts, r.formatFunctionCallTrace(frame.name, frame.args))
 	}
-	parts = append(parts, formatCallSignature(name, args))
+	parts = append(parts, r.formatFunctionCallTrace(name, args))
 	return strings.Join(parts, " -> ")
 }
 
@@ -978,33 +978,6 @@ func functionArgsEqual(left, right []FunctionArg) bool {
 	}
 
 	return true
-}
-
-func formatCallSignature(name string, args []FunctionArg) string {
-	if len(args) == 0 {
-		return fmt.Sprintf("%s()", name)
-	}
-
-	parts := make([]string, 0, len(args))
-	for _, arg := range args {
-		value := formatCallArgValue(arg.Value)
-		if arg.Name != "" {
-			parts = append(parts, fmt.Sprintf("%s=%s", arg.Name, value))
-			continue
-		}
-		parts = append(parts, value)
-	}
-
-	return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
-}
-
-func formatCallArgValue(value any) string {
-	switch v := value.(type) {
-	case string:
-		return fmt.Sprintf("%q", v)
-	default:
-		return fmt.Sprintf("%v", value)
-	}
 }
 
 func (r *Resolver) formatTraceValue(value any) string {
