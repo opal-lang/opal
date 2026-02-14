@@ -24,6 +24,7 @@ const (
 
 	// Language structure
 	FUN       // fun - command definition
+	STRUCT    // struct - user-defined type declaration
 	VAR       // var
 	AT        // @
 	DOT       // .
@@ -32,6 +33,7 @@ const (
 	EQUALS    // =
 	COMMA     // ,
 	ARROW     // -> (for when patterns)
+	QUESTION  // ?
 
 	// Brackets and braces
 	LPAREN  // (
@@ -184,6 +186,8 @@ func (t Token) Symbol() string {
 		return "..."
 	case ARROW:
 		return "->"
+	case QUESTION:
+		return "?"
 	case AT:
 		return "@"
 	case LPAREN:
@@ -239,6 +243,8 @@ func (t TokenType) String() string {
 		return "FINALLY"
 	case FUN:
 		return "FUN"
+	case STRUCT:
+		return "STRUCT"
 	case VAR:
 		return "VAR"
 	case AT:
@@ -255,6 +261,8 @@ func (t TokenType) String() string {
 		return "COMMA"
 	case ARROW:
 		return "ARROW"
+	case QUESTION:
+		return "QUESTION"
 	case LPAREN:
 		return "LPAREN"
 	case RPAREN:
@@ -342,6 +350,7 @@ func (t TokenType) String() string {
 // Keywords maps string literals to their corresponding token types
 var Keywords = map[string]TokenType{
 	"fun":     FUN,
+	"struct":  STRUCT,
 	"for":     FOR,
 	"in":      IN,
 	"if":      IF,
@@ -362,6 +371,7 @@ var SingleCharTokens = map[byte]TokenType{
 	':':  COLON,
 	'=':  EQUALS,
 	',':  COMMA,
+	'?':  QUESTION,
 	'(':  LPAREN,
 	')':  RPAREN,
 	'{':  LBRACE,

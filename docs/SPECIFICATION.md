@@ -112,8 +112,11 @@ Core value categories:
 - duration
 - array
 - object
+- none
 
-Function parameters and decorator schemas define type contracts.
+Function parameters, struct fields, and decorator schemas define type contracts.
+
+Optional function parameter types use `Type?` and accept `none`.
 
 ## 4.5 Expression semantics
 
@@ -122,6 +125,13 @@ Expression evaluation is deterministic.
 - binary operators use standard precedence
 - unary operators include logical negation and numeric sign
 - prefix/postfix increment and decrement operate on expression operands according to parser grammar
+- explicit cast operator uses `expr as Type` and `expr as Type?`
+
+Absence semantics:
+
+- `none` is the language absence literal
+- non-optional typed parameters reject `none`
+- optional typed parameters (`Type?`) accept `none`
 
 Arithmetic type rules:
 
@@ -202,11 +212,34 @@ fun build(module String, target String = "dist") {
 Function parameters are typed.
 
 - grouped form: `fun f(a, b String) { ... }`
-- colon form: `fun f(a: String) { ... }`
+- single form: `fun f(a String) { ... }`
 
 Defaults attach to parameters and validate against declared types.
 
-### 6.4 Call semantics
+### 6.4 Struct declarations
+
+`struct` declarations define reusable object shapes for typed function parameters.
+
+```opal
+struct DeployConfig {
+    env String
+    retries Int = 3
+    timeout Duration?
+}
+
+fun deploy(cfg DeployConfig) {
+    echo "Deploying @var.cfg.env"
+}
+```
+
+Struct declarations are top-level declarations.
+
+- fields use `name Type` syntax
+- optional fields use `Type?`
+- defaults apply per field
+- unknown object fields are rejected for struct-typed parameters
+
+### 6.5 Call semantics
 
 Function calls use direct call syntax:
 
@@ -219,7 +252,7 @@ Parser disambiguation:
 - `name(...)` (no space before `(`) parses as a function call
 - `name (...)` parses as shell syntax
 
-### 6.5 Expansion semantics
+### 6.6 Expansion semantics
 
 Function calls expand during planning.
 
@@ -229,7 +262,7 @@ Function calls expand during planning.
 
 Execution does not perform runtime function lookup.
 
-### 6.6 Call graph constraints
+### 6.7 Call graph constraints
 
 Function calls must form an acyclic graph.
 

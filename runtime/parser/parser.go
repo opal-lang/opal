@@ -261,6 +261,8 @@ func (p *parser) file() {
 
 		if p.at(lexer.FUN) {
 			p.function()
+		} else if p.at(lexer.STRUCT) {
+			p.structDecl()
 		} else if p.at(lexer.VAR) {
 			p.varDecl()
 		} else if p.at(lexer.IF) {
@@ -379,6 +381,67 @@ func (p *parser) function() {
 	}
 }
 
+// structDecl parses a struct declaration: struct IDENTIFIER { fields }
+func (p *parser) structDecl() {
+	kind := p.start(NodeStructDecl)
+
+	// Consume 'struct' keyword
+	p.token()
+
+	// Consume struct name
+	p.expect(lexer.IDENTIFIER, "struct declaration")
+
+	// Parse body
+	if !p.expect(lexer.LBRACE, "struct declaration") {
+		p.finish(kind)
+		return
+	}
+
+	p.skipNewlines()
+	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		p.skipNewlines()
+		if p.at(lexer.RBRACE) || p.at(lexer.EOF) {
+			break
+		}
+
+		p.structField()
+		p.skipNewlines()
+
+		if p.at(lexer.COMMA) {
+			p.token()
+			p.skipNewlines()
+		}
+	}
+
+	p.expect(lexer.RBRACE, "struct declaration")
+	p.finish(kind)
+}
+
+func (p *parser) structField() {
+	kind := p.start(NodeStructField)
+
+	// Field name
+	p.expect(lexer.IDENTIFIER, "struct field")
+
+	// Required field type annotation (go-style only)
+	if p.hasGoStyleTypeAnnotation() {
+		p.typeAnnotation()
+	} else {
+		p.errorWithDetails(
+			"missing field type annotation",
+			"struct field",
+			"Use typed fields: struct Config { retries Int }",
+		)
+	}
+
+	// Optional field default value
+	if p.at(lexer.EQUALS) {
+		p.defaultValue()
+	}
+
+	p.finish(kind)
+}
+
 // paramList parses a parameter list: ( params )
 func (p *parser) paramList() {
 	if p.config.debug > DebugOff {
@@ -425,9 +488,7 @@ func (p *parser) paramList() {
 // Function parameters require explicit type annotations.
 // Supported forms:
 //   - name Type
-//   - name: Type
 //   - name Type = expression
-//   - name: Type = expression
 func (p *parser) param() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("enter_param", "parsing parameter")
@@ -442,7 +503,7 @@ func (p *parser) param() {
 
 	// Parse required type annotation
 	hasType := false
-	if p.at(lexer.COLON) || p.hasGoStyleTypeAnnotation() {
+	if p.hasGoStyleTypeAnnotation() {
 		p.typeAnnotation()
 		hasType = true
 	}
@@ -473,6 +534,19 @@ func (p *parser) hasGoStyleTypeAnnotation() bool {
 
 	if p.pos+1 >= len(p.tokens) {
 		return true
+	}
+
+	if p.tokens[p.pos+1].Type == lexer.QUESTION {
+		if p.pos+2 >= len(p.tokens) {
+			return true
+		}
+
+		switch p.tokens[p.pos+2].Type {
+		case lexer.COMMA, lexer.RPAREN, lexer.EQUALS, lexer.NEWLINE, lexer.LBRACE, lexer.EOF:
+			return true
+		default:
+			return false
+		}
 	}
 
 	switch p.tokens[p.pos+1].Type {
@@ -530,7 +604,7 @@ func (p *parser) hasGroupedTypeAhead() bool {
 		}
 
 		next := p.tokens[i+1].Type
-		if next == lexer.COLON || next == lexer.IDENTIFIER {
+		if next == lexer.IDENTIFIER {
 			return true
 		}
 	}
@@ -538,7 +612,7 @@ func (p *parser) hasGroupedTypeAhead() bool {
 	return false
 }
 
-// typeAnnotation parses a type annotation: : Type or Type
+// typeAnnotation parses a type annotation: Type
 func (p *parser) typeAnnotation() {
 	if p.config.debug > DebugOff {
 		p.recordDebugEvent("enter_typeAnnotation", "parsing type annotation")
@@ -546,13 +620,11 @@ func (p *parser) typeAnnotation() {
 
 	kind := p.start(NodeTypeAnnotation)
 
-	// Optional ':' for legacy style (name: Type)
-	if p.at(lexer.COLON) {
-		p.token()
-	}
-
 	// Consume type name
 	p.expect(lexer.IDENTIFIER, "type annotation")
+	if p.at(lexer.QUESTION) {
+		p.token()
+	}
 
 	p.finish(kind)
 
@@ -666,6 +738,17 @@ func (p *parser) statement() {
 			Example:    "fun helper() { ... } at top level, not inside if/for/etc",
 		})
 		p.advance() // Skip the fun keyword
+	} else if p.at(lexer.STRUCT) {
+		// Struct declarations not allowed inside blocks
+		p.errors = append(p.errors, ParseError{
+			Position:   p.current().Position,
+			Message:    "struct declarations must be at top level",
+			Context:    "statement",
+			Got:        lexer.STRUCT,
+			Suggestion: "Move struct declaration outside of blocks",
+			Example:    "struct Config { retries Int } at top level",
+		})
+		p.advance() // Skip the struct keyword
 	} else if p.at(lexer.VAR) {
 		p.varDecl()
 	} else if p.at(lexer.IF) {
@@ -1756,6 +1839,16 @@ func (p *parser) binaryExpr(minPrec int) {
 		p.finish(kind)
 	}
 
+	for p.isCastOperator() {
+		kind := p.start(NodeTypeCast)
+		p.token() // Consume 'as'
+		p.expect(lexer.IDENTIFIER, "type cast")
+		if p.at(lexer.QUESTION) {
+			p.token()
+		}
+		p.finish(kind)
+	}
+
 	// Parse binary operators
 	for {
 		prec := p.precedence()
@@ -1795,7 +1888,7 @@ func (p *parser) primary() {
 	}
 
 	switch {
-	case p.at(lexer.INTEGER), p.at(lexer.FLOAT), p.at(lexer.BOOLEAN):
+	case p.at(lexer.INTEGER), p.at(lexer.FLOAT), p.at(lexer.BOOLEAN), p.isNoneLiteral():
 		// Literal
 		kind := p.start(NodeLiteral)
 		p.token()
@@ -1832,6 +1925,14 @@ func (p *parser) primary() {
 			p.advance()
 		}
 	}
+}
+
+func (p *parser) isNoneLiteral() bool {
+	return p.at(lexer.IDENTIFIER) && string(p.current().Text) == "none"
+}
+
+func (p *parser) isCastOperator() bool {
+	return p.at(lexer.IDENTIFIER) && string(p.current().Text) == "as"
 }
 
 // arrayLiteral parses an array literal: [expr, expr, ...]

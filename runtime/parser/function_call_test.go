@@ -173,6 +173,42 @@ func TestFunctionCall_IdentifierWithSpaceBeforeParenStaysShell(t *testing.T) {
 	}
 }
 
+func TestFunctionCall_ParsesOptionalTypeAndNoneLiteral(t *testing.T) {
+	input := `fun deploy(token String? = none) {
+	echo @var.token
+}
+
+deploy(none)`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeLiteral)); diff != "" {
+		t.Fatalf("literal node count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestFunctionCall_ParsesCastExpressionArgument(t *testing.T) {
+	input := `fun deploy(cfg Object) {
+	echo @var.cfg
+}
+
+deploy(@var.raw as Object)`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 0 {
+		t.Fatalf("expected no parse errors, got %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodes(tree.Events, NodeTypeCast)); diff != "" {
+		t.Fatalf("type cast node count mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func countOpenNodes(events []Event, kind NodeKind) int {
 	count := 0
 	for _, event := range events {

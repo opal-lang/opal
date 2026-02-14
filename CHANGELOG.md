@@ -9,10 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### 2026-02-14
 - Added deterministic function-call cycle detection with explicit call-path errors for recursive and mutual `fun` expansion
 - Clarified canonical direct function call syntax (`name(...)`) in language docs and removed retired decorator-like call examples
+- Added `none` literal support in expression evaluation and function defaults, with strict optional function parameter typing via `Type?`
+- Added explicit expression casts (`expr as Type` and `expr as Type?`) with planner-time cast validation and runtime IR support
+- Added top-level `struct Name { ... }` declarations and struct-typed function parameter validation
+- Removed colon-style type annotation syntax (`name: Type`) in favor of canonical `name Type`
 
 ### 2026-02-10
 - Changed `fun` parameter contracts to require explicit types at plan-time validation
-- Added grouped Go-style function parameter type syntax (`name, alias String`) while preserving colon-style annotations (`name: String`)
+- Added grouped Go-style function parameter type syntax (`name, alias String`)
 - Clarified language boundary docs: plan-time metaprogramming wraps and validates runtime shell execution
 
 ### 2026-02-09

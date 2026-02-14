@@ -1672,6 +1672,93 @@ func TestResolve_FunctionArgsMissingTypeAnnotation(t *testing.T) {
 	}
 }
 
+func TestResolve_FunctionArgsStructType(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "env", Type: "String"},
+					{Name: "retries", Type: "Int", Default: &ExprIR{Kind: ExprLiteral, Value: int64(1)}},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{
+				Value: map[string]any{
+					"env": "prod",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionArgsStructTypeRejectsUnknownField(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "env", Type: "String"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{
+				Value: map[string]any{
+					"env":    "prod",
+					"region": "us-east-1",
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "cfg" expects DeployConfig`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestResolve_GroupedGoStyleParameterTypeAppliesToAllParameters(t *testing.T) {
 	tree := parser.ParseString(`fun deploy(name, alias String) { echo "ok" }`)
 	if len(tree.Errors) > 0 {
@@ -1760,6 +1847,136 @@ func TestResolve_FunctionArgsMixedBindingWithDefaults(t *testing.T) {
 	}
 }
 
+func TestResolve_FunctionArgsOptionalTypeAcceptsNone(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "retries", Type: "Int?"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: nil},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionArgsOptionalTypeRejectsWrongValue(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "retries", Type: "Int?"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "three"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "retries" expects integer or none`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionParamDefaultNoneRequiresOptionalType(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{
+						Name: "retries",
+						Type: "Int",
+						Default: &ExprIR{
+							Kind:  ExprLiteral,
+							Value: nil,
+						},
+					},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid default for parameter "retries" in function "deploy": expects integer`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionParamDefaultNoneAllowedForOptionalType(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{
+						Name: "retries",
+						Type: "Int?",
+						Default: &ExprIR{
+							Kind:  ExprLiteral,
+							Value: nil,
+						},
+					},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
 func TestResolve_ScriptModeFunctionCallExpandsToStatements(t *testing.T) {
 	tree := parser.ParseString(`fun helper(name String) {
 	echo @var.name
@@ -1802,6 +2019,28 @@ helper("prod")`)
 	}
 	if diff := cmp.Diff(StmtCommand, stmt.CallTrace.Block[0].Kind); diff != "" {
 		t.Fatalf("nested statement kind mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_ScriptModeFunctionCallAppliesCastBeforeBinding(t *testing.T) {
+	tree := parser.ParseString(`fun deploy(retries Int) {
+	echo @var.retries
+}
+
+deploy("3" as Int)`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
 	}
 }
 

@@ -5,7 +5,22 @@ package planner
 type ExecutionGraph struct {
 	Statements []*StatementIR         // Top-level statements (script mode)
 	Functions  map[string]*FunctionIR // Function definitions (command mode)
-	Scopes     *ScopeStack            // Variable scopes (name → exprID)
+	Types      map[string]*StructTypeIR
+	Scopes     *ScopeStack // Variable scopes (name → exprID)
+}
+
+// StructTypeIR represents a top-level user-defined struct declaration.
+type StructTypeIR struct {
+	Name   string
+	Fields []StructFieldIR
+	Span   SourceSpan
+}
+
+// StructFieldIR represents a single struct field.
+type StructFieldIR struct {
+	Name    string
+	Type    string
+	Default *ExprIR
 }
 
 // FunctionIR represents a function definition.
@@ -387,13 +402,15 @@ func deepCopyExpr(expr *ExprIR) *ExprIR {
 		return nil
 	}
 	result := &ExprIR{
-		Kind:    expr.Kind,
-		Span:    expr.Span,
-		Value:   expr.Value,
-		VarName: expr.VarName,
-		Op:      expr.Op,
-		Left:    deepCopyExpr(expr.Left),
-		Right:   deepCopyExpr(expr.Right),
+		Kind:     expr.Kind,
+		Span:     expr.Span,
+		Value:    expr.Value,
+		VarName:  expr.VarName,
+		Op:       expr.Op,
+		Left:     deepCopyExpr(expr.Left),
+		Right:    deepCopyExpr(expr.Right),
+		TypeName: expr.TypeName,
+		Optional: expr.Optional,
 	}
 	if expr.Decorator != nil {
 		result.Decorator = &DecoratorRef{

@@ -1,8 +1,13 @@
 package planner
 
 import (
+	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/opal-lang/opal/core/types"
 )
 
 // ExprKind identifies the type of expression.
@@ -13,6 +18,7 @@ const (
 	ExprVarRef                       // Variable reference (@var.X)
 	ExprDecoratorRef                 // Decorator reference (@env.HOME, @aws.secret.key)
 	ExprBinaryOp                     // Binary operation (==, !=, &&, ||)
+	ExprTypeCast                     // Type cast (expr as Type, expr as Type?)
 )
 
 // durationLiteral preserves duration typing for literals (e.g., 5m, 30s).
@@ -38,6 +44,10 @@ type ExprIR struct {
 	Op    string  // "==", "!=", "&&", "||", "<", ">", "<=", ">="
 	Left  *ExprIR // Left operand
 	Right *ExprIR // Right operand
+
+	// For ExprTypeCast - target type and optionality
+	TypeName string // Target type name (String, Int, Object, etc.)
+	Optional bool   // True for Type? casts
 }
 
 // DecoratorRef is a structured decorator reference.
@@ -125,6 +135,9 @@ func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
 
 	case ExprBinaryOp:
 		return evaluateBinaryOp(expr, getValue)
+
+	case ExprTypeCast:
+		return evaluateTypeCast(expr, getValue)
 
 	default:
 		return nil, &EvalError{
@@ -257,6 +270,286 @@ func evaluateBinaryOp(expr *ExprIR, getValue ValueLookup) (any, error) {
 			Span:    expr.Span,
 		}
 	}
+}
+
+type castTypeSpec struct {
+	kind     types.ParamType
+	optional bool
+}
+
+func evaluateTypeCast(expr *ExprIR, getValue ValueLookup) (any, error) {
+	if expr.Left == nil {
+		return nil, &EvalError{Message: "incomplete type cast", Span: expr.Span}
+	}
+
+	spec, err := parseCastType(expr.TypeName, expr.Optional)
+	if err != nil {
+		return nil, &EvalError{Message: err.Error(), Span: expr.Span}
+	}
+
+	value, err := EvaluateExpr(expr.Left, getValue)
+	if err != nil {
+		return nil, err
+	}
+
+	castValue, err := castValueAsType(value, spec)
+	if err != nil {
+		return nil, &EvalError{Message: err.Error(), Span: expr.Span}
+	}
+
+	return castValue, nil
+}
+
+func parseCastType(typeName string, optional bool) (castTypeSpec, error) {
+	switch strings.ToLower(typeName) {
+	case "string":
+		return castTypeSpec{kind: types.TypeString, optional: optional}, nil
+	case "int", "integer":
+		return castTypeSpec{kind: types.TypeInt, optional: optional}, nil
+	case "float":
+		return castTypeSpec{kind: types.TypeFloat, optional: optional}, nil
+	case "bool", "boolean":
+		return castTypeSpec{kind: types.TypeBool, optional: optional}, nil
+	case "duration":
+		return castTypeSpec{kind: types.TypeDuration, optional: optional}, nil
+	case "array":
+		return castTypeSpec{kind: types.TypeArray, optional: optional}, nil
+	case "map", "object":
+		return castTypeSpec{kind: types.TypeObject, optional: optional}, nil
+	default:
+		return castTypeSpec{}, fmt.Errorf("unsupported cast target %q", typeName)
+	}
+}
+
+func castTypeLabel(spec castTypeSpec) string {
+	label := functionTypeLabel(spec.kind)
+	if spec.optional {
+		return label + " or none"
+	}
+	return label
+}
+
+func castValueAsType(value any, spec castTypeSpec) (any, error) {
+	if value == nil {
+		if spec.optional {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot cast none to %s", functionTypeLabel(spec.kind))
+	}
+
+	switch spec.kind {
+	case types.TypeString:
+		return literalToString(value), nil
+
+	case types.TypeInt:
+		if intVal, ok := toInt64Strict(value); ok {
+			return intVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	case types.TypeFloat:
+		if floatVal, ok := toFloat64Strict(value); ok {
+			return floatVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	case types.TypeBool:
+		if boolVal, ok := toBoolStrict(value); ok {
+			return boolVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	case types.TypeDuration:
+		if durationVal, ok := toDurationStrict(value); ok {
+			return durationVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	case types.TypeArray:
+		if arrayVal, ok := toAnyArray(value); ok {
+			return arrayVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	case types.TypeObject:
+		if objectVal, ok := toAnyObject(value); ok {
+			return objectVal, nil
+		}
+		return nil, fmt.Errorf("cannot cast %T to %s", value, castTypeLabel(spec))
+
+	default:
+		return nil, fmt.Errorf("cannot cast to unsupported type %q", spec.kind)
+	}
+}
+
+func toInt64Strict(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	case uint:
+		maxInt64 := uint64(^uint64(0) >> 1)
+		if uint64(v) > maxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		maxInt64 := uint64(^uint64(0) >> 1)
+		if v > maxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case float32:
+		f := float64(v)
+		if f != float64(int64(f)) {
+			return 0, false
+		}
+		return int64(f), true
+	case float64:
+		if v != float64(int64(v)) {
+			return 0, false
+		}
+		return int64(v), true
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func toFloat64Strict(value any) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	case string:
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func toBoolStrict(value any) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		lower := strings.ToLower(strings.TrimSpace(v))
+		if lower == "true" {
+			return true, true
+		}
+		if lower == "false" {
+			return false, true
+		}
+		return false, false
+	default:
+		return false, false
+	}
+}
+
+func toDurationStrict(value any) (types.Duration, bool) {
+	switch v := value.(type) {
+	case types.Duration:
+		return v, true
+	case time.Duration:
+		parsed, err := types.ParseDuration(v.String())
+		if err != nil {
+			return types.Duration{}, false
+		}
+		return parsed, true
+	case durationLiteral:
+		parsed, err := types.ParseDuration(string(v))
+		if err != nil {
+			return types.Duration{}, false
+		}
+		return parsed, true
+	case string:
+		parsed, err := types.ParseDuration(v)
+		if err != nil {
+			return types.Duration{}, false
+		}
+		return parsed, true
+	default:
+		return types.Duration{}, false
+	}
+}
+
+func toAnyArray(value any) ([]any, bool) {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return nil, false
+	}
+	kind := v.Kind()
+	if kind != reflect.Array && kind != reflect.Slice {
+		return nil, false
+	}
+
+	result := make([]any, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		result[i] = v.Index(i).Interface()
+	}
+
+	return result, true
+}
+
+func toAnyObject(value any) (map[string]any, bool) {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() || v.Kind() != reflect.Map {
+		return nil, false
+	}
+	if v.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+
+	result := make(map[string]any, v.Len())
+	iter := v.MapRange()
+	for iter.Next() {
+		result[iter.Key().String()] = iter.Value().Interface()
+	}
+
+	return result, true
 }
 
 // IsTruthy determines if a value is truthy.
@@ -459,6 +752,12 @@ func RenderExpr(expr *ExprIR, displayIDs map[string]string) string {
 		}
 		return "<unresolved:" + key + ">"
 
+	case ExprTypeCast:
+		if expr.Left == nil {
+			return "<unsupported>"
+		}
+		return RenderExpr(expr.Left, displayIDs)
+
 	default:
 		// Binary ops shouldn't be rendered (they're for conditions)
 		return "<unsupported>"
@@ -483,6 +782,8 @@ func RenderCommand(cmd *CommandExpr, displayIDs map[string]string) string {
 // literalToString converts a literal value to its string representation.
 func literalToString(v any) string {
 	switch val := v.(type) {
+	case nil:
+		return "none"
 	case string:
 		return val
 	case durationLiteral:

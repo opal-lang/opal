@@ -325,6 +325,91 @@ func TestEvaluateExpr_Literal_Bool(t *testing.T) {
 	}
 }
 
+func TestEvaluateExpr_TypeCast_StringToInt(t *testing.T) {
+	expr := &ExprIR{
+		Kind:     ExprTypeCast,
+		TypeName: "Int",
+		Left: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: "42",
+		},
+	}
+
+	result, err := EvaluateExpr(expr, mapLookup(map[string]any{}))
+	if err != nil {
+		t.Fatalf("EvaluateExpr() error = %v", err)
+	}
+
+	if diff := cmp.Diff(int64(42), result); diff != "" {
+		t.Fatalf("cast result mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEvaluateExpr_TypeCast_NoneToOptional(t *testing.T) {
+	expr := &ExprIR{
+		Kind:     ExprTypeCast,
+		TypeName: "String",
+		Optional: true,
+		Left: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: nil,
+		},
+	}
+
+	result, err := EvaluateExpr(expr, mapLookup(map[string]any{}))
+	if err != nil {
+		t.Fatalf("EvaluateExpr() error = %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("EvaluateExpr() = %v, want nil", result)
+	}
+}
+
+func TestEvaluateExpr_TypeCast_NoneToRequiredFails(t *testing.T) {
+	expr := &ExprIR{
+		Kind:     ExprTypeCast,
+		TypeName: "Int",
+		Left: &ExprIR{
+			Kind:  ExprLiteral,
+			Value: nil,
+		},
+	}
+
+	_, err := EvaluateExpr(expr, mapLookup(map[string]any{}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := "cannot cast none to integer"
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEvaluateExpr_TypeCast_ObjectNormalizesMap(t *testing.T) {
+	expr := &ExprIR{
+		Kind:     ExprTypeCast,
+		TypeName: "Object",
+		Left: &ExprIR{
+			Kind: ExprLiteral,
+			Value: map[string]string{
+				"name": "api",
+			},
+		},
+	}
+
+	result, err := EvaluateExpr(expr, mapLookup(map[string]any{}))
+	if err != nil {
+		t.Fatalf("EvaluateExpr() error = %v", err)
+	}
+
+	want := map[string]any{"name": "api"}
+	if diff := cmp.Diff(want, result); diff != "" {
+		t.Fatalf("object cast result mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestEvaluateExpr_VarRef_Found(t *testing.T) {
 	expr := &ExprIR{Kind: ExprVarRef, VarName: "ENV"}
 	values := map[string]any{"ENV": "production"}

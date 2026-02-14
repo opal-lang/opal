@@ -275,6 +275,7 @@ func TestKeywordVsIdentifier(t *testing.T) {
 	}{
 		// Keywords should be recognized as keywords
 		{name: "var keyword", input: "var", expected: VAR, text: "var"},
+		{name: "struct keyword", input: "struct", expected: STRUCT, text: "struct"},
 		{name: "for keyword", input: "for", expected: FOR, text: "for"},
 		{name: "if keyword", input: "if", expected: IF, text: "if"},
 		{name: "when keyword", input: "when", expected: WHEN, text: "when"},
@@ -429,4 +430,12 @@ func TestKeywordPositioning(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQuestionToken(t *testing.T) {
+	assertTokens(t, "question token", "Type?", []tokenExpectation{
+		{IDENTIFIER, "Type", 1, 1},
+		{QUESTION, "", 1, 5},
+		{EOF, "", 1, 6},
+	})
 }
