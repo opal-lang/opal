@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-14
+- Added deterministic function-call cycle detection with explicit call-path errors for recursive and mutual `fun` expansion
+- Clarified canonical direct function call syntax (`name(...)`) in language docs and removed retired decorator-like call examples
+
 ### 2026-02-10
 - Changed `fun` parameter contracts to require explicit types at plan-time validation
 - Added grouped Go-style function parameter type syntax (`name, alias String`) while preserving colon-style annotations (`name: String`)
