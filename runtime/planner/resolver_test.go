@@ -1253,12 +1253,70 @@ countdown(2)`)
 	}
 }
 
-func TestResolve_RecursiveFunctionCallDepthGuard(t *testing.T) {
+func TestResolve_RecursiveFunctionCallCycleDetection(t *testing.T) {
 	tree := parser.ParseString(`fun loop() {
 	loop()
 }
 
 loop()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatalf("expected recursion cycle error")
+	}
+
+	want := `function call cycle detected: loop() -> loop()`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_MutualFunctionCallCycleDetection(t *testing.T) {
+	tree := parser.ParseString(`fun ping() {
+	pong()
+}
+
+fun pong() {
+	ping()
+}
+
+ping()`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	_, err = Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatalf("expected recursion cycle error")
+	}
+
+	want := `function call cycle detected: ping() -> pong() -> ping()`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_RecursiveFunctionCallDepthGuard(t *testing.T) {
+	tree := parser.ParseString(`fun grow(n Int) {
+	grow(@var.n + 1)
+}
+
+grow(0)`)
 	if len(tree.Errors) > 0 {
 		t.Fatalf("parse errors: %v", tree.Errors)
 	}

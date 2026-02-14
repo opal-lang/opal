@@ -131,7 +131,7 @@ type Resolver struct {
 	decoratorExprIDs map[string]string // decorator key (e.g., "env.HOME") → exprID
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
 	errors           []error           // Collected errors
-	callStack        []string          // Active function call stack (for depth guard)
+	callFrames       []callFrame       // Active function call frames (for cycle/depth guards)
 
 	// @env allowance context (non-idempotent transports forbid @env)
 	envAllowed      bool
@@ -144,6 +144,11 @@ const maxFunctionCallDepth = 256
 type envContext struct {
 	allowed   bool
 	decorator string
+}
+
+type callFrame struct {
+	name string
+	args []FunctionArg
 }
 
 // ResolveConfig configures the resolution process.
@@ -830,11 +835,6 @@ func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*Statement
 		return nil, fmt.Errorf("function %q not found", call.Name)
 	}
 
-	if len(r.callStack) >= maxFunctionCallDepth {
-		path := append(append([]string{}, r.callStack...), call.Name)
-		return nil, fmt.Errorf("function call depth exceeded (%d): %s", maxFunctionCallDepth, strings.Join(path, " -> "))
-	}
-
 	for _, arg := range call.Args {
 		r.collectExpr(arg.Value, "")
 	}
@@ -850,9 +850,18 @@ func (r *Resolver) resolveFunctionCallStatement(stmt *StatementIR) ([]*Statement
 		return nil, err
 	}
 
-	r.callStack = append(r.callStack, call.Name)
+	if cyclePath, hasCycle := r.detectCallCycle(call.Name, resolvedArgs); hasCycle {
+		return nil, fmt.Errorf("function call cycle detected: %s", cyclePath)
+	}
+
+	if len(r.callFrames) >= maxFunctionCallDepth {
+		path := r.formatCallPath(call.Name, resolvedArgs)
+		return nil, fmt.Errorf("function call depth exceeded (%d): %s", maxFunctionCallDepth, path)
+	}
+
+	r.callFrames = append(r.callFrames, callFrame{name: call.Name, args: cloneFunctionArgs(resolvedArgs)})
 	defer func() {
-		r.callStack = r.callStack[:len(r.callStack)-1]
+		r.callFrames = r.callFrames[:len(r.callFrames)-1]
 	}()
 
 	prevScopes := r.scopes
@@ -912,6 +921,90 @@ func (r *Resolver) formatFunctionCallTrace(name string, args []FunctionArg) stri
 	}
 
 	return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
+}
+
+func (r *Resolver) detectCallCycle(name string, args []FunctionArg) (string, bool) {
+	for i, frame := range r.callFrames {
+		if frame.name != name {
+			continue
+		}
+		if !functionArgsEqual(frame.args, args) {
+			continue
+		}
+
+		cycleFrames := append([]callFrame{}, r.callFrames[i:]...)
+		cycleFrames = append(cycleFrames, callFrame{name: name, args: args})
+		parts := make([]string, 0, len(cycleFrames))
+		for _, cycleFrame := range cycleFrames {
+			parts = append(parts, formatCallSignature(cycleFrame.name, cycleFrame.args))
+		}
+
+		return strings.Join(parts, " -> "), true
+	}
+
+	return "", false
+}
+
+func (r *Resolver) formatCallPath(name string, args []FunctionArg) string {
+	parts := make([]string, 0, len(r.callFrames)+1)
+	for _, frame := range r.callFrames {
+		parts = append(parts, formatCallSignature(frame.name, frame.args))
+	}
+	parts = append(parts, formatCallSignature(name, args))
+	return strings.Join(parts, " -> ")
+}
+
+func cloneFunctionArgs(args []FunctionArg) []FunctionArg {
+	if len(args) == 0 {
+		return nil
+	}
+	cloned := make([]FunctionArg, len(args))
+	copy(cloned, args)
+	return cloned
+}
+
+func functionArgsEqual(left, right []FunctionArg) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	for i := range left {
+		if left[i].Name != right[i].Name {
+			return false
+		}
+		if !reflect.DeepEqual(left[i].Value, right[i].Value) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func formatCallSignature(name string, args []FunctionArg) string {
+	if len(args) == 0 {
+		return fmt.Sprintf("%s()", name)
+	}
+
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		value := formatCallArgValue(arg.Value)
+		if arg.Name != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s", arg.Name, value))
+			continue
+		}
+		parts = append(parts, value)
+	}
+
+	return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
+}
+
+func formatCallArgValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf("%q", v)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
 }
 
 func (r *Resolver) formatTraceValue(value any) string {
