@@ -1,2005 +1,647 @@
 ---
 title: "Opal Language Specification"
-audience: "End Users & Script Authors"
-summary: "Complete language guide with syntax, semantics, and real-world examples"
+audience: "End Users and Script Authors"
+summary: "Language semantics, execution contract, and operational guarantees"
 ---
 
 # Opal Language Specification
 
-Deterministic task runner for operations and developer workflows.
+Opal is a plan-first language for operational workflows.
 
-> Opal automates *what happens after infrastructure exists* — deployment, validation, and operational workflows — without managing infrastructure state.
+Opal authors write metaprogramming constructs that build an execution plan. The runtime executes shell commands and execution decorators from that plan.
 
-**See also**: [Formal Grammar](GRAMMAR.md) for EBNF syntax specification.
+See `docs/GRAMMAR.md` for formal EBNF syntax.
 
-## The Gap
+## 1. Language Boundary
 
-After infrastructure is provisioned, teams use shell scripts or Makefiles for:
-- Deployments and migrations
-- Health checks and restarts
-- Build, test, release workflows
-- Day-2 operational tasks
+Opal has two semantic layers.
 
-These are brittle, non-deterministic, and hard to audit. Opal fills this gap.
+- **Metaprogramming layer**: `fun`, function calls, `var`, `if`, `for`, `when`
+- **Execution layer**: shell commands, pipes, redirects, and execution decorators such as `@retry`, `@timeout`, and `@parallel`
 
-## Design Philosophy
+The metaprogramming layer builds a deterministic script structure. The execution layer performs the side effects.
 
-**Outcome-focused, not state-driven:**
+This boundary is the core language meaning:
 
-Opal queries reality, plans actions, and executes - without maintaining state files.
+- script construction happens during planning
+- side effects happen during execution
+- contract verification compares planned structure and resolved values before execution when a plan contract is provided
 
-- **Reality is truth**: Query current state (does this instance exist? what's the current version?)
-- **Plan from reality**: Generate execution plan based on what exists now
-- **Execute the plan**: Perform the work to achieve outcomes
-- **Contract verification**: Detect if reality changed between plan and execute
+## 2. Program Lifecycle
 
-The **plan is your contract** - deterministic, verifiable, hash-based. This comes from contract-first development: define the agreement upfront, execute against it.
+Opal execution follows a stable lifecycle.
 
-No state files to maintain or synchronize. Reality is the only source of truth.
+1. **Parse** source into a syntax/event tree.
+2. **Plan** by resolving metaprogramming constructs and value dependencies.
+3. **Resolve values** according to the selected mode.
+4. **Execute** runtime nodes.
+5. **Verify contract** when running with a resolved plan contract.
 
-## Core Principles
+Two execution paths exist:
 
-**Plans as execution contracts**: Resolved plans show exactly what will execute, with hash-based verification to catch changes between planning and execution.
+- **Direct run**: parse -> plan -> resolve -> execute
+- **Contract run**: parse -> plan -> resolve -> compare with contract -> execute on match
 
-**Decorator-based execution**: Everything that performs work becomes a decorator internally - no special cases. You write natural syntax, the parser converts to decorators.
+A plan file is a verification target, not an executable artifact.
 
-```opal
-// You write natural syntax
-deploy: {
-    echo "Starting deployment"
-    npm run build
-    kubectl apply -f k8s/
-}
+## 3. Program Forms and Modes
 
-// Parser converts to execution decorators
-deploy: {
-    @shell("echo \"Starting deployment\"")
-    @shell("npm run build")
-    @shell("kubectl apply -f k8s/")
-}
-```
+Opal validation supports two top-level modes.
 
-**Deterministic planning**: Same inputs always produce the same plan. Control flow resolves at plan-time.
+### 3.1 Script mode
 
-**Scope semantics**: All blocks can read outer values. Variable declarations in nested blocks (`for`, `if`, `when`, `fun`, execution decorators, and `try/catch`) are lexically scoped and do not leak to the outer scope. See [Variable Scope](#variable-scope) for details.
+Script mode accepts full language constructs:
 
-**Scope**: Operations and task running. We're proving the model here before extending to infrastructure provisioning.
+- declarations
+- metaprogramming statements
+- shell execution
+- decorator execution
 
-## Mental Model
+### 3.2 Command mode
 
-```
-                    Direct Execution:
-Source Code → Parse → Plan → Execute
-              ↓       ↓       ↓
-           Events  Actions  Work
+Command mode is definition-oriented:
 
-                    Contract Execution (with plan file):
-Source Code → Parse → Replan → Verify → Execute
-              ↓       ↓        ↓         ↓
-           Events  Actions  Match?    Work
-                              ↓
-                         Plan File
-                        (Contract)
-```
+- allows top-level `fun` declarations
+- allows top-level `var` declarations
+- rejects top-level shell execution
+- rejects top-level function call execution
 
-**Critical insight**: Plan files are NEVER executed directly. They are verification contracts.
+This mode models a task file where declarations define callable commands.
 
-**Contract execution always:**
-1. Replans from current source and infrastructure state
-2. Compares fresh plan against contract (hash verification)
-3. Executes ONLY if they match, aborts if they differ
+## 4. Variables, Values, and Types
 
-**Unlike Terraform** (which applies old plan to new state), Opal verifies current reality would still produce the same plan. This prevents executing stale or tampered plans.
+## 4.1 Variable declaration
 
-## Error Handling Model
+Opal supports single and grouped declarations.
 
-**Error precedence rule** (normative for all executors and decorators):
-
-1. **`err != nil`** → Failure. Exit code becomes informational (logged but not used for control flow).
-2. **`err == nil`** → Success if and only if `exitCode == 0`. Non-zero exit code with `nil` error is a failure.
-
-**Typed errors** enable policy decisions:
-- `RetryableError` - Decorator can retry (network timeout, rate limit)
-- `TimeoutError` - Decorator exceeded time limit
-- `CancelledError` - Context cancelled (user interrupt, deadline)
-
-**Example:**
-```opal
-@retry(times=3) {
-    curl https://api.example.com/health
-}
-```
-
-If `curl` returns exit code 7 (connection failed) with `err == nil`, retry decorator sees non-zero exit and retries. If it returns `TimeoutError`, retry decorator can apply backoff strategy.
-
-## Two Ways to Run
-
-**Command mode** - organized tasks:
-```opal
-// commands.opl
-fun install = npm install
-fun test = npm test
-fun deploy = kubectl apply -f k8s/
-```
-```bash
-opal deploy    # Run specific task
-```
-
-**Script mode** - direct execution:
-```opal
-#!/usr/bin/env opal
-echo "Deploying version $VERSION"
-kubectl apply -f k8s/
-```
-```bash
-./deploy-script    # Execute directly
-```
-
-## Line-by-Line Execution
-
-How commands connect matters:
-
-```opal
-// Newlines = fail-fast (stop on first failure)
-deploy: {
-    npm run build
-    npm test
-    kubectl apply -f k8s/
-}
-
-// Semicolons = keep going (shell behavior)
-setup: npm install; npm run build; npm test
-
-// Shell operators = standard behavior with pipefail
-check: npm run build && npm test || echo "Build failed"
-logs: kubectl logs app | grep ERROR
-```
-
-**Operator precedence**: `|` (pipe) > `&&`, `||` > `;` > newlines
-
-## Example: Deployment with Conditionals
-
-```opal
-deploy: {
-    when @env.ENV {
-        "production" -> {
-            kubectl apply -f k8s/prod/
-            @retry(attempts=3) { kubectl rollout status deployment/app }
-        }
-        else -> kubectl apply -f k8s/dev/
-    }
-}
-```
-
-### Command Definitions with `fun` (Template Functions)
-
-`fun` enables **template-based code reuse** at plan-time. Command definitions can be parameterized and called with different arguments.
-
-Think of this as a deliberate language boundary: Opal metaprogramming shapes the plan, then shell commands perform the runtime work. This can feel different from plain shell at first, but it enables deterministic plans and contract-grade validation.
-
-**IMPORTANT**: `fun` definitions must be at the top level. You cannot define `fun` inside `for` loops, `if` statements, or other control flow constructs. Define template functions first, then call them inside loops.
-
-```opal
-var MODULES = ["cli", "runtime"]
-
-# ✅ CORRECT: Define template functions at top level
-fun build_module(module String) {
-    @workdir(@var.module) {
-        npm ci
-        npm run build
-    }
-}
-
-fun test_module(module String, retries Int = 2) {
-    @workdir(@var.module) {
-        @retry(attempts=@var.retries, delay=5s) { npm test }
-    }
-}
-
-# ✅ CORRECT: Call templates inside loops
-fun build_all {
-    for module in @var.MODULES {
-        @cmd.build_module(module=@var.module)
-    }
-}
-
-fun test_all {
-    for module in @var.MODULES {
-        @cmd.test_module(module=@var.module, retries=3)
-    }
-}
-
-# ❌ INCORRECT: Cannot define fun inside for loops
-fun build_all {
-    for module in @var.MODULES {
-        fun build_@var.module {  # ERROR: fun inside for is not allowed
-            npm run build
-        }
-    }
-}
-```
-
-**Metaprogramming semantics**:
-- **Plan-time expansion**: `for` loops and `@var.NAME` resolve during plan construction
-- **Parameter binding**: Function arguments resolve to concrete values at plan-time
-- **Template inlining**: Function calls expand to `fun` bodies with parameter substitution
-- **Template expansion**: Calls expand into concrete plan steps before execution
-- **Static command names**: After metaprogramming expansion, all command names are concrete identifiers
-- **No runtime reflection**: All metaprogramming happens at plan-time, execution is deterministic
-
-**Syntax forms**:
-```opal
-# Assignment form (concise one-liners)
-fun deploy = kubectl apply -f k8s/
-fun greet(name String) = echo "Hello, @var.name!"
-
-# Block form (multi-line)
-fun complex {
-    kubectl apply -f k8s/
-    kubectl rollout status deployment/app
-}
-
-fun build_module(module String, target String = "dist") {
-    @workdir(@var.module) {
-        npm ci
-        npm run build --output=@var.target
-    }
-}
-```
-
-**Function parameter typing (required):**
-
-Function parameters are explicitly typed. This keeps metaprogramming contracts clear and validated before execution.
-
-```opal
-# Go-style type syntax
-fun deploy(env String, replicas Int = 3, timeout Duration = 30s) {
-    kubectl scale deployment/app --replicas=@var.replicas
-}
-
-# Grouped Go-style shorthand
-fun notify(primary, backup String, urgent Bool = false) {
-    echo "notify @var.primary and @var.backup"
-}
-
-# Colon-style syntax is also valid
-fun build(module: String, target: String = "dist", verbose: Bool = false) {
-    npm run build -- --target=@var.target
-}
-```
-
-**Parameter syntax**:
-- `name Type` - required, typed (Go-style)
-- `name: Type` - required, typed (colon-style)
-- `name Type = default` - optional, typed with default
-- `name: Type = default` - optional, typed with default
-- `a, b Type` - grouped shorthand (both parameters share the same type)
-
-**Supported types**:
-- `String` - text values
-- `Int` - integer numbers
-- `Float` - floating-point numbers
-- `Bool` - true/false
-- `Duration` - time durations (30s, 2h, 1d)
-- `Array` - lists of values
-- `Map` - key-value pairs
-
-**Type checking**:
-- All function parameters are validated at plan-time
-- Missing type annotations are rejected
-- Type mismatches produce clear errors before execution
-
-**Command mode CLI flags**:
-
-In command mode, parameters with defaults become CLI flags:
-
-```opal
-# Definition
-fun deploy(env String, replicas Int = 3, timeout Duration = 30s) {
-    kubectl scale deployment/app --replicas=@var.replicas
-}
-```
-
-```bash
-# CLI usage
-opal deploy production              # uses defaults: replicas=3, timeout=30s
-opal deploy production --replicas=5 # override replicas
-opal deploy production --timeout=60s --replicas=10
-```
-
-**Example expansion**:
-```opal
-# Template function definition
-fun test_module(module String) {
-    @workdir(@var.module) { go test ./... }
-}
-
-# Usage in commands
-test_all: {
-    for module in ["cli", "runtime"] {
-        @cmd.test_module(module=@var.module)
-    }
-}
-
-# Expands at plan-time to:
-# @workdir("cli") { go test ./... }
-# @workdir("runtime") { go test ./... }
-```
-
-## Decorator Syntax
-
-**For advanced patterns** (opaque handles, resource collections, memoization, composition), see [DECORATOR_GUIDE.md](DECORATOR_GUIDE.md).
-
-Opal distinguishes between value decorators (return data) and execution decorators (perform work) with clear syntax patterns.
-
-### **Value Decorators**
-
-**Dot syntax for simple access:**
-```opal
-# Variables (namespaced for visibility)
-kubectl scale --replicas=@var.REPLICAS deployment/app
-psql @var.CONFIG.database.url
-docker run -p @var.SERVICES[0]:3000 app
-
-# Simple value decorators
-kubectl create secret --token=@aws.secret.api_token
-echo "Environment: @env.NODE_ENV"
-curl -H "Authorization: Bearer @oauth.tokens.access_token"
-```
-
-**Optional parameters when needed:**
-```opal
-# Defaults and complex parameters
-kubectl apply -f @env.MANIFEST_PATH(default="k8s/")
-curl @aws.secret.api_key(region="us-west-2")
-echo "Version: @env.APP_VERSION(default="latest")"
-```
-
-### **Execution Decorators**
-
-**Always function syntax with blocks:**
-```opal
-@retry(attempts=3, delay=2s) { kubectl apply -f k8s/ }
-@workdir("/tmp") { ls -la }
-@timeout(30s) { npm test }
-@parallel {
-    echo "Task A"
-    echo "Task B"
-}
-```
-
-**Clear distinction:**
-- **Value decorators**: Use dot syntax, return data for command arguments
-- **Execution decorators**: Use function syntax, modify how commands execute
-
-**See [Decorator Design Guide](DECORATOR_GUIDE.md)** for advanced patterns: opaque handles, resource collections, memoization, and composition best practices.
-
-## Variables
-
-### Overview
-
-Variables store plan-time values that get resolved and interpolated into commands. All variables are resolved during planning, making execution deterministic and verifiable.
-
-**Two ways to use values:**
-
-1. **Variable binding** - Declare once, use many times
-   ```opal
-   var service = "api"
-   kubectl scale deployment/@var.service --replicas=3
-   kubectl logs deployment/@var.service
-   ```
-
-2. **Direct decorator usage** - No variable needed
-   ```opal
-   echo "Home: @env.HOME"
-   kubectl create secret --key=@aws.secret("api-key")
-   ```
-
-### Variable Declaration
-
-**Literals:**
 ```opal
 var service = "api"
-var replicas = 3
-var enabled = true
-var timeout = 30s
+
+var (
+    env = "prod"
+    replicas = 3
+)
 ```
 
-**From decorators:**
-```opal
-var HOME = @env.HOME                    # Environment variable
-var KEY = @aws.secret("prod-key")       # AWS secret
-var VERSION = @file.read("VERSION")     # File content
-```
+## 4.2 Variable usage
 
-**Collections:**
-```opal
-var SERVICES = ["api", "worker", "ui"]
-var CONFIG = {
-    "database": @env.DATABASE_URL,
-    "redis": @env.REDIS_URL(default="redis://localhost")
-}
-```
-
-### Variable Usage
-
-**In commands:**
-```opal
-kubectl scale --replicas=@var.replicas deployment/@var.service
-echo "Deploying @var.service with @var.replicas replicas"
-kubectl apply -f k8s/@var.service/
-```
-
-**Terminating decorator:**
-```opal
-echo "@var.service()_backup"  # Expands to "api_backup"
-```
-
-**Accessing nested data:**
-```opal
-@var.SERVICES.0        # First element: "api"
-@var.CONFIG.database   # Map access
-@var.SERVICES.*        # All elements: "api worker ui"
-```
-
-### Scoping Rules
-
-1. **Variables must be declared before use** - no hoisting
-   ```opal
-   echo "@var.NAME"  # ERROR: not declared yet
-   var NAME = "Aled"
-   ```
-
-2. **Source order matters** - the most recent visible declaration wins
-   ```opal
-   var COUNT = 1
-   echo "@var.COUNT"  # Prints 1
-   var COUNT = 2
-   echo "@var.COUNT"  # Prints 2
-   ```
-
-3. **Root scope** - accessible across all steps
-   ```opal
-   var COUNT = 5
-   echo "@var.COUNT"  # Step 1
-   echo "@var.COUNT"  # Step 2 - same variable
-   ```
-
-4. **Execution block isolation** - `try/catch` and decorator blocks create isolated scopes
-   ```opal
-   var COUNT = 5
-   @retry {
-       var COUNT = 3  # Shadows outer COUNT
-       echo "@var.COUNT"  # Prints 3
-   }
-   echo "@var.COUNT"  # Prints 5 (outer scope restored)
-   ```
-
-5. **Metaprogramming blocks are lexically scoped** - `if`, `for`, `when`, and `fun` evaluate at plan time, but declarations inside their blocks do not leak
-   ```opal
-   var COUNT = 1
-   if true {
-       var COUNT = 2
-   }
-   echo "@var.COUNT"  # Prints 1 (outer scope unchanged)
-   ```
-
-### Resolution and Pruning
-
-**Only touched variables are resolved:**
+Opal variable references use decorator syntax.
 
 ```opal
-var SECRET = @aws.secret("unused")  # Declared but never used
-var NAME = "Aled"                   # Used below
-echo "Hello, @var.NAME"
+kubectl scale deployment/@var.service --replicas=@var.replicas
 ```
 
-- `NAME` is touched (referenced) → resolved
-- `SECRET` is untouched (never referenced) → NOT resolved, pruned from plan
-- Saves API calls and reduces secrets in plan
+`${NAME}` is shell interpolation syntax and is not Opal variable syntax.
 
-**Direct decorator usage is also touched:**
+## 4.3 Naming style
+
+Variable names are case-sensitive identifiers.
+
+Opal does not enforce a casing convention. Teams choose their own naming style.
+
+Documentation examples use `lower_snake_case` for consistency.
+
+## 4.4 Type model
+
+Core value categories:
+
+- string
+- int
+- float
+- bool
+- duration
+- array
+- object
+
+Function parameters and decorator schemas define type contracts.
+
+## 4.5 Expression semantics
+
+Expression evaluation is deterministic.
+
+- binary operators use standard precedence
+- unary operators include logical negation and numeric sign
+- prefix/postfix increment and decrement operate on expression operands according to parser grammar
+
+Arithmetic type rules:
+
+- `int + int -> int`
+- `float + float -> float`
+- `int + float -> float`
+- `duration + duration -> duration`
+
+Division by zero fails planning.
+
+## 4.6 Assignment semantics
+
+Compound assignment operators:
+
+- `+=`
+- `-=`
+- `*=`
+- `/=`
+- `%=`
+
+Assignment updates the binding in scope.
+
+## 5. Scope Semantics
+
+Opal uses lexical read visibility with isolation guarantees.
+
+## 5.1 Block boundary semantics
+
+Braces define block boundaries.
+
+- `{ ... }` opens a nested scope
+- declarations and mutations inside the block stay inside that block
+- exiting the block restores the parent scope bindings
+
+Blocks enclose state change to the block where the change appears.
+
+This rule applies to metaprogramming blocks and execution blocks.
+
+General rule:
+
+- nested scopes read outer bindings
+- declarations inside a nested block do not leak to the parent scope
+
+Scope behavior by block category:
+
+| Block category | Examples | Evaluation phase | Declaration leak |
+|---|---|---|---|
+| Metaprogramming blocks | `if`, `for`, `when`, `fun` body | plan phase | no |
+| Execution blocks | `try`, `catch`, execution decorator blocks | runtime phase | no |
+
+Execution blocks allow local mutation of inherited values inside the block while preserving the parent binding after block exit.
+
+## 6. Functions (`fun`) as Plan-Time Templates
+
+`fun` declarations define reusable templates.
+
+### 6.1 Placement rule
+
+`fun` declarations are top-level declarations.
+
+Defining `fun` inside `if`, `for`, `when`, `try`, or decorator blocks fails parsing.
+
+### 6.2 Declaration forms
 
 ```opal
-echo "Home: @env.HOME"  # @env.HOME is touched → resolved
-```
+fun greet(name String) = echo "hello @var.name"
 
-### Types
-
-Variables are untyped by default:
-
-```opal
-var port = 3000              # Inferred as int
-var service = "api"          # Inferred as string
-var enabled = true           # Inferred as bool
-var timeout = 30s            # Inferred as duration
-```
-
-**Supported types:** `String | Bool | Int | Float | Duration | Array | Map`
-
-**Function parameters:** always typed in `fun` signatures and validated at plan-time.
-
-### Shell Variables vs Opal Variables
-
-**Opal variables** (`@var.X`) - resolved at plan-time:
-```opal
-var ENV = "prod"
-echo "Environment: @var.ENV"  # Plan shows: echo "Environment: prod"
-```
-
-**Shell variables** (`$X`) - resolved at execution-time:
-```opal
-echo "Current user: $USER"  # Shell resolves $USER at runtime
-```
-
-**When to use each:**
-- Use `@var.X` for plan-time values (most common)
-- Use `$X` for runtime shell environment (rare)
-
-Opal supports arithmetic operations for deterministic calculations in operations scripts. All arithmetic is evaluated at plan time, ensuring predictable results.
-
-### Basic Arithmetic
-
-```opal
-// Deterministic calculations for operations
-var total_replicas = base_replicas * environments
-var batch_size = total_items / worker_count
-var shard_id = item_id % shard_count
-var timeout = base_timeout + (retry_attempt * backoff_multiplier)
-
-// Memory and resource calculations
-var total_memory = service_memory * replica_count
-var disk_space = data_size + (log_retention * daily_logs)
-var cpu_limit = base_cpu + (load_factor * peak_multiplier)
-```
-
-**Supported operators**:
-- `+` - addition
-- `-` - subtraction
-- `*` - multiplication
-- `/` - division
-- `%` - modulo (remainder)
-
-**Operator precedence** (highest to lowest):
-1. `*`, `/`, `%` (multiplication, division, modulo)
-2. `+`, `-` (addition, subtraction)
-3. Use parentheses `()` for explicit ordering
-
-### Assignment Operators
-
-```opal
-// Accumulation in deterministic loops
-var total_cost = 0
-for service in @var.SERVICES {
-    total_cost += @var.SERVICE_COSTS[service]
-}
-
-// Resource scaling
-var replicas = 1
-replicas *= @var.ENVIRONMENTS.length  // multiply by environment count
-replicas += 1                          // add monitoring replica
-
-// Batch processing
-var remaining = total_items
-for batch in batches {
-    remaining -= batch.size
-    echo "Processing batch, @var.remaining items left"
-}
-```
-
-**Supported assignment operators**:
-- `+=` - add and assign
-- `-=` - subtract and assign
-- `*=` - multiply and assign
-- `/=` - divide and assign
-- `%=` - modulo and assign
-
-### Increment and Decrement
-
-```opal
-// Counting in deterministic loops
-var counter = 0
-for service in @var.SERVICES {
-    counter++
-    echo "Processing service @var.counter: @var.service"
-}
-
-// Countdown with for loop (plan-time range)
-var max_retries = 3
-for attempt in 1...@var.max_retries {
-    echo "Retry attempt @var.attempt"
-}
-```
-
-**Supported operators**:
-- `++` - increment by 1
-- `--` - decrement by 1
-
-### Deterministic Evaluation
-
-All arithmetic operations are evaluated at plan time with known values:
-
-```opal
-// Plan shows exact calculations
-var replicas = 3 * 2 + 1    // Plan: replicas = 7
-var timeout = 30 + (2 * 5)  // Plan: timeout = 40
-
-// Variable resolution then calculation
-var base = @env.BASE_REPLICAS(default=2)  // Resolves to 2
-var total = base * 3                         // Plan: total = 6
-```
-
-**Type rules**:
-- `int` + `int` = `int`
-- `float` + `float` = `float`
-- `int` + `float` = `float` (automatic promotion)
-- `duration` + `duration` = `duration`
-- Division by zero detected at plan time
-
-## Control Flow
-
-Control flow happens at **plan time**, creating deterministic execution sequences.
-
-### Block Phases and Deterministic Execution
-
-Every `{ ... }` block in opal represents a **phase** - a unit of execution with strong deterministic guarantees. When you write a block, the planner expands it at plan time into a finite, ordered sequence of steps that will execute in a predictable way.
-
-**Phase boundaries create execution order.** Each phase completes entirely before the next phase begins. This means all steps within a phase finish before any step in a subsequent phase can start. Within a phase, steps execute according to their canonical order - the order they appear after plan-time expansion.
-
-**Variable declarations follow lexical scope.** Nested blocks can read outer bindings, but declarations made inside a block remain local to that block. This applies to metaprogramming blocks (`for`, `if`, `when`, `fun`) and execution blocks (`try/catch`, decorator blocks).
-
-**Plans are verifiable contracts.** The resolved plan captures everything needed to verify execution: which steps run in what order, what commands they execute (with placeholders for resolved values), and how they handle retries or timeouts. If any of this changes between plan and execution, verification fails.
-
-**Outputs are deterministically merged.** Each step produces its own stdout and stderr streams. When these need to be combined (for logging or display), they're merged in the canonical order, ensuring the same plan always produces the same combined output.
-
-Block-specific constructs like `for`, `if`, `when`, `try/catch`, and `@parallel` work within this framework. They define how blocks expand (unrolling loops, selecting branches) or add constraints (parallel independence), but they all inherit the same phase execution guarantees.
-
-### Metaprogramming Flattening
-
-Language control blocks (`if`, `for`, `when`, `fun`) are **metaprogramming constructs** evaluated at plan-time. They determine which commands appear in the final plan, but their block scope rules remain lexical.
-
-**Example: if block flattening**
-
-```opal
-var ENV = "prod"
-if @var.ENV == "prod" {
-    var REPLICAS = 3
-}
-kubectl scale --replicas=@var.REPLICAS deployment/app
-```
-
-After planning, the taken branch commands are selected for execution:
-```
-var ENV = "prod"
-var REPLICAS = 3
-kubectl scale --replicas=3 deployment/app
-```
-
-The `if` decision is resolved at plan-time, but declarations inside the `if` block remain block-local and are not visible after the block.
-
-**Example: for loop unrolling**
-
-```opal
-for env in ["staging", "prod"] {
-    kubectl apply -f k8s/@var.env/
-}
-```
-
-After planning, this unrolls to:
-```
-kubectl apply -f k8s/staging/
-kubectl apply -f k8s/prod/
-```
-
-The loop is gone - each iteration becomes a separate command in sequence.
-
-**Why this matters for scoping:**
-
-Metaprogramming blocks are resolved at plan-time, but declarations remain lexical:
-
-```opal
-var result = "unknown"
-if @var.CONDITION {
-    var result = "success"    // Block-local shadowing
-}
-echo @var.result              // "unknown" (outer binding preserved)
-```
-
-This is fundamentally different from execution blocks (`try/catch`, `@retry`, etc.) which remain in the plan and execute at runtime. See [Scope Isolation](#scope-isolation) for details on execution block scoping.
-
-**The two types of blocks:**
-
-| Block Type | Examples | When Evaluated | Scoping |
-|------------|----------|----------------|---------|
-| **Metaprogramming** | `if`, `for`, `when`, `fun` | Plan-time | Lexical block scope (no declaration leak) |
-| **Execution** | `try/catch`, `@retry`, `@timeout` | Runtime (remains in plan) | Variables isolated (no leak) |
-
-### @parallel Output Determinism
-
-**Output merge contract**: Stdout/stderr from parallel branches are buffered per-step and emitted in **plan order** (by step ID), not completion order.
-
-**Example:**
-```opal
-@parallel {
-    sleep 3 && echo "Branch A (slow)"     # Step ID: 1
-    sleep 1 && echo "Branch B (fast)"     # Step ID: 2  
-    echo "Branch C (instant)"             # Step ID: 3
-}
-```
-
-**Output (always in this order):**
-```
-Branch A (slow)
-Branch B (fast)
-Branch C (instant)
-```
-
-Even though Branch C completes first, output is deterministic by step ID. This ensures:
-- **Reproducible logs** - Same plan always produces same output order
-- **Contract verification** - Output order is part of the execution contract
-- **Debugging** - Output matches plan structure, not race conditions
-
-**TUI/live progress**: Separate from final output. TUI can show live progress in completion order, but final stdout/stderr follows plan order.
-
-### Command Definitions
-
-Commands are defined using the `fun` keyword for reusable, parameterized blocks that expand at plan-time:
-
-```opal
-// Simple one-liner definitions
-fun deploy = kubectl apply -f k8s/
-fun hello = echo "Hello World!"
-
-// Parameterized one-liners
-fun greet(name String) = echo "Hello, @var.name!"
-
-// Multi-line block form
-fun build_module(module String, target String = "dist") {
+fun build(module String, target String = "dist") {
     @workdir(@var.module) {
         npm ci
         npm run build --output=@var.target
     }
 }
-
-// Template function for reuse
-fun test_module(module String) {
-    @workdir(@var.module) { go test ./... }
-}
-
-// Calling parameterized commands
-build_all: {
-    @cmd.build_module(module="frontend", target="public")
-    @cmd.build_module(module="backend")  // uses default target="dist"
-}
 ```
 
-**Plan-time expansion**: `fun` definitions are **macros** that expand at plan-time when called via `@cmd.function_name()`. All parameters must be resolvable at plan-time using value decorators.
+### 6.3 Parameter typing and defaults
 
-**Top-level visibility**: Function bodies inherit top-level variables declared **earlier** in the file (source order). Variables declared after the function are not visible unless passed explicitly.
+Function parameters are typed.
 
-**DAG constraint**: Command calls must form a directed acyclic graph. Recursive calls or cycles result in plan generation errors.
+- grouped form: `fun f(a, b String) { ... }`
+- colon form: `fun f(a: String) { ... }`
 
-**Parameter binding**: Arguments are bound to their resolved values at plan-time. Function parameters are typed and defaults must be plan-time expressions.
+Defaults attach to parameters and validate against declared types.
 
-**Deterministic**: All `fun` bodies must have finite execution paths - no unbounded loops or dynamic fan-out beyond normal metaprogramming expansion.
+### 6.4 Call semantics
 
-**Scope isolation**: `fun` bodies follow lexical block scope. Declarations inside a function body are local to that function unless passed explicitly through parameters/returns.
-
-### Loops
+Function calls use direct call syntax:
 
 ```opal
-deploy-all: {
-    for service in @var.SERVICES {
-        echo "Deploying @var.service"
-        kubectl apply -f k8s/@var.service/
-        kubectl rollout status deployment/@var.service
-    }
-}
-
-// Plan expands to independent steps:
-// ├─ echo "Deploying api"
-// ├─ kubectl apply -f k8s/api/
-// ├─ kubectl rollout status deployment/api
-// ├─ echo "Deploying worker"
-// └─ ... (and so on)
+build(module="cli")
 ```
 
-For loops unroll at plan time into a known number of steps. The collection (`@var.SERVICES`) is resolved during planning, and each item creates a separate step in the canonical order. Empty collections produce zero steps.
+Parser disambiguation:
 
-### Conditionals
+- `name(...)` (no space before `(`) parses as a function call
+- `name (...)` parses as shell syntax
+
+### 6.5 Expansion semantics
+
+Function calls expand during planning.
+
+- arguments bind to parameter names
+- defaults apply when omitted
+- expanded bodies are inserted into the plan
+
+Execution does not perform runtime function lookup.
+
+### 6.6 Call graph constraints
+
+Function calls must form an acyclic graph.
+
+- direct recursion fails
+- mutual recursion fails
+
+Cycle errors include deterministic call-path traces.
+
+## 7. Decorators
+
+Decorators are namespaced operations invoked with `@`.
 
 ```opal
-deploy: {
-    if @var.ENV == "production" {
-        kubectl apply -f k8s/prod/
-        kubectl scale --replicas=3 deployment/app
-    } else {
-        kubectl apply -f k8s/dev/
-        kubectl scale --replicas=1 deployment/app
-    }
-}
+@env.PORT(default=3000)
+@retry(attempts=3, delay=2s) { kubectl rollout status deployment/app }
 ```
 
-Conditionals are evaluated at plan time using resolved variable values. Only the taken branch expands into steps - the other branch becomes dead code that doesn't appear in the final plan.
+Decorator name resolution uses a registry and prefers the longest registered path.
 
-### Pattern Matching
+## 7.1 Decorator categories
+
+- **Value decorators** return values for planning and substitution (`@var`, `@env`, secret/value providers)
+- **Execution decorators** wrap execution behavior (`@retry`, `@timeout`, `@parallel`, transport decorators)
+
+## 7.2 Decorator argument binding
+
+Binding model:
+
+- named arguments bind by parameter name
+- positional arguments bind to the next unbound slot
+- slot order is required parameters first, then optional parameters
+- named and positional arguments can mix in any order
+
+Deterministic algorithm:
+
+1. Build required-first slot order from schema.
+2. Reserve all named argument targets.
+3. Process arguments left-to-right.
+4. Bind named args by name.
+5. Bind positional args to next unbound and unreserved slot.
+6. Fail on duplicate assignment or extra positional args.
+
+## 7.3 Decorator block capability
+
+Decorators declare block capability:
+
+- block required
+- block optional
+- block forbidden
+
+Parser enforces that capability during syntax validation.
+
+## 7.4 Interpolation and decorator termination
+
+Decorator references can appear in interpolated strings.
+
+When ASCII characters follow a decorator reference without spacing, use `()` to terminate the decorator name:
 
 ```opal
-deploy: {
-    when @var.ENV {
-        "production" -> {
-            kubectl apply -f k8s/prod/
-            kubectl scale --replicas=3 deployment/app
-        }
-        "staging" -> kubectl apply -f k8s/staging/
-        else -> echo "Unknown environment: @var.ENV"
-    }
-}
+echo "@var.service()_backup"
 ```
 
-Pattern matching uses first-match-wins evaluation at plan time. Supported patterns include exact strings (`"production"`), OR expressions (`"main" | "develop"`), regex patterns (`r"^release/"`), numeric ranges (`200...299`), and catch-all (`else`). Only the matching branch expands into the plan.
+## 8. Shell Execution Semantics
 
-### Error Handling
+Shell commands are runtime operations.
 
-Try/catch is the **only** non-deterministic construct:
+The parser preserves shell argument boundaries through lexer spacing metadata.
 
-```opal
-deploy: {
-    try {
-        kubectl apply -f k8s/
-        kubectl rollout status deployment/app
-        echo "Deployment successful"
-    } catch {
-        echo "Deployment failed, rolling back"
-        kubectl rollout undo deployment/app
-    } finally {
-        echo "Cleaning up temporary resources"
-        kubectl delete pod -l job=deployment-helper
-    }
-}
-```
+### 8.1 Command composition
 
-The plan records all possible execution paths through try/catch blocks. At runtime, only one of `try` or `catch` executes, while `finally` always runs. Execution logs show which path was actually taken.
+Shell chain operators:
 
-## Scope Isolation
+- `|`
+- `&&`
+- `||`
+- `;`
 
-> **Note:** This section applies only to **execution blocks** (`try/catch`, `@retry`, `@timeout`, etc.). 
-> Metaprogramming blocks (`if`, `for`, `when`, `fun`) are resolved at plan-time with lexical block scoping. Declarations inside those blocks do not leak to the outer scope.
-> See [Metaprogramming Flattening](#metaprogramming-flattening) for details.
+Redirect operators:
 
-For execution blocks, the rule is simple: **values can flow in from the outer scope, but mutations never flow back out**. Mutations apply only within the block after they appear; the parent value is restored when the block exits.
+- `>`
+- `>>`
 
-```opal
-var counter = 0
-var status = "pending"
+### 8.2 Precedence
 
-try {
-    // Can READ outer scope values
-    echo "Starting with counter=@var.counter"  // counter = 0 ✓
+Shell precedence:
 
-    // Can MODIFY local copies
-    counter++           // Local counter = 1
-    status = "running"  // Local status = "running"
+- `|` binds tighter than `&&` and `||`
+- `&&` and `||` bind tighter than `;`
+- newline acts as statement boundary with fail-fast sequencing between statements
 
-    kubectl apply -f k8s/
-} catch {
-    // Can READ outer scope values
-    echo "Failed with counter=@var.counter"    // counter = 0 ✓
+### 8.3 Fail-fast line semantics
 
-    // Can MODIFY local copies
-    counter += 5        // Local counter = 5
-    status = "failed"   // Local status = "failed"
-}
+Block lines execute in order.
 
-// Outer scope unchanged after try/catch
-echo "Final: counter=@var.counter, status=@var.status"  // counter=0, status="pending" ✓
-```
+- newline-separated steps stop at first failure unless control flow/decorator policy changes behavior
+- semicolon chaining follows shell continuation semantics
 
-**Decorator blocks work the same way:**
+## 9. Control Flow Semantics
 
-```opal
-var attempts = 0
-var result = ""
+## 9.1 `if`
 
-@retry(attempts=3) {
-    // Can READ outer scope
-    echo "Base attempts: @var.attempts"  // attempts = 0 ✓
+`if` conditions evaluate during planning.
 
-    // Can MODIFY local copies
-    attempts++         // Local attempts = 1, 2, 3...
-    result = "done"    // Local result = "done"
+- only the selected branch expands into runtime steps
+- unselected branch is pruned from execution plan
 
-    kubectl apply -f k8s/
-}
+## 9.2 `for`
 
-// Outer scope unchanged after execution decorator
-echo "Final: attempts=@var.attempts, result=@var.result"  // attempts=0, result="" ✓
-```
+`for` loops unroll during planning.
 
-This pattern ensures that both non-deterministic execution (try/catch) and execution decorator behaviors don't create unpredictable state mutations in the outer scope.
+- each collection element produces one iteration expansion
+- iteration order follows collection order
+- empty collection produces zero expanded steps
 
-## Decorators
+## 9.3 `when`
 
-### Value Decorators
+`when` performs first-match branch selection during planning.
 
-Inject values inline:
+Supported patterns include:
 
-```opal
-// Environment variables
-start: node app.js --port @env.PORT(default=3000)
+- literal string matches
+- OR patterns
+- regex patterns (`r"..."`)
+- numeric range patterns (`a...b`)
+- `else` catch-all
 
-// Opal variables
-scale: kubectl scale --replicas=@var.REPLICAS deployment/app
+## 9.4 `try/catch/finally`
 
-// Expensive lookups (resolved lazily)
-deploy: kubectl apply --token=@aws.secret.api_token
-config: curl -H "Authorization: @http.get('https://auth.com/token')"
-```
+`try/catch/finally` remains a runtime construct.
 
-### Execution Decorators
+- plan records potential paths
+- runtime executes `try` or `catch`
+- runtime executes `finally` after branch completion
 
-Enhance command execution:
+## 9.5 `@parallel`
+
+`@parallel` runs branch blocks concurrently with isolation.
+
+Branch guarantees:
+
+- branch-local scope isolation
+- deterministic merged output order by plan order
+- failure behavior governed by decorator policy
+
+## 10. Environment and Transport Semantics
+
+`@env` is session-scoped.
+
+- in local session, `@env.X` reads local process environment snapshot
+- in transport session, `@env.X` reads transport session environment
+- `$X` inside shell reads shell session environment at command execution
+
+`@env.X` and `$X` read from the same session boundary but at different semantic phases.
+
+### 10.1 Transport boundary rule
+
+Values do not cross transport boundaries implicitly.
+
+To pass a value across a boundary, bind it explicitly:
 
 ```opal
-// Retry with named parameters
-deploy: @retry(attempts=3, delay=2s, backoff=1.5) {
-    kubectl apply -f k8s/
-    kubectl rollout status deployment/app
-}
-
-// Timeout protection
-build: @timeout(5m) {
-    npm run build
-    npm test
-}
-
-// Parallel execution
-services: @parallel {
-    npm run api
-    npm run worker
-    npm run ui
-}
-
-// Command references
-deploy: @cmd.build && @cmd.test && @cmd.apply
-```
-
-### Decorator Argument Binding
-
-Decorator arguments use one binding model:
-
-- Named arguments bind by parameter name.
-- Positional arguments are unnamed arguments that bind to the next unbound slot.
-- Slot order is: required parameters first (in declaration order), then optional parameters (in declaration order).
-- Named and positional forms can be mixed in any order.
-
-Binding algorithm (deterministic):
-
-1. Build slot order using required-first ordering.
-2. Reserve all parameters that appear as named arguments (source position does not matter).
-3. Process arguments in source order (left-to-right).
-4. For named arguments: bind by name; error if that parameter is already bound.
-5. For positional arguments: bind to the next unbound, unreserved slot in slot order.
-6. Error on duplicate assignment (same parameter bound twice) or extra positional arguments.
-
-This differs from many mainstream languages that require all positional arguments to appear before named arguments.
-
-Examples:
-
-```opal
-@example(b=2, 3, 4)   # equivalent to: @example(a=3, b=2, c=4)
-
-# If declaration order is: a(optional), b(required), c(optional)
-@example(3)           # equivalent to: @example(b=3)
-
-# Named first is valid; positional fills the next unbound slot
-@example(b=2, 3)      # equivalent to: @example(a=3, b=2)
-
-# Duplicate assignment is rejected
-@example(b=2, b=3)    # ERROR: duplicate parameter 'b'
-```
-
-### Value Decorators and Remote Execution
-
-**IMPORTANT**: `@env` reads from the **current session's environment**, which changes based on context (local, remote, container).
-
-#### How @env Works
-
-**`@env` is session-aware:**
-- In local context: reads from `os.Environ()` snapshot
-- In transport context: reads from transport's environment (native + `env={}` overrides)
-- Both `@env.X` and `$X` read from the same session environment (different timing)
-
-#### Environment in Different Contexts
-
-**Local execution:**
-```opal
-var user = @env.USER  # Reads from local os.Environ()
-echo $USER            # Also reads from local environment
-```
-
-**Remote execution (idempotent transport):**
-```opal
-@ssh.connect(host="remote-server", env={"DEPLOY_ENV": "prod"}) {
-    # @env reads from SSH session (remote environment + env={} overrides)
-    var remote_user = @env.USER        # Remote USER (e.g., "deploy")
-    var deploy_env = @env.DEPLOY_ENV   # "prod" (from env={} override)
-    
-    # Shell variables read from same SSH session
-    echo $USER        # Remote USER (e.g., "deploy")
-    echo $DEPLOY_ENV  # "prod"
+var deployer = @env.USER
+@ssh.connect(host="example", env={"DEPLOYER": @var.deployer}) {
+    echo $DEPLOYER
 }
 ```
 
-**Passing local values to remote:**
-```opal
-var local_user = @env.USER  # "alice" from local session
+### 10.2 Root-only decorator rule
 
-@ssh.connect(host="remote-server", env={"DEPLOYER": @var.local_user}) {
-    var deployer = @env.DEPLOYER      # "alice" (explicitly passed)
-    var remote_user = @env.USER       # "deploy" (remote native)
-    
-    echo "Deployed by: @var.deployer"  # "alice"
-    echo "Running as: $USER"           # "deploy"
+Root-only value decorators fail inside transport-switching contexts.
+
+Use one of:
+
+- shell variables inside transport shell commands
+- hoisting at root and passing via explicit parameters or env mapping
+
+## 11. Planning Modes and Execution Modes
+
+Opal supports four operational modes.
+
+| Mode | Invocation shape | Resolution behavior | Primary purpose |
+|---|---|---|---|
+| Quick plan | `--dry-run` | cheap-only resolution; expensive values deferred | fast structural preview |
+| Resolved plan | `--dry-run --resolve` | full resolution | contract generation and review |
+| Direct execution | execute source | fresh resolution then execute | immediate run |
+| Contract execution | `run --plan <file>` | fresh resolution + contract comparison | verified execution |
+
+## 11.1 Quick plan
+
+Quick plan expands control flow and shows planned path while deferring expensive value sources.
+
+## 11.2 Resolved plan
+
+Resolved plan materializes all value decorators and emits a deterministic contract artifact.
+
+## 11.3 Direct execution
+
+Direct execution plans and resolves from source, then executes without external contract comparison.
+
+## 11.4 Contract execution
+
+Contract execution performs replan + resolve and compares against a provided contract artifact before execution.
+
+## 12. Contract Verification Semantics
+
+Contract verification compares fresh planning output against a reviewed contract.
+
+Verification flow:
+
+1. parse and plan from source
+2. resolve values
+3. compare structure and hashed placeholders
+4. execute on match
+5. fail on mismatch with actionable diff
+
+Mismatch classes:
+
+- source drift
+- environment drift
+- infrastructure drift
+- non-deterministic value behavior
+
+## 12.1 Plan hash scope
+
+Hash scope includes execution-relevant structure and resolved placeholder mapping.
+
+Hash scope excludes ephemeral run telemetry.
+
+## 13. Security and Data Handling
+
+## 13.1 Placeholder model
+
+Resolved values in plans and logs use opaque placeholders.
+
+Security invariant:
+
+- plans do not expose raw secret values
+- logs do not expose raw secret values
+
+## 13.2 Scrubbing boundaries
+
+Scrubbing applies to:
+
+- plan artifacts
+- terminal/log output paths
+
+Raw values continue to flow through runtime shell pipes and file redirects unless explicit scrub operations are applied before output sinks.
+
+## 13.3 Deterministic identifiers
+
+Placeholder IDs are deterministic within one contract context and vary across independent contract contexts.
+
+This property supports verification and resists cross-context correlation.
+
+## 14. Determinism and Idempotency
+
+Determinism guarantees:
+
+- same source plus same resolved inputs yields same plan structure
+- dead branches do not evaluate value decorators
+- branch pruning is deterministic
+
+Resolved-plan requirement:
+
+- value decorators used in resolved contracts must behave referentially transparent for the contract scope
+
+Idempotency model:
+
+- scripts express desired operational outcomes
+- reruns converge without requiring external state files
+- drift detection relies on fresh resolution and contract comparison behavior
+
+## 15. Error Semantics
+
+Error precedence rule:
+
+1. `err != nil` means failure
+2. `err == nil` means success only when exit code is `0`
+
+Typed execution errors support policy behavior:
+
+- retryable error
+- timeout error
+- cancelled error
+
+Decorator policy decides handling strategy for each type.
+
+## 16. Common Authoring Errors
+
+### 16.1 Defining `fun` inside control flow
+
+Invalid:
+
+```opal
+for module in ["cli", "runtime"] {
+    fun build_module(module String) = npm run build
 }
 ```
 
-#### Environment Isolation
-
-**Critical:** Environments do NOT automatically pass between transports.
-This boundary applies to all value decorators: a value resolved in one transport
-cannot be reused in another transport unless explicitly passed.
+Valid:
 
 ```opal
-# Local: USER=alice
-# Remote: USER=deploy
+fun build_module(module String) = npm run build
 
-@ssh.connect(host="remote-server") {
-    var user = @env.USER  # "deploy" (NOT "alice")
-    # Remote session has no knowledge of local USER
+for module in ["cli", "runtime"] {
+    build_module(module=@var.module)
 }
 ```
 
-**To pass values, use `env={}` explicitly:**
-```opal
-var local_user = @env.USER  # "alice"
+### 16.2 Using shell interpolation syntax for Opal variables
 
-@ssh.connect(host="remote-server", env={"DEPLOYER": @var.local_user}) {
-    var deployer = @env.DEPLOYER  # "alice" (explicitly passed)
-}
-```
-
-#### Idempotent vs Non-Idempotent Decorators
-
-**Idempotent transports** (connect to existing resources):
-- Connect at plan-time (safe, read-only)
-- `@env` works in blocks (reads from connected session)
-- Examples: `@ssh.connect`, `@docker.exec`
+Invalid:
 
 ```opal
-@ssh.connect(host="existing-server") {
-    var home = @env.HOME  # ✅ OK: SSH connects at plan-time
-}
+var service = "api"
+kubectl scale deployment/${service} --replicas=3
 ```
 
-**Non-idempotent decorators** (create new resources):
-- Can't connect at plan-time (resource doesn't exist yet)
-- `@env` FORBIDDEN in blocks
-- Examples: `@aws.instance.deploy`, `@aws.rds.deploy`
+Valid:
 
 ```opal
-@aws.instance.deploy(name="web") {
-    var home = @env.HOME  # ❌ ERROR: Instance doesn't exist yet
-    echo $HOME            # ✅ OK: Shell variable resolves at execution-time
-}
+var service = "api"
+kubectl scale deployment/@var.service --replicas=3
 ```
 
-**Error message:**
-```
-ERROR: @env cannot be used inside @aws.instance.deploy
-Reason: Instance might not exist during planning (non-idempotent)
-Solution: Use shell variables ($HOME, $USER) which resolve at execution-time,
-          or hoist: var x = @env.X at root, then use @var.x
-```
+### 16.3 Duplicate decorator parameter assignment
 
-#### Summary
-
-- **`@env.X`** = Reads from current session's environment (context-aware)
-- **`$X`** = Shell variable (reads from same session, execution-time)
-- **`@var.X`** = Plan-time variable (can be used anywhere)
-
-**When to use each:**
-- Local environment values? → `@env.X` at root
-- Remote environment values? → `@env.X` in transport block OR `$X` in commands
-- Pass local to remote? → `var x = @env.X` then `env={"KEY": @var.x}`
-- Optional values? → `@env.X(default="fallback")`
-
-## Plans: Three Execution Modes
-
-Opal provides three distinct planning and execution modes, each serving different operational needs.
-
-**Plan provenance**: Plans include source_commit, spec_version, and compiler_version in headers for audit trails.
-
-### Quick Plans (`--dry-run`)
-
-**Purpose**: Fast preview of likely execution paths without expensive operations.
-
-```bash
-opal deploy --dry-run
-```
-
-**What happens**:
-- Resolves control flow (`if`/`when`/`for` conditions) using cheap value decorators only
-- Shows single execution path after metaprogramming expansion
-- Defers expensive value decorators (`@aws.secret`, `@http.get`, etc.)
-- Displays which branches/iterations were taken for auditability
-
-```
-deploy:
-├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=¹@aws.secret("api-token")
-└─ if ENV == "production" -> true
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-Deferred Values:
-1. @aws.secret("api-token") → <expensive: AWS lookup>
-```
-
-**Visual format note**: This tree structure is optimized for human readability. The internal contract format uses an optimized structure for efficient parsing and verification.
-
-### Resolved Plans (`--dry-run --resolve`)
-
-**Purpose**: Complete execution contract with all values resolved.
-
-```bash
-opal deploy --dry-run --resolve > prod.plan
-```
-
-**What happens**:
-- Resolves ALL value decorators (including expensive ones)
-- Expands all metaprogramming constructs into concrete execution steps
-- Creates deterministic execution contract with hash placeholders
-- Generates plan file for later contract-verified execution
-
-```
-deploy:
-├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=🔒 opal:3J98t56A
-└─ if ENV == "production" -> true
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-Contract Hash: sha256:abc123...
-```
-
-**Key principles**:
-- All resolved values use `opal:ID` format (security by default)
-- Metaprogramming constructs (`if`, `for`, `when`) are shown with `@` prefix in plan output to indicate internal representation
-- Original constructs are preserved for audit trails while showing expanded results
-
-### Execution Plans (always happens)
-
-**Purpose**: Runtime resolution and execution.
-
-```bash
-# Direct execution
-opal deploy
-
-# Contract-verified execution
-opal run --plan prod.plan
-```
-
-**What happens**:
-1. **Internal resolution**: Resolves all value decorators fresh at execution time
-2. **Path determination**: Follows single execution path based on resolved values
-3. **Contract verification** (if using plan file): Ensures resolved values match contract hashes
-4. **Execution**: Runs commands with internally resolved values
-
-**Security by default**: All values appear as `🔒 opal:3J98t56A` format (opaque context-aware ID, no length leak).
-
-> **Placeholder Format**
-> `opal:kind:ID` where kind is `s` (secret), `v` (value), etc., and ID is Base58-encoded.
-> Format: `🔒 opal:3J98t56A` (with emoji for terminal display)
-> Machine-readable: `opal:3J98t56A` (without emoji for JSON/files)
-> 
-> **DisplayID Determinism:**
-> 
-> Each plan has a random `PlanSalt` (32 bytes) that determines DisplayID generation:
-> 
-> - **Mode 1 (Direct execution)**: Random PlanSalt per run
->   - Different runs → different DisplayIDs (prevents correlation across runs)
->   - Security: Attackers can't track secrets across executions
-> 
-> - **Mode 3 (Resolved plans / Contract generation)**: Random PlanSalt per contract
->   - Different contracts → different PlanSalts → different DisplayIDs (prevents correlation)
->   - Within contract: Same PlanSalt → deterministic DisplayIDs (enables verification)
->   - Security: Each contract gets unique DisplayIDs, no cross-contract correlation
-> 
-> - **Mode 4 (Contract execution)**: Reuses PlanSalt from contract
->   - Fresh plan uses contract's PlanSalt → same DisplayIDs as contract
->   - Hash comparison succeeds if structure unchanged (DisplayIDs match)
->   - Hash comparison fails if structure changed (drift detected)
-> 
-> DisplayIDs use a keyed PRF: `BLAKE2s-128(PlanSalt, value || path || transport)`.
-> The `path` is the canonical plan site path and `transport` is the transport ID.
-> Same value in different sites or transports → different DisplayIDs (prevents correlation),
-> while the same value in the same site/transport is stable for contract verification.
-
-
-
-
-
-
-
-**Plan hash scope**: Ordered steps + arguments (with `opal:ID` placeholders) + operator graph + resolution timing flags; excludes ephemeral run IDs/logs.
-
-> **Security Invariant**
-> Raw secrets never appear in plans or logs, only `🔒 opal:3J98t56A` placeholders.
-> This applies to all value decorators: `@env.KEY`, `@var.NAME`, `@aws.secret.name`, etc.
-> Compliance teams can review plans with confidence.
-> 
-> **Contract Verification with DisplayIDs:**
-> Plan hashes include DisplayID placeholders in their canonical form. In resolved plans,
-> DisplayIDs are deterministic (derived from plan digest + context), ensuring the same
-> plan produces the same hash. This enables contract verification while maintaining
-> security through opaque, context-aware identifiers.
-
-## Contract Verification
-
-When using plan files, opal ensures execution matches the reviewed contract exactly.
-
-### Contract-Verified Execution
-
-```bash
-# Execute against resolved plan contract
-opal run --plan prod.plan
-```
-
-**Critical: Plan files are NEVER executed directly.**
-
-Contract execution always replans from current source and state. The plan file is not executed - it's the verification target. If the fresh plan doesn't match, execution aborts.
-
-**Unlike Terraform** (which applies an old plan to new state), Opal verifies current reality would still produce the same plan. This prevents executing stale or tampered plans.
-
-**Contract verification process**:
-1. **Replan from source**: Parse current source code and query current infrastructure
-2. **Fresh resolution**: Resolve all value decorators with current state
-3. **Hash comparison**: Compare fresh plan hashes with contract hashes
-4. **Path verification**: Ensure execution path matches contracted plan structure
-5. **Execute or bail**: Run fresh plan if it matches contract, otherwise fail with diff
-
-**Why this works**: The contract contains `<length:hash>` placeholders. Opal generates a fresh plan and compares hashes. If `@env.REPLICAS` was `3` during planning but is now `5`, the hashes won't match and execution stops.
-
-### Verification Outcomes
-
-**✅ Contract verified** - hashes match, execution proceeds:
-```
-✓ Contract verified: all value decorators resolve to expected hashes
-→ Executing contracted plan...
-```
-
-**❌ Contract violated** - hashes differ, execution stops:
-```
-ERROR: Contract verification failed
-
-Expected: kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-Actual:   kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-Variable REPLICAS changed: was 3, now 5
-→ Source or environment changed since plan generation
-→ Run 'opal deploy --dry-run --resolve' to generate new plan
-```
-
-**Contract violation causes**:
-- `source_changed`: Source files modified since plan generation
-- `env_changed`: Environment variables modified since plan generation
-- `infra_drift`: Infrastructure state changed since plan generation
-
-### Direct Execution (No Contract)
-
-```bash
-# Always resolves fresh, no contract verification
-opal deploy
-```
-
-**Direct execution process**:
-1. **Fresh resolution**: Resolve all value decorators with current state
-2. **Path determination**: Follow execution path based on resolved values
-3. **Execute**: Run commands with resolved values (no hash verification)
-
-This mode is ideal for development and immediate execution where you want current values, not contracted values.
-
-## Plan Visual Structure
-
-Plans show the execution path after metaprogramming expansion using a consistent tree format. This visual structure is optimized for human readability and audit trails, while the internal contract format uses an optimized binary structure for efficient parsing and verification.
-
-### Metaprogramming Expansion Patterns
-
-**Control flow visualization**: Meta-programming constructs use "Logic Node" format - they show the evaluation result and only the taken branch. Untaken branches are pruned during planning (variables in them are never resolved).
-
-**Parsing rules for Logic Nodes:**
-- Lines starting with control flow keywords (`if`, `for`, `when`, `try`, `catch`, `finally`) are Logic Nodes
-- Logic Nodes show evaluation results (e.g., `-> true`, `-> matched "production"`)
-- Only taken branches appear in the plan (untaken branches are pruned)
-- Children of Logic Nodes are indented underneath
-
----
-
-#### If Statements
-
-**Simple if (condition true):**
-```opal
-// Source:
-if @env.ENV == "production" {
-    kubectl scale --replicas=3 deployment/app
-}
-
-// Plan shows:
-deploy:
-└─ if ENV == "production" -> true
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-```
-
-**If/else (condition true):**
-```opal
-// Source:
-if @env.ENV == "production" {
-    kubectl scale --replicas=3 deployment/app
-} else {
-    kubectl scale --replicas=1 deployment/app
-}
-
-// Plan shows:
-deploy:
-└─ if ENV == "production" -> true
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-// Note: else branch is pruned (not shown)
-```
-
-**If/else (condition false):**
-```opal
-// Source: (same as above, but ENV is "staging")
-
-// Plan shows:
-deploy:
-└─ if ENV == "production" -> false
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-// Note: The "then" branch is pruned, "else" branch is shown
-```
-
-**Nested if statements:**
-```opal
-// Source:
-if @env.ENV == "production" {
-    if @env.REGION == "us-east-1" {
-        kubectl scale --replicas=5 deployment/app
-    }
-}
-
-// Plan shows:
-deploy:
-└─ if ENV == "production" -> true
-   └─ if REGION == "us-east-1" -> true
-      └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-```
-
----
-
-#### For Loops
-
-**Simple for loop:**
-```opal
-// Source:
-for service in ["api", "worker"] {
-    kubectl apply -f k8s/@var.service/
-}
-
-// Plan shows:
-deploy:
-└─ for service in ["api", "worker"]
-   ├─ [i=0] service="api"
-   │  └─ kubectl apply -f k8s/api/
-   └─ [i=1] service="worker"
-      └─ kubectl apply -f k8s/worker/
-```
-
-**For loop with nested if:**
-```opal
-// Source:
-for service in ["api", "worker", "db"] {
-    if @var.service != "db" {
-        kubectl apply -f k8s/@var.service/
-    }
-}
-
-// Plan shows:
-deploy:
-└─ for service in ["api", "worker", "db"]
-   ├─ [i=0] service="api"
-   │  └─ if service != "db" -> true
-   │     └─ kubectl apply -f k8s/api/
-   ├─ [i=1] service="worker"
-   │  └─ if service != "db" -> true
-   │     └─ kubectl apply -f k8s/worker/
-   └─ [i=2] service="db"
-      └─ if service != "db" -> false
-         (no commands - branch pruned)
-```
-
----
-
-#### When Statements (Pattern Matching)
-
-**When with matched pattern:**
-```opal
-// Source:
-when @env.ENV {
-    "production" -> kubectl scale --replicas=5 deployment/app
-    "staging" -> kubectl scale --replicas=2 deployment/app
-    else -> kubectl scale --replicas=1 deployment/app
-}
-
-// Plan shows (when ENV is "production"):
-deploy:
-└─ when ENV -> matched "production"
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-
-// Note: "staging" and "else" branches are pruned
-```
-
-**When with OR patterns:**
-```opal
-// Source:
-when @env.ENV {
-    "production" | "prod" -> kubectl scale --replicas=5 deployment/app
-    "staging" | "stage" -> kubectl scale --replicas=2 deployment/app
-    else -> kubectl scale --replicas=1 deployment/app
-}
-
-// Plan shows (when ENV is "prod"):
-deploy:
-└─ when ENV -> matched "production" | "prod"
-   └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-```
-
-**When with regex patterns:**
-```opal
-// Source:
-when @env.BRANCH {
-    r"^release/.*" -> kubectl apply -f k8s/prod/
-    r"^feature/.*" -> kubectl apply -f k8s/dev/
-    else -> echo "Unknown branch type"
-}
-
-// Plan shows (when BRANCH is "release/v1.2.3"):
-deploy:
-└─ when BRANCH -> matched r"^release/.*"
-   └─ kubectl apply -f k8s/prod/
-```
-
----
-
-#### Try/Catch/Finally
-
-**Try/catch blocks are special**: All branches must be planned because exceptions are runtime events (not plan-time).
+Invalid:
 
 ```opal
-// Source:
-try {
-    kubectl apply -f k8s/deployment.yaml
-    kubectl rollout status deployment/app
-} catch {
-    kubectl rollout undo deployment/app
-    echo "Rollback completed"
-} finally {
-    kubectl delete pod -l job=temp
-}
-
-// Plan shows:
-deploy:
-└─ try
-   ├─ kubectl apply -f k8s/deployment.yaml
-   ├─ kubectl rollout status deployment/app
-   ├─ catch
-   │  ├─ kubectl rollout undo deployment/app
-   │  └─ echo "Rollback completed"
-   └─ finally
-      └─ kubectl delete pod -l job=temp
-
-// Note: All branches shown because exceptions happen at runtime
+@retry(attempts=3, attempts=5) { echo "x" }
 ```
 
----
-
-#### Complex Nested Example
+Valid:
 
 ```opal
-// Source:
-for env in ["staging", "production"] {
-    if @var.env == "production" {
-        when @env.REGION {
-            "us-east-1" -> kubectl scale --replicas=5 deployment/app
-            "eu-west-1" -> kubectl scale --replicas=3 deployment/app
-            else -> kubectl scale --replicas=1 deployment/app
-        }
-    }
-}
-
-// Plan shows (when REGION is "us-east-1"):
-deploy:
-└─ for env in ["staging", "production"]
-   ├─ [i=0] env="staging"
-   │  └─ if env == "production" -> false
-   │     (no commands - branch pruned)
-   └─ [i=1] env="production"
-      └─ if env == "production" -> true
-         └─ when REGION -> matched "us-east-1"
-            └─ kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
+@retry(3, delay=2s) { echo "x" }
+@retry(delay=2s, 3) { echo "x" }
 ```
 
-### Security and Hash Format
+### 16.4 Missing decorator terminator inside string interpolation
 
-**Security by default**: Opal prevents secrets from leaking into plans, logs, and terminal output through automatic scrubbing. ALL value decorator results are treated as secrets - no exceptions.
-
-**DisplayID format**: All resolved values appear as `🔒 opal:3J98t56A` (opaque context-aware ID):
-- `🔒 opal:3J98t56A` - single character value (e.g., "3")
-- `🔒 opal:3J98t56A` - 32 character value (e.g., secret token)
-- `🔒 opal:3J98t56A` - 8 character value (e.g., hostname)
-
-**Context-aware IDs**: DisplayIDs are derived from **value + usage path + transport**.
-The same value used in different blocks or transports produces different IDs,
-which prevents correlation and encodes transport boundaries.
-
-**Why all values are secrets**: Even seemingly innocuous values could leak sensitive information:
-- `@env.HOME` - Could leak system paths
-- `@var.username` - Could leak user information
-- `@git.commit_hash` - Could leak repository state
-- `@aws.secret.key` - Obviously sensitive
-
-**Where scrubbing applies**:
-- ✅ **Plans**: All values replaced with DisplayIDs
-- ✅ **Terminal output**: Stdout/stderr scrubbed before display
-- ✅ **Logs**: All logging output scrubbed
-- ❌ **Pipes**: Raw values flow between operators (needed for work)
-- ❌ **Redirects**: Raw values written to files (user controls destination)
-
-**Explicit scrubbing**: Use the `scrub()` PipeOp to scrub output before redirects:
-```opal
-// Scrub secrets from kubectl output before writing to file
-kubectl get secret db-password -o json |> scrub() > backup.json
-```
-
-**Security properties**:
-- **No value leakage** in plans or logs
-- **Contract verification** via hash comparison
-- **Debugging support** via length hints (no correlation)
-- **Algorithm agility** for future hash upgrades
-- **Audit-friendly**: Compliance teams can review plans safely
-
-## Planning Mode Summary
-
-| Mode | Command | Value Resolution | Use Case |
-|------|---------|------------------|----------|
-| **Quick Plan** | `--dry-run` | Cheap values only | Fast preview, see possible paths |
-| **Resolved Plan** | `--dry-run --resolve` | ALL values resolved | Complete contract, audit review |
-| **Direct Execution** | `deploy` | Fresh resolution | Development, immediate execution |
-| **Contract Execution** | `run --plan file` | Fresh + hash verification | Production, change detection |
-
-### When to Use Each Mode
-
-**Quick plans** for:
-- Development workflow: "What will this probably do?"
-- Fast feedback during script development
-- Understanding possible execution branches
-
-**Resolved plans** for:
-- Change window planning: Generate contract hours before execution
-- Audit review: Show exactly what will execute with real values
-- Production contracts: Lock in execution plan with hash verification
-
-**Direct execution** for:
-- Development and testing: Run with current values immediately
-- One-off operations: Execute without contract overhead
-- Iterative script development
-
-**Contract execution** for:
-- Production deployments: Ensure reviewed plan matches execution
-- Time-delayed execution: Execute plan generated hours earlier
-- Change detection: Catch environment drift since plan generation
-
-## Resolution Strategy
-
-**Value timing rules**:
-- **Quick plans**: Expensive value decorators deferred, show placeholders
-- **Resolved plans**: ALL value decorators resolve, values frozen as execution contract
-- **Direct execution**: Fresh resolution at execution time, no contracts
-- **Contract execution**: Fresh resolution + hash verification against contract
-- **Dead code elimination**: Value decorators in pruned branches never execute
-
-**Non-determinism guardrail**: Value decorators must be referentially transparent during `--resolve`. Non-deterministic value decorators cause contract verification failures.
-
-**Seeded determinism**: Operations requiring randomness or cryptography (like `@random.password()` or `@crypto.generate_key()`) use Plan Seed Envelopes (PSE) to be deterministic within resolved plans while maintaining security. **Note**: PSE is NOT used for `@var` or `@env` which have actual values - PSE is specifically for decorators that need deterministic randomness.
-
-**Always planned**: Even direct script execution generates internal plans first, ensuring consistent behavior.
-
-## Time-Delayed Execution
-
-Real operations involve plan generation and execution at different times. Opal's verification model handles this cleanly.
-
-### The Scenario
-
-```bash
-# 2:00 PM - Generate plan during change window planning
-opal deploy --dry-run --resolve > evening-deploy.plan
-
-# 5:00 PM - Execute plan during maintenance window
-opal run --plan evening-deploy.plan
-```
-
-### Verification at Execution
-
-When you execute a resolved plan, opal **verifies the contract**:
-
-1. **Replan** from source files with current infrastructure state
-2. **Compare** new plan structure with resolved plan
-3. **Verify** all resolved values still match (structure and hashes)
-4. **Execute** contracted plan if verification passes
-5. **Fail** with diff if source changed or infrastructure drifted
-
-### What Gets Verified
-
-**Source changes detected**:
-```
-ERROR: Plan verification failed
-
-Expected: for service in ["api", "worker"] {
-Actual:   for service in ["api", "worker", "ui"] {
-
-Source file modified since plan generation.
-```
-
-**Infrastructure drift detected**:
-```
-ERROR: Infrastructure state changed
-
-Expected: kubectl scale --replicas=🔒 opal:3J98t56A deployment/app
-Current:  No deployment/app found
-
-Infrastructure changed since plan generation.
-Consider regenerating plan or using --force.
-```
-
-**Non-deterministic value decorator detected**:
-```
-ERROR: Contract verification failed
-
-@http.get("https://time-api.com/now") returned different value:
-  Plan time: 🔒 opal:3J98t56A
-  Execution:  🔒 opal:3J98t56A
-
-Non-deterministic value decorators cannot be used in resolved plans.
-Consider separating dynamic value acquisition from deterministic execution.
-```
-
-### Plan Seed Envelopes (PSE)
-
-**Purpose**: PSE provides deterministic randomness for decorators like `@random.password()` and `@crypto.generate_key()`. It is NOT used for `@var` or `@env` which resolve to actual values.
-
-For operations requiring randomness, resolved plans contain a Plan Seed Envelope - a minimal, immutable piece of state that enables deterministic random generation:
+Invalid:
 
 ```opal
-// Default: regenerates on every new plan
-var TEMP_TOKEN = @random.password(length=16)
-
-// Stable across plan changes until regeneration key changes
-var DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v1")
-var API_KEY = @crypto.generate_key(type="ed25519", regen_key="api-key-v3")
-
-deploy: {
-    kubectl create secret generic db --from-literal=password=@var.DB_PASS
-    kubectl create secret generic api --from-literal=key=@var.API_KEY
-}
-
-// Rotate secrets by changing regeneration key
-rotate-secrets: {
-    // Change v1 → v2 to get new password
-    var NEW_DB_PASS = @random.password(length=24, regen_key="db-pass-prod-v2")
-    kubectl patch secret db --patch='{"data":{"password":"'$(echo -n @var.NEW_DB_PASS) | base64)'"}}'
-}
+echo "@var.name_suffix"
 ```
 
-**Plan shows placeholders** (maintaining security invariant):
-```
-kubectl create secret generic db --from-literal=password=¹🔒 opal:3J98t56A
-kubectl create secret generic api --from-literal=key=¹🔒 opal:3J98t56A
-```
-
-**How PSE works**:
-- High-entropy seed generated at `--resolve` time
-- Seed encrypted and sealed to authorized runners (file-based key or KMS)
-- Each value decorator derives unique deterministic values using plan context
-- Same plan always generates identical random values
-- Different plans generate different values (new seed per plan)
-
-**PSE vs traditional state**:
-- **Scoped**: Each plan contains its own PSE, no shared state
-- **Immutable**: Never changes after plan creation, no updates or migrations
-- **Self-contained**: Plan file includes everything needed, no external storage
-- **Minimal**: Contains only cryptographic entropy, not infrastructure tracking
-- **Contract-aligned**: Enables deterministic execution within resolved plans
-
-This gives you secure, auditable randomness while maintaining the stateless execution model.
-
-### Execution Options
-
-**Strict verification** (default):
-```bash
-opal run --plan prod.plan
-# Fails on any source or infrastructure changes
-```
-
-**Force execution**:
-```bash
-opal run --plan prod.plan --force
-# Uses resolved plan values as targets, adapts to current infrastructure
-```
-
-
-
-### Why This Works
-
-**Contract clarity**: Teams review resolved plans knowing exactly what will execute
-**Change detection**: Any modifications between plan and execution are caught
-**Audit trail**: Resolved plans become immutable execution records
-**Flexibility**: Multiple execution modes for different operational needs
-
-This verification model gives you the determinism of resolved plans with safety against unexpected changes.
-
-## Parallel Resolution
-
-Independent expensive operations resolve concurrently:
+Valid:
 
 ```opal
-var CLUSTER = @env.KUBE_CLUSTER(default="minikube")
-var DB_HOST = @aws.secret("@var.CLUSTER()-db-host")
-var API_KEY = @http.get("https://keygen.com/api/new")
-
-deploy: {
-    when @var.CLUSTER {
-        "production" -> {
-            kubectl apply -f k8s/prod/ --server=@var.DB_HOST
-            kubectl create secret --api-key=@var.API_KEY
-        }
-        else -> kubectl apply -f k8s/dev/
-    }
-}
+echo "@var.name()_suffix"
 ```
 
-**Resolution DAG**:
-- `@env.KUBE_CLUSTER` resolves first (needed for conditional)
-- `@aws.secret()` and `@http.get()` resolve in parallel
-- Unused expensive operations in dev branch never execute
+### 16.5 Non-deterministic value in resolved contract
 
-## Change Detection and Idempotency
+Invalid for resolved contract generation:
 
-Scripts are **idempotent by design** with smart change detection:
-
-```bash
-# First run
-opal deploy
-# Creates resources, shows what was done
-
-# Second run (no changes)
-opal deploy
-# Shows "no-op" for existing resources
-
-# Third run (environment changed)
-REPLICAS=5 opal deploy
-# Shows only the scale operation (replica count changed)
+```opal
+var stamp = @time.now()
 ```
 
-**How change detection works**:
-- Value hashing: `<1:3>` → `<1:5>` indicates REPLICAS changed from 3 to 5
-- Secret rotation: `<32:a1b>` → `<32:x7y>` indicates API token was rotated
-- Infrastructure queries: Value decorators check current state vs desired state
-- Character count in hash gives size hints for debugging
+Use deterministic inputs or seeded deterministic decorators for contract-safe workflows.
 
-**Resolved plan verification adds another layer**:
-- Source changes detected by comparing plan structures
-- Hash changes show which values modified
-- Infrastructure drift caught by re-querying current state
-
-## Why This Design Works
-
-**Contract-based**: Resolved plans are execution contracts with verification
-**Auditable**: See exactly what will run, verify it matches before execution
-**Secure**: No sensitive values in plans or logs, change detection without exposure
-**Stateless**: No state files to corrupt - value decorators query reality fresh each time
-**Readable**: More natural than YAML, more structured than shell scripts
-**Extensible**: New value decorators and execution decorators integrate seamlessly
-
-Opal transforms operations from "pray and deploy" to "plan, review, execute with verification" - bringing contract discipline to deployment workflows without traditional infrastructure tool complexity.
-
-## Examples
-
-### Web Application Deployment
+## 17. End-to-End Example
 
 ```opal
 var (
-    ENV = @env.ENVIRONMENT(default="development")
-    VERSION = @env.APP_VERSION(default="latest")
-    REPLICAS = @env.REPLICAS(default=1)
-    SERVICES = ["api", "worker", "ui"]
+    env = @env.ENV(default="development")
+    version = @env.VERSION(default="latest")
+    modules = ["api", "worker", "ui"]
 )
 
-deploy: {
-    echo "Deploying version @var.VERSION to @var.ENV"
+fun deploy_module(module String, replicas Int = 1) {
+    @retry(attempts=3, delay=5s) {
+        kubectl set image deployment/@var.module app=@var.version
+        kubectl scale deployment/@var.module --replicas=@var.replicas
+        kubectl rollout status deployment/@var.module --timeout=300s
+    }
+}
 
-    when @var.ENV {
+fun deploy_all {
+    when @var.env {
         "production" -> {
-            for service in @var.SERVICES {
-                @retry(attempts=3, delay=10s) {
-                    kubectl apply -f k8s/prod/@var.service/
-                    kubectl set image deployment/@var.service app=@var.VERSION
-                    kubectl scale --replicas=@var.REPLICAS deployment/@var.service
-                    kubectl rollout status deployment/@var.service --timeout=300s
-                }
-            }
-        }
-        "staging" -> {
-            @timeout(5m) {
-                kubectl apply -f k8s/staging/
-                kubectl set image deployment/app app=@var.VERSION
-                kubectl rollout status deployment/app
+            for module in @var.modules {
+                deploy_module(module=@var.module, replicas=3)
             }
         }
         else -> {
-            echo "Deploying to development"
-            kubectl apply -f k8s/dev/
-        }
-    }
-
-    echo "Deployment complete"
-}
-```
-
-### Database Migration with Rollback
-
-```opal
-var DB_URL = @env.DATABASE_URL
-var BACKUP_BUCKET = @env.BACKUP_BUCKET(default="db-backups")
-
-migrate: {
-    try {
-        echo "Starting database migration"
-
-        @timeout(30m) {
-            # Backup first
-            pg_dump @var.DB_URL | gzip > backup-$(date +%Y%m%d-%H%M%S).sql.gz
-            aws s3 cp backup-*.sql.gz s3://@var.BACKUP_BUCKET/
-
-            # Run migration
-            @retry(attempts=2, delay=5s) {
-                psql @var.DB_URL -f migrations/001-add-users.sql
-                psql @var.DB_URL -f migrations/002-add-indexes.sql
+            for module in @var.modules {
+                deploy_module(module=@var.module)
             }
-
-            # Verify
-            psql @var.DB_URL -c "SELECT COUNT(*) FROM users;"
         }
-
-        echo "Migration completed successfully"
-
-    } catch {
-        echo "Migration failed, restoring from backup"
-
-        # Find latest backup
-        LATEST_BACKUP=$(aws s3 ls s3://@var.BACKUP_BUCKET/ | tail -1 | awk '{print $4}')
-
-        # Restore
-        aws s3 cp s3://@var.BACKUP_BUCKET/@var.LATEST_BACKUP - | gunzip | psql @var.DB_URL
-
-        echo "Database restored from backup"
-
-    } finally {
-        # Cleanup local backup files
-        rm -f backup-*.sql.gz
-        echo "Migration process completed"
-    }
-}
-```
-
-## Common Errors
-
-### Defining `fun` Inside Loops
-
-**❌ Error:**
-```opal
-for module in @var.MODULES {
-    fun build_@var.module {  # ERROR: fun inside for loop
-        npm run build
-    }
-}
-```
-
-**✅ Correct:**
-```opal
-# Define template function at top level
-fun build_module(module String) {
-    @workdir(@var.module) {
-        npm run build
     }
 }
 
-# Call it inside loop
-for module in @var.MODULES {
-    @cmd.build_module(module=@var.module)
-}
+deploy_all()
 ```
 
-**Why:** `fun` definitions must be at top level. They're plan-time templates, not runtime constructs.
+Meaning of this example:
 
-### Using Shell Variables Instead of Opal Variables
+- metaprogramming resolves `when` and `for` during planning
+- function calls expand into concrete runtime steps
+- execution decorator policy wraps shell execution
+- runtime executes deterministic step order from the selected branch
 
-**❌ Error:**
-```opal
-var SERVICE = "api"
-kubectl scale deployment/${SERVICE} --replicas=3  # Wrong syntax
-```
+## 18. Glossary
 
-**✅ Correct:**
-```opal
-var SERVICE = "api"
-kubectl scale deployment/@var.SERVICE --replicas=3  # Opal syntax
-```
-
-**Why:** Use `@var.NAME` for Opal variables, not `${NAME}` (shell syntax).
-
-### Mixing Positional and Named Arguments Incorrectly
-
-**❌ Error:**
-```opal
-@retry(times=3, times=5)  # Duplicate assignment to times
-```
-
-**✅ Correct:**
-```opal
-@retry(3, delay=2s)                      # times=3, delay=2s
-@retry(delay=2s, 3, backoff="constant") # times=3, delay=2s, backoff="constant"
-@retry(times=3, delay=2s)                # All named
-```
-
-**Why:** Positional arguments are unnamed parameters. They fill the next unbound slot
-using required-first positional order, while named arguments can appear anywhere.
-
-### Forgetting Block Terminator for Variable Interpolation
-
-**❌ Error:**
-```opal
-echo "@var.service_backup"  # Looks for variable "service_backup"
-```
-
-**✅ Correct:**
-```opal
-echo "@var.service()_backup"  # Terminates with (), then adds "_backup"
-```
-
-**Why:** Use `()` to terminate decorator when followed by ASCII characters without spaces.
-
-### Non-Deterministic Value Decorators in Resolved Plans
-
-**❌ Error:**
-```opal
-var timestamp = @time.now()  # Non-deterministic
-opal deploy --dry-run --resolve > plan.json  # Will fail verification
-```
-
-**✅ Correct:**
-```opal
-# Use plan-time constants or seeded randomness
-var deployTime = @env.DEPLOY_TIME(default="2024-01-01")
-var randomPass = @random.password(length=16, regenKey="db-pass-v1")
-```
-
-**Why:** Resolved plans must be deterministic. Use Plan Seed Envelopes for randomness.
+- **Plan**: deterministic execution structure produced from source and resolved values.
+- **Contract**: reviewed resolved plan artifact used as verification target.
+- **Metaprogramming construct**: syntax that shapes plan structure during planning.
+- **Execution construct**: syntax that performs runtime side effects.
+- **Value decorator**: decorator that yields a value for substitution.
+- **Execution decorator**: decorator that wraps execution behavior.
+- **Transport boundary**: session switch where environment and execution context change.
