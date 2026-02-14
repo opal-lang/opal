@@ -117,8 +117,8 @@ func TestParseEventStructure(t *testing.T) {
 			},
 		},
 		{
-			name:  "function with typed parameter",
-			input: "fun greet(name: String) {}",
+			name:  "function with optional typed parameter",
+			input: "fun greet(name String?) {}",
 			events: []Event{
 				{EventOpen, 0},  // Source
 				{EventOpen, 1},  // Function
@@ -129,8 +129,8 @@ func TestParseEventStructure(t *testing.T) {
 				{EventOpen, 4},  // Param
 				{EventToken, 3}, // name
 				{EventOpen, 5},  // TypeAnnotation
-				{EventToken, 4}, // :
-				{EventToken, 5}, // String
+				{EventToken, 4}, // String
+				{EventToken, 5}, // ?
 				{EventClose, 5}, // TypeAnnotation
 				{EventClose, 4}, // Param
 				{EventToken, 6}, // )
@@ -448,7 +448,7 @@ func TestParseBasics(t *testing.T) {
 
 // TestTelemetry verifies telemetry collection
 func TestTelemetry(t *testing.T) {
-	input := "fun greet(name: String) {}"
+	input := "fun greet(name String) {}"
 
 	t.Run("telemetry off by default", func(t *testing.T) {
 		tree := ParseString(input)
@@ -492,7 +492,7 @@ func TestTelemetry(t *testing.T) {
 
 // TestDebugTracing verifies debug event collection
 func TestDebugTracing(t *testing.T) {
-	input := "fun greet(name: String) {}"
+	input := "fun greet(name String) {}"
 
 	t.Run("debug off by default", func(t *testing.T) {
 		tree := ParseString(input)

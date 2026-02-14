@@ -36,7 +36,7 @@ digit      = "0".."9" ;
 ### Keywords
 
 ```ebnf
-"fun" | "var" | "if" | "else" | "for" | "in" | "when" | "try" | "catch" | "finally"
+"fun" | "struct" | "var" | "if" | "else" | "for" | "in" | "when" | "try" | "catch" | "finally" | "as" | "none"
 ```
 
 ### Literals
@@ -50,6 +50,7 @@ bt_string      = "`" { char | newline } "`" ;
 int_literal    = digit { digit } ;
 float_literal  = (digit { digit } "." [digit { digit }]) | ("." digit { digit }) ;
 bool_literal   = "true" | "false" ;
+none_literal   = "none" ;
 
 duration_literal = int_literal duration_unit { int_literal duration_unit } ;
 duration_unit    = "ns" | "us" | "ms" | "s" | "m" | "h" | "d" | "w" | "y" ;
@@ -73,7 +74,7 @@ incdec_op     = "++" | "--" ;
 shell_chain   = "&&" | "||" | "|" | ";" ;
 redirect_op   = ">" | ">>" ;
 
-punctuation   = "@" | "." | ":" | "," | "=" | "(" | ")" | "{" | "}" | "[" | "]" | "->" | "..." ;
+punctuation   = "@" | "." | ":" | "," | "=" | "(" | ")" | "{" | "}" | "[" | "]" | "?" | "->" | "..." ;
 ```
 
 ## Syntax Grammar
@@ -82,7 +83,7 @@ punctuation   = "@" | "." | ":" | "," | "=" | "(" | ")" | "{" | "}" | "[" | "]" 
 
 ```ebnf
 source   = { top_item } ;
-top_item = function_decl | statement ;
+top_item = function_decl | struct_decl | statement ;
 ```
 
 ### Blocks
@@ -100,7 +101,10 @@ function_decl = "fun" identifier [param_list] ("=" shorthand_body | block) ;
 
 param_list    = "(" [param_group { "," param_group }] ")" ;
 param_group   = identifier { "," identifier } type_annotation [default_value] ;
-type_annotation = [":"] identifier ;
+type_annotation = identifier ["?"] ;
+
+struct_decl = "struct" identifier "{" [struct_field { struct_field }] "}" ;
+struct_field = identifier type_annotation [default_value] ;
 
 default_value = "=" default_atom ;
 default_atom  = string_literal | int_literal | float_literal | bool_literal | duration_literal | identifier ;
@@ -110,7 +114,9 @@ shorthand_body = shell_command | expr ;
 
 Notes:
 - Function declarations are top-level declarations.
-- Parameter groups support both `name Type` and `name: Type`.
+- Struct declarations are top-level declarations.
+- Parameter and field types use `name Type` only.
+- Struct fields are newline-delimited, with optional commas between fields.
 - Default values parse as one default atom in the declaration syntax.
 
 ### Statements
@@ -217,7 +223,9 @@ logical_and     = equality { "&&" equality } ;
 equality        = comparison { ("==" | "!=") comparison } ;
 comparison      = additive { ("<" | "<=" | ">" | ">=") additive } ;
 additive        = multiplicative { ("+" | "-") multiplicative } ;
-multiplicative  = unary { ("*" | "/" | "%") unary } ;
+multiplicative  = cast { ("*" | "/" | "%") cast } ;
+
+cast            = unary { "as" identifier ["?"] } ;
 
 unary   = ("!" | "-") unary
         | ("++" | "--") unary
@@ -231,7 +239,7 @@ primary = literal
         | array_literal
         | object_literal ;
 
-literal = string_literal | int_literal | float_literal | bool_literal ;
+literal = string_literal | int_literal | float_literal | bool_literal | none_literal ;
 
 array_literal  = "[" [expr { "," expr }] [","] "]" ;
 object_literal = "{" [object_field { "," object_field }] [","] "}" ;

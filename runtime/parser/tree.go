@@ -47,7 +47,7 @@ const (
 	NodeParamList
 	NodeBlock
 	NodeParam          // Function parameter
-	NodeTypeAnnotation // Type annotation (: Type)
+	NodeTypeAnnotation // Type annotation (Type)
 	NodeDefaultValue   // Default value (= expression)
 
 	// Statements
@@ -108,6 +108,13 @@ const (
 
 	// Function calls - added at end to preserve existing node numbers
 	NodeFunctionCall // Function call statement: name(...)
+
+	// Type casts - added at end to preserve existing node numbers
+	NodeTypeCast // Type cast expression: expr as Type or expr as Type?
+
+	// User-defined struct declarations - added at end to preserve existing node numbers
+	NodeStructDecl  // Struct declaration: struct Name { ... }
+	NodeStructField // Struct field declaration inside a struct body
 )
 
 // ErrorCode represents a structured error code for schema validation errors

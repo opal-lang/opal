@@ -169,6 +169,39 @@ func TestBuildIR_VarDecl_DecoratorRef(t *testing.T) {
 	}
 }
 
+func TestBuildIR_VarDecl_TypeCast(t *testing.T) {
+	graph := buildIR(t, `var retries = "3" as Int`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	stmt := graph.Statements[0]
+	if stmt.VarDecl == nil || stmt.VarDecl.Value == nil {
+		t.Fatal("var declaration value is nil")
+	}
+
+	if diff := cmp.Diff(ExprTypeCast, stmt.VarDecl.Value.Kind); diff != "" {
+		t.Fatalf("value kind mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("Int", stmt.VarDecl.Value.TypeName); diff != "" {
+		t.Fatalf("cast type mismatch (-want +got):\n%s", diff)
+	}
+
+	if stmt.VarDecl.Value.Left == nil {
+		t.Fatal("cast left operand is nil")
+	}
+
+	if diff := cmp.Diff(ExprLiteral, stmt.VarDecl.Value.Left.Kind); diff != "" {
+		t.Fatalf("cast left kind mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("3", stmt.VarDecl.Value.Left.Value); diff != "" {
+		t.Fatalf("cast left value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildIR_DecoratorArg_IdentifierValue(t *testing.T) {
 	graph := buildIR(t, `@env.HOME(default=HOME)`)
 
@@ -403,6 +436,37 @@ deploy(retries = 5, "prod")`)
 	}
 	if diff := cmp.Diff("prod", call.Args[1].Value.Value); diff != "" {
 		t.Fatalf("second arg value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_FunctionCallArgTypeCast(t *testing.T) {
+	graph := buildIR(t, `fun deploy(retries Int) {
+	echo @var.retries
+}
+
+deploy("3" as Int)`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	call := graph.Statements[0].FunctionCall
+	if call == nil {
+		t.Fatal("FunctionCall is nil")
+	}
+	if len(call.Args) != 1 {
+		t.Fatalf("len(FunctionCall.Args) = %d, want 1", len(call.Args))
+	}
+
+	arg := call.Args[0].Value
+	if arg == nil {
+		t.Fatal("FunctionCall.Args[0].Value is nil")
+	}
+	if diff := cmp.Diff(ExprTypeCast, arg.Kind); diff != "" {
+		t.Fatalf("arg kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("Int", arg.TypeName); diff != "" {
+		t.Fatalf("cast type mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -1185,5 +1249,42 @@ func TestDeepCopyStatements_RedirectTargetMutationIsolation(t *testing.T) {
 
 	if diff := cmp.Diff("out.txt", original[0].Command.RedirectTarget.Parts[0].Value); diff != "" {
 		t.Errorf("original redirect target mutated by copy (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_StructDeclaration(t *testing.T) {
+	graph := buildIR(t, `struct DeployConfig {
+		env String
+		replicas Int = 3
+	}`)
+
+	decl, ok := graph.Types["DeployConfig"]
+	if !ok {
+		t.Fatal("expected DeployConfig struct declaration")
+	}
+
+	if diff := cmp.Diff(2, len(decl.Fields)); diff != "" {
+		t.Fatalf("field count mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("env", decl.Fields[0].Name); diff != "" {
+		t.Fatalf("first field name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("String", decl.Fields[0].Type); diff != "" {
+		t.Fatalf("first field type mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("replicas", decl.Fields[1].Name); diff != "" {
+		t.Fatalf("second field name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("Int", decl.Fields[1].Type); diff != "" {
+		t.Fatalf("second field type mismatch (-want +got):\n%s", diff)
+	}
+
+	if decl.Fields[1].Default == nil {
+		t.Fatal("expected default value for replicas field")
+	}
+	if diff := cmp.Diff(int64(3), decl.Fields[1].Default.Value); diff != "" {
+		t.Fatalf("field default mismatch (-want +got):\n%s", diff)
 	}
 }

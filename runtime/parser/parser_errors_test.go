@@ -27,10 +27,10 @@ func TestParseErrors(t *testing.T) {
 			description: "parser accepts, semantic analysis should reject",
 		},
 		{
-			name:        "missing parameter name before colon",
-			input:       "fun greet(: String) {}",
-			wantErrors:  false, // Parser might accept this, semantic analysis rejects
-			description: "parser accepts, semantic analysis should reject",
+			name:        "colon type annotation syntax",
+			input:       "fun greet(name: String) {}",
+			wantErrors:  true,
+			description: "colon type annotation is not valid",
 		},
 		{
 			name:        "trailing comma in parameters",
