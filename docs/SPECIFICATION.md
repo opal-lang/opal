@@ -353,6 +353,7 @@ Execution contract:
 - Opal preserves command text and passes it to the selected shell.
 - Opal does not normalize shell syntax across shells (env syntax, quoting, builtins, and path rules remain shell-native).
 - Use explicit `shell=...` when command text depends on shell-specific syntax.
+- Opal-owned operators (`|`, `&&`, `||`, `;`, `>`, `>>`) are parsed and planned before shell execution.
 
 ## 8. Shell Execution Semantics
 
@@ -390,6 +391,16 @@ Block lines execute in order.
 
 - newline-separated steps stop at first failure unless control flow/decorator policy changes behavior
 - semicolon chaining follows shell continuation semantics
+
+### 8.4 Operator ownership constraints
+
+Operator semantics are runtime-contract semantics, not shell-dialect semantics.
+
+- Opal parses operator structure and builds execution trees independent of selected shell.
+- Selected shell affects only leaf command execution (`command` text in `@shell`).
+- Changing shell (`bash`, `pwsh`, `cmd`) does not change Opal operator precedence or control flow behavior.
+
+Future extensions may introduce shell-dialect-aware execution modes for specific transports, but this contract keeps operator ownership in Opal.
 
 ## 9. Control Flow Semantics
 
