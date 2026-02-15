@@ -279,7 +279,7 @@ jobs:
         if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
         run: |
           echo "Cross-checking Windows build target from Linux Nix shell..."
-          nix develop --command bash -lc 'GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -run TestDoesNotExist -count=1 ./core/... ./runtime/... ./cli/...'
+          nix develop --command bash -lc 'GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -run TestDoesNotExist -count=1 -exec=true ./core/... ./runtime/... ./cli/...'
 
   # =============================================================================
   # PHASE 2: Module Testing (All run in parallel after lint)
