@@ -80,6 +80,9 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 					return nil, err
 				}
 				if decl != nil && decl.Name != "" {
+					if _, exists := b.types[decl.Name]; exists {
+						return nil, fmt.Errorf("duplicate struct declaration %q", decl.Name)
+					}
 					b.types[decl.Name] = decl
 				}
 				continue
@@ -187,6 +190,14 @@ func (b *irBuilder) buildStructDecl() (*StructTypeIR, error) {
 
 	if decl.Name == "" {
 		return nil, fmt.Errorf("struct declaration at position %d has no name", startPos)
+	}
+
+	seenFields := make(map[string]struct{}, len(decl.Fields))
+	for _, field := range decl.Fields {
+		if _, exists := seenFields[field.Name]; exists {
+			return nil, fmt.Errorf("struct %q has duplicate field %q", decl.Name, field.Name)
+		}
+		seenFields[field.Name] = struct{}{}
 	}
 
 	decl.Span = SourceSpan{Start: startPos, End: b.pos}

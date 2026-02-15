@@ -1288,3 +1288,50 @@ func TestBuildIR_StructDeclaration(t *testing.T) {
 		t.Fatalf("field default mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestBuildIR_DuplicateStructDeclarationRejected(t *testing.T) {
+	tree := parser.ParseString(`
+struct Config {
+	env String
+}
+
+struct Config {
+	retries Int
+}
+`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	_, err := BuildIR(tree.Events, tree.Tokens)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `duplicate struct declaration "Config"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_DuplicateStructFieldRejected(t *testing.T) {
+	tree := parser.ParseString(`
+struct Config {
+	env String
+	env String
+}
+`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	_, err := BuildIR(tree.Events, tree.Tokens)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `struct "Config" has duplicate field "env"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}

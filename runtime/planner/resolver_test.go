@@ -1795,6 +1795,60 @@ func TestResolve_FunctionArgsStructTypeAcceptsStringMap(t *testing.T) {
 	}
 }
 
+func TestResolve_RecursiveStructTypeRejected(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Types: map[string]*StructTypeIR{
+			"Node": {
+				Name: "Node",
+				Fields: []StructFieldIR{
+					{Name: "next", Type: "Node?"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `recursive struct type is not supported: Node -> Node`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_MutualRecursiveStructTypeRejected(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Types: map[string]*StructTypeIR{
+			"A": {
+				Name:   "A",
+				Fields: []StructFieldIR{{Name: "b", Type: "B"}},
+			},
+			"B": {
+				Name:   "B",
+				Fields: []StructFieldIR{{Name: "a", Type: "A"}},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `recursive struct type is not supported: A -> B -> A`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestResolve_GroupedGoStyleParameterTypeAppliesToAllParameters(t *testing.T) {
 	tree := parser.ParseString(`fun deploy(name, alias String) { echo "ok" }`)
 	if len(tree.Errors) > 0 {

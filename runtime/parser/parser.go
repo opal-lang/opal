@@ -391,6 +391,17 @@ func (p *parser) structDecl() {
 	// Consume struct name
 	p.expect(lexer.IDENTIFIER, "struct declaration")
 
+	if p.at(lexer.COLON) || (p.at(lexer.IDENTIFIER) && strings.EqualFold(string(p.current().Text), "extends")) {
+		p.errorWithDetails(
+			"struct inheritance is not supported",
+			"struct declaration",
+			"Use nested fields for composition instead of inheritance",
+		)
+		for !p.at(lexer.LBRACE) && !p.at(lexer.EOF) {
+			p.advance()
+		}
+	}
+
 	// Parse body
 	if !p.expect(lexer.LBRACE, "struct declaration") {
 		p.finish(kind)
@@ -404,6 +415,17 @@ func (p *parser) structDecl() {
 		p.skipNewlines()
 		if p.at(lexer.RBRACE) || p.at(lexer.EOF) {
 			break
+		}
+
+		if p.at(lexer.FUN) || (p.at(lexer.IDENTIFIER) && p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Type == lexer.LPAREN) {
+			p.errorWithDetails(
+				"struct methods are not supported",
+				"struct declaration",
+				"Move behavior into top-level functions and keep structs as data-only declarations",
+			)
+			p.skipUnsupportedStructMember()
+			p.skipNewlines()
+			continue
 		}
 
 		p.structField()
@@ -421,6 +443,32 @@ func (p *parser) structDecl() {
 
 	p.expect(lexer.RBRACE, "struct declaration")
 	p.finish(kind)
+}
+
+func (p *parser) skipUnsupportedStructMember() {
+	braceDepth := 0
+	for !p.at(lexer.EOF) {
+		if braceDepth == 0 && (p.at(lexer.NEWLINE) || p.at(lexer.COMMA) || p.at(lexer.RBRACE)) {
+			return
+		}
+
+		if p.at(lexer.LBRACE) {
+			braceDepth++
+			p.advance()
+			continue
+		}
+
+		if p.at(lexer.RBRACE) {
+			if braceDepth == 0 {
+				return
+			}
+			braceDepth--
+			p.advance()
+			continue
+		}
+
+		p.advance()
+	}
 }
 
 func (p *parser) structField() {

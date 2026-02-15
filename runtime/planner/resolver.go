@@ -258,6 +258,10 @@ func (r *Resolver) getValue(name string) (any, bool) {
 //   - For-loops have Iterations populated with deep-copied bodies
 //   - All nested blockers are recursively resolved
 func (r *Resolver) resolve() (*ResolveResult, error) {
+	if err := r.validateStructTypes(); err != nil {
+		return nil, err
+	}
+
 	// Select statements based on mode (script vs command)
 	stmts := r.selectStatements()
 	if stmts == nil && len(r.errors) > 0 {
@@ -1484,6 +1488,87 @@ func buildFunctionRawArgs(args []FunctionArg) (map[string]any, error) {
 		raw[arg.Name] = arg.Value
 	}
 	return raw, nil
+}
+
+func (r *Resolver) validateStructTypes() error {
+	if r.graph == nil || len(r.graph.Types) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(r.graph.Types))
+	for name := range r.graph.Types {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	visiting := make(map[string]bool, len(names))
+	visited := make(map[string]bool, len(names))
+
+	for _, name := range names {
+		if visited[name] {
+			continue
+		}
+		if err := r.validateStructType(name, visiting, visited, nil); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *Resolver) validateStructType(name string, visiting, visited map[string]bool, stack []string) error {
+	if visited[name] {
+		return nil
+	}
+
+	decl, ok := r.graph.Types[name]
+	if !ok || decl == nil {
+		return fmt.Errorf("struct %q declaration is missing", name)
+	}
+
+	visiting[name] = true
+	stack = append(stack, name)
+
+	for _, field := range decl.Fields {
+		spec, hasType, err := r.parseFunctionParamType(field.Type)
+		if err != nil || !hasType {
+			if err != nil {
+				return fmt.Errorf("struct %q field %q: %w", name, field.Name, err)
+			}
+			return fmt.Errorf("struct %q field %q is missing type annotation", name, field.Name)
+		}
+
+		if spec.StructName == "" {
+			continue
+		}
+
+		if visiting[spec.StructName] {
+			cycle := structCyclePath(stack, spec.StructName)
+			return fmt.Errorf("recursive struct type is not supported: %s", strings.Join(cycle, " -> "))
+		}
+
+		if err := r.validateStructType(spec.StructName, visiting, visited, stack); err != nil {
+			return err
+		}
+	}
+
+	delete(visiting, name)
+	visited[name] = true
+	return nil
+}
+
+func structCyclePath(stack []string, target string) []string {
+	start := 0
+	for i, name := range stack {
+		if name == target {
+			start = i
+			break
+		}
+	}
+
+	cycle := append([]string{}, stack[start:]...)
+	cycle = append(cycle, target)
+	return cycle
 }
 
 func (r *Resolver) parseFunctionParamType(raw string) (functionParamTypeSpec, bool, error) {
