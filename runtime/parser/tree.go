@@ -115,6 +115,13 @@ const (
 	// User-defined struct declarations - added at end to preserve existing node numbers
 	NodeStructDecl  // Struct declaration: struct Name { ... }
 	NodeStructField // Struct field declaration inside a struct body
+
+	// User-defined enum declarations - added at end to preserve existing node numbers
+	NodeEnumDecl   // Enum declaration: enum Name [Type] { ... }
+	NodeEnumMember // Enum member declaration inside enum body
+
+	// Qualified value references - added at end to preserve existing node numbers
+	NodeQualifiedRef // Qualified reference expression: Type.Member
 )
 
 // ErrorCode represents a structured error code for schema validation errors

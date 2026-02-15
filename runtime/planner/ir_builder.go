@@ -21,6 +21,7 @@ func BuildIR(events []parser.Event, tokens []lexer.Token) (*ExecutionGraph, erro
 		scopes:    NewScopeStack(),
 		functions: make(map[string]*FunctionIR),
 		types:     make(map[string]*StructTypeIR),
+		enums:     make(map[string]*EnumTypeIR),
 		exprSeq:   0,
 	}
 
@@ -33,6 +34,7 @@ func BuildIR(events []parser.Event, tokens []lexer.Token) (*ExecutionGraph, erro
 		Statements: stmts,
 		Functions:  b.functions,
 		Types:      b.types,
+		Enums:      b.enums,
 		Scopes:     b.scopes,
 	}, nil
 }
@@ -45,6 +47,7 @@ type irBuilder struct {
 	scopes    *ScopeStack
 	functions map[string]*FunctionIR
 	types     map[string]*StructTypeIR
+	enums     map[string]*EnumTypeIR
 	exprSeq   int
 }
 
@@ -83,7 +86,26 @@ func (b *irBuilder) buildSource() ([]*StatementIR, error) {
 					if _, exists := b.types[decl.Name]; exists {
 						return nil, fmt.Errorf("duplicate struct declaration %q", decl.Name)
 					}
+					if _, exists := b.enums[decl.Name]; exists {
+						return nil, fmt.Errorf("duplicate type declaration %q", decl.Name)
+					}
 					b.types[decl.Name] = decl
+				}
+				continue
+
+			case parser.NodeEnumDecl:
+				decl, err := b.buildEnumDecl()
+				if err != nil {
+					return nil, err
+				}
+				if decl != nil && decl.Name != "" {
+					if _, exists := b.enums[decl.Name]; exists {
+						return nil, fmt.Errorf("duplicate enum declaration %q", decl.Name)
+					}
+					if _, exists := b.types[decl.Name]; exists {
+						return nil, fmt.Errorf("duplicate type declaration %q", decl.Name)
+					}
+					b.enums[decl.Name] = decl
 				}
 				continue
 
@@ -251,6 +273,106 @@ func (b *irBuilder) buildStructField() (StructFieldIR, error) {
 	}
 
 	return field, nil
+}
+
+func (b *irBuilder) buildEnumDecl() (*EnumTypeIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeEnumDecl
+
+	var decl EnumTypeIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeEnumDecl {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER && decl.Name == "" {
+				decl.Name = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen {
+			node := parser.NodeKind(evt.Data)
+			switch node {
+			case parser.NodeTypeAnnotation:
+				decl.BaseType = b.buildTypeAnnotation()
+				continue
+			case parser.NodeEnumMember:
+				member, err := b.buildEnumMember()
+				if err != nil {
+					return nil, err
+				}
+				decl.Members = append(decl.Members, member)
+				continue
+			}
+		}
+
+		b.pos++
+	}
+
+	if decl.Name == "" {
+		return nil, fmt.Errorf("enum declaration at position %d has no name", startPos)
+	}
+
+	if decl.BaseType == "" {
+		decl.BaseType = "String"
+	}
+
+	seenMembers := make(map[string]struct{}, len(decl.Members))
+	for _, member := range decl.Members {
+		if _, exists := seenMembers[member.Name]; exists {
+			return nil, fmt.Errorf("enum %q has duplicate member %q", decl.Name, member.Name)
+		}
+		seenMembers[member.Name] = struct{}{}
+	}
+
+	decl.Span = SourceSpan{Start: startPos, End: b.pos}
+	return &decl, nil
+}
+
+func (b *irBuilder) buildEnumMember() (EnumMemberIR, error) {
+	startPos := b.pos
+	b.pos++ // Move past OPEN NodeEnumMember
+
+	var member EnumMemberIR
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeEnumMember {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER && member.Name == "" {
+				member.Name = string(tok.Text)
+			}
+			b.pos++
+			continue
+		}
+
+		if evt.Kind == parser.EventOpen && parser.NodeKind(evt.Data) == parser.NodeDefaultValue {
+			member.Value = b.buildDefaultValue()
+			continue
+		}
+
+		b.pos++
+	}
+
+	if member.Name == "" {
+		return EnumMemberIR{}, fmt.Errorf("enum member at position %d has no name", startPos)
+	}
+
+	return member, nil
 }
 
 // buildFunction processes a function definition.
@@ -1233,6 +1355,8 @@ func (b *irBuilder) buildExprFromNode(node parser.NodeKind, allowBinary bool) (*
 		return b.buildDecoratorExpr(), true
 	case parser.NodeIdentifier:
 		return b.buildIdentifierExpr(), true
+	case parser.NodeQualifiedRef:
+		return b.buildQualifiedRefExpr(), true
 	case parser.NodeBinaryExpr:
 		if allowBinary {
 			return b.buildBinaryExpr(), true
@@ -1640,6 +1764,42 @@ func (b *irBuilder) buildIdentifierExpr() *ExprIR {
 	}
 }
 
+func (b *irBuilder) buildQualifiedRefExpr() *ExprIR {
+	b.pos++ // Move past OPEN NodeQualifiedRef
+
+	parts := make([]string, 0, 2)
+
+	for b.pos < len(b.events) {
+		evt := b.events[b.pos]
+
+		if evt.Kind == parser.EventClose && parser.NodeKind(evt.Data) == parser.NodeQualifiedRef {
+			b.pos++
+			break
+		}
+
+		if evt.Kind == parser.EventToken {
+			tok := b.tokens[evt.Data]
+			if tok.Type == lexer.IDENTIFIER {
+				parts = append(parts, string(tok.Text))
+			}
+			b.pos++
+			continue
+		}
+
+		b.pos++
+	}
+
+	expr := &ExprIR{Kind: ExprEnumMemberRef}
+	if len(parts) > 0 {
+		expr.EnumName = parts[0]
+	}
+	if len(parts) > 1 {
+		expr.EnumMember = parts[1]
+	}
+
+	return expr
+}
+
 // buildIfStmt processes an if statement.
 func (b *irBuilder) buildIfStmt() (*StatementIR, error) {
 	b.pos++ // Move past OPEN NodeIf
@@ -2008,6 +2168,9 @@ func (b *irBuilder) buildWhenArm() (*WhenArmIR, error) {
 				continue
 			case parser.NodePatternRange:
 				pattern = b.buildPatternRange()
+				continue
+			case parser.NodeQualifiedRef:
+				pattern = b.buildQualifiedRefExpr()
 				continue
 			}
 		}

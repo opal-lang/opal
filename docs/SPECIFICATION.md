@@ -242,7 +242,41 @@ Struct declarations are top-level declarations.
 - optional self-references are allowed (for example `next Node?`)
 - required recursive struct cycles are rejected
 
-### 6.5 Call semantics
+### 6.5 Enum declarations
+
+`enum` declarations define global named value sets for typed function parameters and struct fields.
+
+```opal
+enum DeployStage String {
+    Dev
+    Prod = "production"
+}
+
+fun deploy(stage DeployStage) {
+    echo "Deploying @var.stage"
+}
+```
+
+Enum declarations are top-level declarations.
+
+- base type is optional and defaults to `String`
+- enum base type uses `String` in this phase
+- member forms are `Name` or `Name = "value"`
+- implicit member values use the member name
+- duplicate member names and duplicate member values are rejected
+- enum members are referenced as `Type.Member` in expression contexts
+- qualified enum references use exactly two segments in this phase (`Type.Member`)
+
+Enum member references are plan-time constants.
+
+```opal
+when @var.os {
+    OS.Windows -> echo "running on Windows"
+    OS.Linux -> echo "running on Linux"
+}
+```
+
+### 6.6 Call semantics
 
 Function calls use direct call syntax:
 
@@ -255,7 +289,7 @@ Parser disambiguation:
 - `name(...)` (no space before `(`) parses as a function call
 - `name (...)` parses as shell syntax
 
-### 6.6 Expansion semantics
+### 6.7 Expansion semantics
 
 Function calls expand during planning.
 
@@ -265,7 +299,7 @@ Function calls expand during planning.
 
 Execution does not perform runtime function lookup.
 
-### 6.7 Call graph constraints
+### 6.8 Call graph constraints
 
 Function calls must form an acyclic graph.
 

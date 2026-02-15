@@ -21,6 +21,7 @@ type Emitter struct {
 	vault            *vault.Vault
 	scopes           *ScopeStack
 	decoratorExprIDs map[string]string
+	enumMemberValues map[string]string
 	target           string
 	transportKey     []byte
 
@@ -36,8 +37,10 @@ type Emitter struct {
 // NewEmitter creates a new Emitter.
 func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, target string) *Emitter {
 	var decoratorExprIDs map[string]string
+	var enumMemberValues map[string]string
 	if result != nil {
 		decoratorExprIDs = result.DecoratorExprIDs
+		enumMemberValues = result.EnumMemberValues
 	}
 
 	localID := localTransportID(v.GetPlanKey())
@@ -47,6 +50,7 @@ func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, targe
 		vault:            v,
 		scopes:           scopes,
 		decoratorExprIDs: decoratorExprIDs,
+		enumMemberValues: enumMemberValues,
 		target:           target,
 		transportKey:     v.GetPlanKey(),
 		nextStepID:       1,
@@ -581,6 +585,9 @@ func (e *Emitter) getValue(name string) (any, bool) {
 	if exprID, ok := e.decoratorExprIDs[name]; ok {
 		return e.vault.GetUnresolvedValue(exprID)
 	}
+	if value, ok := e.enumMemberValues[name]; ok {
+		return value, true
+	}
 	return nil, false
 }
 
@@ -673,7 +680,7 @@ func (e *Emitter) buildArgValue(expr *ExprIR, displayIDs map[string]string) plan
 		return e.literalToArgValue(expr.Value, displayIDs)
 	case ExprVarRef, ExprDecoratorRef:
 		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
-	case ExprBinaryOp:
+	case ExprBinaryOp, ExprEnumMemberRef:
 		if value, err := EvaluateExpr(expr, e.getValue); err == nil {
 			return e.literalToArgValue(value, displayIDs)
 		}

@@ -276,6 +276,7 @@ func TestKeywordVsIdentifier(t *testing.T) {
 		// Keywords should be recognized as keywords
 		{name: "var keyword", input: "var", expected: VAR, text: "var"},
 		{name: "struct keyword", input: "struct", expected: STRUCT, text: "struct"},
+		{name: "enum keyword", input: "enum", expected: ENUM, text: "enum"},
 		{name: "as keyword", input: "as", expected: AS, text: "as"},
 		{name: "none keyword", input: "none", expected: NONE, text: "none"},
 		{name: "for keyword", input: "for", expected: FOR, text: "for"},

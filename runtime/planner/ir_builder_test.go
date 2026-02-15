@@ -1335,3 +1335,125 @@ struct Config {
 		t.Fatalf("error mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestBuildIR_EnumDeclaration(t *testing.T) {
+	graph := buildIR(t, `enum DeployStage String {
+		Dev
+		Prod = "production"
+	}`)
+
+	decl, ok := graph.Enums["DeployStage"]
+	if !ok {
+		t.Fatal("expected DeployStage enum declaration")
+	}
+
+	if diff := cmp.Diff("String", decl.BaseType); diff != "" {
+		t.Fatalf("base type mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(2, len(decl.Members)); diff != "" {
+		t.Fatalf("member count mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("Dev", decl.Members[0].Name); diff != "" {
+		t.Fatalf("first member name mismatch (-want +got):\n%s", diff)
+	}
+
+	if decl.Members[0].Value != nil {
+		t.Fatal("expected first member to use implicit value")
+	}
+
+	if diff := cmp.Diff("Prod", decl.Members[1].Name); diff != "" {
+		t.Fatalf("second member name mismatch (-want +got):\n%s", diff)
+	}
+
+	if decl.Members[1].Value == nil {
+		t.Fatal("expected explicit value for second enum member")
+	}
+
+	if diff := cmp.Diff("production", decl.Members[1].Value.Value); diff != "" {
+		t.Fatalf("second member value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_DuplicateEnumDeclarationRejected(t *testing.T) {
+	tree := parser.ParseString(`
+enum Stage {
+	Dev
+}
+
+enum Stage {
+	Prod
+}
+`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	_, err := BuildIR(tree.Events, tree.Tokens)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `duplicate enum declaration "Stage"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_EnumAndStructTypeNameCollisionRejected(t *testing.T) {
+	tree := parser.ParseString(`
+struct DeployConfig {
+	env String
+}
+
+enum DeployConfig {
+	Prod
+}
+`)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("parse errors: %v", tree.Errors)
+	}
+
+	_, err := BuildIR(tree.Events, tree.Tokens)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `duplicate type declaration "DeployConfig"`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_EnumMemberReferenceExpression(t *testing.T) {
+	graph := buildIR(t, `
+enum OS {
+	Windows
+	Linux
+}
+
+var selected = OS.Windows
+`)
+
+	if diff := cmp.Diff(1, len(graph.Statements)); diff != "" {
+		t.Fatalf("statement count mismatch (-want +got):\n%s", diff)
+	}
+
+	decl := graph.Statements[0].VarDecl
+	if decl == nil {
+		t.Fatal("expected var declaration")
+	}
+
+	if diff := cmp.Diff(ExprEnumMemberRef, decl.Value.Kind); diff != "" {
+		t.Fatalf("expression kind mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("OS", decl.Value.EnumName); diff != "" {
+		t.Fatalf("enum name mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("Windows", decl.Value.EnumMember); diff != "" {
+		t.Fatalf("enum member mismatch (-want +got):\n%s", diff)
+	}
+}

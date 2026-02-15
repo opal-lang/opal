@@ -263,6 +263,8 @@ func (p *parser) file() {
 			p.function()
 		} else if p.at(lexer.STRUCT) {
 			p.structDecl()
+		} else if p.at(lexer.ENUM) {
+			p.enumDecl()
 		} else if p.at(lexer.VAR) {
 			p.varDecl()
 		} else if p.at(lexer.IF) {
@@ -442,6 +444,67 @@ func (p *parser) structDecl() {
 	}
 
 	p.expect(lexer.RBRACE, "struct declaration")
+	p.finish(kind)
+}
+
+// enumDecl parses an enum declaration: enum IDENTIFIER [Type] { members }
+func (p *parser) enumDecl() {
+	kind := p.start(NodeEnumDecl)
+
+	// Consume 'enum' keyword
+	p.token()
+
+	// Consume enum name
+	p.expect(lexer.IDENTIFIER, "enum declaration")
+
+	// Optional base type annotation
+	if p.hasGoStyleTypeAnnotation() {
+		p.typeAnnotation()
+	}
+
+	// Parse body
+	if !p.expect(lexer.LBRACE, "enum declaration") {
+		p.finish(kind)
+		return
+	}
+
+	p.skipNewlines()
+	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		prevPos := p.pos
+
+		p.skipNewlines()
+		if p.at(lexer.RBRACE) || p.at(lexer.EOF) {
+			break
+		}
+
+		p.enumMember()
+		p.skipNewlines()
+
+		if p.at(lexer.COMMA) {
+			p.token()
+			p.skipNewlines()
+		}
+
+		if p.pos == prevPos && !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+			p.advance()
+		}
+	}
+
+	p.expect(lexer.RBRACE, "enum declaration")
+	p.finish(kind)
+}
+
+func (p *parser) enumMember() {
+	kind := p.start(NodeEnumMember)
+
+	// Member name
+	p.expect(lexer.IDENTIFIER, "enum member")
+
+	// Optional explicit enum value
+	if p.at(lexer.EQUALS) {
+		p.defaultValue()
+	}
+
 	p.finish(kind)
 }
 
@@ -833,6 +896,17 @@ func (p *parser) statement() {
 			Example:    "struct Config { retries Int } at top level",
 		})
 		p.advance() // Skip the struct keyword
+	} else if p.at(lexer.ENUM) {
+		// Enum declarations not allowed inside blocks
+		p.errors = append(p.errors, ParseError{
+			Position:   p.current().Position,
+			Message:    "enum declarations must be at top level",
+			Context:    "statement",
+			Got:        lexer.ENUM,
+			Suggestion: "Move enum declaration outside of blocks",
+			Example:    "enum Stage { Dev Prod } at top level",
+		})
+		p.advance() // Skip the enum keyword
 	} else if p.at(lexer.VAR) {
 		p.varDecl()
 	} else if p.at(lexer.IF) {
@@ -1286,27 +1360,7 @@ func (p *parser) whenStmt() {
 	p.token()
 
 	// Parse match expression (what we're matching against)
-	// Manually parse like if/for do - don't call p.expression() or p.decorator()
-	// to avoid decorator parser checking for blocks
-	if p.at(lexer.IDENTIFIER) {
-		p.token()
-	} else if p.at(lexer.AT) {
-		// Decorator expression: @var.ENV, @env.CLUSTER, etc.
-		// Parse decorator reference without parameters or blocks
-		kind := p.start(NodeDecorator)
-		p.token() // @
-		if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
-			p.token() // decorator name
-		}
-		if p.at(lexer.DOT) {
-			p.token() // .
-			if p.at(lexer.IDENTIFIER) {
-				p.token() // property name
-			}
-		}
-		// Note: We don't parse parameters or blocks in when expression context
-		p.finish(kind)
-	} else {
+	if p.at(lexer.LBRACE) {
 		p.errors = append(p.errors, ParseError{
 			Position:   p.current().Position,
 			Message:    "missing expression after 'when'",
@@ -1316,6 +1370,18 @@ func (p *parser) whenStmt() {
 			Suggestion: "Add an expression to match against",
 			Example:    "when @var.ENV { ... }",
 		})
+	} else if p.at(lexer.EOF) {
+		p.errors = append(p.errors, ParseError{
+			Position:   p.current().Position,
+			Message:    "missing expression after 'when'",
+			Context:    "when statement",
+			Got:        p.current().Type,
+			Expected:   []lexer.TokenType{lexer.IDENTIFIER, lexer.AT},
+			Suggestion: "Add an expression to match against",
+			Example:    "when @var.ENV { ... }",
+		})
+	} else {
+		p.expression()
 	}
 
 	// Expect opening brace
@@ -1472,15 +1538,18 @@ func (p *parser) patternPrimary() {
 			})
 		}
 		p.finish(kind)
+	} else if p.isQualifiedRefExpression() {
+		// Enum member pattern: Type.Member
+		p.qualifiedRef()
 	} else {
 		p.errors = append(p.errors, ParseError{
 			Position:   p.current().Position,
 			Message:    "invalid pattern",
 			Context:    "when arm",
 			Got:        p.current().Type,
-			Expected:   []lexer.TokenType{lexer.STRING, lexer.ELSE, lexer.IDENTIFIER, lexer.INTEGER},
-			Suggestion: "Use a string literal, regex pattern, numeric range, or else",
-			Example:    `"production" -> deploy or r"^release/" -> deploy or 200...299 -> success`,
+			Expected:   []lexer.TokenType{lexer.STRING, lexer.ELSE, lexer.IDENTIFIER, lexer.INTEGER, lexer.DOT},
+			Suggestion: "Use a string literal, regex pattern, numeric range, Type.Member, or else",
+			Example:    `"production" -> deploy or OS.Windows -> deploy or 200...299 -> success`,
 			Note:       "Range patterns use ... (three dots); validation happens at plan-time",
 		})
 		p.advance()
@@ -1988,10 +2057,14 @@ func (p *parser) primary() {
 		p.decoratorInExpressionContext()
 
 	case p.at(lexer.IDENTIFIER):
-		// Identifier
-		kind := p.start(NodeIdentifier)
-		p.token()
-		p.finish(kind)
+		if p.isQualifiedRefExpression() {
+			p.qualifiedRef()
+		} else {
+			// Identifier
+			kind := p.start(NodeIdentifier)
+			p.token()
+			p.finish(kind)
+		}
 
 	case p.at(lexer.LSQUARE):
 		// Array literal: [expr, expr, ...]
@@ -2009,6 +2082,52 @@ func (p *parser) primary() {
 			p.advance()
 		}
 	}
+}
+
+func (p *parser) isQualifiedRefExpression() bool {
+	if !p.at(lexer.IDENTIFIER) {
+		return false
+	}
+
+	nextPos := p.pos + 1
+	if nextPos >= len(p.tokens) || p.tokens[nextPos].Type != lexer.DOT {
+		return false
+	}
+
+	memberPos := p.pos + 2
+	if memberPos >= len(p.tokens) || p.tokens[memberPos].Type != lexer.IDENTIFIER {
+		return false
+	}
+
+	return true
+}
+
+func (p *parser) qualifiedRef() {
+	kind := p.start(NodeQualifiedRef)
+
+	// Parse exactly Type.Member
+	p.token() // Type
+	p.token() // .
+	p.token() // Member
+
+	if p.at(lexer.DOT) {
+		p.errorWithDetails(
+			"qualified reference must use Type.Member",
+			"expression",
+			"Use exactly two segments for qualified constants in this phase",
+		)
+
+		for p.at(lexer.DOT) {
+			p.token()
+			if p.at(lexer.IDENTIFIER) {
+				p.token()
+				continue
+			}
+			break
+		}
+	}
+
+	p.finish(kind)
 }
 
 // arrayLiteral parses an array literal: [expr, expr, ...]

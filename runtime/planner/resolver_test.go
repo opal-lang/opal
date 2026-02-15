@@ -1795,6 +1795,334 @@ func TestResolve_FunctionArgsStructTypeAcceptsStringMap(t *testing.T) {
 	}
 }
 
+func TestResolve_FunctionArgsStructTypeAcceptsOptionalNestedNone(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "service", Type: "ServiceConfig"},
+				},
+			},
+			"ServiceConfig": {
+				Name: "ServiceConfig",
+				Fields: []StructFieldIR{
+					{Name: "name", Type: "String"},
+					{Name: "tls", Type: "TLSConfig?"},
+				},
+			},
+			"TLSConfig": {
+				Name: "TLSConfig",
+				Fields: []StructFieldIR{
+					{Name: "enabled", Type: "Bool"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{
+				Value: map[string]any{
+					"service": map[string]any{
+						"name": "api",
+						"tls":  nil,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionArgsStructTypeRejectsUnknownNestedField(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "service", Type: "ServiceConfig"},
+				},
+			},
+			"ServiceConfig": {
+				Name: "ServiceConfig",
+				Fields: []StructFieldIR{
+					{Name: "name", Type: "String"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{
+				Value: map[string]any{
+					"service": map[string]any{
+						"name":    "api",
+						"unknown": true,
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "cfg" expects DeployConfig`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsEnumType(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "stage", Type: "DeployStage"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Enums: map[string]*EnumTypeIR{
+			"DeployStage": {
+				Name: "DeployStage",
+				Members: []EnumMemberIR{
+					{Name: "Dev"},
+					{Name: "Prod"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "Prod"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionArgsEnumTypeRejectsUnknownValue(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "stage", Type: "DeployStage"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Enums: map[string]*EnumTypeIR{
+			"DeployStage": {
+				Name: "DeployStage",
+				Members: []EnumMemberIR{
+					{Name: "Dev"},
+					{Name: "Prod"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: "Staging"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "stage" expects DeployStage`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionArgsStructFieldEnumTypeRejectsUnknownValue(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "cfg", Type: "DeployConfig"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Types: map[string]*StructTypeIR{
+			"DeployConfig": {
+				Name: "DeployConfig",
+				Fields: []StructFieldIR{
+					{Name: "stage", Type: "DeployStage"},
+				},
+			},
+		},
+		Enums: map[string]*EnumTypeIR{
+			"DeployStage": {
+				Name: "DeployStage",
+				Members: []EnumMemberIR{
+					{Name: "Dev"},
+					{Name: "Prod"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{
+		Context:        context.Background(),
+		TargetFunction: "deploy",
+		FunctionArgs: []FunctionArg{
+			{Value: map[string]any{"stage": "Staging"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid arguments for function "deploy": parameter "cfg" expects DeployConfig`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_FunctionCallEnumMemberArgument(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtFunctionCall,
+				FunctionCall: &FunctionCallStmtIR{
+					Name: "deploy",
+					Args: []ArgIR{
+						{Value: &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Windows"}},
+					},
+				},
+			},
+		},
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "os", Type: "OS"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Enums: map[string]*EnumTypeIR{
+			"OS": {
+				Name: "OS",
+				Members: []EnumMemberIR{
+					{Name: "Windows"},
+					{Name: "Linux"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_FunctionCallEnumMemberUnknownMember(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtFunctionCall,
+				FunctionCall: &FunctionCallStmtIR{
+					Name: "deploy",
+					Args: []ArgIR{
+						{Value: &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Darwin"}},
+					},
+				},
+			},
+		},
+		Functions: map[string]*FunctionIR{
+			"deploy": {
+				Name: "deploy",
+				Params: []ParamIR{
+					{Name: "os", Type: "OS"},
+				},
+				Body: []*StatementIR{},
+			},
+		},
+		Enums: map[string]*EnumTypeIR{
+			"OS": {
+				Name: "OS",
+				Members: []EnumMemberIR{
+					{Name: "Windows"},
+					{Name: "Linux"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `failed to evaluate function call argument "arg1" for "deploy": unresolved enum member: OS.Darwin`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestResolve_OptionalSelfRecursiveStructTypeAllowed(t *testing.T) {
 	v := vault.NewWithPlanKey([]byte("test-key"))
 
@@ -2514,6 +2842,58 @@ func TestResolve_WhenStatement(t *testing.T) {
 
 	// When statements don't set Taken flag (they match arms)
 	// The test verifies it doesn't crash and matches the correct arm
+}
+
+func TestResolve_WhenStatementWithEnumMemberPattern(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	modeExprID := v.DeclareVariable("MODE", "literal:windows")
+	v.StoreUnresolvedValue(modeExprID, "windows")
+	v.MarkTouched(modeExprID)
+
+	scopes := NewScopeStack()
+	scopes.Define("MODE", modeExprID)
+
+	blocker := &BlockerIR{
+		Kind: BlockerWhen,
+		Condition: &ExprIR{
+			Kind:    ExprVarRef,
+			VarName: "MODE",
+		},
+		Arms: []*WhenArmIR{
+			{
+				Pattern: &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Windows"},
+				Body:    []*StatementIR{},
+			},
+			{
+				Pattern: &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Linux"},
+				Body:    []*StatementIR{},
+			},
+		},
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{{Kind: StmtBlocker, Blocker: blocker}},
+		Enums: map[string]*EnumTypeIR{
+			"OS": {
+				Name: "OS",
+				Members: []EnumMemberIR{
+					{Name: "Windows", Value: &ExprIR{Kind: ExprLiteral, Value: "windows"}},
+					{Name: "Linux", Value: &ExprIR{Kind: ExprLiteral, Value: "linux"}},
+				},
+			},
+		},
+		Scopes: scopes,
+	}
+
+	result, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff(0, result.Statements[0].Blocker.MatchedArm); diff != "" {
+		t.Fatalf("matched arm mismatch (-want +got):\n%s", diff)
+	}
 }
 
 // TestResolve_NestedIfFor tests mixed if and for statements.
