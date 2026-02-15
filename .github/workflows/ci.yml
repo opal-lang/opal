@@ -100,6 +100,7 @@ jobs:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [blacksmith-4vcpu-ubuntu-2404, macos-latest, blacksmith-4vcpu-windows-2025]
         include:
@@ -154,6 +155,17 @@ jobs:
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $ldflags = "-s -w -X main.Version=$version -X main.BuildTime=$buildTime"
           go build -ldflags $ldflags -o "${{ matrix.binary_name }}" ./cli
+
+      - name: Compile all modules (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          Write-Host "Compile-checking all modules and tests for windows/$env:GOARCH..."
+          go test -run TestDoesNotExist -count=1 ./core/... ./runtime/... ./cli/...
 
       - name: Test binary (Linux/macOS)
         if: matrix.goos != 'windows'
@@ -227,6 +239,7 @@ jobs:
       contents: read
       actions: read
     strategy:
+      fail-fast: false
       matrix:
         module: [core, runtime, cli]
     steps:
@@ -317,9 +330,9 @@ jobs:
           tail -n +2 coverage-*.out | grep -v "mode: atomic" >> coverage.out || true
 
       - name: Upload merged coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.out
+          files: ./coverage.out
           flags: unittests
           name: codecov-umbrella
 
@@ -433,7 +446,7 @@ jobs:
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       - name: Build release binaries
@@ -462,7 +475,7 @@ jobs:
               BINARY_NAME="opal-$GOOS-$GOARCH"
             fi
 
-            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
               -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -o "release/$BINARY_NAME" \
               ./cli
@@ -480,7 +493,7 @@ jobs:
           done
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
