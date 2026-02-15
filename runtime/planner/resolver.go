@@ -1543,6 +1543,9 @@ func (r *Resolver) validateStructType(name string, visiting, visited map[string]
 		}
 
 		if visiting[spec.StructName] {
+			if spec.Optional && spec.StructName == name {
+				continue
+			}
 			cycle := structCyclePath(stack, spec.StructName)
 			return fmt.Errorf("recursive struct type is not supported: %s", strings.Join(cycle, " -> "))
 		}

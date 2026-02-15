@@ -447,8 +447,10 @@ func (p *parser) structDecl() {
 
 func (p *parser) skipUnsupportedStructMember() {
 	braceDepth := 0
+	parenDepth := 0
+	bracketDepth := 0
 	for !p.at(lexer.EOF) {
-		if braceDepth == 0 && (p.at(lexer.NEWLINE) || p.at(lexer.COMMA) || p.at(lexer.RBRACE)) {
+		if braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 && (p.at(lexer.NEWLINE) || p.at(lexer.COMMA) || p.at(lexer.RBRACE)) {
 			return
 		}
 
@@ -458,11 +460,39 @@ func (p *parser) skipUnsupportedStructMember() {
 			continue
 		}
 
+		if p.at(lexer.LPAREN) {
+			parenDepth++
+			p.advance()
+			continue
+		}
+
+		if p.at(lexer.LSQUARE) {
+			bracketDepth++
+			p.advance()
+			continue
+		}
+
 		if p.at(lexer.RBRACE) {
 			if braceDepth == 0 {
 				return
 			}
 			braceDepth--
+			p.advance()
+			continue
+		}
+
+		if p.at(lexer.RPAREN) {
+			if parenDepth > 0 {
+				parenDepth--
+			}
+			p.advance()
+			continue
+		}
+
+		if p.at(lexer.RSQUARE) {
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
 			p.advance()
 			continue
 		}

@@ -1795,7 +1795,7 @@ func TestResolve_FunctionArgsStructTypeAcceptsStringMap(t *testing.T) {
 	}
 }
 
-func TestResolve_RecursiveStructTypeRejected(t *testing.T) {
+func TestResolve_OptionalSelfRecursiveStructTypeAllowed(t *testing.T) {
 	v := vault.NewWithPlanKey([]byte("test-key"))
 
 	graph := &ExecutionGraph{
@@ -1804,6 +1804,27 @@ func TestResolve_RecursiveStructTypeRejected(t *testing.T) {
 				Name: "Node",
 				Fields: []StructFieldIR{
 					{Name: "next", Type: "Node?"},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestResolve_RequiredSelfRecursiveStructTypeRejected(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+
+	graph := &ExecutionGraph{
+		Types: map[string]*StructTypeIR{
+			"Node": {
+				Name: "Node",
+				Fields: []StructFieldIR{
+					{Name: "next", Type: "Node"},
 				},
 			},
 		},

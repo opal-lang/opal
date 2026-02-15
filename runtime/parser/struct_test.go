@@ -122,6 +122,35 @@ func TestParseStructMethodsRejected(t *testing.T) {
 	}
 }
 
+func TestParseStructMethodsRejected_MultiArgSignatureRecovery(t *testing.T) {
+	tree := ParseString(`struct Config {
+	fun validate(a, b String) {}
+	env String
+}`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	methodErr := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct methods are not supported" {
+			methodErr = true
+			continue
+		}
+		if err.Message == "missing field type annotation" {
+			t.Fatalf("unexpected cascading field parse error: %v", err)
+		}
+	}
+
+	if diff := cmp.Diff(true, methodErr); diff != "" {
+		t.Fatalf("expected method rejection error (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodesOfKind(tree.Events, NodeStructField)); diff != "" {
+		t.Fatalf("struct field count mismatch after recovery (-want +got):\n%s", diff)
+	}
+}
+
 func countOpenNodesOfKind(events []Event, kind NodeKind) int {
 	count := 0
 	for _, event := range events {
