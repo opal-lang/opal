@@ -34,8 +34,11 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 	invariant.NotNil(ctx, "ctx")
 
-	// Create command with context for cancellation
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if ctx.Err() != nil {
+		return Result{ExitCode: ExitCanceled}, ctx.Err()
+	}
+
+	cmd := exec.Command(argv[0], argv[1:]...)
 
 	// Set working directory (opts.Dir overrides session cwd)
 	if opts.Dir != "" {

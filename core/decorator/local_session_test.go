@@ -3,6 +3,7 @@ package decorator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -381,6 +382,22 @@ func TestLocalSessionForwardsStderr(t *testing.T) {
 	}
 	if stderr.String() != "err\n" {
 		t.Errorf("Stderr: got %q, want %q", stderr.String(), "err\n")
+	}
+}
+
+func TestLocalSessionAlreadyCanceledContext(t *testing.T) {
+	session := NewLocalSession()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := session.Run(ctx, []string{"this-command-should-not-run"}, RunOpts{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	if result.ExitCode != ExitCanceled {
+		t.Fatalf("ExitCode: got %d, want %d", result.ExitCode, ExitCanceled)
 	}
 }
 

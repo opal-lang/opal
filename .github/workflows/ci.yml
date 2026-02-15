@@ -167,6 +167,12 @@ jobs:
           Write-Host "Compile-checking all modules and tests for windows/$env:GOARCH..."
           go test -run TestDoesNotExist -count=1 ./core/... ./runtime/... ./cli/...
 
+      - name: Test cancellation path (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          go test ./core/decorator -run TestLocalSessionAlreadyCanceledContext -count=1
+
       - name: Test binary (Linux/macOS)
         if: matrix.goos != 'windows'
         run: |
