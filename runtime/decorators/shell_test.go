@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
 )
 
@@ -102,8 +103,112 @@ func TestShellDecorator_NewArch_MissingCommandArg(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for missing command arg, got nil")
 	}
-	if result.ExitCode != 127 {
-		t.Errorf("expected exit code 127 for missing command, got: %d", result.ExitCode)
+	if result.ExitCode != decorator.ExitFailure {
+		t.Errorf("expected exit code %d for missing command, got: %d", decorator.ExitFailure, result.ExitCode)
+	}
+}
+
+func TestShellDecorator_ResolveShellNamePrecedence(t *testing.T) {
+	session := decorator.NewLocalSession().WithEnv(map[string]string{"OPAL_SHELL": "pwsh"})
+
+	resolved, err := resolveShellName("cmd", session)
+	if err != nil {
+		t.Fatalf("resolveShellName failed: %v", err)
+	}
+
+	if diff := cmp.Diff("cmd", resolved); diff != "" {
+		t.Fatalf("resolved shell mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellDecorator_ResolveShellNameFromSessionEnv(t *testing.T) {
+	session := decorator.NewLocalSession().WithEnv(map[string]string{"OPAL_SHELL": "pwsh"})
+
+	resolved, err := resolveShellName("", session)
+	if err != nil {
+		t.Fatalf("resolveShellName failed: %v", err)
+	}
+
+	if diff := cmp.Diff("pwsh", resolved); diff != "" {
+		t.Fatalf("resolved shell mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellDecorator_ResolveShellNameDefault(t *testing.T) {
+	resolved, err := resolveShellName("", decorator.NewLocalSession())
+	if err != nil {
+		t.Fatalf("resolveShellName failed: %v", err)
+	}
+
+	if diff := cmp.Diff("bash", resolved); diff != "" {
+		t.Fatalf("resolved shell mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellDecorator_ResolveShellNameInvalidSessionEnv(t *testing.T) {
+	session := decorator.NewLocalSession().WithEnv(map[string]string{"OPAL_SHELL": "fish"})
+
+	_, err := resolveShellName("", session)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `invalid OPAL_SHELL "fish": expected one of bash, pwsh, cmd`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellDecorator_ShellCommandArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		shell   string
+		command string
+		want    []string
+	}{
+		{
+			name:    "bash",
+			shell:   "bash",
+			command: "echo hi",
+			want:    []string{"bash", "-c", "echo hi"},
+		},
+		{
+			name:    "pwsh",
+			shell:   "pwsh",
+			command: "Write-Host hi",
+			want:    []string{"pwsh", "-NoProfile", "-NonInteractive", "-Command", "Write-Host hi"},
+		},
+		{
+			name:    "cmd",
+			shell:   "cmd",
+			command: "echo hi",
+			want:    []string{"cmd", "/C", "echo hi"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := shellCommandArgs(tt.shell, tt.command)
+			if err != nil {
+				t.Fatalf("shellCommandArgs failed: %v", err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("argv mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestShellDecorator_ShellCommandArgsInvalidShell(t *testing.T) {
+	_, err := shellCommandArgs("fish", "echo hi")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `unsupported shell "fish": expected one of bash, pwsh, cmd`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
 	}
 }
 

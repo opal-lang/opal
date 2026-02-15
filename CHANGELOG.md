@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Rejected unsupported struct inheritance and struct methods with explicit parser diagnostics
 - Added deterministic validation for duplicate struct declarations/fields and required recursive struct type cycles, while allowing optional self-references (`Node?`)
 - Fixed struct inheritance error recovery so malformed declarations do not consume subsequent top-level declarations
+- Changed local-session cancellation semantics to use OS-specific termination paths (Unix process-group kill, Windows process-tree kill) with context-first early cancellation
+- Added `@shell(..., shell="bash|pwsh|cmd")` with `OPAL_SHELL` fallback and deterministic shell resolution
 
 ### 2026-02-14
 - Added deterministic function-call cycle detection with explicit call-path errors for recursive and mutual `fun` expansion

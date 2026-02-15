@@ -22,7 +22,7 @@ jobs:
 
   format-check:
     name: Format Check
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +75,7 @@ jobs:
 
   lint:
     name: Lint (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       matrix:
         module: [core, runtime, cli]
@@ -100,15 +100,22 @@ jobs:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest, blacksmith-4vcpu-windows-2025]
         include:
-          - os: ubuntu-latest
+          - os: blacksmith-4vcpu-ubuntu-2404
             goos: linux
             goarch: amd64
+            binary_name: opal-linux-amd64
           - os: macos-latest
             goos: darwin
             goarch: amd64
+            binary_name: opal-darwin-amd64
+          - os: blacksmith-4vcpu-windows-2025
+            goos: windows
+            goarch: amd64
+            binary_name: opal-windows-amd64.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,7 +126,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.work.sum
 
-      - name: Build binary
+      - name: Build binary (Linux/macOS)
+        if: matrix.goos != 'windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -130,29 +138,125 @@ jobs:
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
-            -o opal-${{ matrix.goos }}-${{ matrix.goarch }} \
+            -o ${{ matrix.binary_name }} \
             ./cli
 
-      - name: Test binary
+      - name: Build binary (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          Write-Host "Building opal for $env:GOOS/$env:GOARCH..."
+          $version = (git describe --tags --always --dirty) 2>$null
+          if (-not $version) { $version = "dev" }
+          $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ldflags = "-s -w -X main.Version=$version -X main.BuildTime=$buildTime"
+          go build -ldflags $ldflags -o "${{ matrix.binary_name }}" ./cli
+
+      - name: Compile all modules (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          Write-Host "Compile-checking all modules and tests for windows/$env:GOARCH..."
+          go test -run TestDoesNotExist -count=1 ./core/... ./runtime/... ./cli/...
+
+      - name: Test cancellation path (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          go test ./core/decorator -run TestLocalSessionAlreadyCanceledContext -count=1
+
+      - name: Test binary (Linux/macOS)
+        if: matrix.goos != 'windows'
         run: |
           echo "Testing built binary..."
-          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --help
+          ./${{ matrix.binary_name }} --help
 
           echo 'fun test = echo "Binary test successful"' > test.opl
-          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.opl test
+          ./${{ matrix.binary_name }} --dry-run -f test.opl test
+
+      - name: Test binary (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          Write-Host "Testing built binary..."
+          & ".\${{ matrix.binary_name }}" --help
+          Set-Content -Path test.opl -Value 'fun test = echo "Binary test successful"'
+          & ".\${{ matrix.binary_name }}" --dry-run -f test.opl test
+
+      - name: Verify PowerShell 7+ (Windows required)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) {
+            Write-Error "PowerShell 7+ is required on Windows runners"
+            exit 1
+          }
+
+      - name: System smoke (Windows cmd shell, best-effort)
+        if: matrix.goos == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Set-Content -Path smoke-cmd.opl -Value 'fun hello = echo %ComSpec%'
+          $env:OPAL_SHELL = "cmd"
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-cmd.opl hello
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -notmatch "cmd.exe") {
+            Write-Error "Expected cmd shell output, got: $output"
+            exit 1
+          }
+
+      - name: System smoke (Windows pwsh shell)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          Set-Content -Path smoke-pwsh.opl -Value "fun hello = Write-Output `$PSVersionTable.PSVersion.Major"
+          $env:OPAL_SHELL = "pwsh"
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.opl hello
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -notmatch "[0-9]") {
+            Write-Error "Expected pwsh shell output, got: $output"
+            exit 1
+          }
+
+      - name: System smoke (Windows bash shell, best-effort)
+        if: matrix.goos == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          if (Get-Command bash -ErrorAction SilentlyContinue) {
+            Set-Content -Path smoke-bash.opl -Value 'fun hello = echo $BASH_VERSION'
+            $env:OPAL_SHELL = "bash"
+            $output = & ".\${{ matrix.binary_name }}" -f smoke-bash.opl hello
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($output -notmatch "[0-9]") {
+              Write-Error "Expected bash shell output, got: $output"
+              exit 1
+            }
+          } else {
+            Write-Host "bash not present on runner; skipping bash smoke test"
+          }
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: opal-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: opal-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: ${{ matrix.binary_name }}
+          path: ${{ matrix.binary_name }}
 
   nix-development:
     name: Nix Development (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -182,19 +286,26 @@ jobs:
           nix develop --command go version
           nix develop --command gofumpt --version || echo "gofumpt not required in shell"
 
+      - name: Cross-check Windows compile in Nix shell
+        if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
+        run: |
+          echo "Cross-checking Windows build target from Linux Nix shell..."
+          nix develop --command bash -lc 'GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -run TestDoesNotExist -count=1 -exec=true ./core/... ./runtime/... ./cli/...'
+
   # =============================================================================
   # PHASE 2: Module Testing (All run in parallel after lint)
   # =============================================================================
 
   test:
     name: Test (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [lint]
     timeout-minutes: 15
     permissions:
       contents: read
       actions: read
     strategy:
+      fail-fast: false
       matrix:
         module: [core, runtime, cli]
     steps:
@@ -265,7 +376,7 @@ jobs:
 
   aggregate-coverage:
     name: Aggregate Coverage
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [test]
     steps:
       - name: Checkout
@@ -285,9 +396,9 @@ jobs:
           tail -n +2 coverage-*.out | grep -v "mode: atomic" >> coverage.out || true
 
       - name: Upload merged coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.out
+          files: ./coverage.out
           flags: unittests
           name: codecov-umbrella
 
@@ -303,7 +414,7 @@ jobs:
 
   summary:
     name: CI Summary
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [format-check, lint, build, nix-development, test, aggregate-coverage]
     if: always()
     steps:
@@ -349,7 +460,7 @@ jobs:
 
   latest-builds:
     name: Latest Development Builds
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [summary]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
@@ -385,7 +496,7 @@ jobs:
 
   release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout
@@ -401,7 +512,7 @@ jobs:
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       - name: Build release binaries
@@ -430,7 +541,7 @@ jobs:
               BINARY_NAME="opal-$GOOS-$GOARCH"
             fi
 
-            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
               -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -o "release/$BINARY_NAME" \
               ./cli
@@ -448,7 +559,7 @@ jobs:
           done
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}

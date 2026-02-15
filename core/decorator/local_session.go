@@ -8,14 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 
 	"github.com/opal-lang/opal/core/invariant"
 )
-
-const osWindows = "windows"
 
 // LocalSession implements Session for local command execution.
 // Uses os/exec to run commands on the local machine.
@@ -38,8 +34,11 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 	invariant.NotNil(ctx, "ctx")
 
-	// Create command with context for cancellation
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if ctx.Err() != nil {
+		return Result{ExitCode: ExitCanceled}, ctx.Err()
+	}
+
+	cmd := exec.Command(argv[0], argv[1:]...)
 
 	// Set working directory (opts.Dir overrides session cwd)
 	if opts.Dir != "" {
@@ -51,14 +50,7 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 	// Set environment (merge session env)
 	cmd.Env = mapToEnv(s.env)
 
-	// CRITICAL: Set process group for proper cancellation
-	// On Unix: Setpgid=true creates new process group
-	// We manually kill the entire group on cancellation below
-	if runtime.GOOS != osWindows {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-		}
-	}
+	configureCommandForCancellation(cmd)
 
 	// Wire up I/O
 	if opts.Stdin != nil {
@@ -90,12 +82,7 @@ func (s *LocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Re
 
 	select {
 	case <-ctx.Done():
-		// Context canceled - kill entire process group
-		if runtime.GOOS != osWindows && cmd.Process != nil {
-			// Send SIGKILL to process group (negative PID)
-			// This kills the parent and all children in the group
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+		terminateCommandOnCancel(cmd)
 		// Wait for process to actually exit
 		<-done
 		return Result{ExitCode: -1}, ctx.Err()

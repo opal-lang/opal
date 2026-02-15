@@ -328,11 +328,40 @@ When ASCII characters follow a decorator reference without spacing, use `()` to 
 echo "@var.service()_backup"
 ```
 
+## 7.5 `@shell` shell selection
+
+`@shell` accepts an optional `shell` argument.
+
+- `shell="bash"`
+- `shell="pwsh"`
+- `shell="cmd"`
+
+Resolution order:
+
+1. `@shell(..., shell=...)`
+2. session environment `OPAL_SHELL`
+3. default `bash`
+
+Shell support policy:
+
+- Windows required: `pwsh` (PowerShell 7+)
+- Windows best-effort: `cmd`, `bash`
+- Unix targets: shell availability is target-dependent (`bash` default unless overridden)
+
+Execution contract:
+
+- Opal preserves command text and passes it to the selected shell.
+- Opal does not normalize shell syntax across shells (env syntax, quoting, builtins, and path rules remain shell-native).
+- Use explicit `shell=...` when command text depends on shell-specific syntax.
+- Opal-owned operators (`|`, `&&`, `||`, `;`, `>`, `>>`) are parsed and planned before shell execution.
+
 ## 8. Shell Execution Semantics
 
 Shell commands are runtime operations.
 
 The parser preserves shell argument boundaries through lexer spacing metadata.
+
+Plan-time metaprogramming decides *which* commands run; runtime `@shell` decides *how* each command is executed via the selected shell.
 
 ### 8.1 Command composition
 
@@ -362,6 +391,16 @@ Block lines execute in order.
 
 - newline-separated steps stop at first failure unless control flow/decorator policy changes behavior
 - semicolon chaining follows shell continuation semantics
+
+### 8.4 Operator ownership constraints
+
+Operator semantics are runtime-contract semantics, not shell-dialect semantics.
+
+- Opal parses operator structure and builds execution trees independent of selected shell.
+- Selected shell affects only leaf command execution (`command` text in `@shell`).
+- Changing shell (`bash`, `pwsh`, `cmd`) does not change Opal operator precedence or control flow behavior.
+
+Future extensions may introduce shell-dialect-aware execution modes for specific transports, but this contract keeps operator ownership in Opal.
 
 ## 9. Control Flow Semantics
 
