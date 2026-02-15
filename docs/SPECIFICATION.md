@@ -328,6 +328,20 @@ When ASCII characters follow a decorator reference without spacing, use `()` to 
 echo "@var.service()_backup"
 ```
 
+## 7.5 `@shell` shell selection
+
+`@shell` accepts an optional `shell` argument.
+
+- `shell="bash"`
+- `shell="pwsh"`
+- `shell="cmd"`
+
+Resolution order:
+
+1. `@shell(..., shell=...)`
+2. session environment `OPAL_SHELL`
+3. default `bash`
+
 ## 8. Shell Execution Semantics
 
 Shell commands are runtime operations.

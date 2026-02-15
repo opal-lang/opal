@@ -191,6 +191,49 @@ jobs:
           Set-Content -Path test.opl -Value 'fun test = echo "Binary test successful"'
           & ".\${{ matrix.binary_name }}" --dry-run -f test.opl test
 
+      - name: System smoke (Windows cmd shell)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          Set-Content -Path smoke-cmd.opl -Value 'fun hello = echo %ComSpec%'
+          $env:OPAL_SHELL = "cmd"
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-cmd.opl hello
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -notmatch "cmd.exe") {
+            Write-Error "Expected cmd shell output, got: $output"
+            exit 1
+          }
+
+      - name: System smoke (Windows pwsh shell)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          Set-Content -Path smoke-pwsh.opl -Value 'fun hello = Write-Output $PSVersionTable.PSVersion.Major'
+          $env:OPAL_SHELL = "pwsh"
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.opl hello
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -notmatch "[0-9]") {
+            Write-Error "Expected pwsh shell output, got: $output"
+            exit 1
+          }
+
+      - name: System smoke (Windows bash shell, optional)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          if (Get-Command bash -ErrorAction SilentlyContinue) {
+            Set-Content -Path smoke-bash.opl -Value 'fun hello = echo $BASH_VERSION'
+            $env:OPAL_SHELL = "bash"
+            $output = & ".\${{ matrix.binary_name }}" -f smoke-bash.opl hello
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($output -notmatch "[0-9]") {
+              Write-Error "Expected bash shell output, got: $output"
+              exit 1
+            }
+          } else {
+            Write-Host "bash not present on runner; skipping bash smoke test"
+          }
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
@@ -231,6 +274,12 @@ jobs:
           echo "Verifying Go tools are available in Nix shell..."
           nix develop --command go version
           nix develop --command gofumpt --version || echo "gofumpt not required in shell"
+
+      - name: Cross-check Windows compile in Nix shell
+        if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
+        run: |
+          echo "Cross-checking Windows build target from Linux Nix shell..."
+          nix develop --command bash -lc 'GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -run TestDoesNotExist -count=1 ./core/... ./runtime/... ./cli/...'
 
   # =============================================================================
   # PHASE 2: Module Testing (All run in parallel after lint)
