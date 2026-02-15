@@ -73,6 +73,24 @@ func TestExprIR_VarRef(t *testing.T) {
 	}
 }
 
+func TestExprIR_EnumMemberRef(t *testing.T) {
+	expr := &ExprIR{
+		Kind:       ExprEnumMemberRef,
+		EnumName:   "OS",
+		EnumMember: "Windows",
+	}
+
+	if expr.Kind != ExprEnumMemberRef {
+		t.Errorf("Kind = %v, want ExprEnumMemberRef", expr.Kind)
+	}
+	if diff := cmp.Diff("OS", expr.EnumName); diff != "" {
+		t.Errorf("EnumName mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("Windows", expr.EnumMember); diff != "" {
+		t.Errorf("EnumMember mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestExprIR_DecoratorRef(t *testing.T) {
 	expr := &ExprIR{
 		Kind: ExprDecoratorRef,
@@ -434,6 +452,32 @@ func TestEvaluateExpr_VarRef_NotFound(t *testing.T) {
 	// Error should mention the variable name
 	if !contains(err.Error(), "MISSING") {
 		t.Errorf("error = %q, want to contain %q", err.Error(), "MISSING")
+	}
+}
+
+func TestEvaluateExpr_EnumMemberRef_Found(t *testing.T) {
+	expr := &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Windows"}
+
+	result, err := EvaluateExpr(expr, mapLookup(map[string]any{"OS.Windows": "windows"}))
+	if err != nil {
+		t.Fatalf("EvaluateExpr() error = %v", err)
+	}
+
+	if diff := cmp.Diff("windows", result); diff != "" {
+		t.Errorf("result mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEvaluateExpr_EnumMemberRef_NotFound(t *testing.T) {
+	expr := &ExprIR{Kind: ExprEnumMemberRef, EnumName: "OS", EnumMember: "Darwin"}
+
+	_, err := EvaluateExpr(expr, mapLookup(nil))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if diff := cmp.Diff("unresolved enum member: OS.Darwin", err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
 	}
 }
 

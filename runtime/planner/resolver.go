@@ -132,6 +132,9 @@ type Resolver struct {
 	pendingCalls     []decoratorCall   // Decorator calls to batch resolve
 	errors           []error           // Collected errors
 	callFrames       []callFrame       // Active function call frames (for cycle/depth guards)
+	structSchemas    map[string]types.ParamSchema
+	enumSchemas      map[string]types.ParamSchema
+	enumMemberValues map[string]string
 
 	// @env allowance context (non-idempotent transports forbid @env)
 	envAllowed      bool
@@ -170,6 +173,7 @@ type ResolveConfig struct {
 type ResolveResult struct {
 	Statements       []*StatementIR    // Pruned tree (only taken branches, nested blockers resolved)
 	DecoratorExprIDs map[string]string // Decorator key → exprID for display ID lookup
+	EnumMemberValues map[string]string // Enum member key (Type.Member) -> resolved string value
 }
 
 // decoratorCall represents a decorator call to be batch resolved.
@@ -205,6 +209,9 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		telemetry:        config.Telemetry,
 		telemetryLevel:   config.TelemetryLevel,
 		decoratorExprIDs: make(map[string]string),
+		structSchemas:    make(map[string]types.ParamSchema),
+		enumSchemas:      make(map[string]types.ParamSchema),
+		enumMemberValues: make(map[string]string),
 		envAllowed:       true,
 	}
 
@@ -228,7 +235,8 @@ func (r *Resolver) checkContext() error {
 //
 // Lookup order:
 //  1. Variable name → exprID via ScopeStack → value via Vault
-//  2. Decorator key → exprID via decoratorExprIDs → value via Vault
+//  2. Enum member key (Type.Member) → constant value
+//  3. Decorator key → exprID via decoratorExprIDs → value via Vault
 func (r *Resolver) getValue(name string) (any, bool) {
 	// Try variable lookup first (via scope)
 	if r.scopes != nil {
@@ -236,6 +244,11 @@ func (r *Resolver) getValue(name string) (any, bool) {
 			return r.vault.GetUnresolvedValue(exprID)
 		}
 	}
+
+	if value, ok := r.enumMemberValues[name]; ok {
+		return value, true
+	}
+
 	// Try decorator key lookup
 	if exprID, ok := r.decoratorExprIDs[name]; ok {
 		return r.vault.GetUnresolvedValue(exprID)
@@ -258,6 +271,10 @@ func (r *Resolver) getValue(name string) (any, bool) {
 //   - For-loops have Iterations populated with deep-copied bodies
 //   - All nested blockers are recursively resolved
 func (r *Resolver) resolve() (*ResolveResult, error) {
+	if err := r.validateEnumTypes(); err != nil {
+		return nil, err
+	}
+
 	if err := r.validateStructTypes(); err != nil {
 		return nil, err
 	}
@@ -294,9 +311,15 @@ func (r *Resolver) resolve() (*ResolveResult, error) {
 		decoratorExprIDs[key] = exprID
 	}
 
+	enumMemberValues := make(map[string]string, len(r.enumMemberValues))
+	for key, value := range r.enumMemberValues {
+		enumMemberValues[key] = value
+	}
+
 	return &ResolveResult{
 		Statements:       resolved,
 		DecoratorExprIDs: decoratorExprIDs,
+		EnumMemberValues: enumMemberValues,
 	}, nil
 }
 
@@ -1313,6 +1336,7 @@ func (r *Resolver) validateCommandModeTopLevel() error {
 type functionParamBinding struct {
 	Name        string
 	Type        functionParamTypeSpec
+	Schema      types.ParamSchema
 	HasDefault  bool
 	Default     any
 	DefaultExpr *ExprIR
@@ -1324,6 +1348,8 @@ type functionParamTypeSpec struct {
 	Optional   bool
 	StructName string
 	StructDef  *StructTypeIR
+	EnumName   string
+	EnumDef    *EnumTypeIR
 }
 
 func (r *Resolver) bindFunctionArguments(fn *FunctionIR) error {
@@ -1377,7 +1403,7 @@ func (r *Resolver) bindFunctionArgumentsWithArgs(fn *FunctionIR, args []Function
 			}
 		}
 
-		if !r.isFunctionParamType(value, binding.Type) {
+		if err := r.validateFunctionParamValue(binding.Name, binding.Schema, binding.Type, value); err != nil {
 			return fmt.Errorf("invalid arguments for function %q: parameter %q expects %s", fn.Name, binding.Name, functionTypeSpecLabel(binding.Type))
 		}
 
@@ -1450,14 +1476,12 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 			return types.DecoratorSchema{}, nil, fmt.Errorf("invalid default for parameter %q in function %q: expects %s", param.Name, fn.Name, functionTypeSpecLabel(expectedType))
 		}
 
-		paramSchema := types.ParamSchema{
-			Name:     param.Name,
-			Required: !hasDefault,
-			Default:  defaultValue,
+		paramSchema, err := r.buildParamSchemaForFunctionType(param.Name, expectedType, map[string]bool{})
+		if err != nil {
+			return types.DecoratorSchema{}, nil, fmt.Errorf("function %q parameter %q: %w", fn.Name, param.Name, err)
 		}
-		if !expectedType.Optional {
-			paramSchema.Type = expectedType.Kind
-		}
+		paramSchema.Required = !hasDefault
+		paramSchema.Default = defaultValue
 
 		schema.Parameters[param.Name] = paramSchema
 		schema.ParameterOrder = append(schema.ParameterOrder, param.Name)
@@ -1465,6 +1489,7 @@ func (r *Resolver) buildFunctionParamSchema(fn *FunctionIR) (types.DecoratorSche
 		bindings = append(bindings, functionParamBinding{
 			Name:        param.Name,
 			Type:        expectedType,
+			Schema:      paramSchema,
 			HasDefault:  hasDefault,
 			Default:     defaultValue,
 			DefaultExpr: param.Default,
@@ -1488,6 +1513,376 @@ func buildFunctionRawArgs(args []FunctionArg) (map[string]any, error) {
 		raw[arg.Name] = arg.Value
 	}
 	return raw, nil
+}
+
+func (r *Resolver) buildParamSchemaForFunctionType(name string, expected functionParamTypeSpec, stack map[string]bool) (types.ParamSchema, error) {
+	if expected.EnumName != "" {
+		enumSchema, err := r.buildEnumParamSchema(expected.EnumName, expected.EnumDef)
+		if err != nil {
+			return types.ParamSchema{}, err
+		}
+
+		enumSchema.Name = name
+		return enumSchema, nil
+	}
+
+	if expected.StructName == "" {
+		return types.ParamSchema{Name: name, Type: expected.Kind}, nil
+	}
+
+	structSchema, err := r.buildStructParamSchema(expected.StructName, stack)
+	if err != nil {
+		return types.ParamSchema{}, err
+	}
+
+	structSchema.Name = name
+	return structSchema, nil
+}
+
+func enumBaseParamType(raw string) (types.ParamType, error) {
+	if raw == "" {
+		return types.TypeEnum, nil
+	}
+
+	if strings.HasSuffix(raw, "?") {
+		return "", fmt.Errorf("base type cannot be optional")
+	}
+
+	switch strings.ToLower(raw) {
+	case "string":
+		return types.TypeEnum, nil
+	default:
+		return "", fmt.Errorf("base type %q is not supported (use String)", raw)
+	}
+}
+
+func (r *Resolver) buildEnumParamSchema(enumName string, decl *EnumTypeIR) (types.ParamSchema, error) {
+	if cached, ok := r.enumSchemas[enumName]; ok {
+		return cloneParamSchema(cached), nil
+	}
+
+	if decl == nil {
+		return types.ParamSchema{}, fmt.Errorf("unknown enum type %q", enumName)
+	}
+
+	if _, err := enumBaseParamType(decl.BaseType); err != nil {
+		return types.ParamSchema{}, fmt.Errorf("enum %q: %w", enumName, err)
+	}
+
+	if len(decl.Members) == 0 {
+		return types.ParamSchema{}, fmt.Errorf("enum %q must declare at least one member", enumName)
+	}
+
+	memberNames := make(map[string]struct{}, len(decl.Members))
+	memberValues := make([]string, 0, len(decl.Members))
+	seenValues := make(map[string]struct{}, len(decl.Members))
+
+	for _, member := range decl.Members {
+		if _, exists := memberNames[member.Name]; exists {
+			return types.ParamSchema{}, fmt.Errorf("enum %q has duplicate member %q", enumName, member.Name)
+		}
+		memberNames[member.Name] = struct{}{}
+
+		value, err := enumMemberStringValue(enumName, member)
+		if err != nil {
+			return types.ParamSchema{}, err
+		}
+
+		if _, exists := seenValues[value]; exists {
+			return types.ParamSchema{}, fmt.Errorf("enum %q has duplicate value %q", enumName, value)
+		}
+		seenValues[value] = struct{}{}
+		memberValues = append(memberValues, value)
+	}
+
+	schema := types.ParamSchema{
+		Name: enumName,
+		Type: types.TypeEnum,
+		EnumSchema: &types.EnumSchema{
+			Values: memberValues,
+		},
+	}
+
+	r.enumSchemas[enumName] = cloneParamSchema(schema)
+	return schema, nil
+}
+
+func enumMemberStringValue(enumName string, member EnumMemberIR) (string, error) {
+	if member.Value == nil {
+		return member.Name, nil
+	}
+
+	if member.Value.Kind != ExprLiteral {
+		return "", fmt.Errorf("enum %q member %q must use a literal value", enumName, member.Name)
+	}
+
+	value, ok := member.Value.Value.(string)
+	if !ok {
+		return "", fmt.Errorf("enum %q member %q expects string literal value", enumName, member.Name)
+	}
+
+	return value, nil
+}
+
+func (r *Resolver) buildStructParamSchema(structName string, stack map[string]bool) (types.ParamSchema, error) {
+	if cached, ok := r.structSchemas[structName]; ok {
+		return cloneParamSchema(cached), nil
+	}
+
+	decl, ok := r.graph.Types[structName]
+	if !ok || decl == nil {
+		return types.ParamSchema{}, fmt.Errorf("unknown struct type %q", structName)
+	}
+
+	if stack[structName] {
+		return types.ParamSchema{}, fmt.Errorf("recursive struct type is not supported: %s", structName)
+	}
+
+	stack[structName] = true
+	defer delete(stack, structName)
+
+	required := make([]string, 0, len(decl.Fields))
+	fields := make(map[string]types.ParamSchema, len(decl.Fields))
+
+	for _, field := range decl.Fields {
+		spec, hasType, err := r.parseFunctionParamType(field.Type)
+		if err != nil || !hasType {
+			if err != nil {
+				return types.ParamSchema{}, fmt.Errorf("struct %q field %q: %w", structName, field.Name, err)
+			}
+			return types.ParamSchema{}, fmt.Errorf("struct %q field %q is missing type annotation", structName, field.Name)
+		}
+
+		fieldSchema, err := r.buildStructFieldSchema(structName, field.Name, spec, stack)
+		if err != nil {
+			return types.ParamSchema{}, err
+		}
+
+		fieldSchema.Name = field.Name
+		fields[field.Name] = fieldSchema
+
+		if field.Default == nil && !spec.Optional {
+			required = append(required, field.Name)
+		}
+	}
+
+	sort.Strings(required)
+
+	schema := types.ParamSchema{
+		Name: structName,
+		Type: types.TypeObject,
+		ObjectSchema: &types.ObjectSchema{
+			Fields:               fields,
+			Required:             required,
+			AdditionalProperties: false,
+		},
+	}
+
+	r.structSchemas[structName] = cloneParamSchema(schema)
+	return schema, nil
+}
+
+func (r *Resolver) buildStructFieldSchema(ownerStruct, fieldName string, spec functionParamTypeSpec, stack map[string]bool) (types.ParamSchema, error) {
+	if spec.EnumName != "" {
+		enumSchema, err := r.buildEnumParamSchema(spec.EnumName, spec.EnumDef)
+		if err != nil {
+			return types.ParamSchema{}, err
+		}
+
+		enumSchema.Name = fieldName
+		return enumSchema, nil
+	}
+
+	if spec.StructName == "" {
+		return types.ParamSchema{Name: fieldName, Type: spec.Kind}, nil
+	}
+
+	if stack[spec.StructName] {
+		if spec.Optional && spec.StructName == ownerStruct {
+			// Optional self-reference stays opaque in schema form to avoid recursive schema expansion.
+			return types.ParamSchema{Name: fieldName, Type: types.TypeObject}, nil
+		}
+		return types.ParamSchema{}, fmt.Errorf("recursive struct type is not supported: %s -> %s", ownerStruct, spec.StructName)
+	}
+
+	nested, err := r.buildStructParamSchema(spec.StructName, stack)
+	if err != nil {
+		return types.ParamSchema{}, err
+	}
+
+	nested.Name = fieldName
+	return nested, nil
+}
+
+func cloneParamSchema(schema types.ParamSchema) types.ParamSchema {
+	cloned := schema
+	if schema.ObjectSchema != nil {
+		fields := make(map[string]types.ParamSchema, len(schema.ObjectSchema.Fields))
+		for name, field := range schema.ObjectSchema.Fields {
+			fields[name] = cloneParamSchema(field)
+		}
+
+		required := append([]string(nil), schema.ObjectSchema.Required...)
+		cloned.ObjectSchema = &types.ObjectSchema{
+			Fields:               fields,
+			Required:             required,
+			AdditionalProperties: schema.ObjectSchema.AdditionalProperties,
+		}
+	}
+
+	if schema.ArraySchema != nil {
+		arrayClone := *schema.ArraySchema
+		if schema.ArraySchema.ElementSchema != nil {
+			element := cloneParamSchema(*schema.ArraySchema.ElementSchema)
+			arrayClone.ElementSchema = &element
+		}
+		cloned.ArraySchema = &arrayClone
+	}
+
+	if schema.EnumSchema != nil {
+		enumClone := *schema.EnumSchema
+		enumClone.Values = append([]string(nil), schema.EnumSchema.Values...)
+		if schema.EnumSchema.DeprecatedValues != nil {
+			enumClone.DeprecatedValues = make(map[string]string, len(schema.EnumSchema.DeprecatedValues))
+			for old, replacement := range schema.EnumSchema.DeprecatedValues {
+				enumClone.DeprecatedValues[old] = replacement
+			}
+		}
+		cloned.EnumSchema = &enumClone
+	}
+
+	if schema.Enum != nil {
+		enumVals := make([]any, len(schema.Enum))
+		copy(enumVals, schema.Enum)
+		cloned.Enum = enumVals
+	}
+
+	if schema.Examples != nil {
+		examples := make([]string, len(schema.Examples))
+		copy(examples, schema.Examples)
+		cloned.Examples = examples
+	}
+
+	return cloned
+}
+
+func (r *Resolver) validateFunctionParamValue(name string, schema types.ParamSchema, expected functionParamTypeSpec, value any) error {
+	if value == nil {
+		if expected.Optional {
+			return nil
+		}
+		return fmt.Errorf("parameter %q expects %s", name, functionTypeSpecLabel(expected))
+	}
+
+	if expected.Kind == types.TypeDuration {
+		if duration, ok := value.(durationLiteral); ok {
+			value = string(duration)
+		}
+	}
+
+	if expected.StructDef != nil && structHasOptionalSelfReference(expected.StructDef, r) {
+		if !r.isStructValue(value, expected.StructDef) {
+			return fmt.Errorf("parameter %q expects %s", name, functionTypeSpecLabel(expected))
+		}
+		return nil
+	}
+
+	normalized := normalizeOptionalNoneInObjectSchema(value, schema)
+
+	validationSchema := types.DecoratorSchema{
+		Path:           "function-args",
+		Parameters:     map[string]types.ParamSchema{name: schema},
+		ParameterOrder: []string{name},
+	}
+
+	_, err := decorator.ValidateArgs(validationSchema, map[string]any{name: normalized})
+	return err
+}
+
+func structHasOptionalSelfReference(decl *StructTypeIR, resolver *Resolver) bool {
+	if decl == nil {
+		return false
+	}
+
+	for _, field := range decl.Fields {
+		spec, hasType, err := resolver.parseFunctionParamType(field.Type)
+		if err != nil || !hasType {
+			continue
+		}
+		if spec.Optional && spec.StructName == decl.Name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeOptionalNoneInObjectSchema(value any, schema types.ParamSchema) any {
+	if schema.Type != types.TypeObject || schema.ObjectSchema == nil {
+		return value
+	}
+
+	objectValue, ok := toAnyObject(value)
+	if !ok {
+		return value
+	}
+
+	required := make(map[string]struct{}, len(schema.ObjectSchema.Required))
+	for _, name := range schema.ObjectSchema.Required {
+		required[name] = struct{}{}
+	}
+
+	normalized := make(map[string]any, len(objectValue))
+	for key, fieldValue := range objectValue {
+		fieldSchema, exists := schema.ObjectSchema.Fields[key]
+		if !exists {
+			normalized[key] = fieldValue
+			continue
+		}
+
+		if fieldValue == nil {
+			if _, isRequired := required[key]; !isRequired {
+				continue
+			}
+			normalized[key] = fieldValue
+			continue
+		}
+
+		normalized[key] = normalizeOptionalNoneInObjectSchema(fieldValue, fieldSchema)
+	}
+
+	return normalized
+}
+
+func (r *Resolver) validateEnumTypes() error {
+	if r.graph == nil || len(r.graph.Enums) == 0 {
+		return nil
+	}
+
+	clear(r.enumMemberValues)
+
+	names := make([]string, 0, len(r.graph.Enums))
+	for name := range r.graph.Enums {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		decl := r.graph.Enums[name]
+		if _, err := r.buildEnumParamSchema(name, decl); err != nil {
+			return err
+		}
+
+		for _, member := range decl.Members {
+			value, err := enumMemberStringValue(name, member)
+			if err != nil {
+				return err
+			}
+			r.enumMemberValues[enumMemberRefKey(name, member.Name)] = value
+		}
+	}
+
+	return nil
 }
 
 func (r *Resolver) validateStructTypes() error {
@@ -1602,6 +1997,22 @@ func (r *Resolver) parseFunctionParamType(raw string) (functionParamTypeSpec, bo
 	case "map", "object":
 		return functionParamTypeSpec{Kind: types.TypeObject, Optional: optional}, true, nil
 	default:
+		if r.graph != nil && r.graph.Enums != nil {
+			if decl, ok := r.graph.Enums[baseType]; ok {
+				baseKind, err := enumBaseParamType(decl.BaseType)
+				if err != nil {
+					return functionParamTypeSpec{}, false, fmt.Errorf("enum %q: %w", baseType, err)
+				}
+
+				return functionParamTypeSpec{
+					Kind:     baseKind,
+					Optional: optional,
+					EnumName: baseType,
+					EnumDef:  decl,
+				}, true, nil
+			}
+		}
+
 		if r.graph != nil && r.graph.Types != nil {
 			if decl, ok := r.graph.Types[baseType]; ok {
 				return functionParamTypeSpec{
@@ -1623,6 +2034,30 @@ func (r *Resolver) isFunctionParamType(value any, expected functionParamTypeSpec
 
 	if expected.StructDef != nil {
 		return r.isStructValue(value, expected.StructDef)
+	}
+
+	if expected.EnumDef != nil {
+		strValue, ok := value.(string)
+		if !ok {
+			return false
+		}
+
+		schema, err := r.buildEnumParamSchema(expected.EnumName, expected.EnumDef)
+		if err != nil {
+			return false
+		}
+
+		if schema.EnumSchema == nil {
+			return false
+		}
+
+		for _, allowed := range schema.EnumSchema.Values {
+			if strValue == allowed {
+				return true
+			}
+		}
+
+		return false
 	}
 
 	switch expected.Kind {
@@ -1724,6 +2159,9 @@ func (r *Resolver) isStructValue(value any, decl *StructTypeIR) bool {
 
 func functionTypeSpecLabel(expected functionParamTypeSpec) string {
 	label := functionTypeLabel(expected.Kind)
+	if expected.EnumName != "" {
+		label = expected.EnumName
+	}
 	if expected.StructName != "" {
 		label = expected.StructName
 	}
@@ -1791,6 +2229,8 @@ func (r *Resolver) lookupBindingExprID(sourceExpr *ExprIR) (string, bool) {
 		key := decoratorKey(sourceExpr.Decorator)
 		exprID, exists := r.decoratorExprIDs[key]
 		return exprID, exists
+	case ExprEnumMemberRef:
+		return "", false
 	default:
 		return "", false
 	}
@@ -1854,6 +2294,15 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 		// For decorator refs, the value will be stored after batch resolution
 		// Mark as touched now so it's included in resolution
 		r.vault.MarkTouched(exprID)
+
+	case ExprEnumMemberRef:
+		value, err := EvaluateExpr(decl.Value, r.getValue)
+		if err != nil {
+			r.errors = append(r.errors, err)
+			return
+		}
+		r.vault.StoreUnresolvedValue(exprID, value)
+		r.vault.MarkTouched(exprID)
 	}
 }
 
@@ -1905,6 +2354,9 @@ func (r *Resolver) buildVarDeclRaw(decl *VarDeclIR) string {
 			return fmt.Sprintf("varref:%s:undefined", decl.Value.VarName)
 		}
 		return fmt.Sprintf("varref:%s:%s", decl.Value.VarName, refExprID)
+
+	case ExprEnumMemberRef:
+		return "enumref:" + enumMemberRefKey(decl.Value.EnumName, decl.Value.EnumMember)
 
 	default:
 		return fmt.Sprintf("expr:%s:%d", decl.Name, decl.Value.Kind)
@@ -2099,6 +2551,9 @@ func (r *Resolver) checkTransportBoundaryExpr(expr *ExprIR) error {
 		}
 		return r.vault.CheckTransportBoundary(exprID)
 
+	case ExprEnumMemberRef:
+		return nil
+
 	case ExprBinaryOp:
 		if err := r.checkTransportBoundaryExpr(expr.Left); err != nil {
 			return err
@@ -2125,6 +2580,9 @@ func (r *Resolver) isExprTransportSensitive(expr *ExprIR) bool {
 
 	switch expr.Kind {
 	case ExprLiteral:
+		return false
+
+	case ExprEnumMemberRef:
 		return false
 
 	case ExprVarRef:

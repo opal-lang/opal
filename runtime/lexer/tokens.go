@@ -25,6 +25,7 @@ const (
 	// Language structure
 	FUN       // fun - command definition
 	STRUCT    // struct - user-defined type declaration
+	ENUM      // enum - user-defined enum declaration
 	VAR       // var
 	AS        // as - explicit cast operator
 	AT        // @
@@ -247,6 +248,8 @@ func (t TokenType) String() string {
 		return "FUN"
 	case STRUCT:
 		return "STRUCT"
+	case ENUM:
+		return "ENUM"
 	case VAR:
 		return "VAR"
 	case AS:
@@ -357,6 +360,7 @@ func (t TokenType) String() string {
 var Keywords = map[string]TokenType{
 	"fun":     FUN,
 	"struct":  STRUCT,
+	"enum":    ENUM,
 	"for":     FOR,
 	"in":      IN,
 	"if":      IF,

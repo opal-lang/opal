@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -21,6 +22,7 @@ type Emitter struct {
 	vault            *vault.Vault
 	scopes           *ScopeStack
 	decoratorExprIDs map[string]string
+	enumMemberValues map[string]string
 	target           string
 	transportKey     []byte
 
@@ -36,8 +38,10 @@ type Emitter struct {
 // NewEmitter creates a new Emitter.
 func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, target string) *Emitter {
 	var decoratorExprIDs map[string]string
+	var enumMemberValues map[string]string
 	if result != nil {
 		decoratorExprIDs = result.DecoratorExprIDs
+		enumMemberValues = result.EnumMemberValues
 	}
 
 	localID := localTransportID(v.GetPlanKey())
@@ -47,6 +51,7 @@ func NewEmitter(result *ResolveResult, v *vault.Vault, scopes *ScopeStack, targe
 		vault:            v,
 		scopes:           scopes,
 		decoratorExprIDs: decoratorExprIDs,
+		enumMemberValues: enumMemberValues,
 		target:           target,
 		transportKey:     v.GetPlanKey(),
 		nextStepID:       1,
@@ -252,9 +257,13 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	}
 
 	for _, arg := range cmd.Args {
+		argValue, err := e.buildArgValue(arg.Value, displayIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate command argument %q: %w", arg.Name, err)
+		}
 		args = append(args, planfmt.Arg{
 			Key: arg.Name,
-			Val: e.buildArgValue(arg.Value, displayIDs),
+			Val: argValue,
 		})
 	}
 
@@ -578,6 +587,9 @@ func (e *Emitter) getValue(name string) (any, bool) {
 			return e.vault.GetUnresolvedValue(exprID)
 		}
 	}
+	if value, ok := e.enumMemberValues[name]; ok {
+		return value, true
+	}
 	if exprID, ok := e.decoratorExprIDs[name]; ok {
 		return e.vault.GetUnresolvedValue(exprID)
 	}
@@ -663,67 +675,93 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string, p
 	}
 }
 
-func (e *Emitter) buildArgValue(expr *ExprIR, displayIDs map[string]string) planfmt.Value {
+func (e *Emitter) buildArgValue(expr *ExprIR, displayIDs map[string]string) (planfmt.Value, error) {
 	if expr == nil {
-		return planfmt.Value{Kind: planfmt.ValueString, Str: ""}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: ""}, nil
 	}
 
 	switch expr.Kind {
 	case ExprLiteral:
 		return e.literalToArgValue(expr.Value, displayIDs)
 	case ExprVarRef, ExprDecoratorRef:
-		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
-	case ExprBinaryOp:
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}, nil
+	case ExprBinaryOp, ExprEnumMemberRef:
 		if value, err := EvaluateExpr(expr, e.getValue); err == nil {
 			return e.literalToArgValue(value, displayIDs)
+		} else if isUnresolvedEnumError(err) {
+			return planfmt.Value{}, err
 		}
-		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}, nil
 	default:
-		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: RenderExpr(expr, displayIDs)}, nil
 	}
 }
 
-func (e *Emitter) literalToArgValue(value any, displayIDs map[string]string) planfmt.Value {
+func (e *Emitter) literalToArgValue(value any, displayIDs map[string]string) (planfmt.Value, error) {
 	switch val := value.(type) {
 	case string:
-		return planfmt.Value{Kind: planfmt.ValueString, Str: val}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: val}, nil
 	case int:
-		return planfmt.Value{Kind: planfmt.ValueInt, Int: int64(val)}
+		return planfmt.Value{Kind: planfmt.ValueInt, Int: int64(val)}, nil
 	case int64:
-		return planfmt.Value{Kind: planfmt.ValueInt, Int: val}
+		return planfmt.Value{Kind: planfmt.ValueInt, Int: val}, nil
 	case bool:
-		return planfmt.Value{Kind: planfmt.ValueBool, Bool: val}
+		return planfmt.Value{Kind: planfmt.ValueBool, Bool: val}, nil
 	case float64:
-		return planfmt.Value{Kind: planfmt.ValueFloat, Float: val}
+		return planfmt.Value{Kind: planfmt.ValueFloat, Float: val}, nil
 	case durationLiteral:
-		return planfmt.Value{Kind: planfmt.ValueDuration, Duration: string(val)}
+		return planfmt.Value{Kind: planfmt.ValueDuration, Duration: string(val)}, nil
 	case []*ExprIR:
 		items := make([]planfmt.Value, len(val))
 		for i, item := range val {
-			items[i] = e.buildArgValue(item, displayIDs)
+			argValue, err := e.buildArgValue(item, displayIDs)
+			if err != nil {
+				return planfmt.Value{}, err
+			}
+			items[i] = argValue
 		}
-		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}
+		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}, nil
 	case map[string]*ExprIR:
 		mapped := make(map[string]planfmt.Value, len(val))
 		for key, item := range val {
-			mapped[key] = e.buildArgValue(item, displayIDs)
+			argValue, err := e.buildArgValue(item, displayIDs)
+			if err != nil {
+				return planfmt.Value{}, err
+			}
+			mapped[key] = argValue
 		}
-		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}
+		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}, nil
 	case []any:
 		items := make([]planfmt.Value, len(val))
 		for i, item := range val {
-			items[i] = e.literalToArgValue(item, displayIDs)
+			argValue, err := e.literalToArgValue(item, displayIDs)
+			if err != nil {
+				return planfmt.Value{}, err
+			}
+			items[i] = argValue
 		}
-		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}
+		return planfmt.Value{Kind: planfmt.ValueArray, Array: items}, nil
 	case map[string]any:
 		mapped := make(map[string]planfmt.Value, len(val))
 		for key, item := range val {
-			mapped[key] = e.literalToArgValue(item, displayIDs)
+			argValue, err := e.literalToArgValue(item, displayIDs)
+			if err != nil {
+				return planfmt.Value{}, err
+			}
+			mapped[key] = argValue
 		}
-		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}
+		return planfmt.Value{Kind: planfmt.ValueMap, Map: mapped}, nil
 	default:
-		return planfmt.Value{Kind: planfmt.ValueString, Str: fmt.Sprintf("%v", value)}
+		return planfmt.Value{Kind: planfmt.ValueString, Str: fmt.Sprintf("%v", value)}, nil
 	}
+}
+
+func isUnresolvedEnumError(err error) bool {
+	var evalErr *EvalError
+	if !errors.As(err, &evalErr) {
+		return false
+	}
+	return evalErr.Message == "unresolved enum member"
 }
 
 func (e *Emitter) pushStep(stepID uint64) {

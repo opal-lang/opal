@@ -14,11 +14,12 @@ import (
 type ExprKind int
 
 const (
-	ExprLiteral      ExprKind = iota // Literal value (string, int, bool)
-	ExprVarRef                       // Variable reference (@var.X)
-	ExprDecoratorRef                 // Decorator reference (@env.HOME, @aws.secret.key)
-	ExprBinaryOp                     // Binary operation (==, !=, &&, ||)
-	ExprTypeCast                     // Type cast (expr as Type, expr as Type?)
+	ExprLiteral       ExprKind = iota // Literal value (string, int, bool)
+	ExprVarRef                        // Variable reference (@var.X)
+	ExprDecoratorRef                  // Decorator reference (@env.HOME, @aws.secret.key)
+	ExprEnumMemberRef                 // Enum member reference (Type.Member)
+	ExprBinaryOp                      // Binary operation (==, !=, &&, ||)
+	ExprTypeCast                      // Type cast (expr as Type, expr as Type?)
 )
 
 // durationLiteral preserves duration typing for literals (e.g., 5m, 30s).
@@ -39,6 +40,10 @@ type ExprIR struct {
 
 	// For ExprDecoratorRef - structured decorator reference
 	Decorator *DecoratorRef
+
+	// For ExprEnumMemberRef - enum type and member
+	EnumName   string
+	EnumMember string
 
 	// For ExprBinaryOp - operator and operands
 	Op    string  // "==", "!=", "&&", "||", "<", ">", "<=", ">="
@@ -127,6 +132,18 @@ func EvaluateExpr(expr *ExprIR, getValue ValueLookup) (any, error) {
 		if !ok {
 			return nil, &EvalError{
 				Message: "unresolved decorator",
+				VarName: key,
+				Span:    expr.Span,
+			}
+		}
+		return val, nil
+
+	case ExprEnumMemberRef:
+		key := enumMemberRefKey(expr.EnumName, expr.EnumMember)
+		val, ok := getValue(key)
+		if !ok {
+			return nil, &EvalError{
+				Message: "unresolved enum member",
 				VarName: key,
 				Span:    expr.Span,
 			}
@@ -714,6 +731,16 @@ func decoratorKey(d *DecoratorRef) string {
 	return key
 }
 
+func enumMemberRefKey(enumName, member string) string {
+	if enumName == "" {
+		return member
+	}
+	if member == "" {
+		return enumName
+	}
+	return enumName + "." + member
+}
+
 // EvalError represents an error during expression evaluation.
 type EvalError struct {
 	Message string
@@ -751,6 +778,9 @@ func RenderExpr(expr *ExprIR, displayIDs map[string]string) string {
 			return id
 		}
 		return "<unresolved:" + key + ">"
+
+	case ExprEnumMemberRef:
+		return enumMemberRefKey(expr.EnumName, expr.EnumMember)
 
 	case ExprTypeCast:
 		if expr.Left == nil {

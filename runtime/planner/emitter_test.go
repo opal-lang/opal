@@ -117,6 +117,66 @@ func TestEmit_NilCommand(t *testing.T) {
 	}
 }
 
+func TestEmitterGetValue_EnumMemberPrecedesDecoratorKey(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	exprID := v.TrackExpression("@env.HOME")
+	v.StoreUnresolvedValue(exprID, "/tmp/decorator")
+
+	result := &ResolveResult{
+		DecoratorExprIDs: map[string]string{"env.HOME": exprID},
+		EnumMemberValues: map[string]string{"env.HOME": "enum-home"},
+	}
+
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+	value, ok := emitter.getValue("env.HOME")
+	if !ok {
+		t.Fatal("expected value")
+	}
+
+	if diff := cmp.Diff("enum-home", value); diff != "" {
+		t.Fatalf("value mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEmit_CommandArgUnresolvedEnumMemberFails(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{{Kind: ExprLiteral, Value: `echo "hello"`}},
+					},
+					Args: []ArgIR{
+						{
+							Name: "shell",
+							Value: &ExprIR{
+								Kind:       ExprEnumMemberRef,
+								EnumName:   "OS",
+								EnumMember: "Darwin",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	_, err := emitter.Emit()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := `failed to evaluate command argument "shell": unresolved enum member: OS.Darwin`
+	if diff := cmp.Diff(want, err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestEmit_MultipleCommands tests emitting multiple sequential commands.
 func TestEmit_MultipleCommands(t *testing.T) {
 	// Build resolved IR: echo "a"; echo "b"

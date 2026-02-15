@@ -6,6 +6,7 @@ type ExecutionGraph struct {
 	Statements []*StatementIR         // Top-level statements (script mode)
 	Functions  map[string]*FunctionIR // Function definitions (command mode)
 	Types      map[string]*StructTypeIR
+	Enums      map[string]*EnumTypeIR
 	Scopes     *ScopeStack // Variable scopes (name → exprID)
 }
 
@@ -21,6 +22,20 @@ type StructFieldIR struct {
 	Name    string
 	Type    string
 	Default *ExprIR
+}
+
+// EnumTypeIR represents a top-level user-defined enum declaration.
+type EnumTypeIR struct {
+	Name     string
+	BaseType string
+	Members  []EnumMemberIR
+	Span     SourceSpan
+}
+
+// EnumMemberIR represents a single enum member declaration.
+type EnumMemberIR struct {
+	Name  string
+	Value *ExprIR
 }
 
 // FunctionIR represents a function definition.
@@ -402,15 +417,17 @@ func deepCopyExpr(expr *ExprIR) *ExprIR {
 		return nil
 	}
 	result := &ExprIR{
-		Kind:     expr.Kind,
-		Span:     expr.Span,
-		Value:    expr.Value,
-		VarName:  expr.VarName,
-		Op:       expr.Op,
-		Left:     deepCopyExpr(expr.Left),
-		Right:    deepCopyExpr(expr.Right),
-		TypeName: expr.TypeName,
-		Optional: expr.Optional,
+		Kind:       expr.Kind,
+		Span:       expr.Span,
+		Value:      expr.Value,
+		VarName:    expr.VarName,
+		EnumName:   expr.EnumName,
+		EnumMember: expr.EnumMember,
+		Op:         expr.Op,
+		Left:       deepCopyExpr(expr.Left),
+		Right:      deepCopyExpr(expr.Right),
+		TypeName:   expr.TypeName,
+		Optional:   expr.Optional,
 	}
 	if expr.Decorator != nil {
 		result.Decorator = &DecoratorRef{
