@@ -342,11 +342,25 @@ Resolution order:
 2. session environment `OPAL_SHELL`
 3. default `bash`
 
+Shell support policy:
+
+- Windows required: `pwsh` (PowerShell 7+)
+- Windows best-effort: `cmd`, `bash`
+- Unix targets: shell availability is target-dependent (`bash` default unless overridden)
+
+Execution contract:
+
+- Opal preserves command text and passes it to the selected shell.
+- Opal does not normalize shell syntax across shells (env syntax, quoting, builtins, and path rules remain shell-native).
+- Use explicit `shell=...` when command text depends on shell-specific syntax.
+
 ## 8. Shell Execution Semantics
 
 Shell commands are runtime operations.
 
 The parser preserves shell argument boundaries through lexer spacing metadata.
+
+Plan-time metaprogramming decides *which* commands run; runtime `@shell` decides *how* each command is executed via the selected shell.
 
 ### 8.1 Command composition
 

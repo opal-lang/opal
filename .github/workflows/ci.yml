@@ -191,8 +191,18 @@ jobs:
           Set-Content -Path test.opl -Value 'fun test = echo "Binary test successful"'
           & ".\${{ matrix.binary_name }}" --dry-run -f test.opl test
 
-      - name: System smoke (Windows cmd shell)
+      - name: Verify PowerShell 7+ (Windows required)
         if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) {
+            Write-Error "PowerShell 7+ is required on Windows runners"
+            exit 1
+          }
+
+      - name: System smoke (Windows cmd shell, best-effort)
+        if: matrix.goos == 'windows'
+        continue-on-error: true
         shell: pwsh
         run: |
           Set-Content -Path smoke-cmd.opl -Value 'fun hello = echo %ComSpec%'
@@ -217,8 +227,9 @@ jobs:
             exit 1
           }
 
-      - name: System smoke (Windows bash shell, optional)
+      - name: System smoke (Windows bash shell, best-effort)
         if: matrix.goos == 'windows'
+        continue-on-error: true
         shell: pwsh
         run: |
           if (Get-Command bash -ErrorAction SilentlyContinue) {

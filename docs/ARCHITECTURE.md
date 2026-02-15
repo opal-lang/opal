@@ -74,6 +74,8 @@ Opal has two distinct layers that work together:
 - Plan-time metaprogramming (`fun`, `if`, `for`, `when`, decorators) defines and validates execution contracts.
 - Runtime shell execution performs the actual work (commands, operators, pipelines, redirects).
 - Function signatures are typed plan-time interfaces; shell command syntax stays shell-native.
+- Runtime does not rewrite shell dialect differences; selected shell semantics remain authoritative.
+- `@shell(..., shell=...)` and `OPAL_SHELL` choose shell execution explicitly when portability matters.
 
 This boundary is a deliberate departure from plain shell scripts: Opal wraps and enhances shell with deterministic planning instead of replacing shell semantics.
 
