@@ -582,11 +582,11 @@ func (e *Emitter) getValue(name string) (any, bool) {
 			return e.vault.GetUnresolvedValue(exprID)
 		}
 	}
-	if exprID, ok := e.decoratorExprIDs[name]; ok {
-		return e.vault.GetUnresolvedValue(exprID)
-	}
 	if value, ok := e.enumMemberValues[name]; ok {
 		return value, true
+	}
+	if exprID, ok := e.decoratorExprIDs[name]; ok {
+		return e.vault.GetUnresolvedValue(exprID)
 	}
 	return nil, false
 }

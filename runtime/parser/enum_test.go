@@ -67,6 +67,21 @@ func TestParseEnumMemberReferenceRejectsExtraSegments(t *testing.T) {
 	}
 }
 
+func TestParseEnumDeclarationRejectsUnquotedMemberValue(t *testing.T) {
+	tree := ParseString(`enum DeployStage { Prod = production }`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	err := tree.Errors[0]
+	if diff := cmp.Diff("enum member value must be a string literal", err.Message); diff != "" {
+		t.Fatalf("error message mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("enum member", err.Context); diff != "" {
+		t.Fatalf("error context mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestParseWhenPatternWithEnumMemberReference(t *testing.T) {
 	tree := ParseString(`
 when @var.os {

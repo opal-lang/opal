@@ -502,7 +502,47 @@ func (p *parser) enumMember() {
 
 	// Optional explicit enum value
 	if p.at(lexer.EQUALS) {
-		p.defaultValue()
+		p.enumMemberDefaultValue()
+	}
+
+	p.finish(kind)
+}
+
+func (p *parser) enumMemberDefaultValue() {
+	kind := p.start(NodeDefaultValue)
+
+	// Consume '='
+	p.token()
+	p.skipNewlines()
+
+	if p.at(lexer.EOF) || p.at(lexer.NEWLINE) || p.at(lexer.COMMA) || p.at(lexer.RBRACE) {
+		p.errorWithDetails(
+			"missing enum member value",
+			"enum member",
+			"Add a quoted string after '='",
+		)
+		p.finish(kind)
+		return
+	}
+
+	if p.at(lexer.STRING) {
+		p.token()
+		p.finish(kind)
+		return
+	}
+
+	p.errors = append(p.errors, ParseError{
+		Position:   p.current().Position,
+		Message:    "enum member value must be a string literal",
+		Context:    "enum member",
+		Got:        p.current().Type,
+		Expected:   []lexer.TokenType{lexer.STRING},
+		Suggestion: "Wrap enum member values in quotes",
+		Example:    `Prod = "production"`,
+	})
+
+	if !p.at(lexer.EOF) && !p.at(lexer.NEWLINE) && !p.at(lexer.COMMA) && !p.at(lexer.RBRACE) {
+		p.advance()
 	}
 
 	p.finish(kind)

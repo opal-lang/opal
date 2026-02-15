@@ -235,7 +235,8 @@ func (r *Resolver) checkContext() error {
 //
 // Lookup order:
 //  1. Variable name → exprID via ScopeStack → value via Vault
-//  2. Decorator key → exprID via decoratorExprIDs → value via Vault
+//  2. Enum member key (Type.Member) → constant value
+//  3. Decorator key → exprID via decoratorExprIDs → value via Vault
 func (r *Resolver) getValue(name string) (any, bool) {
 	// Try variable lookup first (via scope)
 	if r.scopes != nil {
@@ -243,13 +244,14 @@ func (r *Resolver) getValue(name string) (any, bool) {
 			return r.vault.GetUnresolvedValue(exprID)
 		}
 	}
-	// Try decorator key lookup
-	if exprID, ok := r.decoratorExprIDs[name]; ok {
-		return r.vault.GetUnresolvedValue(exprID)
-	}
 
 	if value, ok := r.enumMemberValues[name]; ok {
 		return value, true
+	}
+
+	// Try decorator key lookup
+	if exprID, ok := r.decoratorExprIDs[name]; ok {
+		return r.vault.GetUnresolvedValue(exprID)
 	}
 	return nil, false
 }

@@ -2123,6 +2123,27 @@ func TestResolve_FunctionCallEnumMemberUnknownMember(t *testing.T) {
 	}
 }
 
+func TestResolverGetValue_EnumMemberPrecedesDecoratorKey(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	exprID := v.TrackExpression("@env.HOME")
+	v.StoreUnresolvedValue(exprID, "/tmp/decorator")
+
+	r := &Resolver{
+		vault:            v,
+		decoratorExprIDs: map[string]string{"env.HOME": exprID},
+		enumMemberValues: map[string]string{"env.HOME": "enum-home"},
+	}
+
+	value, ok := r.getValue("env.HOME")
+	if !ok {
+		t.Fatal("expected value")
+	}
+
+	if diff := cmp.Diff("enum-home", value); diff != "" {
+		t.Fatalf("value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestResolve_OptionalSelfRecursiveStructTypeAllowed(t *testing.T) {
 	v := vault.NewWithPlanKey([]byte("test-key"))
 

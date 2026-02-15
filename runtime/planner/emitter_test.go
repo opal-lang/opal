@@ -117,6 +117,27 @@ func TestEmit_NilCommand(t *testing.T) {
 	}
 }
 
+func TestEmitterGetValue_EnumMemberPrecedesDecoratorKey(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	exprID := v.TrackExpression("@env.HOME")
+	v.StoreUnresolvedValue(exprID, "/tmp/decorator")
+
+	result := &ResolveResult{
+		DecoratorExprIDs: map[string]string{"env.HOME": exprID},
+		EnumMemberValues: map[string]string{"env.HOME": "enum-home"},
+	}
+
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+	value, ok := emitter.getValue("env.HOME")
+	if !ok {
+		t.Fatal("expected value")
+	}
+
+	if diff := cmp.Diff("enum-home", value); diff != "" {
+		t.Fatalf("value mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestEmit_MultipleCommands tests emitting multiple sequential commands.
 func TestEmit_MultipleCommands(t *testing.T) {
 	// Build resolved IR: echo "a"; echo "b"
