@@ -100,6 +100,30 @@ func TestParseStructInheritanceRejected(t *testing.T) {
 	}
 }
 
+func TestParseStructInheritanceRecovery_DoesNotConsumeNextDeclaration(t *testing.T) {
+	tree := ParseString(`struct Child : Parent
+fun deploy() { echo "hello" }`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	inheritanceErr := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct inheritance is not supported" {
+			inheritanceErr = true
+			break
+		}
+	}
+
+	if diff := cmp.Diff(true, inheritanceErr); diff != "" {
+		t.Fatalf("expected inheritance rejection error (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodesOfKind(tree.Events, NodeFunction)); diff != "" {
+		t.Fatalf("function declaration should still be parsed (-want +got):\n%s", diff)
+	}
+}
+
 func TestParseStructMethodsRejected(t *testing.T) {
 	tree := ParseString(`struct Config { fun validate() {} }`)
 	if len(tree.Errors) == 0 {

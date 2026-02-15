@@ -397,7 +397,7 @@ func (p *parser) structDecl() {
 			"struct declaration",
 			"Use nested fields for composition instead of inheritance",
 		)
-		for !p.at(lexer.LBRACE) && !p.at(lexer.EOF) {
+		for !p.at(lexer.LBRACE) && !p.at(lexer.NEWLINE) && !p.at(lexer.EOF) {
 			p.advance()
 		}
 	}
