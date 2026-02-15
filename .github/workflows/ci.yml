@@ -218,7 +218,7 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         run: |
-          Set-Content -Path smoke-pwsh.opl -Value 'fun hello = Write-Output $PSVersionTable.PSVersion.Major'
+          Set-Content -Path smoke-pwsh.opl -Value "fun hello = Write-Output `$PSVersionTable.PSVersion.Major"
           $env:OPAL_SHELL = "pwsh"
           $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.opl hello
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
