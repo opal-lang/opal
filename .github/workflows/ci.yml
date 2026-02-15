@@ -101,14 +101,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest]
+        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest, blacksmith-4vcpu-windows-2025]
         include:
           - os: blacksmith-4vcpu-ubuntu-2404
             goos: linux
             goarch: amd64
+            binary_name: opal-linux-amd64
           - os: macos-latest
             goos: darwin
             goarch: amd64
+            binary_name: opal-darwin-amd64
+          - os: blacksmith-4vcpu-windows-2025
+            goos: windows
+            goarch: amd64
+            binary_name: opal-windows-amd64.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,7 +125,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.work.sum
 
-      - name: Build binary
+      - name: Build binary (Linux/macOS)
+        if: matrix.goos != 'windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -130,22 +137,47 @@ jobs:
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
-            -o opal-${{ matrix.goos }}-${{ matrix.goarch }} \
+            -o ${{ matrix.binary_name }} \
             ./cli
 
-      - name: Test binary
+      - name: Build binary (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          Write-Host "Building opal for $env:GOOS/$env:GOARCH..."
+          $version = (git describe --tags --always --dirty) 2>$null
+          if (-not $version) { $version = "dev" }
+          $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ldflags = "-s -w -X main.Version=$version -X main.BuildTime=$buildTime"
+          go build -ldflags $ldflags -o "${{ matrix.binary_name }}" ./cli
+
+      - name: Test binary (Linux/macOS)
+        if: matrix.goos != 'windows'
         run: |
           echo "Testing built binary..."
-          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --help
+          ./${{ matrix.binary_name }} --help
 
           echo 'fun test = echo "Binary test successful"' > test.opl
-          ./opal-${{ matrix.goos }}-${{ matrix.goarch }} --dry-run -f test.opl test
+          ./${{ matrix.binary_name }} --dry-run -f test.opl test
+
+      - name: Test binary (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          Write-Host "Testing built binary..."
+          & ".\${{ matrix.binary_name }}" --help
+          Set-Content -Path test.opl -Value 'fun test = echo "Binary test successful"'
+          & ".\${{ matrix.binary_name }}" --dry-run -f test.opl test
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: opal-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: opal-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: ${{ matrix.binary_name }}
+          path: ${{ matrix.binary_name }}
 
   nix-development:
     name: Nix Development (${{ matrix.os }})
