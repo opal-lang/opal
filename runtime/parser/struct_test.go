@@ -78,6 +78,103 @@ func TestParseStructMalformedFieldDoesNotHang(t *testing.T) {
 	}
 }
 
+func TestParseStructInheritanceRejected(t *testing.T) {
+	tree := ParseString(`struct Child : Parent { env String }`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	found := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct inheritance is not supported" {
+			if diff := cmp.Diff("struct declaration", err.Context); diff != "" {
+				t.Fatalf("error context mismatch (-want +got):\n%s", diff)
+			}
+			found = true
+			break
+		}
+	}
+
+	if diff := cmp.Diff(true, found); diff != "" {
+		t.Fatalf("expected inheritance rejection error (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseStructInheritanceRecovery_DoesNotConsumeNextDeclaration(t *testing.T) {
+	tree := ParseString(`struct Child : Parent
+fun deploy() { echo "hello" }`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	inheritanceErr := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct inheritance is not supported" {
+			inheritanceErr = true
+			break
+		}
+	}
+
+	if diff := cmp.Diff(true, inheritanceErr); diff != "" {
+		t.Fatalf("expected inheritance rejection error (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodesOfKind(tree.Events, NodeFunction)); diff != "" {
+		t.Fatalf("function declaration should still be parsed (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseStructMethodsRejected(t *testing.T) {
+	tree := ParseString(`struct Config { fun validate() {} }`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	found := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct methods are not supported" {
+			if diff := cmp.Diff("struct declaration", err.Context); diff != "" {
+				t.Fatalf("error context mismatch (-want +got):\n%s", diff)
+			}
+			found = true
+			break
+		}
+	}
+
+	if diff := cmp.Diff(true, found); diff != "" {
+		t.Fatalf("expected method rejection error (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseStructMethodsRejected_MultiArgSignatureRecovery(t *testing.T) {
+	tree := ParseString(`struct Config {
+	fun validate(a, b String) {}
+	env String
+}`)
+	if len(tree.Errors) == 0 {
+		t.Fatal("expected parse error")
+	}
+
+	methodErr := false
+	for _, err := range tree.Errors {
+		if err.Message == "struct methods are not supported" {
+			methodErr = true
+			continue
+		}
+		if err.Message == "missing field type annotation" {
+			t.Fatalf("unexpected cascading field parse error: %v", err)
+		}
+	}
+
+	if diff := cmp.Diff(true, methodErr); diff != "" {
+		t.Fatalf("expected method rejection error (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, countOpenNodesOfKind(tree.Events, NodeStructField)); diff != "" {
+		t.Fatalf("struct field count mismatch after recovery (-want +got):\n%s", diff)
+	}
+}
+
 func countOpenNodesOfKind(events []Event, kind NodeKind) int {
 	count := 0
 	for _, event := range events {

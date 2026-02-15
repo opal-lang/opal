@@ -239,6 +239,8 @@ Struct declarations are top-level declarations.
 - optional fields use `Type?`
 - defaults apply per field
 - unknown object fields are rejected for struct-typed parameters
+- optional self-references are allowed (for example `next Node?`)
+- required recursive struct cycles are rejected
 
 ### 6.5 Call semantics
 
