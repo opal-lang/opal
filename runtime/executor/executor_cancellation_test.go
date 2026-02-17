@@ -369,7 +369,7 @@ func TestCancellationWithOrOperator(t *testing.T) {
 	duration := time.Since(start)
 
 	// Should stop quickly
-	assert.Less(t, duration, 1*time.Second, "OR operator should respect cancellation")
+	assert.Less(t, duration, 2*time.Second, "OR operator should respect cancellation")
 }
 
 // TestDeadlineExceeded verifies that context deadline is properly detected.

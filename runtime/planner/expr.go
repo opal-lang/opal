@@ -780,7 +780,11 @@ func RenderExpr(expr *ExprIR, displayIDs map[string]string) string {
 		return "<unresolved:" + key + ">"
 
 	case ExprEnumMemberRef:
-		return enumMemberRefKey(expr.EnumName, expr.EnumMember)
+		key := enumMemberRefKey(expr.EnumName, expr.EnumMember)
+		if value, ok := displayIDs[key]; ok {
+			return value
+		}
+		return key
 
 	case ExprTypeCast:
 		if expr.Left == nil {

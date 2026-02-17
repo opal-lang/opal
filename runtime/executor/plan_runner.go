@@ -105,8 +105,18 @@ func (e *executor) executePlanTreeNode(execCtx sdk.ExecutionContext, node planfm
 
 func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline *planfmt.PipelineNode, initialStdin io.Reader, finalStdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
+	invariant.NotNil(pipeline, "pipeline")
 	numCommands := len(pipeline.Commands)
 	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
+	for i, node := range pipeline.Commands {
+		invariant.Precondition(node != nil, "pipeline command %d cannot be nil", i)
+		switch node.(type) {
+		case *planfmt.CommandNode, *planfmt.RedirectNode:
+			// valid pipeline node types
+		default:
+			invariant.Precondition(false, "invalid pipeline element type %T", node)
+		}
+	}
 
 	if numCommands == 1 {
 		return e.executePlanTreeNode(execCtx, pipeline.Commands[0], initialStdin, finalStdout)

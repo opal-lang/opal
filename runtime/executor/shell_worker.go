@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/invariant"
 )
 
 const workerInstanceEnvVar = "OPAL_INTERNAL_WORKER_INSTANCE"
@@ -50,6 +51,10 @@ func newShellWorkerPool(sessions *sessionRuntime) *shellWorkerPool {
 }
 
 func (p *shellWorkerPool) Run(ctx context.Context, req shellRunRequest) (int, error) {
+	invariant.NotNil(p, "shell worker pool")
+	invariant.Precondition(req.shellName != "", "shell worker request missing shell name")
+	invariant.Precondition(req.command != "", "shell worker request missing command")
+
 	worker, err := p.acquire(req.transportID, req.shellName)
 	if err != nil {
 		return decorator.ExitFailure, err
@@ -78,7 +83,7 @@ func (p *shellWorkerPool) acquire(transportID, shellName string) (*shellWorker, 
 
 	p.mu.Lock()
 	for _, worker := range p.workers[key] {
-		if worker.alive && !worker.busy {
+		if worker.isAlive() && !worker.busy {
 			worker.busy = true
 			p.mu.Unlock()
 			return worker, nil
@@ -104,7 +109,7 @@ func (p *shellWorkerPool) release(worker *shellWorker) {
 	defer p.mu.Unlock()
 
 	worker.busy = false
-	if worker.alive {
+	if worker.isAlive() {
 		return
 	}
 
@@ -136,9 +141,9 @@ func (p *shellWorkerPool) newWorker(key shellWorkerKey) (*shellWorker, error) {
 	worker := &shellWorker{
 		key:      key,
 		session:  session,
-		alive:    true,
 		instance: strconv.FormatUint(shellWorkerSequence.Add(1), 10),
 	}
+	worker.alive.Store(true)
 
 	if err := worker.start(); err != nil {
 		return nil, err
@@ -157,7 +162,9 @@ type shellWorker struct {
 	stdout *bufio.Reader
 
 	busy  bool
-	alive bool
+	alive atomic.Bool
+
+	closeOnce sync.Once
 
 	mu sync.Mutex
 }
@@ -223,7 +230,7 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if !w.alive {
+	if !w.isAlive() {
 		return decorator.ExitFailure, fmt.Errorf("worker %s/%s is closed", w.key.transportID, w.key.shellName)
 	}
 
@@ -302,23 +309,28 @@ func (w *shellWorker) readStatus(marker string) (int, error) {
 }
 
 func (w *shellWorker) close() {
-	if !w.alive {
-		return
-	}
-	w.alive = false
+	w.closeOnce.Do(func() {
+		w.alive.Store(false)
 
-	if w.stdin != nil {
-		_ = w.stdin.Close()
-	}
-	if w.cmd != nil && w.cmd.Process != nil {
-		_ = w.cmd.Process.Kill()
-	}
-	if w.cmd != nil {
-		_ = w.cmd.Wait()
-	}
+		if w.stdin != nil {
+			_ = w.stdin.Close()
+		}
+		if w.cmd != nil && w.cmd.Process != nil {
+			_ = w.cmd.Process.Kill()
+		}
+		if w.cmd != nil {
+			_ = w.cmd.Wait()
+		}
+	})
+}
+
+func (w *shellWorker) isAlive() bool {
+	return w.alive.Load()
 }
 
 func buildWorkerScript(req shellRunRequest, stdoutPath, stderrPath, statusMarker string) string {
+	invariant.Precondition(req.command != "", "worker command cannot be empty")
+
 	var b strings.Builder
 	b.WriteString("(\n")
 
@@ -390,21 +402,20 @@ func createWorkerCaptureFiles() (stdoutPath, stderrPath string, cleanup func(), 
 }
 
 func replayWorkerOutput(path string, writer, defaultWriter io.Writer) error {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("read worker output %q: %w", path, err)
 	}
-
-	if len(data) == 0 {
-		return nil
-	}
+	defer func() {
+		_ = file.Close()
+	}()
 
 	target := writer
 	if target == nil {
 		target = defaultWriter
 	}
 
-	if _, err := target.Write(data); err != nil {
+	if _, err := io.Copy(target, file); err != nil {
 		return fmt.Errorf("write worker output: %w", err)
 	}
 

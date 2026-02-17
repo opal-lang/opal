@@ -661,6 +661,12 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string, p
 			}
 		}
 
+	case ExprEnumMemberRef:
+		key := enumMemberRefKey(expr.EnumName, expr.EnumMember)
+		if value, ok := e.enumMemberValues[key]; ok {
+			displayIDs[key] = value
+		}
+
 	case ExprLiteral:
 		if arr, ok := expr.Value.([]*ExprIR); ok {
 			for _, item := range arr {
@@ -672,6 +678,13 @@ func (e *Emitter) collectDisplayID(expr *ExprIR, displayIDs map[string]string, p
 				e.collectDisplayID(item, displayIDs, paramName)
 			}
 		}
+
+	case ExprTypeCast:
+		e.collectDisplayID(expr.Left, displayIDs, paramName)
+
+	case ExprBinaryOp:
+		e.collectDisplayID(expr.Left, displayIDs, paramName)
+		e.collectDisplayID(expr.Right, displayIDs, paramName)
 	}
 }
 
