@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +20,9 @@ var displayIDPattern = regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
 func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
 	commandExecCtx := withExecutionTransport(execCtx, cmd.TransportID)
+	if isShellDecorator(cmd.Name) {
+		return e.executeShellCommandWithPipes(commandExecCtx, cmd, stdin, stdout)
+	}
 
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
 	entry, exists := decorator.Global().Lookup(decoratorName)
@@ -27,6 +32,10 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
 
 	return e.executeDecorator(commandExecCtx, cmd, execDec, stdin, stdout)
+}
+
+func isShellDecorator(name string) bool {
+	return strings.TrimPrefix(name, "@") == "shell"
 }
 
 func withExecutionTransport(execCtx sdk.ExecutionContext, transportID string) sdk.ExecutionContext {
@@ -47,6 +56,163 @@ func executionTransportID(execCtx sdk.ExecutionContext) string {
 		return "local"
 	}
 	return normalizedTransportID(ec.transportID)
+}
+
+func (e *executor) executeShellCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
+	params, ok := e.resolvedCommandParams(execCtx, cmd)
+	if !ok {
+		return decorator.ExitFailure
+	}
+
+	return e.executeShellWithParams(execCtx, params, stdin, stdout)
+}
+
+func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params map[string]any, stdin io.Reader, stdout io.Writer) int {
+	if params == nil {
+		fmt.Fprintln(os.Stderr, "Error: @shell missing parameters")
+		return decorator.ExitFailure
+	}
+
+	command, ok := params["command"].(string)
+	if !ok || command == "" {
+		fmt.Fprintln(os.Stderr, "Error: @shell requires a non-empty string command")
+		return decorator.ExitFailure
+	}
+
+	if displayIDPattern.MatchString(command) {
+		panic(fmt.Sprintf("INVARIANT VIOLATION: Command contains unresolved DisplayID: %s\n"+
+			"DisplayIDs must be resolved to actual values before execution.\n"+
+			"Format: opal:<base64url-hash> (22 chars)\n"+
+			"This indicates the executor is not resolving secrets from the plan.", command))
+	}
+
+	explicitShell := ""
+	if shellArg, hasShellArg := params["shell"]; hasShellArg {
+		shellStr, ok := shellArg.(string)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Error: @shell expects 'shell' to be a string when provided")
+			return decorator.ExitFailure
+		}
+		explicitShell = shellStr
+	}
+
+	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
+	if sessionErr != nil {
+		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		return decorator.ExitFailure
+	}
+
+	session := sessionForExecutionContext(baseSession, execCtx)
+	shellName, err := resolveShellName(explicitShell, session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return decorator.ExitFailure
+	}
+
+	runCtx := execCtx.Context()
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+
+	if e.workers != nil && canUseShellWorker(shellName, stdin, stdout) {
+		exitCode, workerErr := e.workers.Run(runCtx, shellRunRequest{
+			transportID: executionTransportID(execCtx),
+			shellName:   shellName,
+			command:     command,
+			environ:     execCtx.Environ(),
+			workdir:     execCtx.Workdir(),
+			stdout:      stdout,
+			stderr:      os.Stderr,
+		})
+		if workerErr == nil {
+			return exitCode
+		}
+
+		if errors.Is(workerErr, context.Canceled) || errors.Is(workerErr, context.DeadlineExceeded) {
+			return decorator.ExitCanceled
+		}
+
+		fmt.Fprintf(os.Stderr, "Warning: shell worker execution failed, falling back to session run: %v\n", workerErr)
+	}
+
+	argv, err := shellCommandArgs(shellName, command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return decorator.ExitFailure
+	}
+
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+
+	result, err := session.Run(runCtx, argv, decorator.RunOpts{
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+
+	return result.ExitCode
+}
+
+func canUseShellWorker(shellName string, stdin io.Reader, stdout io.Writer) bool {
+	if shellName != "bash" {
+		return false
+	}
+	if stdin != nil {
+		return false
+	}
+	return !isStreamPipeWriter(stdout)
+}
+
+func isStreamPipeWriter(stdout io.Writer) bool {
+	if stdout == nil || stdout == os.Stdout || stdout == os.Stderr {
+		return false
+	}
+
+	file, ok := stdout.(*os.File)
+	if !ok {
+		return false
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+
+	return info.Mode()&os.ModeNamedPipe != 0
+}
+
+func resolveShellName(explicit string, session decorator.Session) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+
+	if session != nil {
+		if envShell := session.Env()["OPAL_SHELL"]; envShell != "" {
+			if _, err := shellCommandArgs(envShell, ""); err != nil {
+				return "", fmt.Errorf("invalid OPAL_SHELL %q: expected one of bash, pwsh, cmd", envShell)
+			}
+			return envShell, nil
+		}
+	}
+
+	return "bash", nil
+}
+
+func shellCommandArgs(shellName, command string) ([]string, error) {
+	switch shellName {
+	case "bash":
+		return []string{"bash", "-c", command}, nil
+	case "pwsh":
+		return []string{"pwsh", "-NoProfile", "-NonInteractive", "-Command", command}, nil
+	case "cmd":
+		return []string{"cmd", "/C", command}, nil
+	default:
+		return nil, fmt.Errorf("unsupported shell %q: expected one of bash, pwsh, cmd", shellName)
+	}
 }
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
@@ -89,18 +255,9 @@ func (e *executor) executeDecorator(
 	stdin io.Reader,
 	stdout io.Writer,
 ) int {
-	params := make(map[string]any)
-	for k, v := range cmd.Args {
-		params[k] = v
-	}
-
-	if e.vault != nil {
-		var err error
-		params, err = e.resolveDisplayIDs(params, cmd.Name, executionTransportID(execCtx))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving secrets: %v\n", err)
-			return 1
-		}
+	params, ok := e.resolvedCommandParams(execCtx, cmd)
+	if !ok {
+		return decorator.ExitFailure
 	}
 
 	var next decorator.ExecNode
@@ -142,6 +299,29 @@ func (e *executor) executeDecorator(
 	}
 
 	return result.ExitCode
+}
+
+func (e *executor) resolvedCommandParams(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode) (map[string]any, bool) {
+	return e.resolveCommandParams(execCtx, cmd.Name, cmd.Args)
+}
+
+func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorName string, raw map[string]any) (map[string]any, bool) {
+	params := make(map[string]any, len(raw))
+	for k, v := range raw {
+		params[k] = v
+	}
+
+	if e.vault == nil {
+		return params, true
+	}
+
+	resolved, err := e.resolveDisplayIDs(params, decoratorName, executionTransportID(execCtx))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving secrets: %v\n", err)
+		return nil, false
+	}
+
+	return resolved, true
 }
 
 func sessionForExecutionContext(base decorator.Session, execCtx sdk.ExecutionContext) decorator.Session {

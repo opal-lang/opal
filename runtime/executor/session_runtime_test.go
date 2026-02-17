@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
@@ -105,17 +105,17 @@ func registerSessionBoundaryDecorator(t *testing.T) {
 func TestExecuteRoutesSessionByTransportID(t *testing.T) {
 	registerSessionIDCheckDecorator(t)
 
-	steps := []sdk.Step{{
+	plan := &planfmt.Plan{Target: "route-by-transport", Steps: []planfmt.Step{{
 		ID: 1,
-		Tree: &sdk.SequenceNode{Nodes: []sdk.TreeNode{
-			&sdk.CommandNode{Name: "@test.sessionid.check", Args: map[string]any{"expect": "local"}},
-			&sdk.CommandNode{Name: "@test.sessionid.check", TransportID: "transport:A", Args: map[string]any{"expect": "transport:A"}},
-			&sdk.CommandNode{Name: "@test.sessionid.check", TransportID: "transport:A", Args: map[string]any{"expect": "transport:A"}},
-			&sdk.CommandNode{Name: "@test.sessionid.check", TransportID: "transport:B", Args: map[string]any{"expect": "transport:B"}},
+		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+			planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "local"}}, ""),
+			planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:A"}}, "transport:A"),
+			planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:A"}}, "transport:A"),
+			planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:B"}}, "transport:B"),
 		}},
-	}}
+	}}}
 
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -128,27 +128,37 @@ func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
 	registerSessionIDCheckDecorator(t)
 	registerSessionBoundaryDecorator(t)
 
-	steps := []sdk.Step{{
+	plan := &planfmt.Plan{Target: "wrapper-session-inherit", Steps: []planfmt.Step{{
 		ID: 1,
-		Tree: &sdk.CommandNode{
-			Name: "@test.session.boundary",
-			Args: map[string]any{"id": "transport:boundary"},
-			Block: []sdk.Step{{
-				ID: 2,
-				Tree: &sdk.CommandNode{
-					Name: "@test.sessionid.check",
-					Args: map[string]any{"expect": "transport:boundary"},
-				},
+		Tree: &planfmt.CommandNode{
+			Decorator: "@test.session.boundary",
+			Args:      []planfmt.Arg{{Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "transport:boundary"}}},
+			Block: []planfmt.Step{{
+				ID:   2,
+				Tree: planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:boundary"}}, ""),
 			}},
 		},
-	}}
+	}}}
 
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
 	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func planExec(name string, args map[string]planfmt.Value, transportID string) *planfmt.CommandNode {
+	planArgs := make([]planfmt.Arg, 0, len(args))
+	for key, value := range args {
+		planArgs = append(planArgs, planfmt.Arg{Key: key, Val: value})
+	}
+
+	return &planfmt.CommandNode{
+		Decorator:   name,
+		TransportID: transportID,
+		Args:        planArgs,
 	}
 }
 

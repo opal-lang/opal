@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-17
+- Changed runtime execution to use the plan-native `executor.ExecutePlan` entrypoint and removed the legacy SDK-step executor entrypoint
+- Removed the planfmt-to-SDK execution conversion layer (`core/planfmt/sdk.go`) so execution uses planfmt trees directly
+- Added executor-owned shell worker reuse keyed by transport with per-command subshell isolation to preserve non-leaking env/workdir semantics
+
 ### 2026-02-15
 - Fixed planner command-argument emission to fail on unresolved `Type.Member` enum references instead of emitting raw enum keys
 - Rejected unsupported struct inheritance and struct methods with explicit parser diagnostics

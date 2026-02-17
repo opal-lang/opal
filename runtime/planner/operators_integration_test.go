@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 	"github.com/opal-lang/opal/runtime/executor"
 	"github.com/opal-lang/opal/runtime/lexer"
@@ -136,8 +135,7 @@ func TestOperatorsEndToEnd(t *testing.T) {
 			require.NoError(t, err, "plan error")
 
 			// Execute
-			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := executor.Execute(context.Background(), steps, executor.Config{}, nil)
+			result, err := executor.ExecutePlan(context.Background(), plan, executor.Config{}, nil)
 			require.NoError(t, err, "execute error")
 
 			// Verify

@@ -30,7 +30,11 @@ func (n *blockNode) ExecuteBranch(index int, ctx decorator.ExecContext) (decorat
 }
 
 func (n *blockNode) childContext(ctx decorator.ExecContext) sdk.ExecutionContext {
-	child := n.execCtx.WithContext(ctx.Context)
+	return childExecutionContextFromDecorator(n.execCtx, ctx)
+}
+
+func childExecutionContextFromDecorator(base sdk.ExecutionContext, ctx decorator.ExecContext) sdk.ExecutionContext {
+	child := base.WithContext(ctx.Context)
 	if typed, ok := child.(*executionContext); ok {
 		child = typed.withPipes(ctx.Stdin, ctx.Stdout)
 	}

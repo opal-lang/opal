@@ -356,10 +356,6 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		execDebug = executor.DebugDetailed
 	}
 
-	// Convert plan to SDK steps at the boundary
-	// The executor only sees SDK types - it has no knowledge of planfmt
-	steps := planfmt.ToSDKSteps(plan.Steps)
-
 	// Execute with telemetry level based on timing flag
 	telemetryLevel := executor.TelemetryBasic
 	if timing {
@@ -370,7 +366,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 	ctx, cancel := newCancellableContext()
 	defer cancel()
 
-	result, err := executor.Execute(ctx, steps, executor.Config{
+	result, err := executor.ExecutePlan(ctx, plan, executor.Config{
 		Debug:     execDebug,
 		Telemetry: telemetryLevel,
 	}, vlt)
@@ -388,7 +384,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 	// Print execution summary if debug enabled
 	if debug {
 		fmt.Fprintf(os.Stderr, "\nExecution summary:\n")
-		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(steps))
+		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(plan.Steps))
 		fmt.Fprintf(os.Stderr, "  Duration: %v\n", result.Duration)
 		fmt.Fprintf(os.Stderr, "  Exit code: %d\n", result.ExitCode)
 	}
@@ -601,14 +597,11 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 		execDebug = executor.DebugDetailed
 	}
 
-	// Convert plan to SDK steps at the boundary
-	steps := planfmt.ToSDKSteps(freshPlan.Steps)
-
 	// Create cancellable context for Ctrl+C handling
 	ctx, cancel := newCancellableContext()
 	defer cancel()
 
-	result, err := executor.Execute(ctx, steps, executor.Config{
+	result, err := executor.ExecutePlan(ctx, freshPlan, executor.Config{
 		Debug:     execDebug,
 		Telemetry: executor.TelemetryBasic,
 	}, vlt)
@@ -619,7 +612,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 	// Print execution summary if debug enabled
 	if debug {
 		fmt.Fprintf(os.Stderr, "\nExecution summary:\n")
-		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(steps))
+		fmt.Fprintf(os.Stderr, "  Steps run: %d/%d\n", result.StepsRun, len(freshPlan.Steps))
 		fmt.Fprintf(os.Stderr, "  Duration: %v\n", result.Duration)
 		fmt.Fprintf(os.Stderr, "  Exit code: %d\n", result.ExitCode)
 	}

@@ -12,6 +12,8 @@ import (
 
 // TestContextCloneInheritsParent verifies that Clone inherits parent's Go context
 func TestContextCloneInheritsParent(t *testing.T) {
+	t.Parallel()
+
 	// Create parent with timeout
 	parentCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -28,6 +30,8 @@ func TestContextCloneInheritsParent(t *testing.T) {
 
 // TestContextCloneCancellation verifies that canceling parent cancels child
 func TestContextCloneCancellation(t *testing.T) {
+	t.Parallel()
+
 	// Create parent with cancellable context
 	parentCtx, cancel := context.WithCancel(context.Background())
 
@@ -48,6 +52,8 @@ func TestContextCloneCancellation(t *testing.T) {
 
 // TestContextCloneWithPipes verifies Clone sets stdin/stdout correctly
 func TestContextCloneWithPipes(t *testing.T) {
+	t.Parallel()
+
 	parent := newExecutionContext(map[string]interface{}{}, nil, context.Background())
 
 	stdin := strings.NewReader("test input")
@@ -61,6 +67,8 @@ func TestContextCloneWithPipes(t *testing.T) {
 
 // TestContextCloneWithoutPipes verifies Clone works with nil pipes
 func TestContextCloneWithoutPipes(t *testing.T) {
+	t.Parallel()
+
 	parent := newExecutionContext(map[string]interface{}{}, nil, context.Background())
 
 	child := parent.Clone(map[string]interface{}{}, nil, nil)
@@ -71,6 +79,8 @@ func TestContextCloneWithoutPipes(t *testing.T) {
 
 // TestContextCloneInheritsEnvironment verifies Clone inherits environment
 func TestContextCloneInheritsEnvironment(t *testing.T) {
+	t.Parallel()
+
 	parent := newExecutionContext(map[string]interface{}{}, nil, context.Background())
 	parentWithEnv := parent.WithEnviron(map[string]string{"FOO": "bar"})
 
@@ -81,6 +91,8 @@ func TestContextCloneInheritsEnvironment(t *testing.T) {
 
 // TestContextCloneInheritsWorkdir verifies Clone inherits workdir
 func TestContextCloneInheritsWorkdir(t *testing.T) {
+	t.Parallel()
+
 	parent := newExecutionContext(map[string]interface{}{}, nil, context.Background())
 	parentWithWd := parent.WithWorkdir("/tmp")
 
@@ -91,6 +103,8 @@ func TestContextCloneInheritsWorkdir(t *testing.T) {
 
 // TestContextWithMethodsPreservePipes verifies With* methods preserve pipes
 func TestContextWithMethodsPreservePipes(t *testing.T) {
+	t.Parallel()
+
 	stdin := strings.NewReader("test")
 	stdout := &strings.Builder{}
 
@@ -114,16 +128,22 @@ func TestContextWithMethodsPreservePipes(t *testing.T) {
 }
 
 func TestContextArgDurationParsesString(t *testing.T) {
+	t.Parallel()
+
 	ctx := newExecutionContext(map[string]interface{}{"duration": "150ms"}, nil, context.Background())
 	assert.Equal(t, 150*time.Millisecond, ctx.ArgDuration("duration"))
 }
 
 func TestContextArgDurationReturnsZeroForInvalid(t *testing.T) {
+	t.Parallel()
+
 	ctx := newExecutionContext(map[string]interface{}{"duration": "invalid"}, nil, context.Background())
 	assert.Equal(t, time.Duration(0), ctx.ArgDuration("duration"))
 }
 
 func TestContextTransportUsesTransportSession(t *testing.T) {
+	t.Parallel()
+
 	exec := &executor{sessions: newSessionRuntime(func(transportID string) (decorator.Session, error) {
 		base := decorator.NewLocalSession()
 		if transportID == "local" {

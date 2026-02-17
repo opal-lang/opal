@@ -3,12 +3,13 @@ package executor
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
@@ -62,47 +63,49 @@ func registerTestChdirDecorator(t *testing.T) {
 }
 
 func TestParallelBranchWorkdirIsolation(t *testing.T) {
+	t.Parallel()
+
 	registerTestChdirDecorator(t)
 	originalWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd failed: %v", err)
 	}
 	dirA := t.TempDir()
-	sink := &captureSink{}
+	outPath := filepath.Join(t.TempDir(), "parallel-output.txt")
 
-	steps := []sdk.Step{{
+	plan := &planfmt.Plan{Target: "parallel-workdir", Steps: []planfmt.Step{{
 		ID: 1,
-		Tree: &sdk.RedirectNode{
-			Source: &sdk.CommandNode{
-				Name: "@parallel",
-				Args: map[string]any{
-					"maxConcurrency": int64(2),
-					"onFailure":      "wait_all",
+		Tree: &planfmt.RedirectNode{
+			Source: &planfmt.CommandNode{
+				Decorator: "@parallel",
+				Args: []planfmt.Arg{
+					{Key: "maxConcurrency", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 2}},
+					{Key: "onFailure", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "wait_all"}},
 				},
-				Block: []sdk.Step{
+				Block: []planfmt.Step{
 					{
 						ID: 2,
-						Tree: &sdk.CommandNode{
-							Name: "@test.chdir",
-							Args: map[string]any{"dir": dirA},
-							Block: []sdk.Step{{
+						Tree: &planfmt.CommandNode{
+							Decorator: "@test.chdir",
+							Args:      []planfmt.Arg{{Key: "dir", Val: planfmt.Value{Kind: planfmt.ValueString, Str: dirA}}},
+							Block: []planfmt.Step{{
 								ID:   3,
-								Tree: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "pwd"}},
+								Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "pwd"}}}},
 							}},
 						},
 					},
 					{
 						ID:   4,
-						Tree: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "pwd"}},
+						Tree: &planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "pwd"}}}},
 					},
 				},
 			},
-			Sink: sink,
-			Mode: sdk.RedirectOverwrite,
+			Target: planfmt.CommandNode{Decorator: "@shell", Args: []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: outPath}}}},
+			Mode:   planfmt.RedirectOverwrite,
 		},
-	}}
+	}}}
 
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -111,7 +114,11 @@ func TestParallelBranchWorkdirIsolation(t *testing.T) {
 	}
 
 	want := dirA + "\n" + originalWd + "\n"
-	if diff := cmp.Diff(want, sink.output.String()); diff != "" {
+	content, readErr := os.ReadFile(outPath)
+	if readErr != nil {
+		t.Fatalf("read redirected output: %v", readErr)
+	}
+	if diff := cmp.Diff(want, string(content)); diff != "" {
 		t.Fatalf("parallel branch isolation mismatch (-want +got):\n%s", diff)
 	}
 }
