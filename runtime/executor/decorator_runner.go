@@ -132,7 +132,12 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 			return decorator.ExitCanceled
 		}
 
-		fmt.Fprintf(os.Stderr, "Warning: shell worker execution failed, falling back to session run: %v\n", workerErr)
+		if !canFallbackToSessionRun(workerErr) {
+			fmt.Fprintf(os.Stderr, "Error: shell worker execution failed after command start: %v\n", workerErr)
+			return decorator.ExitFailure
+		}
+
+		fmt.Fprintf(os.Stderr, "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
 	}
 
 	argv, err := shellCommandArgs(shellName, command)
@@ -183,6 +188,14 @@ func isStreamPipeWriter(stdout io.Writer) bool {
 	}
 
 	return info.Mode()&os.ModeNamedPipe != 0
+}
+
+func canFallbackToSessionRun(workerErr error) bool {
+	var runErr *workerRunError
+	if !errors.As(workerErr, &runErr) {
+		return false
+	}
+	return !runErr.commandStarted
 }
 
 func resolveShellName(explicit string, session decorator.Session) (string, error) {

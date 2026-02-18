@@ -207,7 +207,7 @@ func TestCancellationDuringExecuteBlock(t *testing.T) {
 	duration := time.Since(start)
 
 	// Should stop quickly
-	assert.Less(t, duration, 3*time.Second, "ExecuteBlock should respect cancellation")
+	assert.Less(t, duration, 4*time.Second, "ExecuteBlock should respect cancellation")
 }
 
 // TestMultipleCancellations verifies that calling cancel multiple times

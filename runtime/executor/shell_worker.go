@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
@@ -36,6 +37,26 @@ type shellRunRequest struct {
 	stderr      io.Writer
 }
 
+type workerRunError struct {
+	cause          error
+	commandStarted bool
+}
+
+func (e *workerRunError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *workerRunError) Unwrap() error {
+	return e.cause
+}
+
+func newWorkerRunError(cause error, commandStarted bool) error {
+	if cause == nil {
+		return nil
+	}
+	return &workerRunError{cause: cause, commandStarted: commandStarted}
+}
+
 type shellWorkerPool struct {
 	sessions *sessionRuntime
 
@@ -57,7 +78,7 @@ func (p *shellWorkerPool) Run(ctx context.Context, req shellRunRequest) (int, er
 
 	worker, err := p.acquire(req.transportID, req.shellName)
 	if err != nil {
-		return decorator.ExitFailure, err
+		return decorator.ExitFailure, newWorkerRunError(err, false)
 	}
 	defer p.release(worker)
 
@@ -236,7 +257,7 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 
 	stdoutPath, stderrPath, cleanup, err := createWorkerCaptureFiles()
 	if err != nil {
-		return decorator.ExitFailure, err
+		return decorator.ExitFailure, newWorkerRunError(err, false)
 	}
 	defer cleanup()
 
@@ -250,7 +271,7 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	script := buildWorkerScript(runReq, stdoutPath, stderrPath, statusMarker)
 	if _, err := io.WriteString(w.stdin, script); err != nil {
 		w.close()
-		return decorator.ExitFailure, fmt.Errorf("write worker request: %w", err)
+		return decorator.ExitFailure, newWorkerRunError(fmt.Errorf("write worker request: %w", err), false)
 	}
 
 	type workerResult struct {
@@ -267,18 +288,22 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	select {
 	case <-ctx.Done():
 		w.close()
-		return decorator.ExitCanceled, ctx.Err()
+		select {
+		case <-resultCh:
+		case <-time.After(250 * time.Millisecond):
+		}
+		return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
 	case result := <-resultCh:
 		if result.err != nil {
 			w.close()
-			return decorator.ExitFailure, result.err
+			return decorator.ExitFailure, newWorkerRunError(result.err, true)
 		}
 
 		if err := replayWorkerOutput(stdoutPath, req.stdout, os.Stdout); err != nil {
-			return decorator.ExitFailure, err
+			return decorator.ExitFailure, newWorkerRunError(err, true)
 		}
 		if err := replayWorkerOutput(stderrPath, req.stderr, os.Stderr); err != nil {
-			return decorator.ExitFailure, err
+			return decorator.ExitFailure, newWorkerRunError(err, true)
 		}
 
 		return result.exitCode, nil
@@ -363,6 +388,8 @@ func buildWorkerScript(req shellRunRequest, stdoutPath, stderrPath, statusMarker
 	b.WriteString(quoteShellLiteral(stderrPath))
 	b.WriteString("\n")
 	b.WriteString("__opal_status=$?\n")
+	// Status markers are trusted protocol lines emitted by this wrapper, not by
+	// command stdout/stderr payloads (which are redirected to capture files).
 	b.WriteString("printf '__OPAL_STATUS_")
 	b.WriteString(statusMarker)
 	b.WriteString(":%d\\n' \"$__opal_status\"\n")
