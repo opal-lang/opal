@@ -7,7 +7,7 @@ import (
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/planfmt"
 )
 
 // DisplayIDResolver resolves display IDs in an execution transport context.
@@ -77,6 +77,7 @@ type executor struct {
 	config   Config
 	vault    DisplayIDResolver // For DisplayID resolution (nil if no secrets)
 	sessions *sessionRuntime
+	workers  *shellWorkerPool
 
 	// Execution state
 	stepsRun int
@@ -88,59 +89,51 @@ type executor struct {
 	startTime   time.Time
 }
 
-// Execute runs SDK steps and returns the result.
+// ExecutePlan runs a planfmt plan and returns the result.
 //
-// The executor resolves DisplayIDs to actual values during execution when vault is provided.
-// Without vault, commands execute as-is (useful for testing or non-secret workflows).
-//
-// Context enables cancellation and timeout propagation through the execution chain.
-// The CLI handles secret scrubbing by redirecting stdout/stderr through the scrubber.
-func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt DisplayIDResolver) (*ExecutionResult, error) {
-	// INPUT CONTRACT (preconditions)
+// This is the plan-native execution boundary for planner/planfmt contracts.
+// No planfmt->sdk step conversion is required on this execution path.
+func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt DisplayIDResolver) (*ExecutionResult, error) {
 	invariant.NotNil(ctx, "ctx")
-	invariant.NotNil(steps, "steps")
+	invariant.NotNil(plan, "plan")
 
 	e := &executor{
 		config:    config,
 		vault:     vlt,
 		sessions:  newSessionRuntime(config.sessionFactory),
+		workers:   nil,
 		startTime: time.Now(),
 	}
+	e.workers = newShellWorkerPool(e.sessions)
 	defer e.sessions.Close()
+	defer e.workers.Close()
 
-	// Initialize telemetry if enabled
 	if config.Telemetry != TelemetryOff {
 		e.telemetry = &ExecutionTelemetry{
-			StepCount: len(steps),
+			StepCount: len(plan.Steps),
 		}
 		if config.Telemetry == TelemetryTiming {
-			e.telemetry.StepTimings = make([]StepTiming, 0, len(steps))
+			e.telemetry.StepTimings = make([]StepTiming, 0, len(plan.Steps))
 		}
 	}
 
-	// Record debug event: enter_execute
 	if config.Debug >= DebugPaths {
-		e.recordDebugEvent("enter_execute", 0, fmt.Sprintf("steps=%d", len(steps)))
+		e.recordDebugEvent("enter_execute", 0, fmt.Sprintf("steps=%d", len(plan.Steps)))
 	}
 
-	// Create root ExecutionContext with current environment and workdir
-	// This is the entry point - all nested decorators will inherit from this
 	rootExecCtx := newExecutionContext(make(map[string]interface{}), e, ctx)
 
-	// Execute all steps sequentially
-	for _, step := range steps {
+	for _, step := range plan.Steps {
 		stepStart := time.Now()
 
 		if config.Debug >= DebugDetailed {
 			e.recordDebugEvent("step_start", step.ID, "executing tree")
 		}
 
-		exitCode := e.executeStep(rootExecCtx, step)
+		exitCode := e.executePlanStep(rootExecCtx, step)
 		e.stepsRun++
 
 		stepDuration := time.Since(stepStart)
-
-		// Record timing if enabled
 		if config.Telemetry == TelemetryTiming {
 			e.telemetry.StepTimings = append(e.telemetry.StepTimings, StepTiming{
 				StepID:   step.ID,
@@ -153,7 +146,6 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt DisplayID
 			e.recordDebugEvent("step_complete", step.ID, fmt.Sprintf("exit=%d, duration=%v", exitCode, stepDuration))
 		}
 
-		// Fail-fast: stop on first failure
 		if exitCode != 0 {
 			e.exitCode = exitCode
 			if e.telemetry != nil {
@@ -164,24 +156,20 @@ func Execute(ctx context.Context, steps []sdk.Step, config Config, vlt DisplayID
 		}
 	}
 
-	// Update telemetry
 	if e.telemetry != nil {
 		e.telemetry.StepsRun = e.stepsRun
 	}
 
-	// Record debug event: exit_execute
 	duration := time.Since(e.startTime)
 	if config.Debug >= DebugPaths {
 		e.recordDebugEvent("exit_execute", 0, fmt.Sprintf("steps_run=%d, exit=%d, duration=%v", e.stepsRun, e.exitCode, duration))
 	}
 
-	// OUTPUT CONTRACT (postconditions)
-	// Exit code must be valid: -1 (canceled), 0 (success), or 1-255 (failure)
 	invariant.Postcondition(
 		e.exitCode == decorator.ExitCanceled || (e.exitCode >= 0 && e.exitCode <= 255),
 		"exit code must be -1 (canceled) or in range [0, 255], got %d", e.exitCode)
 	invariant.Postcondition(e.stepsRun >= 0, "steps run must be non-negative")
-	invariant.Postcondition(e.stepsRun <= len(steps), "steps run cannot exceed total steps")
+	invariant.Postcondition(e.stepsRun <= len(plan.Steps), "steps run cannot exceed total steps")
 
 	return &ExecutionResult{
 		ExitCode:    e.exitCode,

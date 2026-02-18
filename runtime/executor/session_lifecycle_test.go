@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
@@ -33,16 +33,18 @@ func monitoredFactory() (sessionFactory, map[string]*decorator.SessionStats) {
 }
 
 func TestExecuteClosesSessionsOnSuccess(t *testing.T) {
-	factory, stats := monitoredFactory()
-	steps := []sdk.Step{{
-		ID: 1,
-		Tree: &sdk.SequenceNode{Nodes: []sdk.TreeNode{
-			&sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo local"}},
-			&sdk.CommandNode{Name: "@shell", TransportID: "transport:A", Args: map[string]any{"command": "echo remote"}},
-		}},
-	}}
+	t.Parallel()
 
-	result, err := Execute(context.Background(), steps, Config{sessionFactory: factory}, testVault())
+	factory, stats := monitoredFactory()
+	plan := &planfmt.Plan{Target: "session-close-success", Steps: []planfmt.Step{{
+		ID: 1,
+		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+			planShell("echo local"),
+			planShellOn("transport:A", "echo remote"),
+		}},
+	}}}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: factory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -59,16 +61,18 @@ func TestExecuteClosesSessionsOnSuccess(t *testing.T) {
 }
 
 func TestExecuteClosesSessionsOnFailure(t *testing.T) {
-	factory, stats := monitoredFactory()
-	steps := []sdk.Step{{
-		ID: 1,
-		Tree: &sdk.SequenceNode{Nodes: []sdk.TreeNode{
-			&sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo local"}},
-			&sdk.CommandNode{Name: "@shell", TransportID: "transport:A", Args: map[string]any{"command": "exit 7"}},
-		}},
-	}}
+	t.Parallel()
 
-	result, err := Execute(context.Background(), steps, Config{sessionFactory: factory}, testVault())
+	factory, stats := monitoredFactory()
+	plan := &planfmt.Plan{Target: "session-close-failure", Steps: []planfmt.Step{{
+		ID: 1,
+		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+			planShell("echo local"),
+			planShellOn("transport:A", "exit 7"),
+		}},
+	}}}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: factory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -85,6 +89,8 @@ func TestExecuteClosesSessionsOnFailure(t *testing.T) {
 }
 
 func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
+	t.Parallel()
+
 	factory, stats := monitoredFactory()
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -92,16 +98,12 @@ func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	steps := []sdk.Step{{
-		ID: 1,
-		Tree: &sdk.CommandNode{
-			Name:        "@shell",
-			TransportID: "transport:A",
-			Args:        map[string]any{"command": "sleep 5"},
-		},
-	}}
+	plan := &planfmt.Plan{Target: "session-close-cancel", Steps: []planfmt.Step{{
+		ID:   1,
+		Tree: planShellOn("transport:A", "sleep 5"),
+	}}}
 
-	result, err := Execute(ctx, steps, Config{sessionFactory: factory}, testVault())
+	result, err := ExecutePlan(ctx, plan, Config{sessionFactory: factory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -111,5 +113,20 @@ func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
 
 	if diff := cmp.Diff(1, stats["transport:A"].CloseCalls); diff != "" {
 		t.Fatalf("transport:A close calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func planShell(command string) *planfmt.CommandNode {
+	return planShellOn("", command)
+}
+
+func planShellOn(transportID, command string) *planfmt.CommandNode {
+	return &planfmt.CommandNode{
+		Decorator:   "@shell",
+		TransportID: transportID,
+		Args: []planfmt.Arg{{
+			Key: "command",
+			Val: planfmt.Value{Kind: planfmt.ValueString, Str: command},
+		}},
 	}
 }

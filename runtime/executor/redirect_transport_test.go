@@ -8,65 +8,146 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
-type captureSink struct {
-	mu           sync.Mutex
-	openCount    int
-	transportIDs []string
-	sessionIDs   []string
-	output       bytes.Buffer
+type sinkCaptureRecord struct {
+	openCount  int
+	sessionIDs []string
+	output     bytes.Buffer
 }
 
-func (s *captureSink) Caps() sdk.SinkCaps {
-	return sdk.SinkCaps{Overwrite: true, Append: true}
+type sinkCaptureStore struct {
+	mu      sync.Mutex
+	records map[string]*sinkCaptureRecord
 }
 
-func (s *captureSink) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
+var testSinkStore = &sinkCaptureStore{records: map[string]*sinkCaptureRecord{}}
+
+func (s *sinkCaptureStore) reset(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.records[id] = &sinkCaptureRecord{}
+}
 
-	s.openCount++
-	if ec, ok := ctx.(*executionContext); ok {
-		s.transportIDs = append(s.transportIDs, ec.transportID)
+func (s *sinkCaptureStore) withRecord(id string, f func(*sinkCaptureRecord)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[id]
+	if !ok {
+		record = &sinkCaptureRecord{}
+		s.records[id] = record
 	}
-	if transport, ok := ctx.Transport().(*sessionTransport); ok {
-		s.sessionIDs = append(s.sessionIDs, transport.session.ID())
+	f(record)
+}
+
+func (s *sinkCaptureStore) snapshot(id string) sinkCaptureRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[id]
+	if !ok {
+		return sinkCaptureRecord{}
 	}
-
-	return nopWriteCloser{Writer: &s.output}, nil
+	copyRecord := sinkCaptureRecord{
+		openCount:  record.openCount,
+		sessionIDs: append([]string(nil), record.sessionIDs...),
+	}
+	copyRecord.output.Write(record.output.Bytes())
+	return copyRecord
 }
 
-func (s *captureSink) Identity() (kind, identifier string) {
-	return "test.capture", "capture"
+type captureSinkDecorator struct {
+	id string
 }
 
-type nopWriteCloser struct {
-	io.Writer
+func (d *captureSinkDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.capture.sink").
+		Summary("Test-only sink decorator for transport capture assertions").
+		Roles(decorator.RoleEndpoint).
+		ParamString("command", "Capture sink identifier").
+		Required().
+		Done().
+		Build()
 }
 
-func (n nopWriteCloser) Close() error {
+func (d *captureSinkDecorator) IOCaps() decorator.IOCaps {
+	return decorator.IOCaps{Write: true, Append: true}
+}
+
+func (d *captureSinkDecorator) OpenRead(ctx decorator.ExecContext, opts ...decorator.IOOpts) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (d *captureSinkDecorator) OpenWrite(ctx decorator.ExecContext, appendMode bool, opts ...decorator.IOOpts) (io.WriteCloser, error) {
+	testSinkStore.withRecord(d.id, func(record *sinkCaptureRecord) {
+		record.openCount++
+		record.sessionIDs = append(record.sessionIDs, ctx.Session.ID())
+		if !appendMode {
+			record.output.Reset()
+		}
+	})
+	return &captureSinkWriter{id: d.id}, nil
+}
+
+func (d *captureSinkDecorator) WithParams(params map[string]any) decorator.IO {
+	id, _ := params["command"].(string)
+	return &captureSinkDecorator{id: id}
+}
+
+type captureSinkWriter struct {
+	id string
+}
+
+func (w *captureSinkWriter) Write(p []byte) (int, error) {
+	testSinkStore.withRecord(w.id, func(record *sinkCaptureRecord) {
+		_, _ = record.output.Write(p)
+	})
+	return len(p), nil
+}
+
+func (w *captureSinkWriter) Close() error {
 	return nil
 }
 
-func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
-	sink := &captureSink{}
-	steps := []sdk.Step{{
-		ID: 1,
-		Tree: &sdk.RedirectNode{
-			Source: &sdk.CommandNode{
-				Name:        "@shell",
-				TransportID: "transport:A",
-				Args:        map[string]any{"command": "echo routed"},
-			},
-			Sink: sink,
-			Mode: sdk.RedirectOverwrite,
-		},
-	}}
+var registerCaptureSinkOnce sync.Once
 
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+func registerCaptureSinkDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerCaptureSinkOnce.Do(func() {
+		registerErr = decorator.Register("test.capture.sink", &captureSinkDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.capture.sink: %v", registerErr)
+	}
+}
+
+func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
+	t.Parallel()
+	registerCaptureSinkDecorator(t)
+
+	id := t.TempDir() + "/capture-A"
+	testSinkStore.reset(id)
+
+	plan := &planfmt.Plan{Target: "redirect-source-transport", Steps: []planfmt.Step{{
+		ID: 1,
+		Tree: &planfmt.RedirectNode{
+			Source: &planfmt.CommandNode{
+				Decorator:   "@shell",
+				TransportID: "transport:A",
+				Args:        []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo routed"}}},
+			},
+			Target: planfmt.CommandNode{
+				Decorator: "@test.capture.sink",
+				Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: id}}},
+			},
+			Mode: planfmt.RedirectOverwrite,
+		},
+	}}}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -74,44 +155,49 @@ func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(1, sink.openCount); diff != "" {
+	record := testSinkStore.snapshot(id)
+	if diff := cmp.Diff(1, record.openCount); diff != "" {
 		t.Fatalf("sink open count mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]string{"transport:A"}, sink.transportIDs); diff != "" {
-		t.Fatalf("transport context mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff([]string{"transport:A"}, sink.sessionIDs); diff != "" {
+	if diff := cmp.Diff([]string{"transport:A"}, record.sessionIDs); diff != "" {
 		t.Fatalf("session routing mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff("routed\n", sink.output.String()); diff != "" {
+	if diff := cmp.Diff("routed\n", record.output.String()); diff != "" {
 		t.Fatalf("sink output mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestRedirectSinkInheritsWrapperTransportContext(t *testing.T) {
+	t.Parallel()
 	registerSessionBoundaryDecorator(t)
+	registerCaptureSinkDecorator(t)
 
-	sink := &captureSink{}
-	steps := []sdk.Step{{
+	id := t.TempDir() + "/capture-boundary"
+	testSinkStore.reset(id)
+
+	plan := &planfmt.Plan{Target: "redirect-wrapper-transport", Steps: []planfmt.Step{{
 		ID: 1,
-		Tree: &sdk.CommandNode{
-			Name: "@test.session.boundary",
-			Args: map[string]any{"id": "transport:boundary"},
-			Block: []sdk.Step{{
+		Tree: &planfmt.CommandNode{
+			Decorator: "@test.session.boundary",
+			Args:      []planfmt.Arg{{Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "transport:boundary"}}},
+			Block: []planfmt.Step{{
 				ID: 2,
-				Tree: &sdk.RedirectNode{
-					Source: &sdk.CommandNode{
-						Name: "@shell",
-						Args: map[string]any{"command": "echo routed"},
+				Tree: &planfmt.RedirectNode{
+					Source: &planfmt.CommandNode{
+						Decorator: "@shell",
+						Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo routed"}}},
 					},
-					Sink: sink,
-					Mode: sdk.RedirectOverwrite,
+					Target: planfmt.CommandNode{
+						Decorator: "@test.capture.sink",
+						Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: id}}},
+					},
+					Mode: planfmt.RedirectOverwrite,
 				},
 			}},
 		},
-	}}
+	}}}
 
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -119,16 +205,14 @@ func TestRedirectSinkInheritsWrapperTransportContext(t *testing.T) {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(1, sink.openCount); diff != "" {
+	record := testSinkStore.snapshot(id)
+	if diff := cmp.Diff(1, record.openCount); diff != "" {
 		t.Fatalf("sink open count mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]string{"transport:boundary"}, sink.transportIDs); diff != "" {
-		t.Fatalf("transport context mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff([]string{"transport:boundary"}, sink.sessionIDs); diff != "" {
+	if diff := cmp.Diff([]string{"transport:boundary"}, record.sessionIDs); diff != "" {
 		t.Fatalf("session routing mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff("routed\n", sink.output.String()); diff != "" {
+	if diff := cmp.Diff("routed\n", record.output.String()); diff != "" {
 		t.Fatalf("sink output mismatch (-want +got):\n%s", diff)
 	}
 }

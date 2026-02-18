@@ -842,6 +842,25 @@ func TestRenderExpr_DecoratorRef_Nested(t *testing.T) {
 	}
 }
 
+func TestRenderExpr_EnumMemberRef_ResolvedValue(t *testing.T) {
+	expr := &ExprIR{Kind: ExprEnumMemberRef, EnumName: "DeployStage", EnumMember: "Prod"}
+	displayIDs := map[string]string{"DeployStage.Prod": "production"}
+
+	result := RenderExpr(expr, displayIDs)
+	if result != "production" {
+		t.Errorf("RenderExpr() = %q, want %q", result, "production")
+	}
+}
+
+func TestRenderExpr_EnumMemberRef_UnresolvedFallsBackToKey(t *testing.T) {
+	expr := &ExprIR{Kind: ExprEnumMemberRef, EnumName: "DeployStage", EnumMember: "Prod"}
+
+	result := RenderExpr(expr, map[string]string{})
+	if result != "DeployStage.Prod" {
+		t.Errorf("RenderExpr() = %q, want %q", result, "DeployStage.Prod")
+	}
+}
+
 // ========== RenderCommand Tests ==========
 
 func TestRenderCommand_LiteralOnly(t *testing.T) {
@@ -917,6 +936,22 @@ func TestRenderCommand_MultipleRefs(t *testing.T) {
 
 	result := RenderCommand(cmd, displayIDs)
 	expected := "kubectl scale --replicas=opal:count1 deployment/opal:name2"
+	if result != expected {
+		t.Errorf("RenderCommand() = %q, want %q", result, expected)
+	}
+}
+
+func TestRenderCommand_WithEnumMemberRef(t *testing.T) {
+	cmd := &CommandExpr{
+		Parts: []*ExprIR{
+			{Kind: ExprLiteral, Value: "echo "},
+			{Kind: ExprEnumMemberRef, EnumName: "DeployStage", EnumMember: "Prod"},
+		},
+	}
+	displayIDs := map[string]string{"DeployStage.Prod": "production"}
+
+	result := RenderCommand(cmd, displayIDs)
+	expected := "echo production"
 	if result != expected {
 		t.Errorf("RenderCommand() = %q, want %q", result, expected)
 	}

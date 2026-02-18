@@ -369,9 +369,10 @@ func (rd *Reader) readExecutionNode(r io.Reader, depth, maxDepth int) (Execution
 			return nil, fmt.Errorf("read command node: %w", err)
 		}
 		return &CommandNode{
-			Decorator: cmd.Decorator,
-			Args:      cmd.Args,
-			Block:     cmd.Block,
+			Decorator:   cmd.Decorator,
+			TransportID: cmd.TransportID,
+			Args:        cmd.Args,
+			Block:       cmd.Block,
 		}, nil
 
 	case 0x02: // PipelineNode

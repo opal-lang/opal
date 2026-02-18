@@ -333,3 +333,90 @@ func TestTreeOnlySerialized(t *testing.T) {
 		t.Errorf("expected command 'echo hello', got %q", cmdNode.Args[0].Val.Str)
 	}
 }
+
+func TestTreeRoundTrip_PreservesTransportIDs(t *testing.T) {
+	plan := &planfmt.Plan{
+		Target: "transport-ids",
+		Steps: []planfmt.Step{
+			{
+				ID: 1,
+				Tree: &planfmt.CommandNode{
+					Decorator:   "@shell",
+					TransportID: "transport:step1",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo step1"}},
+					},
+				},
+			},
+			{
+				ID: 2,
+				Tree: &planfmt.CommandNode{
+					Decorator:   "@retry",
+					TransportID: "transport:wrapper",
+					Args: []planfmt.Arg{
+						{Key: "times", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 2}},
+					},
+					Block: []planfmt.Step{
+						{
+							ID: 3,
+							Tree: &planfmt.CommandNode{
+								Decorator:   "@shell",
+								TransportID: "transport:block",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo block"}},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				ID: 4,
+				Tree: &planfmt.PipelineNode{
+					Commands: []planfmt.ExecutionNode{
+						&planfmt.CommandNode{
+							Decorator:   "@shell",
+							TransportID: "transport:pipe-left",
+							Args: []planfmt.Arg{
+								{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo pipe"}},
+							},
+						},
+						&planfmt.RedirectNode{
+							Source: &planfmt.CommandNode{
+								Decorator:   "@shell",
+								TransportID: "transport:pipe-right",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "cat"}},
+								},
+							},
+							Target: planfmt.CommandNode{
+								Decorator:   "@shell",
+								TransportID: "transport:sink",
+								Args: []planfmt.Arg{
+									{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "output.txt"}},
+								},
+							},
+							Mode: planfmt.RedirectOverwrite,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	_, err := planfmt.Write(&buf, plan)
+	if err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	roundTrip, _, err := planfmt.Read(&buf)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	opts := cmpopts.IgnoreUnexported(planfmt.Plan{}, planfmt.PlanHeader{})
+	if diff := cmp.Diff(plan, roundTrip, opts); diff != "" {
+		t.Fatalf("transport ID round-trip mismatch (-want +got):\n%s", diff)
+	}
+}

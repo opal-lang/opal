@@ -34,6 +34,8 @@ func testVault() *vault.Vault {
 
 // TestExecuteSimpleShellCommand tests executing a single echo command
 func TestExecuteSimpleShellCommand(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "hello",
 		Steps: []planfmt.Step{
@@ -44,8 +46,7 @@ func TestExecuteSimpleShellCommand(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -54,6 +55,8 @@ func TestExecuteSimpleShellCommand(t *testing.T) {
 
 // TestExecuteMultipleCommands tests executing multiple sequential commands
 func TestExecuteMultipleCommands(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "multi",
 		Steps: []planfmt.Step{
@@ -68,8 +71,7 @@ func TestExecuteMultipleCommands(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun)
@@ -77,6 +79,8 @@ func TestExecuteMultipleCommands(t *testing.T) {
 
 // TestExecuteFailingCommand tests that non-zero exit codes are returned
 func TestExecuteFailingCommand(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "fail",
 		Steps: []planfmt.Step{
@@ -87,8 +91,7 @@ func TestExecuteFailingCommand(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err) // Execute returns result, not error
 	assert.Equal(t, 42, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -96,6 +99,8 @@ func TestExecuteFailingCommand(t *testing.T) {
 
 // TestExecuteStopOnFirstFailure tests fail-fast behavior
 func TestExecuteStopOnFirstFailure(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "failfast",
 		Steps: []planfmt.Step{
@@ -114,8 +119,7 @@ func TestExecuteStopOnFirstFailure(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExitCode)
 	assert.Equal(t, 2, result.StepsRun) // Only first two steps run
@@ -123,13 +127,14 @@ func TestExecuteStopOnFirstFailure(t *testing.T) {
 
 // TestExecuteEmptyPlan tests that empty plans succeed
 func TestExecuteEmptyPlan(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "empty",
 		Steps:  []planfmt.Step{},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 0, result.StepsRun)
@@ -137,6 +142,8 @@ func TestExecuteEmptyPlan(t *testing.T) {
 
 // TestExecuteTelemetryBasic tests basic telemetry collection
 func TestExecuteTelemetryBasic(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "telemetry",
 		Steps: []planfmt.Step{
@@ -147,8 +154,7 @@ func TestExecuteTelemetryBasic(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryBasic}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{Telemetry: TelemetryBasic}, testVault())
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	assert.Equal(t, 1, result.Telemetry.StepCount)
@@ -158,6 +164,8 @@ func TestExecuteTelemetryBasic(t *testing.T) {
 
 // TestExecuteTelemetryTiming tests timing telemetry collection
 func TestExecuteTelemetryTiming(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "timing",
 		Steps: []planfmt.Step{
@@ -168,8 +176,7 @@ func TestExecuteTelemetryTiming(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryTiming}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{Telemetry: TelemetryTiming}, testVault())
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.StepTimings)
@@ -181,6 +188,8 @@ func TestExecuteTelemetryTiming(t *testing.T) {
 
 // TestExecuteTelemetryFailedStep tests failed step tracking
 func TestExecuteTelemetryFailedStep(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "fail",
 		Steps: []planfmt.Step{
@@ -191,8 +200,7 @@ func TestExecuteTelemetryFailedStep(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{Telemetry: TelemetryBasic}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{Telemetry: TelemetryBasic}, testVault())
 	require.NoError(t, err)
 	require.NotNil(t, result.Telemetry)
 	require.NotNil(t, result.Telemetry.FailedStep)
@@ -201,6 +209,8 @@ func TestExecuteTelemetryFailedStep(t *testing.T) {
 
 // TestExecuteDebugPaths tests path-level debug tracing
 func TestExecuteDebugPaths(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "debug",
 		Steps: []planfmt.Step{
@@ -211,8 +221,7 @@ func TestExecuteDebugPaths(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{Debug: DebugPaths}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{Debug: DebugPaths}, testVault())
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 	assert.Greater(t, len(result.DebugEvents), 0)
@@ -228,6 +237,8 @@ func TestExecuteDebugPaths(t *testing.T) {
 
 // TestExecuteDebugDetailed tests detailed debug tracing
 func TestExecuteDebugDetailed(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "debug",
 		Steps: []planfmt.Step{
@@ -238,8 +249,7 @@ func TestExecuteDebugDetailed(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{Debug: DebugDetailed}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{Debug: DebugDetailed}, testVault())
 	require.NoError(t, err)
 	require.NotNil(t, result.DebugEvents)
 
@@ -254,14 +264,18 @@ func TestExecuteDebugDetailed(t *testing.T) {
 
 // TestInvariantNilPlan tests that nil plan causes panic
 func TestInvariantNilPlan(t *testing.T) {
+	t.Parallel()
+
 	assert.Panics(t, func() {
-		_, _ = Execute(context.Background(), nil, Config{}, testVault())
+		_, _ = ExecutePlan(context.Background(), nil, Config{}, testVault())
 	})
 }
 
 // TestExecutorBashParity tests executor behavior matches bash for redirect + operator combinations
 // This mirrors the planner bash_parity_test.go but verifies actual execution (double-entry bookkeeping)
 func TestExecutorBashParity(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name         string
 		tree         planfmt.ExecutionNode
@@ -390,7 +404,10 @@ func TestExecutorBashParity(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			// Clean up any existing test files
 			if tt.checkFile != "" {
 				_ = os.Remove(tt.checkFile)
@@ -412,8 +429,7 @@ func TestExecutorBashParity(t *testing.T) {
 				},
 			}
 
-			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(context.Background(), steps, Config{}, testVault())
+			result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExitCode, result.ExitCode, "exit code mismatch")
 
@@ -436,6 +452,8 @@ func TestExecutorBashParity(t *testing.T) {
 
 // TestExecuteRedirectAppend tests output redirection with >> operator
 func TestExecuteRedirectAppend(t *testing.T) {
+	t.Parallel()
+
 	// Create temp file with initial content
 	tmpFile := t.TempDir() + "/output.txt"
 	err := os.WriteFile(tmpFile, []byte("Line 1\n"), 0o644)
@@ -455,8 +473,7 @@ func TestExecuteRedirectAppend(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, 1, result.StepsRun)
@@ -469,6 +486,8 @@ func TestExecuteRedirectAppend(t *testing.T) {
 
 // TestExecuteRedirectWithPipeline tests redirect with pipeline source
 func TestExecuteRedirectWithPipeline(t *testing.T) {
+	t.Parallel()
+
 	tmpFile := t.TempDir() + "/output.txt"
 
 	plan := &planfmt.Plan{
@@ -500,8 +519,7 @@ func TestExecuteRedirectWithPipeline(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -513,6 +531,8 @@ func TestExecuteRedirectWithPipeline(t *testing.T) {
 
 // TestExecuteRedirectWithAndOperator tests redirect with && operator
 func TestExecuteRedirectWithAndOperator(t *testing.T) {
+	t.Parallel()
+
 	tmpFile := t.TempDir() + "/output.txt"
 
 	plan := &planfmt.Plan{
@@ -532,8 +552,7 @@ func TestExecuteRedirectWithAndOperator(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -545,6 +564,8 @@ func TestExecuteRedirectWithAndOperator(t *testing.T) {
 
 // TestExecuteRedirectWithOrOperator tests redirect with || operator
 func TestExecuteRedirectWithOrOperator(t *testing.T) {
+	t.Parallel()
+
 	tmpFile := t.TempDir() + "/output.txt"
 
 	plan := &planfmt.Plan{
@@ -564,8 +585,7 @@ func TestExecuteRedirectWithOrOperator(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -577,6 +597,8 @@ func TestExecuteRedirectWithOrOperator(t *testing.T) {
 
 // TestExecuteRedirectWithSequence tests redirect with semicolon operator
 func TestExecuteRedirectWithSequence(t *testing.T) {
+	t.Parallel()
+
 	tmpFile := t.TempDir() + "/output.txt"
 
 	plan := &planfmt.Plan{
@@ -599,8 +621,7 @@ func TestExecuteRedirectWithSequence(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-	result, err := Execute(context.Background(), steps, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 
@@ -612,6 +633,8 @@ func TestExecuteRedirectWithSequence(t *testing.T) {
 
 // TestOperatorSemicolon tests semicolon operator (always execute next)
 func TestOperatorSemicolon(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		tree     planfmt.ExecutionNode
@@ -652,7 +675,10 @@ func TestOperatorSemicolon(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			plan := &planfmt.Plan{
 				Target: "test",
 				Steps: []planfmt.Step{
@@ -663,8 +689,7 @@ func TestOperatorSemicolon(t *testing.T) {
 				},
 			}
 
-			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(context.Background(), steps, Config{}, testVault())
+			result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)
@@ -674,6 +699,8 @@ func TestOperatorSemicolon(t *testing.T) {
 
 // TestOperatorAND tests AND operator (execute next only if previous succeeded)
 func TestOperatorAND(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		tree     planfmt.ExecutionNode
@@ -720,7 +747,10 @@ func TestOperatorAND(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			plan := &planfmt.Plan{
 				Target: "test",
 				Steps: []planfmt.Step{
@@ -731,8 +761,7 @@ func TestOperatorAND(t *testing.T) {
 				},
 			}
 
-			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(context.Background(), steps, Config{}, testVault())
+			result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)
@@ -742,6 +771,8 @@ func TestOperatorAND(t *testing.T) {
 
 // TestOperatorOR tests OR operator (execute next only if previous failed)
 func TestOperatorOR(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		tree     planfmt.ExecutionNode
@@ -785,7 +816,10 @@ func TestOperatorOR(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			plan := &planfmt.Plan{
 				Target: "test",
 				Steps: []planfmt.Step{
@@ -796,8 +830,7 @@ func TestOperatorOR(t *testing.T) {
 				},
 			}
 
-			steps := planfmt.ToSDKSteps(plan.Steps)
-			result, err := Execute(context.Background(), steps, Config{}, testVault())
+			result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantExit, result.ExitCode)
 			assert.Equal(t, 1, result.StepsRun)
@@ -810,6 +843,8 @@ func TestOperatorOR(t *testing.T) {
 // The bug is in executeNewDecorator() which calls io.ReadAll(stdin) before execution,
 // causing the downstream command to wait for upstream to finish.
 func TestPipelineStreamingBehavior(t *testing.T) {
+	t.Parallel()
+
 	plan := &planfmt.Plan{
 		Target: "streaming-test",
 		Steps: []planfmt.Step{
@@ -827,14 +862,12 @@ func TestPipelineStreamingBehavior(t *testing.T) {
 		},
 	}
 
-	steps := planfmt.ToSDKSteps(plan.Steps)
-
 	// Set a timeout to detect hang
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	result, err := Execute(ctx, steps, Config{}, testVault())
+	result, err := ExecutePlan(ctx, plan, Config{}, testVault())
 	duration := time.Since(start)
 
 	// Should complete quickly with streaming (<500ms on fast machines)

@@ -177,6 +177,51 @@ func TestEmit_CommandArgUnresolvedEnumMemberFails(t *testing.T) {
 	}
 }
 
+func TestEmit_CommandTextResolvesEnumMemberValue(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@shell",
+					Command: &CommandExpr{
+						Parts: []*ExprIR{
+							{Kind: ExprLiteral, Value: "echo "},
+							{Kind: ExprEnumMemberRef, EnumName: "DeployStage", EnumMember: "Prod"},
+						},
+					},
+				},
+			},
+		},
+		EnumMemberValues: map[string]string{
+			"DeployStage.Prod": "production",
+		},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if len(plan.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(plan.Steps))
+	}
+
+	cmdNode, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
+	if !ok {
+		t.Fatalf("expected *planfmt.CommandNode, got %T", plan.Steps[0].Tree)
+	}
+	if len(cmdNode.Args) == 0 {
+		t.Fatal("expected command args")
+	}
+
+	if diff := cmp.Diff("echo production", cmdNode.Args[0].Val.Str); diff != "" {
+		t.Fatalf("command text mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestEmit_MultipleCommands tests emitting multiple sequential commands.
 func TestEmit_MultipleCommands(t *testing.T) {
 	// Build resolved IR: echo "a"; echo "b"
