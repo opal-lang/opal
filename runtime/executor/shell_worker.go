@@ -314,8 +314,13 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	var streamErr error
 
 	for !statusReady || streamsRemaining > 0 {
+		cancelCh := ctx.Done()
+		if statusReady {
+			cancelCh = nil
+		}
+
 		select {
-		case <-ctx.Done():
+		case <-cancelCh:
 			abortStream()
 			w.close()
 			for !statusReady || streamsRemaining > 0 {

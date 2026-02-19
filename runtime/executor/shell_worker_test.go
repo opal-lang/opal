@@ -234,12 +234,114 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 	}
 }
 
+func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSessionRuntime(nil)
+	defer runtime.Close()
+
+	pool := newShellWorkerPool(runtime)
+	defer pool.Close()
+
+	writer := newBlockingFlushWriter()
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+
+	type runResult struct {
+		exitCode int
+		err      error
+	}
+	resultCh := make(chan runResult, 1)
+
+	go func() {
+		exitCode, err := pool.Run(ctx, shellRunRequest{
+			transportID: "local",
+			shellName:   "bash",
+			command:     "printf 'done\\n'",
+			stdout:      writer,
+		})
+		resultCh <- runResult{exitCode: exitCode, err: err}
+	}()
+
+	select {
+	case <-writer.Started():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for flush writer to block")
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for context cancellation")
+	}
+
+	writer.Release()
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed: %v", result.err)
+		}
+		if diff := cmp.Diff(0, result.exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for worker run completion")
+	}
+
+	if diff := cmp.Diff("done\n", writer.String()); diff != "" {
+		t.Fatalf("flush output mismatch (-want +got):\n%s", diff)
+	}
+}
+
 type streamingProbeWriter struct {
 	mu        sync.Mutex
 	triggerOn string
 	triggered bool
 	buf       strings.Builder
 	trigger   chan struct{}
+}
+
+type blockingFlushWriter struct {
+	mu          sync.Mutex
+	buf         strings.Builder
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingFlushWriter() *blockingFlushWriter {
+	return &blockingFlushWriter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (w *blockingFlushWriter) Write(p []byte) (int, error) {
+	w.startedOnce.Do(func() { close(w.started) })
+	<-w.release
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, err := w.buf.Write(p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *blockingFlushWriter) Started() <-chan struct{} {
+	return w.started
+}
+
+func (w *blockingFlushWriter) Release() {
+	w.releaseOnce.Do(func() { close(w.release) })
+}
+
+func (w *blockingFlushWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 func newStreamingProbeWriter(triggerOn string) *streamingProbeWriter {
