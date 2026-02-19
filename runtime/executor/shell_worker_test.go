@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/planfmt"
@@ -120,6 +122,157 @@ func TestShellWorkerSubshellIsolationForWorkdir(t *testing.T) {
 	if diff := cmp.Diff(originalCwd, readTrimmedFile(t, secondPwd)); diff != "" {
 		t.Fatalf("second command cwd mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSessionRuntime(nil)
+	defer runtime.Close()
+
+	pool := newShellWorkerPool(runtime)
+	defer pool.Close()
+
+	writer := newStreamingProbeWriter("first\n")
+	type runResult struct {
+		exitCode int
+		err      error
+	}
+	resultCh := make(chan runResult, 1)
+
+	go func() {
+		exitCode, err := pool.Run(context.Background(), shellRunRequest{
+			transportID: "local",
+			shellName:   "bash",
+			command:     "printf 'first\\n'; sleep 1; printf 'second\\n'",
+			stdout:      writer,
+		})
+		resultCh <- runResult{exitCode: exitCode, err: err}
+	}()
+
+	select {
+	case <-writer.Trigger():
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for first streamed stdout chunk")
+	}
+
+	select {
+	case <-resultCh:
+		t.Fatal("worker run finished before first chunk was observed")
+	default:
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed: %v", result.err)
+		}
+		if diff := cmp.Diff(0, result.exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for worker run completion")
+	}
+
+	if diff := cmp.Diff("first\nsecond\n", writer.String()); diff != "" {
+		t.Fatalf("streamed stdout mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
+	t.Parallel()
+
+	runtime := newSessionRuntime(nil)
+	defer runtime.Close()
+
+	pool := newShellWorkerPool(runtime)
+	defer pool.Close()
+
+	writer := newStreamingProbeWriter("err-first\n")
+	type runResult struct {
+		exitCode int
+		err      error
+	}
+	resultCh := make(chan runResult, 1)
+
+	go func() {
+		exitCode, err := pool.Run(context.Background(), shellRunRequest{
+			transportID: "local",
+			shellName:   "bash",
+			command:     "printf 'err-first\\n' >&2; sleep 1; printf 'err-second\\n' >&2",
+			stderr:      writer,
+		})
+		resultCh <- runResult{exitCode: exitCode, err: err}
+	}()
+
+	select {
+	case <-writer.Trigger():
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for first streamed stderr chunk")
+	}
+
+	select {
+	case <-resultCh:
+		t.Fatal("worker run finished before first stderr chunk was observed")
+	default:
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed: %v", result.err)
+		}
+		if diff := cmp.Diff(0, result.exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for worker run completion")
+	}
+
+	if diff := cmp.Diff("err-first\nerr-second\n", writer.String()); diff != "" {
+		t.Fatalf("streamed stderr mismatch (-want +got):\n%s", diff)
+	}
+}
+
+type streamingProbeWriter struct {
+	mu        sync.Mutex
+	triggerOn string
+	triggered bool
+	buf       strings.Builder
+	trigger   chan struct{}
+}
+
+func newStreamingProbeWriter(triggerOn string) *streamingProbeWriter {
+	return &streamingProbeWriter{
+		triggerOn: triggerOn,
+		trigger:   make(chan struct{}),
+	}
+}
+
+func (w *streamingProbeWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.buf.Write(p); err != nil {
+		return 0, err
+	}
+
+	if !w.triggered && strings.Contains(w.buf.String(), w.triggerOn) {
+		w.triggered = true
+		close(w.trigger)
+	}
+
+	return len(p), nil
+}
+
+func (w *streamingProbeWriter) Trigger() <-chan struct{} {
+	return w.trigger
+}
+
+func (w *streamingProbeWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 func readTrimmedFile(t *testing.T, path string) string {

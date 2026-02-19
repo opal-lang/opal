@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 )
@@ -274,6 +274,29 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 		return decorator.ExitFailure, newWorkerRunError(fmt.Errorf("write worker request: %w", err), false)
 	}
 
+	streamDone := make(chan struct{})
+	streamAbort := make(chan struct{})
+	var streamDoneOnce sync.Once
+	var streamAbortOnce sync.Once
+	markStreamDone := func() {
+		streamDoneOnce.Do(func() {
+			close(streamDone)
+		})
+	}
+	abortStream := func() {
+		streamAbortOnce.Do(func() {
+			close(streamAbort)
+		})
+	}
+
+	streamErrCh := make(chan error, 2)
+	go func() {
+		streamErrCh <- streamWorkerOutputLive(stdoutPath, req.stdout, os.Stdout, streamDone, streamAbort)
+	}()
+	go func() {
+		streamErrCh <- streamWorkerOutputLive(stderrPath, req.stderr, os.Stderr, streamDone, streamAbort)
+	}()
+
 	type workerResult struct {
 		exitCode int
 		err      error
@@ -285,29 +308,57 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 		resultCh <- workerResult{exitCode: exitCode, err: readErr}
 	}()
 
-	select {
-	case <-ctx.Done():
-		w.close()
+	var status workerResult
+	statusReady := false
+	streamsRemaining := 2
+	var streamErr error
+
+	for !statusReady || streamsRemaining > 0 {
 		select {
-		case <-resultCh:
-		case <-time.After(250 * time.Millisecond):
-		}
-		return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
-	case result := <-resultCh:
-		if result.err != nil {
+		case <-ctx.Done():
+			abortStream()
 			w.close()
-			return decorator.ExitFailure, newWorkerRunError(result.err, true)
-		}
+			for !statusReady || streamsRemaining > 0 {
+				if !statusReady {
+					status = <-resultCh
+					statusReady = true
+					continue
+				}
+				<-streamErrCh
+				streamsRemaining--
+			}
+			return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
 
-		if err := replayWorkerOutput(stdoutPath, req.stdout, os.Stdout); err != nil {
-			return decorator.ExitFailure, newWorkerRunError(err, true)
-		}
-		if err := replayWorkerOutput(stderrPath, req.stderr, os.Stderr); err != nil {
-			return decorator.ExitFailure, newWorkerRunError(err, true)
-		}
+		case result := <-resultCh:
+			status = result
+			statusReady = true
+			if result.err != nil {
+				abortStream()
+			} else {
+				markStreamDone()
+			}
 
-		return result.exitCode, nil
+		case err := <-streamErrCh:
+			streamsRemaining--
+			if err != nil && streamErr == nil {
+				streamErr = err
+				abortStream()
+				w.close()
+			}
+		}
 	}
+
+	if status.err != nil {
+		w.close()
+		return decorator.ExitFailure, newWorkerRunError(status.err, true)
+	}
+
+	if streamErr != nil {
+		w.close()
+		return decorator.ExitFailure, newWorkerRunError(streamErr, true)
+	}
+
+	return status.exitCode, nil
 }
 
 func (w *shellWorker) readStatus(marker string) (int, error) {
@@ -428,7 +479,7 @@ func createWorkerCaptureFiles() (stdoutPath, stderrPath string, cleanup func(), 
 	return stdoutPath, stderrPath, cleanup, nil
 }
 
-func replayWorkerOutput(path string, writer, defaultWriter io.Writer) error {
+func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, abort <-chan struct{}) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("read worker output %q: %w", path, err)
@@ -441,12 +492,78 @@ func replayWorkerOutput(path string, writer, defaultWriter io.Writer) error {
 	if target == nil {
 		target = defaultWriter
 	}
-
-	if _, err := io.Copy(target, file); err != nil {
-		return fmt.Errorf("write worker output: %w", err)
+	if target == nil {
+		return nil
 	}
 
-	return nil
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("watch worker output %q: %w", path, err)
+	}
+	defer func() {
+		_ = watcher.Close()
+	}()
+
+	if err := watcher.Add(path); err != nil {
+		return fmt.Errorf("watch worker output %q: %w", path, err)
+	}
+
+	drain := func(stop <-chan struct{}) error {
+		buf := make([]byte, 64*1024)
+		for {
+			if stop != nil {
+				select {
+				case <-stop:
+					return nil
+				default:
+				}
+			}
+
+			n, readErr := file.Read(buf)
+			if n > 0 {
+				if _, err := target.Write(buf[:n]); err != nil {
+					return fmt.Errorf("write worker output: %w", err)
+				}
+			}
+
+			if readErr == nil {
+				continue
+			}
+
+			if readErr == io.EOF {
+				return nil
+			}
+
+			return fmt.Errorf("read worker output %q: %w", path, readErr)
+		}
+	}
+
+	if err := drain(abort); err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-abort:
+			return nil
+		case <-done:
+			return drain(nil)
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				if err := drain(abort); err != nil {
+					return err
+				}
+			}
+		case watchErr, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			return fmt.Errorf("watch worker output %q: %w", path, watchErr)
+		}
+	}
 }
 
 func sortedEnvKeys(env map[string]string) []string {

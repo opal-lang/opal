@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-19
+- Changed shell-worker output handling to stream stdout/stderr live with event-driven file watching, while preserving cancellation behavior and scrubber-compatible output routing
+
 ### 2026-02-17
 - Changed runtime execution to use the plan-native `executor.ExecutePlan` entrypoint and removed the legacy SDK-step executor entrypoint
 - Removed the planfmt-to-SDK execution conversion layer (`core/planfmt/sdk.go`) so execution uses planfmt trees directly
