@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,6 +334,172 @@ func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
 	if diff := cmp.Diff("done\n", writer.String()); diff != "" {
 		t.Fatalf("flush output mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestConsumeWorkerStreamFiltersCompletionMarkerAcrossChunks(t *testing.T) {
+	t.Parallel()
+
+	state := &workerStreamState{marker: []byte("__DONE__\n")}
+
+	first := consumeWorkerStream(state, []byte("alpha__DO"))
+	second := consumeWorkerStream(state, []byte("NE__\nbeta"))
+	combined := string(append(first, second...))
+
+	if diff := cmp.Diff("alphabeta", combined); diff != "" {
+		t.Fatalf("filtered output mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, state.done); diff != "" {
+		t.Fatalf("done state mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellWorkerWaitsForLateChunksAfterStatus(t *testing.T) {
+	ctrlR, ctrlW := io.Pipe()
+	defer func() { _ = ctrlR.Close() }()
+	defer func() { _ = ctrlW.Close() }()
+
+	stdin := newScriptCaptureWriteCloser()
+
+	w := &shellWorker{
+		key:         shellWorkerKey{transportID: "local", shellName: "bash"},
+		instance:    "test-instance",
+		baseEnv:     map[string]string{},
+		baseCwd:     "",
+		stdin:       stdin,
+		ctrl:        bufio.NewReader(ctrlR),
+		streamCh:    make(chan workerStreamChunk, 4),
+		streamErrCh: make(chan error, 1),
+		closedCh:    make(chan struct{}),
+	}
+	w.alive.Store(true)
+
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
+
+	type runResult struct {
+		exitCode int
+		err      error
+	}
+	runCh := make(chan runResult, 1)
+	go func() {
+		exitCode, err := w.run(context.Background(), shellRunRequest{
+			transportID: "local",
+			shellName:   "bash",
+			command:     "echo ignored",
+			stdout:      stdout,
+			stderr:      stderr,
+		})
+		runCh <- runResult{exitCode: exitCode, err: err}
+	}()
+
+	var statusMarker string
+	select {
+	case script := <-stdin.Script():
+		marker, err := extractWorkerStatusMarker(script)
+		if err != nil {
+			t.Fatalf("extract status marker: %v", err)
+		}
+		statusMarker = marker
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker script write")
+	}
+
+	if _, err := io.WriteString(ctrlW, "__OPAL_STATUS_"+statusMarker+":0\n"); err != nil {
+		t.Fatalf("write status line: %v", err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case result := <-runCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed unexpectedly: %v", result.err)
+		}
+		t.Fatal("worker run returned before late stream chunks arrived")
+	default:
+	}
+
+	stdoutDoneMarker, stderrDoneMarker := workerStreamDoneMarkers(w.instance, statusMarker)
+	w.streamCh <- workerStreamChunk{stderr: false, data: []byte("late-output\n" + stdoutDoneMarker + "\n")}
+	w.streamCh <- workerStreamChunk{stderr: true, data: []byte(stderrDoneMarker + "\n")}
+
+	select {
+	case result := <-runCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed: %v", result.err)
+		}
+		if diff := cmp.Diff(0, result.exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker completion after late chunks")
+	}
+
+	if diff := cmp.Diff("late-output\n", stdout.String()); diff != "" {
+		t.Fatalf("stdout mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("", stderr.String()); diff != "" {
+		t.Fatalf("stderr mismatch (-want +got):\n%s", diff)
+	}
+}
+
+type scriptCaptureWriteCloser struct {
+	mu       sync.Mutex
+	buf      strings.Builder
+	scriptCh chan string
+	once     sync.Once
+}
+
+func newScriptCaptureWriteCloser() *scriptCaptureWriteCloser {
+	return &scriptCaptureWriteCloser{scriptCh: make(chan string, 1)}
+}
+
+func (w *scriptCaptureWriteCloser) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.buf.Write(p); err != nil {
+		return 0, err
+	}
+
+	script := w.buf.String()
+	if strings.Contains(script, "printf '__OPAL_STATUS_") {
+		w.once.Do(func() {
+			w.scriptCh <- script
+			close(w.scriptCh)
+		})
+	}
+
+	return len(p), nil
+}
+
+func (w *scriptCaptureWriteCloser) Close() error {
+	return nil
+}
+
+func (w *scriptCaptureWriteCloser) Script() <-chan string {
+	return w.scriptCh
+}
+
+func extractWorkerStatusMarker(script string) (string, error) {
+	prefix := "printf '__OPAL_STATUS_"
+	start := strings.Index(script, prefix)
+	if start < 0 {
+		return "", fmt.Errorf("status marker prefix not found")
+	}
+
+	rest := script[start+len(prefix):]
+	suffix := ":%d\\n' \"$__opal_status\" >&3"
+	end := strings.Index(rest, suffix)
+	if end < 0 {
+		return "", fmt.Errorf("status marker suffix not found")
+	}
+
+	marker := rest[:end]
+	if marker == "" {
+		return "", fmt.Errorf("status marker is empty")
+	}
+
+	return marker, nil
 }
 
 type streamingProbeWriter struct {

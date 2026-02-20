@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
@@ -230,6 +230,12 @@ type workerStreamChunk struct {
 	pool   *[]byte
 }
 
+type workerStreamState struct {
+	marker []byte
+	tail   []byte
+	done   bool
+}
+
 func (w *shellWorker) start() error {
 	var cmd *exec.Cmd
 	switch w.key.shellName {
@@ -325,13 +331,14 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	}
 
 	statusMarker := strconv.FormatUint(shellWorkerSequence.Add(1), 10)
+	stdoutDoneMarker, stderrDoneMarker := workerStreamDoneMarkers(w.instance, statusMarker)
 	runReq := req
 	runReq.environ = envDelta(w.baseEnv, req.environ)
 	if req.workdir == w.baseCwd {
 		runReq.workdir = ""
 	}
 
-	script := buildWorkerScript(runReq, statusMarker)
+	script := buildWorkerScript(runReq, statusMarker, stdoutDoneMarker, stderrDoneMarker)
 	if _, err := io.WriteString(w.stdin, script); err != nil {
 		w.close()
 		return decorator.ExitFailure, newWorkerRunError(fmt.Errorf("write worker request: %w", err), false)
@@ -351,49 +358,34 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	var status workerResult
 	statusReady := false
 	var streamErr error
-	var flushTimer *time.Timer
-	var flushCh <-chan time.Time
-	flushIdle := 2 * time.Millisecond
-	stopFlush := func() {
-		if flushTimer == nil {
-			return
-		}
-		if !flushTimer.Stop() {
-			select {
-			case <-flushTimer.C:
-			default:
-			}
-		}
-		flushCh = nil
-	}
-	armFlush := func() {
-		if flushTimer == nil {
-			flushTimer = time.NewTimer(flushIdle)
-			flushCh = flushTimer.C
-			return
-		}
-		if !flushTimer.Stop() {
-			select {
-			case <-flushTimer.C:
-			default:
-			}
-		}
-		flushTimer.Reset(flushIdle)
-		flushCh = flushTimer.C
-	}
-	defer func() {
-		if flushTimer != nil {
-			stopFlush()
-		}
-	}()
+	stdoutState := workerStreamState{marker: []byte(stdoutDoneMarker + "\n")}
+	stderrState := workerStreamState{marker: []byte(stderrDoneMarker + "\n")}
 
 	recordStatus := func(result workerResult) {
 		status = result
 		statusReady = true
-		armFlush()
+	}
+
+	finishIfReady := func() (int, error, bool) {
+		if statusReady && status.err != nil {
+			w.close()
+			return decorator.ExitFailure, newWorkerRunError(status.err, true), true
+		}
+		if streamErr != nil {
+			w.close()
+			return decorator.ExitFailure, newWorkerRunError(streamErr, true), true
+		}
+		if !statusReady || !stdoutState.done || !stderrState.done {
+			return 0, nil, false
+		}
+		return status.exitCode, nil, true
 	}
 
 	for {
+		if exitCode, runErr, done := finishIfReady(); done {
+			return exitCode, runErr
+		}
+
 		if !statusReady {
 			select {
 			case result := <-resultCh:
@@ -426,12 +418,9 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 			recordStatus(result)
 
 		case chunk := <-w.streamCh:
-			if err := writeWorkerChunk(chunk, req.stdout, req.stderr); err != nil {
+			if err := handleWorkerStreamChunk(&stdoutState, &stderrState, chunk, req.stdout, req.stderr); err != nil {
 				w.close()
 				return decorator.ExitFailure, newWorkerRunError(err, true)
-			}
-			if statusReady {
-				armFlush()
 			}
 
 		case err := <-w.streamErrCh:
@@ -439,33 +428,6 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 				streamErr = err
 				w.close()
 			}
-
-		case <-flushCh:
-			if !statusReady {
-				continue
-			}
-			select {
-			case chunk := <-w.streamCh:
-				if err := writeWorkerChunk(chunk, req.stdout, req.stderr); err != nil {
-					w.close()
-					return decorator.ExitFailure, newWorkerRunError(err, true)
-				}
-				armFlush()
-				continue
-			default:
-			}
-
-			if status.err != nil {
-				w.close()
-				return decorator.ExitFailure, newWorkerRunError(status.err, true)
-			}
-
-			if streamErr != nil {
-				w.close()
-				return decorator.ExitFailure, newWorkerRunError(streamErr, true)
-			}
-
-			return status.exitCode, nil
 		}
 	}
 }
@@ -526,7 +488,7 @@ func (w *shellWorker) isAlive() bool {
 	return w.alive.Load()
 }
 
-func buildWorkerScript(req shellRunRequest, statusMarker string) string {
+func buildWorkerScript(req shellRunRequest, statusMarker, stdoutDoneMarker, stderrDoneMarker string) string {
 	invariant.Precondition(req.command != "", "worker command cannot be empty")
 
 	var b strings.Builder
@@ -556,6 +518,12 @@ func buildWorkerScript(req shellRunRequest, statusMarker string) string {
 	}
 	b.WriteString(")\n")
 	b.WriteString("__opal_status=$?\n")
+	b.WriteString("printf '%s\\n' ")
+	b.WriteString(quoteShellLiteral(stdoutDoneMarker))
+	b.WriteString("\n")
+	b.WriteString("printf '%s\\n' ")
+	b.WriteString(quoteShellLiteral(stderrDoneMarker))
+	b.WriteString(" >&2\n")
 	b.WriteString("printf '__OPAL_STATUS_")
 	b.WriteString(statusMarker)
 	b.WriteString(":%d\\n' \"$__opal_status\" >&3\n")
@@ -628,25 +596,102 @@ func (w *shellWorker) drainPendingStreams() error {
 	}
 }
 
-func writeWorkerChunk(chunk workerStreamChunk, stdout, stderr io.Writer) error {
-	defer releaseWorkerStreamChunk(chunk)
+func handleWorkerStreamChunk(stdoutState, stderrState *workerStreamState, chunk workerStreamChunk, stdout, stderr io.Writer) error {
+	var filtered []byte
+	if chunk.stderr {
+		filtered = consumeWorkerStream(stderrState, chunk.data)
+	} else {
+		filtered = consumeWorkerStream(stdoutState, chunk.data)
+	}
+	releaseWorkerStreamChunk(chunk)
 
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return writeWorkerOutput(filtered, chunk.stderr, stdout, stderr)
+}
+
+func writeWorkerOutput(data []byte, isStderr bool, stdout, stderr io.Writer) error {
 	target := stdout
 	defaultTarget := os.Stdout
-	if chunk.stderr {
+	if isStderr {
 		target = stderr
 		defaultTarget = os.Stderr
 	}
 	if target == nil {
 		target = defaultTarget
 	}
-	if target == nil || len(chunk.data) == 0 {
+	if target == nil || len(data) == 0 {
 		return nil
 	}
-	if _, err := target.Write(chunk.data); err != nil {
+	if _, err := target.Write(data); err != nil {
 		return fmt.Errorf("write worker output: %w", err)
 	}
 	return nil
+}
+
+func consumeWorkerStream(state *workerStreamState, data []byte) []byte {
+	if state == nil || len(data) == 0 {
+		return nil
+	}
+	if state.done {
+		return append([]byte(nil), data...)
+	}
+
+	combined := make([]byte, 0, len(state.tail)+len(data))
+	combined = append(combined, state.tail...)
+	combined = append(combined, data...)
+	state.tail = state.tail[:0]
+
+	markerLen := len(state.marker)
+	if markerLen == 0 {
+		return combined
+	}
+
+	var out []byte
+	for {
+		idx := bytes.Index(combined, state.marker)
+		if idx < 0 {
+			break
+		}
+
+		if idx > 0 {
+			out = append(out, combined[:idx]...)
+		}
+		combined = combined[idx+markerLen:]
+		state.done = true
+	}
+
+	if state.done {
+		if len(combined) > 0 {
+			out = append(out, combined...)
+		}
+		return out
+	}
+
+	tailLen := markerLen - 1
+	if tailLen < 0 {
+		tailLen = 0
+	}
+	if tailLen > len(combined) {
+		tailLen = len(combined)
+	}
+
+	flushLen := len(combined) - tailLen
+	if flushLen > 0 {
+		out = append(out, combined[:flushLen]...)
+	}
+	if tailLen > 0 {
+		state.tail = append(state.tail[:0], combined[flushLen:]...)
+	}
+
+	return out
+}
+
+func workerStreamDoneMarkers(instance, statusMarker string) (string, string) {
+	prefix := "__OPAL_STREAM_DONE_" + instance + "_" + statusMarker + "_"
+	return prefix + "STDOUT__", prefix + "STDERR__"
 }
 
 func getWorkerStreamBuffer() *[]byte {
