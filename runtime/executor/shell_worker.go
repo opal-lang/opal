@@ -513,8 +513,9 @@ func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, 
 		return fmt.Errorf("watch worker output %q: %w", path, err)
 	}
 
+	buf := make([]byte, 64*1024)
+
 	drain := func(stop <-chan struct{}) error {
-		buf := make([]byte, 64*1024)
 		for {
 			if stop != nil {
 				select {
