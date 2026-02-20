@@ -15,6 +15,9 @@ import (
 func (e *executor) executePlanStep(execCtx sdk.ExecutionContext, step planfmt.Step) int {
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
 
 	if logic, ok := step.Tree.(*planfmt.LogicNode); ok {
 		return e.executePlanBlock(execCtx, logic.Block)
@@ -32,6 +35,9 @@ func (e *executor) executePlanStep(execCtx sdk.ExecutionContext, step planfmt.St
 
 func (e *executor) executePlanBlock(execCtx sdk.ExecutionContext, steps []planfmt.Step) int {
 	for _, step := range steps {
+		if isExecutionCanceled(execCtx) {
+			return decorator.ExitCanceled
+		}
 		exitCode := e.executePlanStep(execCtx, step)
 		if exitCode != 0 {
 			return exitCode
@@ -42,6 +48,9 @@ func (e *executor) executePlanBlock(execCtx sdk.ExecutionContext, steps []planfm
 
 func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.ExecutionNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
 
 	switch n := node.(type) {
 	case *planfmt.CommandNode:
@@ -59,7 +68,7 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 
 	case *planfmt.OrNode:
 		leftExit := e.executePlanTreeIO(execCtx, n.Left, nil, stdout)
-		if leftExit == 0 {
+		if leftExit == 0 || isExecutionCanceled(execCtx) {
 			return leftExit
 		}
 		return e.executePlanTreeIO(execCtx, n.Right, stdin, stdout)
@@ -67,6 +76,9 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 	case *planfmt.SequenceNode:
 		var lastExit int
 		for i, child := range n.Nodes {
+			if isExecutionCanceled(execCtx) {
+				return decorator.ExitCanceled
+			}
 			childStdin := io.Reader(nil)
 			if i == len(n.Nodes)-1 {
 				childStdin = stdin
@@ -106,6 +118,9 @@ func (e *executor) executePlanTreeNode(execCtx sdk.ExecutionContext, node planfm
 func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline *planfmt.PipelineNode, initialStdin io.Reader, finalStdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.NotNil(pipeline, "pipeline")
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
 	numCommands := len(pipeline.Commands)
 	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
 	for i, node := range pipeline.Commands {
@@ -189,6 +204,10 @@ func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline 
 
 func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd *planfmt.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
+
 	commandExecCtx := withExecutionTransport(execCtx, cmd.TransportID)
 
 	params, ok := e.resolveCommandParams(commandExecCtx, cmd.Decorator, planArgsToMap(cmd.Args))
@@ -218,6 +237,10 @@ func (e *executor) executePlanDecorator(
 	stdin io.Reader,
 	stdout io.Writer,
 ) int {
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
+
 	var next decorator.ExecNode
 	if len(cmd.Block) > 0 {
 		next = &planBlockNode{executor: e, execCtx: execCtx, steps: cmd.Block}
@@ -262,6 +285,9 @@ func (e *executor) executePlanDecorator(
 func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *planfmt.RedirectNode, stdin io.Reader) int {
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.NotNil(redirect, "redirect node")
+	if isExecutionCanceled(execCtx) {
+		return decorator.ExitCanceled
+	}
 
 	redirectExecCtx := withExecutionTransport(execCtx, sourceTransportIDForPlan(redirect.Source))
 
@@ -286,6 +312,9 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 		return decorator.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, redirectExecCtx)
+	if isExecutionCanceled(redirectExecCtx) {
+		return decorator.ExitCanceled
+	}
 
 	writer, err := ioDecorator.OpenWrite(decorator.ExecContext{
 		Context: redirectExecCtx.Context(),
@@ -303,6 +332,17 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 	}()
 
 	return e.executePlanTreeIO(redirectExecCtx, redirect.Source, stdin, writer)
+}
+
+func isExecutionCanceled(execCtx sdk.ExecutionContext) bool {
+	if execCtx == nil {
+		return false
+	}
+	ctx := execCtx.Context()
+	if ctx == nil {
+		return false
+	}
+	return ctx.Err() != nil
 }
 
 func sourceTransportIDForPlan(node planfmt.ExecutionNode) string {

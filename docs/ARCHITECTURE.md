@@ -2730,6 +2730,13 @@ Opal guarantees that all operations halt with deterministic results.
 
 **Resource limits**: Memory and process limits prevent system exhaustion.
 
+**Interrupt model (Ctrl+C / SIGINT)**: Interrupt behavior matches shell expectations while preserving Opal safety guarantees.
+- **First interrupt** cancels the run context and stops scheduling new work
+- In-flight commands receive cancellation and are terminated with best-effort process-tree cleanup
+- Cancellation return is bounded; Opal prefers prompt interrupt response over unbounded output draining
+- If a command exit status is already finalized, later cancellation does not rewrite it to canceled
+- **Second interrupt** forces immediate termination
+
 ### Determinism
 
 **Reproducible plans**: Same source + environment = identical plan.
@@ -2745,9 +2752,20 @@ Opal guarantees that all operations halt with deterministic results.
 ### Cancellation and Cleanup
 
 **Graceful cancellation**: `finally` blocks run on interruption for safe cleanup.
-- **First Ctrl+C**: Triggers cleanup sequence, shows "Cleaning up..."
-- **Second Ctrl+C**: Force immediate termination, skips cleanup
-- Allows resource cleanup (PIDs, temp files, containers) while providing escape hatch
+
+**Cancellation invariants (must hold):**
+- **No new scheduling after cancel**: once cancellation is observed, Opal does not start new commands/branches
+- **No replay after start**: if command start is ambiguous or confirmed, Opal does not fallback-reexecute that command
+- **Status precedence**: if command completion status is known, that status is preserved even if cancellation arrives during output flush
+- **Bounded cleanup**: cleanup is best-effort and time-bounded; Opal does not wait forever for drains/teardown
+- **Operator propagation**: cancellation short-circuits operator trees (`sequence`, `and`, `or`, `pipeline`, `redirect`) to prevent post-cancel side effects
+
+**Infrastructure deployment expectation:** cancellation is not a transactional rollback.
+- External systems may observe partial progress at cancel boundaries
+- If a cloud/provider create request is already accepted, cancellation stops further Opal work but does not automatically "un-create" that resource
+- `finally` is for stabilization and cleanup, not a global undo primitive
+- Deployment decorators expose idempotency keys and safe re-entry so reruns reconcile cleanly
+- Operators rely on explicit health checks and reconciliation steps after interruption
 
 ## Decorator Design Requirements
 
