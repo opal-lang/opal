@@ -22,6 +22,13 @@ const workerInstanceEnvVar = "OPAL_INTERNAL_WORKER_INSTANCE"
 
 var shellWorkerSequence atomic.Uint64
 
+var streamReadBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 64*1024)
+		return &buf
+	},
+}
+
 type shellWorkerKey struct {
 	transportID string
 	shellName   string
@@ -323,15 +330,6 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 		case <-cancelCh:
 			abortStream()
 			w.close()
-			for !statusReady || streamsRemaining > 0 {
-				if !statusReady {
-					status = <-resultCh
-					statusReady = true
-					continue
-				}
-				<-streamErrCh
-				streamsRemaining--
-			}
 			return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
 
 		case result := <-resultCh:
@@ -513,38 +511,25 @@ func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, 
 		return fmt.Errorf("watch worker output %q: %w", path, err)
 	}
 
-	buf := make([]byte, 64*1024)
-
-	drain := func(stop <-chan struct{}) error {
-		for {
-			if stop != nil {
-				select {
-				case <-stop:
-					return nil
-				default:
-				}
-			}
-
-			n, readErr := file.Read(buf)
-			if n > 0 {
-				if _, err := target.Write(buf[:n]); err != nil {
-					return fmt.Errorf("write worker output: %w", err)
-				}
-			}
-
-			if readErr == nil {
-				continue
-			}
-
-			if readErr == io.EOF {
-				return nil
-			}
-
-			return fmt.Errorf("read worker output %q: %w", path, readErr)
-		}
+	bufPtr, ok := streamReadBufferPool.Get().(*[]byte)
+	if !ok || bufPtr == nil {
+		buf := make([]byte, 64*1024)
+		bufPtr = &buf
 	}
 
-	if err := drain(abort); err != nil {
+	buf := *bufPtr
+	if cap(buf) < 64*1024 {
+		buf = make([]byte, 64*1024)
+	}
+	buf = buf[:64*1024]
+	*bufPtr = buf
+
+	defer func() {
+		clear(buf)
+		streamReadBufferPool.Put(bufPtr)
+	}()
+
+	if err := drainWorkerOutput(file, target, buf, abort, path); err != nil {
 		return err
 	}
 
@@ -553,13 +538,13 @@ func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, 
 		case <-abort:
 			return nil
 		case <-done:
-			return drain(nil)
+			return drainWorkerOutput(file, target, buf, nil, path)
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
 			}
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				if err := drain(abort); err != nil {
+				if err := drainWorkerOutput(file, target, buf, abort, path); err != nil {
 					return err
 				}
 			}
@@ -569,6 +554,35 @@ func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, 
 			}
 			return fmt.Errorf("watch worker output %q: %w", path, watchErr)
 		}
+	}
+}
+
+func drainWorkerOutput(file *os.File, target io.Writer, buf []byte, stop <-chan struct{}, path string) error {
+	for {
+		if stop != nil {
+			select {
+			case <-stop:
+				return nil
+			default:
+			}
+		}
+
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			if _, err := target.Write(buf[:n]); err != nil {
+				return fmt.Errorf("write worker output: %w", err)
+			}
+		}
+
+		if readErr == nil {
+			continue
+		}
+
+		if readErr == io.EOF {
+			return nil
+		}
+
+		return fmt.Errorf("read worker output %q: %w", path, readErr)
 	}
 }
 

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-20
+- Changed executor cancellation semantics to stop scheduling new work after cancellation, preserve finalized command status during late cancellation, and document interrupt/cleanup invariants for infrastructure runs
+
 ### 2026-02-19
 - Changed shell-worker output handling to stream stdout/stderr live with event-driven file watching, while preserving cancellation behavior and scrubber-compatible output routing
 

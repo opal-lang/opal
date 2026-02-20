@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -290,6 +292,49 @@ func TestCancellationWithSequenceOperator(t *testing.T) {
 
 	// Should stop quickly, not run all 3 commands
 	assert.Less(t, duration, 1*time.Second, "sequence should stop after cancellation")
+}
+
+func TestCancellationStopsSchedulingSubsequentSequenceNodes(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	markerPath := filepath.Join(t.TempDir(), "should-not-exist.txt")
+
+	steps := []sdk.Step{{
+		ID: 1,
+		Tree: &sdk.SequenceNode{
+			Nodes: []sdk.TreeNode{
+				&sdk.CommandNode{
+					Name: "@shell",
+					Args: map[string]interface{}{
+						"command": "sleep 10",
+					},
+				},
+				&sdk.CommandNode{
+					Name: "@shell",
+					Args: map[string]interface{}{
+						"command": "echo ran > " + markerPath,
+					},
+				},
+			},
+		},
+	}}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	result, err := ExecutePlan(ctx, planFromSDKStepsForCancellation(t, "cancel-sequence-no-schedule", steps), Config{}, testVault())
+	duration := time.Since(start)
+
+	assert.Less(t, duration, 1*time.Second, "execution should stop promptly after cancellation")
+	assert.NotEqual(t, 0, result.ExitCode, "cancelled run should be non-zero")
+	assert.NoError(t, err)
+
+	_, statErr := os.Stat(markerPath)
+	assert.True(t, os.IsNotExist(statErr), "second sequence node should not run after cancellation")
 }
 
 // TestCancellationWithAndOperator verifies that cancellation works

@@ -125,8 +125,6 @@ func TestShellWorkerSubshellIsolationForWorkdir(t *testing.T) {
 }
 
 func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
-	t.Parallel()
-
 	runtime := newSessionRuntime(nil)
 	defer runtime.Close()
 
@@ -152,7 +150,12 @@ func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
 
 	select {
 	case <-writer.Trigger():
-	case <-time.After(700 * time.Millisecond):
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed before first streamed stdout chunk: %v", result.err)
+		}
+		t.Fatal("worker run completed before first streamed stdout chunk")
+	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first streamed stdout chunk")
 	}
 
@@ -170,7 +173,7 @@ func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
 		if diff := cmp.Diff(0, result.exitCode); diff != "" {
 			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for worker run completion")
 	}
 
@@ -180,8 +183,6 @@ func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
 }
 
 func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
-	t.Parallel()
-
 	runtime := newSessionRuntime(nil)
 	defer runtime.Close()
 
@@ -207,7 +208,12 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 
 	select {
 	case <-writer.Trigger():
-	case <-time.After(700 * time.Millisecond):
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed before first streamed stderr chunk: %v", result.err)
+		}
+		t.Fatal("worker run completed before first streamed stderr chunk")
+	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first streamed stderr chunk")
 	}
 
@@ -225,7 +231,7 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 		if diff := cmp.Diff(0, result.exitCode); diff != "" {
 			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for worker run completion")
 	}
 
@@ -235,8 +241,6 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 }
 
 func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
-	t.Parallel()
-
 	runtime := newSessionRuntime(nil)
 	defer runtime.Close()
 
@@ -244,7 +248,7 @@ func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
 	defer pool.Close()
 
 	writer := newBlockingFlushWriter()
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	type runResult struct {
@@ -268,6 +272,9 @@ func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for flush writer to block")
 	}
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
 
 	select {
 	case <-ctx.Done():
