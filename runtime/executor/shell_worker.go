@@ -319,8 +319,26 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 	statusReady := false
 	streamsRemaining := 2
 	var streamErr error
+	recordStatus := func(result workerResult) {
+		status = result
+		statusReady = true
+		if result.err != nil {
+			abortStream()
+		} else {
+			markStreamDone()
+		}
+	}
 
 	for !statusReady || streamsRemaining > 0 {
+		if !statusReady {
+			select {
+			case result := <-resultCh:
+				recordStatus(result)
+				continue
+			default:
+			}
+		}
+
 		cancelCh := ctx.Done()
 		if statusReady {
 			cancelCh = nil
@@ -328,18 +346,21 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 
 		select {
 		case <-cancelCh:
+			if !statusReady {
+				select {
+				case result := <-resultCh:
+					recordStatus(result)
+					continue
+				default:
+				}
+			}
+
 			abortStream()
 			w.close()
 			return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
 
 		case result := <-resultCh:
-			status = result
-			statusReady = true
-			if result.err != nil {
-				abortStream()
-			} else {
-				markStreamDone()
-			}
+			recordStatus(result)
 
 		case err := <-streamErrCh:
 			streamsRemaining--
