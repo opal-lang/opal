@@ -352,9 +352,12 @@ func sessionForExecutionContext(base decorator.Session, execCtx sdk.ExecutionCon
 }
 
 func envDelta(base, target map[string]string) map[string]string {
-	delta := make(map[string]string)
+	var delta map[string]string
 	for key, targetValue := range target {
 		if baseValue, ok := base[key]; !ok || baseValue != targetValue {
+			if delta == nil {
+				delta = make(map[string]string)
+			}
 			delta[key] = targetValue
 		}
 	}
