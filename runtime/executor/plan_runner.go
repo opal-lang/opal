@@ -68,7 +68,7 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 
 	case *planfmt.OrNode:
 		leftExit := e.executePlanTreeIO(execCtx, n.Left, nil, stdout)
-		if leftExit == 0 {
+		if leftExit == 0 || isExecutionCanceled(execCtx) {
 			return leftExit
 		}
 		return e.executePlanTreeIO(execCtx, n.Right, stdin, stdout)
