@@ -20,8 +20,10 @@ type executionContext struct {
 	args        map[string]interface{} // Decorator arguments (from sdk.Command)
 	ctx         context.Context
 	transportID string
-	environ     map[string]string // Immutable snapshot
-	workdir     string            // Immutable snapshot
+	environ     map[string]string // Immutable snapshot for this context
+	workdir     string            // Immutable snapshot for this context
+	baseEnviron map[string]string // Base session snapshot for transportID
+	baseWorkdir string            // Base session snapshot for transportID
 	stdin       io.Reader         // Piped input (nil if not piped)
 	stdoutPipe  io.Writer         // Piped output (nil if not piped)
 }
@@ -32,11 +34,26 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 	invariant.NotNil(ctx, "context")
 	invariant.NotNil(args, "args")
 
-	// Capture current working directory at context creation time
-	// This ensures isolation - changes to os.Getwd() won't affect this context
-	wd, err := os.Getwd()
-	if err != nil {
-		panic("failed to get working directory: " + err.Error())
+	baseEnv := map[string]string{}
+	baseWd := ""
+
+	if exec != nil && exec.sessions != nil {
+		baseSession, err := exec.sessions.SessionFor("local")
+		if err == nil {
+			baseEnv = baseSession.Env()
+			baseWd = baseSession.Cwd()
+		}
+	}
+
+	if baseWd == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			panic("failed to get working directory: " + err.Error())
+		}
+		baseWd = wd
+	}
+	if len(baseEnv) == 0 {
+		baseEnv = captureEnviron()
 	}
 
 	return &executionContext{
@@ -44,10 +61,12 @@ func newExecutionContext(args map[string]interface{}, exec *executor, ctx contex
 		args:        args,
 		ctx:         ctx,
 		transportID: "local",
-		environ:     captureEnviron(), // Immutable snapshot
-		workdir:     wd,               // Immutable snapshot
-		stdin:       nil,              // Root context has no piped input
-		stdoutPipe:  nil,              // Root context has no piped output
+		environ:     baseEnv,
+		workdir:     baseWd,
+		baseEnviron: baseEnv,
+		baseWorkdir: baseWd,
+		stdin:       nil, // Root context has no piped input
+		stdoutPipe:  nil, // Root context has no piped output
 	}
 }
 
@@ -155,8 +174,10 @@ func (e *executionContext) WithContext(ctx context.Context) sdk.ExecutionContext
 		args:        e.args,
 		ctx:         ctx,
 		transportID: e.transportID,
-		environ:     e.environ,    // Share immutable snapshot
-		workdir:     e.workdir,    // Share immutable snapshot
+		environ:     e.environ, // Share immutable snapshot
+		workdir:     e.workdir, // Share immutable snapshot
+		baseEnviron: e.baseEnviron,
+		baseWorkdir: e.baseWorkdir,
 		stdin:       e.stdin,      // Preserve pipes
 		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
@@ -180,6 +201,8 @@ func (e *executionContext) WithEnviron(env map[string]string) sdk.ExecutionConte
 		transportID: e.transportID,
 		environ:     envCopy,
 		workdir:     e.workdir,
+		baseEnviron: e.baseEnviron,
+		baseWorkdir: e.baseWorkdir,
 		stdin:       e.stdin,      // Preserve pipes
 		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
@@ -225,6 +248,8 @@ func (e *executionContext) WithWorkdir(dir string) sdk.ExecutionContext {
 		transportID: e.transportID,
 		environ:     e.environ,
 		workdir:     resolved,
+		baseEnviron: e.baseEnviron,
+		baseWorkdir: e.baseWorkdir,
 		stdin:       e.stdin,      // Preserve pipes
 		stdoutPipe:  e.stdoutPipe, // Preserve pipes
 	}
@@ -255,8 +280,10 @@ func (e *executionContext) Clone(
 		args:        args,
 		ctx:         e.ctx, // INHERIT parent context
 		transportID: e.transportID,
-		environ:     e.environ,  // INHERIT environment
-		workdir:     e.workdir,  // INHERIT workdir
+		environ:     e.environ, // INHERIT environment
+		workdir:     e.workdir, // INHERIT workdir
+		baseEnviron: e.baseEnviron,
+		baseWorkdir: e.baseWorkdir,
 		stdin:       stdin,      // NEW (may be nil)
 		stdoutPipe:  stdoutPipe, // NEW (may be nil)
 	}
@@ -266,14 +293,34 @@ func (e *executionContext) withTransportID(transportID string) *executionContext
 	if transportID == "" {
 		transportID = "local"
 	}
+	if normalizedTransportID(e.transportID) == normalizedTransportID(transportID) {
+		return e
+	}
+
+	baseEnviron := e.baseEnviron
+	baseWorkdir := e.baseWorkdir
+	environ := e.environ
+	workdir := e.workdir
+
+	if e.executor != nil && e.executor.sessions != nil {
+		baseSession, err := e.executor.sessions.SessionFor(transportID)
+		if err == nil {
+			baseEnviron = baseSession.Env()
+			baseWorkdir = baseSession.Cwd()
+			environ = baseEnviron
+			workdir = baseWorkdir
+		}
+	}
 
 	return &executionContext{
 		executor:    e.executor,
 		args:        e.args,
 		ctx:         e.ctx,
 		transportID: transportID,
-		environ:     e.environ,
-		workdir:     e.workdir,
+		environ:     environ,
+		workdir:     workdir,
+		baseEnviron: baseEnviron,
+		baseWorkdir: baseWorkdir,
 		stdin:       e.stdin,
 		stdoutPipe:  e.stdoutPipe,
 	}
@@ -287,6 +334,8 @@ func (e *executionContext) withPipes(stdin io.Reader, stdout io.Writer) *executi
 		transportID: e.transportID,
 		environ:     e.environ,
 		workdir:     e.workdir,
+		baseEnviron: e.baseEnviron,
+		baseWorkdir: e.baseWorkdir,
 		stdin:       stdin,
 		stdoutPipe:  stdout,
 	}

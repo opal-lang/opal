@@ -22,16 +22,21 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	localB := filepath.Join(tmpDir, "local-b.txt")
 	transportA1 := filepath.Join(tmpDir, "transport-a-1.txt")
 	transportA2 := filepath.Join(tmpDir, "transport-a-2.txt")
-	transportB := filepath.Join(tmpDir, "transport-b.txt")
+	transportB1 := filepath.Join(tmpDir, "transport-b-1.txt")
+	transportB2 := filepath.Join(tmpDir, "transport-b-2.txt")
 
 	plan := &planfmt.Plan{Target: "worker-reuse", Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+			shellPlanCommand(":"),
 			shellPlanCommand("echo \"$" + workerInstanceEnvVar + "\" > " + shellLiteral(localA)),
 			shellPlanCommand("echo \"$" + workerInstanceEnvVar + "\" > " + shellLiteral(localB)),
+			shellPlanCommandOn("transport:A", ":"),
 			shellPlanCommandOn("transport:A", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportA1)),
 			shellPlanCommandOn("transport:A", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportA2)),
-			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB)),
+			shellPlanCommandOn("transport:B", ":"),
+			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB1)),
+			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB2)),
 		}},
 	}}}
 
@@ -47,7 +52,8 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	localBID := readTrimmedFile(t, localB)
 	transportAID1 := readTrimmedFile(t, transportA1)
 	transportAID2 := readTrimmedFile(t, transportA2)
-	transportBID := readTrimmedFile(t, transportB)
+	transportBID1 := readTrimmedFile(t, transportB1)
+	transportBID2 := readTrimmedFile(t, transportB2)
 
 	if diff := cmp.Diff(localAID, localBID); diff != "" {
 		t.Fatalf("local worker ID mismatch (-want +got):\n%s", diff)
@@ -55,15 +61,41 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	if diff := cmp.Diff(transportAID1, transportAID2); diff != "" {
 		t.Fatalf("transport:A worker ID mismatch (-want +got):\n%s", diff)
 	}
+	if diff := cmp.Diff(transportBID1, transportBID2); diff != "" {
+		t.Fatalf("transport:B worker ID mismatch (-want +got):\n%s", diff)
+	}
 
-	if localAID == "" || transportAID1 == "" || transportBID == "" {
-		t.Fatalf("worker IDs must be non-empty: local=%q transportA=%q transportB=%q", localAID, transportAID1, transportBID)
+	if localAID == "" || transportAID1 == "" || transportBID1 == "" {
+		t.Fatalf("worker IDs must be non-empty: local=%q transportA=%q transportB=%q", localAID, transportAID1, transportBID1)
 	}
 	if diff := cmp.Diff(false, localAID == transportAID1); diff != "" {
 		t.Fatalf("expected different worker IDs for local and transport:A (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(false, transportAID1 == transportBID); diff != "" {
+	if diff := cmp.Diff(false, transportAID1 == transportBID1); diff != "" {
 		t.Fatalf("expected different worker IDs for transport:A and transport:B (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellWorkerPoolAdmissionThresholdPerKey(t *testing.T) {
+	t.Parallel()
+
+	pool := newShellWorkerPool(nil)
+
+	if diff := cmp.Diff(false, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("first local/bash command should run direct (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("second local/bash command should use worker (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("third local/bash command should use worker (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(false, pool.shouldUseWorker("transport:A", "bash")); diff != "" {
+		t.Fatalf("first transport:A/bash command should run direct (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, pool.shouldUseWorker("local", "pwsh")); diff != "" {
+		t.Fatalf("first local/pwsh command should run direct (-want +got):\n%s", diff)
 	}
 }
 

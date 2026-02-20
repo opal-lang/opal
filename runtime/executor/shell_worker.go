@@ -72,15 +72,27 @@ func newWorkerRunError(cause error, commandStarted bool) error {
 type shellWorkerPool struct {
 	sessions *sessionRuntime
 
-	mu      sync.Mutex
-	workers map[shellWorkerKey][]*shellWorker
+	mu            sync.Mutex
+	workers       map[shellWorkerKey][]*shellWorker
+	commandCounts map[shellWorkerKey]int
 }
 
 func newShellWorkerPool(sessions *sessionRuntime) *shellWorkerPool {
 	return &shellWorkerPool{
-		sessions: sessions,
-		workers:  make(map[shellWorkerKey][]*shellWorker),
+		sessions:      sessions,
+		workers:       make(map[shellWorkerKey][]*shellWorker),
+		commandCounts: make(map[shellWorkerKey]int),
 	}
+}
+
+func (p *shellWorkerPool) shouldUseWorker(transportID, shellName string) bool {
+	key := shellWorkerKey{transportID: normalizedTransportID(transportID), shellName: shellName}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.commandCounts[key]++
+	return p.commandCounts[key] > 1
 }
 
 func (p *shellWorkerPool) Run(ctx context.Context, req shellRunRequest) (int, error) {
@@ -104,6 +116,7 @@ func (p *shellWorkerPool) Close() {
 		workers = append(workers, workerList...)
 	}
 	p.workers = make(map[shellWorkerKey][]*shellWorker)
+	p.commandCounts = make(map[shellWorkerKey]int)
 	p.mu.Unlock()
 
 	for _, worker := range workers {

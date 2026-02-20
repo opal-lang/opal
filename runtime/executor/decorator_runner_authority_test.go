@@ -70,7 +70,7 @@ func TestExecuteShellBypassesDecoratorExecPath(t *testing.T) {
 	if monitored == nil {
 		t.Fatal("expected monitored session to be created")
 	}
-	if diff := cmp.Diff(0, monitored.Stats().RunCalls); diff != "" {
+	if diff := cmp.Diff(1, monitored.Stats().RunCalls); diff != "" {
 		t.Fatalf("run calls mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -125,7 +125,7 @@ func TestExecuteNestedShellBypassesDecoratorExecPath(t *testing.T) {
 	if monitored == nil {
 		t.Fatal("expected monitored session to be created")
 	}
-	if diff := cmp.Diff(0, monitored.Stats().RunCalls); diff != "" {
+	if diff := cmp.Diff(1, monitored.Stats().RunCalls); diff != "" {
 		t.Fatalf("run calls mismatch (-want +got):\n%s", diff)
 	}
 }
