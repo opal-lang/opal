@@ -96,14 +96,8 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		explicitShell = shellStr
 	}
 
-	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
-	if sessionErr != nil {
-		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
-		return decorator.ExitFailure
-	}
-
-	session := sessionForExecutionContext(baseSession, execCtx)
-	shellName, err := resolveShellName(explicitShell, session)
+	transportID := executionTransportID(execCtx)
+	shellName, err := resolveShellName(explicitShell, execCtx.Environ())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return decorator.ExitFailure
@@ -114,9 +108,9 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		runCtx = context.Background()
 	}
 
-	if e.workers != nil && canUseShellWorker(shellName, stdin, stdout) {
+	if e.workers != nil && canUseShellWorker(shellName, stdin, stdout) && e.workers.shouldUseWorker(transportID, shellName) {
 		exitCode, workerErr := e.workers.Run(runCtx, shellRunRequest{
-			transportID: executionTransportID(execCtx),
+			transportID: transportID,
 			shellName:   shellName,
 			command:     command,
 			environ:     execCtx.Environ(),
@@ -139,6 +133,14 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 
 		fmt.Fprintf(os.Stderr, "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
 	}
+
+	baseSession, sessionErr := e.sessions.SessionFor(transportID)
+	if sessionErr != nil {
+		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		return decorator.ExitFailure
+	}
+
+	session := sessionForExecutionContext(baseSession, execCtx)
 
 	argv, err := shellCommandArgs(shellName, command)
 	if err != nil {
@@ -198,18 +200,16 @@ func canFallbackToSessionRun(workerErr error) bool {
 	return !runErr.commandStarted
 }
 
-func resolveShellName(explicit string, session decorator.Session) (string, error) {
+func resolveShellName(explicit string, env map[string]string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
 
-	if session != nil {
-		if envShell := session.Env()["OPAL_SHELL"]; envShell != "" {
-			if _, err := shellCommandArgs(envShell, ""); err != nil {
-				return "", fmt.Errorf("invalid OPAL_SHELL %q: expected one of bash, pwsh, cmd", envShell)
-			}
-			return envShell, nil
+	if envShell := env["OPAL_SHELL"]; envShell != "" {
+		if _, err := shellCommandArgs(envShell, ""); err != nil {
+			return "", fmt.Errorf("invalid OPAL_SHELL %q: expected one of bash, pwsh, cmd", envShell)
 		}
+		return envShell, nil
 	}
 
 	return "bash", nil
@@ -339,12 +339,28 @@ func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorN
 
 func sessionForExecutionContext(base decorator.Session, execCtx sdk.ExecutionContext) decorator.Session {
 	session := base
+	ec, typed := execCtx.(*executionContext)
 
-	if workdir := execCtx.Workdir(); workdir != "" && workdir != session.Cwd() {
+	workdir := execCtx.Workdir()
+	baseWorkdir := ""
+	if typed {
+		baseWorkdir = ec.baseWorkdir
+	}
+	if baseWorkdir == "" {
+		baseWorkdir = session.Cwd()
+	}
+	if workdir != "" && workdir != baseWorkdir {
 		session = session.WithWorkdir(workdir)
 	}
 
-	if delta := envDelta(session.Env(), execCtx.Environ()); len(delta) > 0 {
+	baseEnv := map[string]string(nil)
+	if typed {
+		baseEnv = ec.baseEnviron
+	}
+	if baseEnv == nil {
+		baseEnv = session.Env()
+	}
+	if delta := envDelta(baseEnv, execCtx.Environ()); len(delta) > 0 {
 		session = session.WithEnv(delta)
 	}
 
@@ -352,9 +368,12 @@ func sessionForExecutionContext(base decorator.Session, execCtx sdk.ExecutionCon
 }
 
 func envDelta(base, target map[string]string) map[string]string {
-	delta := make(map[string]string)
+	var delta map[string]string
 	for key, targetValue := range target {
 		if baseValue, ok := base[key]; !ok || baseValue != targetValue {
+			if delta == nil {
+				delta = make(map[string]string)
+			}
 			delta[key] = targetValue
 		}
 	}

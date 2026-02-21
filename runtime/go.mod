@@ -3,7 +3,6 @@ module github.com/opal-lang/opal/runtime
 go 1.25.0
 
 require (
-	github.com/fsnotify/fsnotify v1.7.0
 	github.com/opal-lang/opal/core v0.0.0-20251105223424-05107dc292f1
 	github.com/google/go-cmp v0.7.0
 	github.com/lithammer/fuzzysearch v1.1.8

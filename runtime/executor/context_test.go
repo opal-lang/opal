@@ -2,10 +2,13 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/stretchr/testify/assert"
 )
@@ -160,4 +163,48 @@ func TestContextTransportUsesTransportSession(t *testing.T) {
 		t.Fatalf("expected sessionTransport, got %T", transportCtx.Transport())
 	}
 	assert.Equal(t, "transport:A", transport.session.ID())
+}
+
+func TestContextTransportBoundaryResetsEnvAndWorkdirToTransportSnapshot(t *testing.T) {
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalCwd)
+	})
+
+	localDir := t.TempDir()
+	transportDir := t.TempDir()
+
+	if err := os.Chdir(localDir); err != nil {
+		t.Fatalf("chdir local dir: %v", err)
+	}
+	t.Setenv("OPAL_CONTEXT_BOUNDARY_TEST", "local")
+
+	exec := &executor{sessions: newSessionRuntime(nil)}
+	defer exec.sessions.Close()
+
+	root := newExecutionContext(map[string]interface{}{}, exec, context.Background()).(*executionContext)
+
+	if err := os.Chdir(transportDir); err != nil {
+		t.Fatalf("chdir transport dir: %v", err)
+	}
+	t.Setenv("OPAL_CONTEXT_BOUNDARY_TEST", "transport")
+
+	transportCtx := root.withTransportID("transport:A")
+
+	if diff := cmp.Diff("local", root.Environ()["OPAL_CONTEXT_BOUNDARY_TEST"]); diff != "" {
+		t.Fatalf("root env mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(filepath.Clean(localDir), filepath.Clean(root.Workdir())); diff != "" {
+		t.Fatalf("root cwd mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("transport", transportCtx.Environ()["OPAL_CONTEXT_BOUNDARY_TEST"]); diff != "" {
+		t.Fatalf("transport env mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(filepath.Clean(transportDir), filepath.Clean(transportCtx.Workdir())); diff != "" {
+		t.Fatalf("transport cwd mismatch (-want +got):\n%s", diff)
+	}
 }

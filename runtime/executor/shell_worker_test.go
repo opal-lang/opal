@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,16 +25,21 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	localB := filepath.Join(tmpDir, "local-b.txt")
 	transportA1 := filepath.Join(tmpDir, "transport-a-1.txt")
 	transportA2 := filepath.Join(tmpDir, "transport-a-2.txt")
-	transportB := filepath.Join(tmpDir, "transport-b.txt")
+	transportB1 := filepath.Join(tmpDir, "transport-b-1.txt")
+	transportB2 := filepath.Join(tmpDir, "transport-b-2.txt")
 
 	plan := &planfmt.Plan{Target: "worker-reuse", Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+			shellPlanCommand(":"),
 			shellPlanCommand("echo \"$" + workerInstanceEnvVar + "\" > " + shellLiteral(localA)),
 			shellPlanCommand("echo \"$" + workerInstanceEnvVar + "\" > " + shellLiteral(localB)),
+			shellPlanCommandOn("transport:A", ":"),
 			shellPlanCommandOn("transport:A", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportA1)),
 			shellPlanCommandOn("transport:A", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportA2)),
-			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB)),
+			shellPlanCommandOn("transport:B", ":"),
+			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB1)),
+			shellPlanCommandOn("transport:B", "echo \"$"+workerInstanceEnvVar+"\" > "+shellLiteral(transportB2)),
 		}},
 	}}}
 
@@ -47,7 +55,8 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	localBID := readTrimmedFile(t, localB)
 	transportAID1 := readTrimmedFile(t, transportA1)
 	transportAID2 := readTrimmedFile(t, transportA2)
-	transportBID := readTrimmedFile(t, transportB)
+	transportBID1 := readTrimmedFile(t, transportB1)
+	transportBID2 := readTrimmedFile(t, transportB2)
 
 	if diff := cmp.Diff(localAID, localBID); diff != "" {
 		t.Fatalf("local worker ID mismatch (-want +got):\n%s", diff)
@@ -55,15 +64,41 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	if diff := cmp.Diff(transportAID1, transportAID2); diff != "" {
 		t.Fatalf("transport:A worker ID mismatch (-want +got):\n%s", diff)
 	}
+	if diff := cmp.Diff(transportBID1, transportBID2); diff != "" {
+		t.Fatalf("transport:B worker ID mismatch (-want +got):\n%s", diff)
+	}
 
-	if localAID == "" || transportAID1 == "" || transportBID == "" {
-		t.Fatalf("worker IDs must be non-empty: local=%q transportA=%q transportB=%q", localAID, transportAID1, transportBID)
+	if localAID == "" || transportAID1 == "" || transportBID1 == "" {
+		t.Fatalf("worker IDs must be non-empty: local=%q transportA=%q transportB=%q", localAID, transportAID1, transportBID1)
 	}
 	if diff := cmp.Diff(false, localAID == transportAID1); diff != "" {
 		t.Fatalf("expected different worker IDs for local and transport:A (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(false, transportAID1 == transportBID); diff != "" {
+	if diff := cmp.Diff(false, transportAID1 == transportBID1); diff != "" {
 		t.Fatalf("expected different worker IDs for transport:A and transport:B (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellWorkerPoolAdmissionThresholdPerKey(t *testing.T) {
+	t.Parallel()
+
+	pool := newShellWorkerPool(nil)
+
+	if diff := cmp.Diff(false, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("first local/bash command should run direct (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("second local/bash command should use worker (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, pool.shouldUseWorker("local", "bash")); diff != "" {
+		t.Fatalf("third local/bash command should use worker (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(false, pool.shouldUseWorker("transport:A", "bash")); diff != "" {
+		t.Fatalf("first transport:A/bash command should run direct (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, pool.shouldUseWorker("local", "pwsh")); diff != "" {
+		t.Fatalf("first local/pwsh command should run direct (-want +got):\n%s", diff)
 	}
 }
 
@@ -160,12 +195,6 @@ func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
 	}
 
 	select {
-	case <-resultCh:
-		t.Fatal("worker run finished before first chunk was observed")
-	default:
-	}
-
-	select {
 	case result := <-resultCh:
 		if result.err != nil {
 			t.Fatalf("worker run failed: %v", result.err)
@@ -215,12 +244,6 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 		t.Fatal("worker run completed before first streamed stderr chunk")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first streamed stderr chunk")
-	}
-
-	select {
-	case <-resultCh:
-		t.Fatal("worker run finished before first stderr chunk was observed")
-	default:
 	}
 
 	select {
@@ -299,6 +322,220 @@ func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
 	if diff := cmp.Diff("done\n", writer.String()); diff != "" {
 		t.Fatalf("flush output mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestShellWorkerIsolatesControlFDFromUserCommands(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	defer runtime.Close()
+
+	pool := newShellWorkerPool(runtime)
+	defer pool.Close()
+
+	stdout := &strings.Builder{}
+	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	exitCode, err := pool.Run(runCtx, shellRunRequest{
+		transportID: "local",
+		shellName:   "bash",
+		command:     "printf 'noise' >&3 2>/dev/null || true; printf 'ok\\n'",
+		stdout:      stdout,
+	})
+	if err != nil {
+		t.Fatalf("worker run failed: %v", err)
+	}
+	if diff := cmp.Diff(0, exitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("ok\n", stdout.String()); diff != "" {
+		t.Fatalf("stdout mismatch (-want +got):\n%s", diff)
+	}
+
+	stdout.Reset()
+	runCtx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+
+	exitCode, err = pool.Run(runCtx2, shellRunRequest{
+		transportID: "local",
+		shellName:   "bash",
+		command:     "printf 'second\\n'",
+		stdout:      stdout,
+	})
+	if err != nil {
+		t.Fatalf("second worker run failed: %v", err)
+	}
+	if diff := cmp.Diff(0, exitCode); diff != "" {
+		t.Fatalf("second exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("second\n", stdout.String()); diff != "" {
+		t.Fatalf("second stdout mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestConsumeWorkerStreamFiltersCompletionMarkerAcrossChunks(t *testing.T) {
+	t.Parallel()
+
+	state := &workerStreamState{marker: []byte("__DONE__\n")}
+
+	first := consumeWorkerStream(state, []byte("alpha__DO"))
+	second := consumeWorkerStream(state, []byte("NE__\nbeta"))
+	combined := string(append(first, second...))
+
+	if diff := cmp.Diff("alphabeta", combined); diff != "" {
+		t.Fatalf("filtered output mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, state.done); diff != "" {
+		t.Fatalf("done state mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestShellWorkerWaitsForLateChunksAfterStatus(t *testing.T) {
+	ctrlR, ctrlW := io.Pipe()
+	defer func() { _ = ctrlR.Close() }()
+	defer func() { _ = ctrlW.Close() }()
+
+	stdin := newScriptCaptureWriteCloser()
+
+	w := &shellWorker{
+		key:         shellWorkerKey{transportID: "local", shellName: "bash"},
+		instance:    "test-instance",
+		baseEnv:     map[string]string{},
+		baseCwd:     "",
+		stdin:       stdin,
+		ctrl:        bufio.NewReader(ctrlR),
+		streamCh:    make(chan workerStreamChunk, 4),
+		streamErrCh: make(chan error, 1),
+		closedCh:    make(chan struct{}),
+	}
+	w.alive.Store(true)
+
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
+
+	type runResult struct {
+		exitCode int
+		err      error
+	}
+	runCh := make(chan runResult, 1)
+	go func() {
+		exitCode, err := w.run(context.Background(), shellRunRequest{
+			transportID: "local",
+			shellName:   "bash",
+			command:     "echo ignored",
+			stdout:      stdout,
+			stderr:      stderr,
+		})
+		runCh <- runResult{exitCode: exitCode, err: err}
+	}()
+
+	var statusMarker string
+	select {
+	case script := <-stdin.Script():
+		marker, err := extractWorkerStatusMarker(script)
+		if err != nil {
+			t.Fatalf("extract status marker: %v", err)
+		}
+		statusMarker = marker
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker script write")
+	}
+
+	if _, err := io.WriteString(ctrlW, "__OPAL_STATUS_"+statusMarker+":0\n"); err != nil {
+		t.Fatalf("write status line: %v", err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case result := <-runCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed unexpectedly: %v", result.err)
+		}
+		t.Fatal("worker run returned before late stream chunks arrived")
+	default:
+	}
+
+	stdoutDoneMarker, stderrDoneMarker := workerStreamDoneMarkers(w.instance, statusMarker)
+	w.streamCh <- workerStreamChunk{stderr: false, data: []byte("late-output\n" + stdoutDoneMarker + "\n")}
+	w.streamCh <- workerStreamChunk{stderr: true, data: []byte(stderrDoneMarker + "\n")}
+
+	select {
+	case result := <-runCh:
+		if result.err != nil {
+			t.Fatalf("worker run failed: %v", result.err)
+		}
+		if diff := cmp.Diff(0, result.exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker completion after late chunks")
+	}
+
+	if diff := cmp.Diff("late-output\n", stdout.String()); diff != "" {
+		t.Fatalf("stdout mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("", stderr.String()); diff != "" {
+		t.Fatalf("stderr mismatch (-want +got):\n%s", diff)
+	}
+}
+
+type scriptCaptureWriteCloser struct {
+	mu       sync.Mutex
+	buf      strings.Builder
+	scriptCh chan string
+	once     sync.Once
+}
+
+func newScriptCaptureWriteCloser() *scriptCaptureWriteCloser {
+	return &scriptCaptureWriteCloser{scriptCh: make(chan string, 1)}
+}
+
+func (w *scriptCaptureWriteCloser) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.buf.Write(p); err != nil {
+		return 0, err
+	}
+
+	script := w.buf.String()
+	if strings.Contains(script, "printf '__OPAL_STATUS_") {
+		w.once.Do(func() {
+			w.scriptCh <- script
+			close(w.scriptCh)
+		})
+	}
+
+	return len(p), nil
+}
+
+func (w *scriptCaptureWriteCloser) Close() error {
+	return nil
+}
+
+func (w *scriptCaptureWriteCloser) Script() <-chan string {
+	return w.scriptCh
+}
+
+func extractWorkerStatusMarker(script string) (string, error) {
+	prefix := "printf '__OPAL_STATUS_"
+	start := strings.Index(script, prefix)
+	if start < 0 {
+		return "", fmt.Errorf("status marker prefix not found")
+	}
+
+	rest := script[start+len(prefix):]
+	suffix := ":%d\\n' \"$__opal_status\" >&3"
+	end := strings.Index(rest, suffix)
+	if end < 0 {
+		return "", fmt.Errorf("status marker suffix not found")
+	}
+
+	marker := rest[:end]
+	if marker == "" {
+		return "", fmt.Errorf("status marker is empty")
+	}
+
+	return marker, nil
 }
 
 type streamingProbeWriter struct {

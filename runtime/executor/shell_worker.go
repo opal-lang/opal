@@ -2,7 +2,9 @@ package executor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,21 +15,24 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/invariant"
 )
 
-const workerInstanceEnvVar = "OPAL_INTERNAL_WORKER_INSTANCE"
+const (
+	workerInstanceEnvVar   = "OPAL_INTERNAL_WORKER_INSTANCE"
+	workerStreamBufferSize = 64 * 1024
+)
 
-var shellWorkerSequence atomic.Uint64
-
-var streamReadBufferPool = sync.Pool{
-	New: func() any {
-		buf := make([]byte, 64*1024)
-		return &buf
-	},
-}
+var (
+	shellWorkerSequence    atomic.Uint64
+	workerStreamBufferPool = sync.Pool{
+		New: func() any {
+			buf := make([]byte, workerStreamBufferSize)
+			return &buf
+		},
+	}
+)
 
 type shellWorkerKey struct {
 	transportID string
@@ -67,15 +72,27 @@ func newWorkerRunError(cause error, commandStarted bool) error {
 type shellWorkerPool struct {
 	sessions *sessionRuntime
 
-	mu      sync.Mutex
-	workers map[shellWorkerKey][]*shellWorker
+	mu            sync.Mutex
+	workers       map[shellWorkerKey][]*shellWorker
+	commandCounts map[shellWorkerKey]int
 }
 
 func newShellWorkerPool(sessions *sessionRuntime) *shellWorkerPool {
 	return &shellWorkerPool{
-		sessions: sessions,
-		workers:  make(map[shellWorkerKey][]*shellWorker),
+		sessions:      sessions,
+		workers:       make(map[shellWorkerKey][]*shellWorker),
+		commandCounts: make(map[shellWorkerKey]int),
 	}
+}
+
+func (p *shellWorkerPool) shouldUseWorker(transportID, shellName string) bool {
+	key := shellWorkerKey{transportID: normalizedTransportID(transportID), shellName: shellName}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.commandCounts[key]++
+	return p.commandCounts[key] > 1
 }
 
 func (p *shellWorkerPool) Run(ctx context.Context, req shellRunRequest) (int, error) {
@@ -99,6 +116,7 @@ func (p *shellWorkerPool) Close() {
 		workers = append(workers, workerList...)
 	}
 	p.workers = make(map[shellWorkerKey][]*shellWorker)
+	p.commandCounts = make(map[shellWorkerKey]int)
 	p.mu.Unlock()
 
 	for _, worker := range workers {
@@ -184,10 +202,19 @@ type shellWorker struct {
 	key      shellWorkerKey
 	session  decorator.Session
 	instance string
+	baseEnv  map[string]string
+	baseCwd  string
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	stdout *bufio.Reader
+	stdout io.ReadCloser
+	stderr io.ReadCloser
+	ctrl   *bufio.Reader
+	ctrlR  *os.File
+
+	streamCh    chan workerStreamChunk
+	streamErrCh chan error
+	closedCh    chan struct{}
 
 	busy  bool
 	alive atomic.Bool
@@ -195,6 +222,18 @@ type shellWorker struct {
 	closeOnce sync.Once
 
 	mu sync.Mutex
+}
+
+type workerStreamChunk struct {
+	stderr bool
+	data   []byte
+	pool   *[]byte
+}
+
+type workerStreamState struct {
+	marker []byte
+	tail   []byte
+	done   bool
 }
 
 func (w *shellWorker) start() error {
@@ -217,27 +256,51 @@ func (w *shellWorker) start() error {
 		return fmt.Errorf("worker stdout pipe: %w", err)
 	}
 
-	cmd.Stderr = os.Stderr
-	cmd.Env = toEnvironList(w.session.Env())
-	cmd.Dir = w.session.Cwd()
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("worker stderr pipe: %w", err)
+	}
+
+	ctrlR, ctrlW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("worker control pipe: %w", err)
+	}
+
+	cmd.ExtraFiles = []*os.File{ctrlW}
+	w.baseEnv = w.session.Env()
+	w.baseCwd = w.session.Cwd()
+	cmd.Env = toEnvironList(w.baseEnv)
+	cmd.Dir = w.baseCwd
 
 	if err := cmd.Start(); err != nil {
+		_ = ctrlR.Close()
+		_ = ctrlW.Close()
 		return fmt.Errorf("start worker shell: %w", err)
 	}
+	_ = ctrlW.Close()
 
 	w.cmd = cmd
 	w.stdin = stdin
-	w.stdout = bufio.NewReader(stdoutPipe)
+	w.stdout = stdoutPipe
+	w.stderr = stderrPipe
+	w.ctrlR = ctrlR
+	w.ctrl = bufio.NewReader(ctrlR)
+	w.streamCh = make(chan workerStreamChunk, 128)
+	w.streamErrCh = make(chan error, 2)
+	w.closedCh = make(chan struct{})
+
+	go w.pumpStream(stdoutPipe, false)
+	go w.pumpStream(stderrPipe, true)
 
 	readyMarker := strconv.FormatUint(shellWorkerSequence.Add(1), 10)
-	bootstrap := fmt.Sprintf("export %s=%s\nprintf '__OPAL_WORKER_READY_%s__\\n'\n", workerInstanceEnvVar, quoteShellLiteral(w.instance), readyMarker)
+	bootstrap := fmt.Sprintf("export %s=%s\nprintf '__OPAL_WORKER_READY_%s__\\n' >&3\n", workerInstanceEnvVar, quoteShellLiteral(w.instance), readyMarker)
 	if _, err := io.WriteString(w.stdin, bootstrap); err != nil {
 		w.close()
 		return fmt.Errorf("bootstrap worker: %w", err)
 	}
 
 	for {
-		line, err := w.stdout.ReadString('\n')
+		line, err := w.ctrl.ReadString('\n')
 		if err != nil {
 			w.close()
 			return fmt.Errorf("read bootstrap marker: %w", err)
@@ -262,47 +325,24 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 		return decorator.ExitFailure, fmt.Errorf("worker %s/%s is closed", w.key.transportID, w.key.shellName)
 	}
 
-	stdoutPath, stderrPath, cleanup, err := createWorkerCaptureFiles()
-	if err != nil {
-		return decorator.ExitFailure, newWorkerRunError(err, false)
+	if err := w.drainPendingStreams(); err != nil {
+		w.close()
+		return decorator.ExitFailure, newWorkerRunError(err, true)
 	}
-	defer cleanup()
 
 	statusMarker := strconv.FormatUint(shellWorkerSequence.Add(1), 10)
+	stdoutDoneMarker, stderrDoneMarker := workerStreamDoneMarkers(w.instance, statusMarker)
 	runReq := req
-	runReq.environ = envDelta(w.session.Env(), req.environ)
-	if req.workdir == w.session.Cwd() {
+	runReq.environ = envDelta(w.baseEnv, req.environ)
+	if req.workdir == w.baseCwd {
 		runReq.workdir = ""
 	}
 
-	script := buildWorkerScript(runReq, stdoutPath, stderrPath, statusMarker)
+	script := buildWorkerScript(runReq, statusMarker, stdoutDoneMarker, stderrDoneMarker)
 	if _, err := io.WriteString(w.stdin, script); err != nil {
 		w.close()
 		return decorator.ExitFailure, newWorkerRunError(fmt.Errorf("write worker request: %w", err), false)
 	}
-
-	streamDone := make(chan struct{})
-	streamAbort := make(chan struct{})
-	var streamDoneOnce sync.Once
-	var streamAbortOnce sync.Once
-	markStreamDone := func() {
-		streamDoneOnce.Do(func() {
-			close(streamDone)
-		})
-	}
-	abortStream := func() {
-		streamAbortOnce.Do(func() {
-			close(streamAbort)
-		})
-	}
-
-	streamErrCh := make(chan error, 2)
-	go func() {
-		streamErrCh <- streamWorkerOutputLive(stdoutPath, req.stdout, os.Stdout, streamDone, streamAbort)
-	}()
-	go func() {
-		streamErrCh <- streamWorkerOutputLive(stderrPath, req.stderr, os.Stderr, streamDone, streamAbort)
-	}()
 
 	type workerResult struct {
 		exitCode int
@@ -317,19 +357,35 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 
 	var status workerResult
 	statusReady := false
-	streamsRemaining := 2
 	var streamErr error
+	stdoutState := workerStreamState{marker: []byte(stdoutDoneMarker + "\n")}
+	stderrState := workerStreamState{marker: []byte(stderrDoneMarker + "\n")}
+
 	recordStatus := func(result workerResult) {
 		status = result
 		statusReady = true
-		if result.err != nil {
-			abortStream()
-		} else {
-			markStreamDone()
-		}
 	}
 
-	for !statusReady || streamsRemaining > 0 {
+	finishIfReady := func() (int, error, bool) {
+		if statusReady && status.err != nil {
+			w.close()
+			return decorator.ExitFailure, newWorkerRunError(status.err, true), true
+		}
+		if streamErr != nil {
+			w.close()
+			return decorator.ExitFailure, newWorkerRunError(streamErr, true), true
+		}
+		if !statusReady || !stdoutState.done || !stderrState.done {
+			return 0, nil, false
+		}
+		return status.exitCode, nil, true
+	}
+
+	for {
+		if exitCode, runErr, done := finishIfReady(); done {
+			return exitCode, runErr
+		}
+
 		if !statusReady {
 			select {
 			case result := <-resultCh:
@@ -355,40 +411,31 @@ func (w *shellWorker) run(ctx context.Context, req shellRunRequest) (int, error)
 				}
 			}
 
-			abortStream()
 			w.close()
 			return decorator.ExitCanceled, newWorkerRunError(ctx.Err(), true)
 
 		case result := <-resultCh:
 			recordStatus(result)
 
-		case err := <-streamErrCh:
-			streamsRemaining--
+		case chunk := <-w.streamCh:
+			if err := handleWorkerStreamChunk(&stdoutState, &stderrState, chunk, req.stdout, req.stderr); err != nil {
+				w.close()
+				return decorator.ExitFailure, newWorkerRunError(err, true)
+			}
+
+		case err := <-w.streamErrCh:
 			if err != nil && streamErr == nil {
 				streamErr = err
-				abortStream()
 				w.close()
 			}
 		}
 	}
-
-	if status.err != nil {
-		w.close()
-		return decorator.ExitFailure, newWorkerRunError(status.err, true)
-	}
-
-	if streamErr != nil {
-		w.close()
-		return decorator.ExitFailure, newWorkerRunError(streamErr, true)
-	}
-
-	return status.exitCode, nil
 }
 
 func (w *shellWorker) readStatus(marker string) (int, error) {
 	statusPrefix := "__OPAL_STATUS_" + marker + ":"
 	for {
-		line, err := w.stdout.ReadString('\n')
+		line, err := w.ctrl.ReadString('\n')
 		if err != nil {
 			return decorator.ExitFailure, fmt.Errorf("read worker status: %w", err)
 		}
@@ -411,9 +458,22 @@ func (w *shellWorker) readStatus(marker string) (int, error) {
 func (w *shellWorker) close() {
 	w.closeOnce.Do(func() {
 		w.alive.Store(false)
+		if w.closedCh != nil {
+			close(w.closedCh)
+		}
+		if w.ctrlR != nil {
+			_ = w.ctrlR.Close()
+		}
 
 		if w.stdin != nil {
 			_ = w.stdin.Close()
+		}
+
+		if w.stdout != nil {
+			_ = w.stdout.Close()
+		}
+		if w.stderr != nil {
+			_ = w.stderr.Close()
 		}
 		if w.cmd != nil && w.cmd.Process != nil {
 			_ = w.cmd.Process.Kill()
@@ -428,11 +488,12 @@ func (w *shellWorker) isAlive() bool {
 	return w.alive.Load()
 }
 
-func buildWorkerScript(req shellRunRequest, stdoutPath, stderrPath, statusMarker string) string {
+func buildWorkerScript(req shellRunRequest, statusMarker, stdoutDoneMarker, stderrDoneMarker string) string {
 	invariant.Precondition(req.command != "", "worker command cannot be empty")
 
 	var b strings.Builder
 	b.WriteString("(\n")
+	b.WriteString("exec 3>&-\n")
 
 	if req.workdir != "" {
 		b.WriteString("cd -- ")
@@ -456,155 +517,229 @@ func buildWorkerScript(req shellRunRequest, stdoutPath, stderrPath, statusMarker
 	if !strings.HasSuffix(req.command, "\n") {
 		b.WriteString("\n")
 	}
-
-	b.WriteString(") >")
-	b.WriteString(quoteShellLiteral(stdoutPath))
-	b.WriteString(" 2>")
-	b.WriteString(quoteShellLiteral(stderrPath))
-	b.WriteString("\n")
+	b.WriteString(")\n")
 	b.WriteString("__opal_status=$?\n")
-	// Status markers are trusted protocol lines emitted by this wrapper, not by
-	// command stdout/stderr payloads (which are redirected to capture files).
+	b.WriteString("printf '%s\\n' ")
+	b.WriteString(quoteShellLiteral(stdoutDoneMarker))
+	b.WriteString("\n")
+	b.WriteString("printf '%s\\n' ")
+	b.WriteString(quoteShellLiteral(stderrDoneMarker))
+	b.WriteString(" >&2\n")
 	b.WriteString("printf '__OPAL_STATUS_")
 	b.WriteString(statusMarker)
-	b.WriteString(":%d\\n' \"$__opal_status\"\n")
+	b.WriteString(":%d\\n' \"$__opal_status\" >&3\n")
 
 	return b.String()
 }
 
-func createWorkerCaptureFiles() (stdoutPath, stderrPath string, cleanup func(), err error) {
-	stdoutFile, err := os.CreateTemp("", "opal-worker-stdout-*")
-	if err != nil {
-		return "", "", nil, fmt.Errorf("create worker stdout file: %w", err)
-	}
-	stdoutPath = stdoutFile.Name()
-	if closeErr := stdoutFile.Close(); closeErr != nil {
-		_ = os.Remove(stdoutPath)
-		return "", "", nil, fmt.Errorf("close worker stdout file: %w", closeErr)
-	}
+func (w *shellWorker) pumpStream(reader io.Reader, stderr bool) {
+	bufPtr := getWorkerStreamBuffer()
+	buf := (*bufPtr)[:workerStreamBufferSize]
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunk := workerStreamChunk{stderr: stderr, data: buf[:n], pool: bufPtr}
+			bufPtr = nil
+			buf = nil
+			select {
+			case w.streamCh <- chunk:
+			case <-w.closedCh:
+				releaseWorkerStreamChunk(chunk)
+				return
+			}
+		}
 
-	stderrFile, err := os.CreateTemp("", "opal-worker-stderr-*")
-	if err != nil {
-		_ = os.Remove(stdoutPath)
-		return "", "", nil, fmt.Errorf("create worker stderr file: %w", err)
-	}
-	stderrPath = stderrFile.Name()
-	if closeErr := stderrFile.Close(); closeErr != nil {
-		_ = os.Remove(stdoutPath)
-		_ = os.Remove(stderrPath)
-		return "", "", nil, fmt.Errorf("close worker stderr file: %w", closeErr)
-	}
+		if err == nil {
+			if bufPtr == nil {
+				bufPtr = getWorkerStreamBuffer()
+				buf = (*bufPtr)[:workerStreamBufferSize]
+			}
+			continue
+		}
 
-	cleanup = func() {
-		_ = os.Remove(stdoutPath)
-		_ = os.Remove(stderrPath)
-	}
+		if bufPtr != nil {
+			putWorkerStreamBuffer(bufPtr, 0)
+			buf = nil
+		}
 
-	return stdoutPath, stderrPath, cleanup, nil
+		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+			return
+		}
+
+		select {
+		case w.streamErrCh <- fmt.Errorf("read worker stream: %w", err):
+		case <-w.closedCh:
+		}
+		return
+	}
 }
 
-func streamWorkerOutputLive(path string, writer, defaultWriter io.Writer, done, abort <-chan struct{}) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("read worker output %q: %w", path, err)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	target := writer
-	if target == nil {
-		target = defaultWriter
-	}
-	if target == nil {
-		return nil
-	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("watch worker output %q: %w", path, err)
-	}
-	defer func() {
-		_ = watcher.Close()
-	}()
-
-	if err := watcher.Add(path); err != nil {
-		return fmt.Errorf("watch worker output %q: %w", path, err)
-	}
-
-	bufPtr, ok := streamReadBufferPool.Get().(*[]byte)
-	if !ok || bufPtr == nil {
-		buf := make([]byte, 64*1024)
-		bufPtr = &buf
-	}
-
-	buf := *bufPtr
-	if cap(buf) < 64*1024 {
-		buf = make([]byte, 64*1024)
-	}
-	buf = buf[:64*1024]
-	*bufPtr = buf
-
-	defer func() {
-		clear(buf)
-		streamReadBufferPool.Put(bufPtr)
-	}()
-
-	if err := drainWorkerOutput(file, target, buf, abort, path); err != nil {
-		return err
+func (w *shellWorker) drainPendingStreams() error {
+	for {
+		select {
+		case chunk := <-w.streamCh:
+			releaseWorkerStreamChunk(chunk)
+			continue
+		default:
+		}
+		break
 	}
 
 	for {
 		select {
-		case <-abort:
+		case err := <-w.streamErrCh:
+			if err != nil {
+				return err
+			}
+		default:
 			return nil
-		case <-done:
-			return drainWorkerOutput(file, target, buf, nil, path)
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return nil
-			}
-			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				if err := drainWorkerOutput(file, target, buf, abort, path); err != nil {
-					return err
-				}
-			}
-		case watchErr, ok := <-watcher.Errors:
-			if !ok {
-				return nil
-			}
-			return fmt.Errorf("watch worker output %q: %w", path, watchErr)
 		}
 	}
 }
 
-func drainWorkerOutput(file *os.File, target io.Writer, buf []byte, stop <-chan struct{}, path string) error {
-	for {
-		if stop != nil {
-			select {
-			case <-stop:
-				return nil
-			default:
-			}
-		}
-
-		n, readErr := file.Read(buf)
-		if n > 0 {
-			if _, err := target.Write(buf[:n]); err != nil {
-				return fmt.Errorf("write worker output: %w", err)
-			}
-		}
-
-		if readErr == nil {
-			continue
-		}
-
-		if readErr == io.EOF {
-			return nil
-		}
-
-		return fmt.Errorf("read worker output %q: %w", path, readErr)
+func handleWorkerStreamChunk(stdoutState, stderrState *workerStreamState, chunk workerStreamChunk, stdout, stderr io.Writer) error {
+	var filtered []byte
+	if chunk.stderr {
+		filtered = consumeWorkerStream(stderrState, chunk.data)
+	} else {
+		filtered = consumeWorkerStream(stdoutState, chunk.data)
 	}
+	releaseWorkerStreamChunk(chunk)
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return writeWorkerOutput(filtered, chunk.stderr, stdout, stderr)
+}
+
+func writeWorkerOutput(data []byte, isStderr bool, stdout, stderr io.Writer) error {
+	target := stdout
+	defaultTarget := os.Stdout
+	if isStderr {
+		target = stderr
+		defaultTarget = os.Stderr
+	}
+	if target == nil {
+		target = defaultTarget
+	}
+	if target == nil || len(data) == 0 {
+		return nil
+	}
+	if _, err := target.Write(data); err != nil {
+		return fmt.Errorf("write worker output: %w", err)
+	}
+	return nil
+}
+
+func consumeWorkerStream(state *workerStreamState, data []byte) []byte {
+	if state == nil || len(data) == 0 {
+		return nil
+	}
+	if state.done {
+		return append([]byte(nil), data...)
+	}
+
+	combined := make([]byte, 0, len(state.tail)+len(data))
+	combined = append(combined, state.tail...)
+	combined = append(combined, data...)
+	state.tail = state.tail[:0]
+
+	markerLen := len(state.marker)
+	if markerLen == 0 {
+		return combined
+	}
+
+	var out []byte
+	for {
+		idx := bytes.Index(combined, state.marker)
+		if idx < 0 {
+			break
+		}
+
+		if idx > 0 {
+			out = append(out, combined[:idx]...)
+		}
+		combined = combined[idx+markerLen:]
+		state.done = true
+	}
+
+	if state.done {
+		if len(combined) > 0 {
+			out = append(out, combined...)
+		}
+		return out
+	}
+
+	tailLen := markerLen - 1
+	if tailLen < 0 {
+		tailLen = 0
+	}
+	if tailLen > len(combined) {
+		tailLen = len(combined)
+	}
+
+	flushLen := len(combined) - tailLen
+	if flushLen > 0 {
+		out = append(out, combined[:flushLen]...)
+	}
+	if tailLen > 0 {
+		state.tail = append(state.tail[:0], combined[flushLen:]...)
+	}
+
+	return out
+}
+
+func workerStreamDoneMarkers(instance, statusMarker string) (string, string) {
+	prefix := "__OPAL_STREAM_DONE_" + instance + "_" + statusMarker + "_"
+	return prefix + "STDOUT__", prefix + "STDERR__"
+}
+
+func getWorkerStreamBuffer() *[]byte {
+	bufPtr, ok := workerStreamBufferPool.Get().(*[]byte)
+	if !ok || bufPtr == nil {
+		buf := make([]byte, workerStreamBufferSize)
+		return &buf
+	}
+
+	buf := *bufPtr
+	if cap(buf) < workerStreamBufferSize {
+		buf = make([]byte, workerStreamBufferSize)
+	}
+	buf = buf[:workerStreamBufferSize]
+	*bufPtr = buf
+	return bufPtr
+}
+
+func putWorkerStreamBuffer(bufPtr *[]byte, used int) {
+	if bufPtr == nil {
+		return
+	}
+
+	buf := *bufPtr
+	if cap(buf) < workerStreamBufferSize {
+		buf = make([]byte, workerStreamBufferSize)
+	}
+	buf = buf[:workerStreamBufferSize]
+
+	if used < 0 {
+		used = 0
+	}
+	if used > len(buf) {
+		used = len(buf)
+	}
+	if used > 0 {
+		clear(buf[:used])
+	}
+	*bufPtr = buf
+	workerStreamBufferPool.Put(bufPtr)
+}
+
+func releaseWorkerStreamChunk(chunk workerStreamChunk) {
+	if chunk.pool == nil {
+		return
+	}
+	putWorkerStreamBuffer(chunk.pool, len(chunk.data))
 }
 
 func sortedEnvKeys(env map[string]string) []string {
