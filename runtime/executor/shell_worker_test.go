@@ -336,6 +336,54 @@ func TestShellWorkerReturnsStatusWhenContextCancelsDuringFlush(t *testing.T) {
 	}
 }
 
+func TestShellWorkerIsolatesControlFDFromUserCommands(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	defer runtime.Close()
+
+	pool := newShellWorkerPool(runtime)
+	defer pool.Close()
+
+	stdout := &strings.Builder{}
+	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	exitCode, err := pool.Run(runCtx, shellRunRequest{
+		transportID: "local",
+		shellName:   "bash",
+		command:     "printf 'noise' >&3 2>/dev/null || true; printf 'ok\\n'",
+		stdout:      stdout,
+	})
+	if err != nil {
+		t.Fatalf("worker run failed: %v", err)
+	}
+	if diff := cmp.Diff(0, exitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("ok\n", stdout.String()); diff != "" {
+		t.Fatalf("stdout mismatch (-want +got):\n%s", diff)
+	}
+
+	stdout.Reset()
+	runCtx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+
+	exitCode, err = pool.Run(runCtx2, shellRunRequest{
+		transportID: "local",
+		shellName:   "bash",
+		command:     "printf 'second\\n'",
+		stdout:      stdout,
+	})
+	if err != nil {
+		t.Fatalf("second worker run failed: %v", err)
+	}
+	if diff := cmp.Diff(0, exitCode); diff != "" {
+		t.Fatalf("second exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("second\n", stdout.String()); diff != "" {
+		t.Fatalf("second stdout mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestConsumeWorkerStreamFiltersCompletionMarkerAcrossChunks(t *testing.T) {
 	t.Parallel()
 

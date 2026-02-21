@@ -493,6 +493,7 @@ func buildWorkerScript(req shellRunRequest, statusMarker, stdoutDoneMarker, stde
 
 	var b strings.Builder
 	b.WriteString("(\n")
+	b.WriteString("exec 3>&-\n")
 
 	if req.workdir != "" {
 		b.WriteString("cd -- ")
