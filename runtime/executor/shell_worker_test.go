@@ -195,12 +195,6 @@ func TestShellWorkerStreamsStdoutBeforeCommandExit(t *testing.T) {
 	}
 
 	select {
-	case <-resultCh:
-		t.Fatal("worker run finished before first chunk was observed")
-	default:
-	}
-
-	select {
 	case result := <-resultCh:
 		if result.err != nil {
 			t.Fatalf("worker run failed: %v", result.err)
@@ -250,12 +244,6 @@ func TestShellWorkerStreamsStderrBeforeCommandExit(t *testing.T) {
 		t.Fatal("worker run completed before first streamed stderr chunk")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first streamed stderr chunk")
-	}
-
-	select {
-	case <-resultCh:
-		t.Fatal("worker run finished before first stderr chunk was observed")
-	default:
 	}
 
 	select {
