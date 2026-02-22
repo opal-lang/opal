@@ -220,6 +220,10 @@ func (m *mockTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return nil
 }
 
+func (m *mockTransport) MaterializeSession() bool {
+	return true
+}
+
 func (m *mockTransport) IsolationContext() IsolationContext {
 	return nil
 }

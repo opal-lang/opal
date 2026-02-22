@@ -34,6 +34,10 @@ func (m *mockTransportDecorator) Wrap(next decorator.ExecNode, params map[string
 	return next
 }
 
+func (m *mockTransportDecorator) MaterializeSession() bool {
+	return false
+}
+
 func (m *mockTransportDecorator) Capabilities() decorator.TransportCaps {
 	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
 }

@@ -164,6 +164,10 @@ func (m *MonitoredTransport) Wrap(next ExecNode, params map[string]any) ExecNode
 	return m.wrapped.Wrap(next, params)
 }
 
+func (m *MonitoredTransport) MaterializeSession() bool {
+	return m.wrapped.MaterializeSession()
+}
+
 func (m *MonitoredTransport) IsolationContext() IsolationContext {
 	return m.wrapped.IsolationContext()
 }
@@ -215,6 +219,10 @@ func (t *TestTransport) Open(parent Session, params map[string]any) (Session, er
 // For TestTransport, this is a no-op that just passes through.
 func (t *TestTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return next
+}
+
+func (t *TestTransport) MaterializeSession() bool {
+	return true
 }
 
 func (t *TestTransport) IsolationContext() IsolationContext {

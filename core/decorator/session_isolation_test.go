@@ -212,6 +212,10 @@ func (t *localTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return nil
 }
 
+func (t *localTransport) MaterializeSession() bool {
+	return true
+}
+
 func (t *localTransport) IsolationContext() IsolationContext {
 	return nil
 }

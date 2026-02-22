@@ -413,6 +413,10 @@ func (t *SSHTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	}
 }
 
+func (t *SSHTransport) MaterializeSession() bool {
+	return true
+}
+
 func (t *SSHTransport) IsolationContext() IsolationContext {
 	return nil
 }

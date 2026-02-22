@@ -134,7 +134,17 @@ func (r *sessionRuntime) lookupTransport(transportID string) (planfmt.Transport,
 }
 
 func isTransportSessionMaterialized(name string) bool {
-	return name == "test.transport.sshprobe" || name == "ssh" || strings.HasPrefix(name, "ssh.") || name == "isolated"
+	entry, exists := decorator.Global().Lookup(name)
+	if !exists {
+		return false
+	}
+
+	transport, ok := entry.Impl.(decorator.Transport)
+	if !ok {
+		return false
+	}
+
+	return transport.MaterializeSession()
 }
 
 func (r *sessionRuntime) Close() {

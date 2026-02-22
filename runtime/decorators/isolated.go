@@ -89,6 +89,10 @@ func (d *IsolatedTransportDecorator) Wrap(next decorator.ExecNode, params map[st
 	return next
 }
 
+func (d *IsolatedTransportDecorator) MaterializeSession() bool {
+	return true
+}
+
 func (d *IsolatedTransportDecorator) IsolationContext() decorator.IsolationContext {
 	return isolation.NewIsolator()
 }

@@ -15,6 +15,10 @@ type Transport interface {
 	// Wrap wraps execution to use the transport session
 	Wrap(next ExecNode, params map[string]any) ExecNode
 
+	// MaterializeSession reports whether this transport creates a dedicated
+	// session via Open() instead of using the default session factory.
+	MaterializeSession() bool
+
 	// IsolationContext returns the transport's isolation capabilities.
 	// Returns nil if transport doesn't support isolation.
 	IsolationContext() IsolationContext

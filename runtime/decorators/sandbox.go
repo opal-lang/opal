@@ -176,6 +176,10 @@ func (d *SandboxTransportDecorator) Wrap(next decorator.ExecNode, params map[str
 	return next
 }
 
+func (d *SandboxTransportDecorator) MaterializeSession() bool {
+	return false
+}
+
 func (d *SandboxTransportDecorator) IsolationContext() decorator.IsolationContext {
 	return isolation.NewIsolator()
 }

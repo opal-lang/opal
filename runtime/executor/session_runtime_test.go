@@ -75,6 +75,10 @@ func (d *testSSHTransportDecorator) Open(parent decorator.Session, params map[st
 	return &testSSHSession{parent: parent}, nil
 }
 
+func (d *testSSHTransportDecorator) MaterializeSession() bool {
+	return true
+}
+
 func (d *testSSHTransportDecorator) IsolationContext() decorator.IsolationContext {
 	return nil
 }
