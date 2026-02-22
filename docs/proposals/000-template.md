@@ -144,25 +144,34 @@ Break implementation into phases.
 - Estimated scope (if known)
 
 ## Compatibility
+### Pre-Alpha Exception
+
+During pre-alpha, Opal prefers clean breaks over migration scaffolding. Migration paths are **optional** unless:
+ The proposal explicitly requests transition support
+ A maintainer specifically requires compatibility handling
+
+Default behavior for pre-alpha breaking changes:
+ Remove old syntax/behavior directly
+ Update tests and docs to canonical form
+ No deprecation warnings or compatibility errors
 
 ### Breaking Changes
 
 List any breaking changes. If none, say "None. This is a new feature."
 
 **Format:**
-- What breaks
-- Why it breaks
-- How to migrate
+ What breaks
+ Why it breaks
+ How to migrate (optional during pre-alpha)
 
 ### Migration Path
 
-If there are breaking changes, provide a clear migration path.
+If a migration path is required (see Pre-Alpha Exception), provide clear steps:
 
 **Format:**
-- Step-by-step migration guide
-- Automated migration tools (if applicable)
-- Timeline for deprecation
-
+ Step-by-step migration guide
+ Automated migration tools (if applicable)
+ Timeline for deprecation (post-alpha only)
 ## Open Questions
 
 **CRITICAL SECTION** - List unresolved design issues.

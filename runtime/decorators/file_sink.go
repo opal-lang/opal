@@ -1,6 +1,7 @@
 package decorators
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -89,6 +90,9 @@ func (d *FileSinkDecorator) parseConfig() fileConfig {
 	if perm, ok := d.params["perm"].(int); ok && perm > 0 {
 		cfg.Perm = perm
 	}
+	if perm, ok := d.params["perm"].(int64); ok && perm > 0 {
+		cfg.Perm = int(perm)
+	}
 
 	return cfg
 }
@@ -113,22 +117,12 @@ func (d *FileSinkDecorator) OpenRead(ctx decorator.ExecContext, _ ...decorator.I
 	// Resolve path against session's working directory
 	path := resolvePath(cfg.Path, session)
 
-	reader, writer := io.Pipe()
+	data, err := session.Get(execCtx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %q: %w", path, err)
+	}
 
-	go func() {
-		res, err := session.Run(execCtx, []string{"sh", "-c", "cat " + shellQuote(path)}, decorator.RunOpts{Stdout: writer})
-		if err != nil {
-			_ = writer.CloseWithError(fmt.Errorf("failed to read file %q: %w", path, err))
-			return
-		}
-		if res.ExitCode != decorator.ExitSuccess {
-			_ = writer.CloseWithError(fmt.Errorf("failed to read file %q: %s", path, strings.TrimSpace(string(res.Stderr))))
-			return
-		}
-		_ = writer.Close()
-	}()
-
-	return reader, nil
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 // OpenWrite opens the file for writing (> or >> sink).

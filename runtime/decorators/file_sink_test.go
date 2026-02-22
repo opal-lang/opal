@@ -216,11 +216,11 @@ func TestFileSinkDecorator_ReadAndTransportContext(t *testing.T) {
 	}
 
 	_, gets, runs := tracker.snapshot()
-	if len(gets) != 0 {
-		t.Fatalf("expected no direct get calls for streaming read, got %d", len(gets))
+	if len(gets) != 1 {
+		t.Fatalf("expected one direct get call for read path, got %d", len(gets))
 	}
-	if len(runs) == 0 {
-		t.Fatal("expected at least one session run call for streaming read")
+	if len(runs) != 0 {
+		t.Fatalf("expected no session run calls for read path, got %d", len(runs))
 	}
 
 	if tracker.ID() == "" {
@@ -238,5 +238,33 @@ func TestFileSinkDecorator_MissingPath(t *testing.T) {
 
 	if _, err := sink.OpenWrite(ctx, false); err == nil {
 		t.Fatal("expected missing path write error")
+	}
+}
+
+func TestFileSinkDecorator_PermInt64(t *testing.T) {
+	tempDir := t.TempDir()
+	delegate := decorator.NewLocalSession().WithWorkdir(tempDir)
+
+	sink := &FileSinkDecorator{params: map[string]any{"path": "out/perm-int64.txt", "perm": int64(0o640)}}
+	ctx := decorator.ExecContext{Session: delegate, Context: context.Background()}
+
+	writer, err := sink.OpenWrite(ctx, false)
+	if err != nil {
+		t.Fatalf("open write with int64 perm: %v", err)
+	}
+	if _, err := writer.Write([]byte("perm\n")); err != nil {
+		t.Fatalf("write with int64 perm: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close write with int64 perm: %v", err)
+	}
+
+	path := filepath.Join(tempDir, "out", "perm-int64.txt")
+	content, err := delegate.Get(context.Background(), path)
+	if err != nil {
+		t.Fatalf("read file written with int64 perm: %v", err)
+	}
+	if diff := cmp.Diff("perm\n", string(content)); diff != "" {
+		t.Fatalf("content mismatch (-want +got):\n%s", diff)
 	}
 }
