@@ -609,6 +609,31 @@ func TestShellRedirect(t *testing.T) {
 				{Kind: EventClose, Data: uint32(NodeSource)},
 			},
 		},
+		{
+			name:  "read from file with <",
+			input: `cat < input.txt`,
+			events: []Event{
+				{Kind: EventOpen, Data: uint32(NodeSource)},
+				{Kind: EventStepEnter, Data: 0},
+				{Kind: EventOpen, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeShellCommand)},
+				{Kind: EventOpen, Data: uint32(NodeRedirect)},
+				{Kind: EventToken, Data: 1},
+				{Kind: EventOpen, Data: uint32(NodeRedirectTarget)},
+				{Kind: EventOpen, Data: uint32(NodeShellArg)},
+				{Kind: EventToken, Data: 2},
+				{Kind: EventToken, Data: 3},
+				{Kind: EventToken, Data: 4},
+				{Kind: EventClose, Data: uint32(NodeShellArg)},
+				{Kind: EventClose, Data: uint32(NodeRedirectTarget)},
+				{Kind: EventClose, Data: uint32(NodeRedirect)},
+				{Kind: EventStepExit, Data: 0},
+				{Kind: EventClose, Data: uint32(NodeSource)},
+			},
+		},
 	}
 
 	for _, tt := range tests {

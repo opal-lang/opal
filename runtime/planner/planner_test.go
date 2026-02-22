@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/planfmt"
+	_ "github.com/opal-lang/opal/runtime/decorators"
 	"github.com/opal-lang/opal/runtime/lexer"
 	"github.com/opal-lang/opal/runtime/parser"
 	"github.com/opal-lang/opal/runtime/planner"
@@ -729,6 +731,11 @@ func TestRedirectOperators(t *testing.T) {
 			input:    `echo "data" > @var.OUTPUT_FILE`,
 			wantMode: planfmt.RedirectOverwrite,
 		},
+		{
+			name:     "input redirect from bare path",
+			input:    `cat < input.txt`,
+			wantMode: planfmt.RedirectInput,
+		},
 	}
 
 	for _, tt := range tests {
@@ -929,6 +936,110 @@ func TestRedirectWithChaining(t *testing.T) {
 				t.Errorf("Expected right decorator @shell, got %q", rightCmd.Decorator)
 			}
 		})
+	}
+}
+
+func TestRedirectDecoratorTarget(t *testing.T) {
+	tree := parser.Parse([]byte(`echo "hello" > @file("sink-1")`))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	graph, err := planner.BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+	if len(graph.Statements) != 1 || graph.Statements[0].Command == nil || graph.Statements[0].Command.RedirectTarget == nil {
+		t.Fatalf("redirect target missing from IR: %+v", graph.Statements)
+	}
+	parts := graph.Statements[0].Command.RedirectTarget.Parts
+	hasDecoratorRef := false
+	for _, part := range parts {
+		if part != nil && part.Kind == planner.ExprDecoratorRef {
+			hasDecoratorRef = true
+			break
+		}
+	}
+	if !hasDecoratorRef {
+		t.Fatalf("redirect target has no decorator ref part: %+v", parts)
+	}
+
+	result, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if len(result.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(result.Steps))
+	}
+
+	redirectNode, ok := result.Steps[0].Tree.(*planfmt.RedirectNode)
+	if !ok {
+		t.Fatalf("Expected RedirectNode, got %T", result.Steps[0].Tree)
+	}
+
+	if diff := cmp.Diff("@file", redirectNode.Target.Decorator); diff != "" {
+		t.Fatalf("redirect target decorator mismatch (-want +got):\n%s", diff)
+	}
+
+	if len(redirectNode.Target.Args) != 1 {
+		t.Fatalf("expected 1 redirect target arg, got %d", len(redirectNode.Target.Args))
+	}
+
+	if diff := cmp.Diff("path", redirectNode.Target.Args[0].Key); diff != "" {
+		t.Fatalf("redirect target arg key mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(planfmt.Value{Kind: planfmt.ValueString, Str: "sink-1"}, redirectNode.Target.Args[0].Val); diff != "" {
+		t.Fatalf("redirect target arg mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestInputRedirectDecoratorTarget(t *testing.T) {
+	tree := parser.Parse([]byte(`cat < @file("source-1")`))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	graph, err := planner.BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+	if len(graph.Statements) != 1 || graph.Statements[0].Command == nil || graph.Statements[0].Command.RedirectTarget == nil {
+		t.Fatalf("redirect target missing from IR: %+v", graph.Statements)
+	}
+	parts := graph.Statements[0].Command.RedirectTarget.Parts
+	hasDecoratorRef := false
+	for _, part := range parts {
+		if part != nil && part.Kind == planner.ExprDecoratorRef {
+			hasDecoratorRef = true
+			break
+		}
+	}
+	if !hasDecoratorRef {
+		t.Fatalf("redirect target has no decorator ref part: %+v", parts)
+	}
+
+	result, err := planner.Plan(tree.Events, tree.Tokens, planner.Config{Target: ""})
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if len(result.Steps) != 1 {
+		t.Fatalf("Expected 1 step, got %d", len(result.Steps))
+	}
+
+	redirectNode, ok := result.Steps[0].Tree.(*planfmt.RedirectNode)
+	if !ok {
+		t.Fatalf("Expected RedirectNode, got %T", result.Steps[0].Tree)
+	}
+
+	if diff := cmp.Diff(planfmt.RedirectInput, redirectNode.Mode); diff != "" {
+		t.Fatalf("redirect mode mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("@file", redirectNode.Target.Decorator); diff != "" {
+		t.Fatalf("redirect target decorator mismatch (-want +got):\n%s", diff)
 	}
 }
 

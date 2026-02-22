@@ -119,6 +119,85 @@ func TestPlanPipelinePanicsOnNilNode(t *testing.T) {
 	_, _ = ExecutePlan(context.Background(), plan, Config{}, testVault())
 }
 
+func TestStderrCaptureWithFileSink(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to stdout", func(t *testing.T) {
+		t.Parallel()
+
+		outPath := filepath.Join(t.TempDir(), "stdout.txt")
+		plan := &planfmt.Plan{Target: "redirect-stdout-file", Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.RedirectNode{
+				Source: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo out && echo err 1>&2"}}},
+				},
+				Target: planfmt.CommandNode{
+					Decorator: "@file",
+					Args:      []planfmt.Arg{{Key: "path", Val: planfmt.Value{Kind: planfmt.ValueString, Str: outPath}}},
+				},
+				Mode: planfmt.RedirectOverwrite,
+			},
+		}}}
+
+		result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+
+		content, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read redirected output: %v", err)
+		}
+		if diff := cmp.Diff("out\n", string(content)); diff != "" {
+			t.Fatalf("stdout redirect mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("routes stderr when enabled", func(t *testing.T) {
+		t.Parallel()
+
+		outPath := filepath.Join(t.TempDir(), "stderr.txt")
+		plan := &planfmt.Plan{Target: "redirect-stderr-file", Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.RedirectNode{
+				Source: &planfmt.CommandNode{
+					Decorator: "@shell",
+					Args: []planfmt.Arg{
+						{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo out && echo err 1>&2"}},
+						{Key: "stderr", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
+					},
+				},
+				Target: planfmt.CommandNode{
+					Decorator: "@file",
+					Args:      []planfmt.Arg{{Key: "path", Val: planfmt.Value{Kind: planfmt.ValueString, Str: outPath}}},
+				},
+				Mode: planfmt.RedirectOverwrite,
+			},
+		}}}
+
+		result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+
+		content, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read redirected output: %v", err)
+		}
+		if diff := cmp.Diff("err\n", string(content)); diff != "" {
+			t.Fatalf("stderr redirect mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func planShellCommand(command string) *planfmt.CommandNode {
 	return &planfmt.CommandNode{
 		Decorator: "@shell",

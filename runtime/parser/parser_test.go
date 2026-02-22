@@ -51,8 +51,77 @@ func init() {
 		panic(err)
 	}
 
+	testSinkSchema := types.NewSchema("test.sink.path", types.KindExecution).
+		Description("Test sink decorator").
+		Param("path", types.TypeString).
+		Required().
+		Done().
+		WithRedirect(types.RedirectBoth).
+		Build()
+
+	if err := types.Global().RegisterExecutionWithSchema(testSinkSchema, nil); err != nil {
+		panic(err)
+	}
+
 	// Note: @retry, @parallel, @timeout are now registered in runtime/decorators/
 	// No need for mocks - real decorators with stub implementations are used
+}
+
+func TestDecoratorSink(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectError  bool
+		errorMessage string
+	}{
+		{
+			name:        "accepts decorator sink in redirect target",
+			input:       `echo "test" > @test.sink.path("out.txt")`,
+			expectError: false,
+		},
+		{
+			name:        "continues accepting bare redirect path",
+			input:       `echo "test" > out.txt`,
+			expectError: false,
+		},
+		{
+			name:        "accepts input redirect with bare path",
+			input:       `cat < input.txt`,
+			expectError: false,
+		},
+		{
+			name:        "accepts input redirect with decorator source",
+			input:       `cat < @shell("input.txt")`,
+			expectError: false,
+		},
+		{
+			name:         "rejects non-sink decorator in redirect target",
+			input:        `echo "test" > @timeout(5s) { echo "inner" }`,
+			expectError:  true,
+			errorMessage: "@timeout does not support redirection",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+			tree.ValidateSemantics()
+
+			if tt.expectError {
+				if len(tree.Errors) == 0 {
+					t.Fatalf("expected parse error, got none")
+				}
+				if diff := cmp.Diff(tt.errorMessage, tree.Errors[0].Message); diff != "" {
+					t.Fatalf("error message mismatch (-want +got):\n%s", diff)
+				}
+				return
+			}
+
+			if len(tree.Errors) > 0 {
+				t.Fatalf("unexpected parse errors: %v", tree.Errors)
+			}
+		})
+	}
 }
 
 // TestParseEventStructure uses table-driven tests to verify parse tree events

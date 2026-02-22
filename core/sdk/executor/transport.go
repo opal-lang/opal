@@ -61,6 +61,7 @@ type RedirectMode int
 const (
 	RedirectOverwrite RedirectMode = iota // > (truncate file)
 	RedirectAppend                        // >> (append to file)
+	RedirectInput
 )
 
 // Transport abstracts command execution and file transfer for different environments.
@@ -123,6 +124,15 @@ type Transport interface {
 	// The returned WriteCloser MUST be closed by the caller.
 	// Close() waits for the write operation to complete and returns any errors.
 	OpenFileWriter(ctx context.Context, path string, mode RedirectMode, perm fs.FileMode) (io.WriteCloser, error)
+
+	// OpenFileReader opens a file for reading (for input redirection).
+	// This enables `cat < file.txt` to work correctly in all contexts:
+	//   - LocalTransport: opens local file
+	//   - SSHTransport: reads remote file via SSH
+	//   - DockerTransport: reads file inside container
+	//
+	// The returned ReadCloser MUST be closed by the caller.
+	OpenFileReader(ctx context.Context, path string) (io.ReadCloser, error)
 
 	// Close cleans up transport resources (connections, sessions).
 	// Safe to call multiple times.
@@ -414,6 +424,14 @@ func (t *LocalTransport) OpenFileWriter(ctx context.Context, path string, mode R
 	default:
 		return nil, errors.New("invalid redirect mode")
 	}
+}
+
+// OpenFileReader opens a local file for reading (for input redirection).
+func (t *LocalTransport) OpenFileReader(ctx context.Context, path string) (io.ReadCloser, error) {
+	invariant.NotNil(ctx, "context")
+	invariant.Precondition(path != "", "path cannot be empty")
+
+	return os.Open(path)
 }
 
 // atomicWriter wraps a file and performs atomic rename on Close().
