@@ -440,15 +440,9 @@ func TestBenchmarkPerformanceRequirements(t *testing.T) {
 // TestDebugTelemetryZeroAlloc tests that debug disabled maintains zero allocation
 func TestDebugTelemetryZeroAlloc(t *testing.T) {
 	input := "test input"
-
-	// Create lexer without debug (should be zero alloc)
-	lexer := newTestLexer(input)
-
-	runtime.GC()
-	var m1, m2 runtime.MemStats
-	runtime.ReadMemStats(&m1)
-
-	// Process tokens - should have zero allocations
+	lexer := NewLexer()
+	inputBytes := []byte(input)
+	lexer.Init(inputBytes)
 	for {
 		token := lexer.NextToken()
 		if token.Type == EOF {
@@ -456,11 +450,18 @@ func TestDebugTelemetryZeroAlloc(t *testing.T) {
 		}
 	}
 
-	runtime.ReadMemStats(&m2)
-	allocsDiff := m2.Mallocs - m1.Mallocs
+	allocsPerRun := testing.AllocsPerRun(1000, func() {
+		lexer.Init(inputBytes)
+		for {
+			token := lexer.NextToken()
+			if token.Type == EOF {
+				break
+			}
+		}
+	})
 
-	if allocsDiff > 0 {
-		t.Errorf("Expected zero allocations with debug disabled, got %d", allocsDiff)
+	if allocsPerRun > 0 {
+		t.Errorf("Expected zero allocations with debug disabled, got %.0f", allocsPerRun)
 	}
 }
 
