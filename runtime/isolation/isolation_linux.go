@@ -165,9 +165,5 @@ func remount(path string, extraFlags uintptr) error {
 		return err
 	}
 
-	if err := syscall.Mount(path, path, "", uintptr(syscall.MS_BIND|syscall.MS_REMOUNT)|extraFlags, ""); err != nil {
-		return err
-	}
-
-	return nil
+	return syscall.Mount(path, path, "", uintptr(syscall.MS_BIND|syscall.MS_REMOUNT)|extraFlags, "")
 }

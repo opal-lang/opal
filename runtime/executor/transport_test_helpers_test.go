@@ -13,14 +13,6 @@ func localTestTransports(ids ...string) []planfmt.Transport {
 	return transports
 }
 
-func sshProbeTestTransports(ids ...string) []planfmt.Transport {
-	transports := []planfmt.Transport{{ID: "local", Decorator: "local"}}
-	for _, id := range ids {
-		transports = append(transports, planfmt.Transport{ID: id, Decorator: "@test.transport.sshprobe", ParentID: "local"})
-	}
-	return transports
-}
-
 func scopedLocalSessionFactory(transportID string) (decorator.Session, error) {
 	base := decorator.NewLocalSession()
 	if normalizedTransportID(transportID) == "local" {

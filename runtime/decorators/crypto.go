@@ -15,7 +15,9 @@ import (
 var cryptoVault = vault.NewWithPlanKey(nil)
 
 func init() {
-	decorator.Register("crypto", &CryptoValueDecorator{})
+	if err := decorator.Register("crypto", &CryptoValueDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @crypto decorator: %v", err))
+	}
 }
 
 // CryptoValueDecorator provides cryptographic operations in isolated environment
@@ -124,7 +126,7 @@ func (d *CryptoValueDecorator) Generate(ctx context.Context, keyType string) (Ke
 
 	// Lock memory to prevent swapping
 	if err := isolator.LockMemory(); err != nil {
-		// Non-fatal: continue without memory lock
+		return d.generateWithoutIsolation(keyType)
 	}
 
 	// Generate key in isolated environment

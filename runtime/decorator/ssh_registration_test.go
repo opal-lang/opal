@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	_ "github.com/opal-lang/opal/core/decorator"
 	coredecorator "github.com/opal-lang/opal/core/decorator"
 )
 

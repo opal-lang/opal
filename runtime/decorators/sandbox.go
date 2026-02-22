@@ -383,7 +383,7 @@ func runSandboxHelper() error {
 		network = "allow"
 	}
 
-	isolationLevel := decorator.IsolationLevelStandard
+	var isolationLevel decorator.IsolationLevel
 	switch level {
 	case "none":
 		isolationLevel = decorator.IsolationLevelNone
@@ -397,7 +397,7 @@ func runSandboxHelper() error {
 		return fmt.Errorf("invalid sandbox level %q", level)
 	}
 
-	networkPolicy := decorator.NetworkPolicyAllow
+	var networkPolicy decorator.NetworkPolicy
 	switch network {
 	case "allow":
 		networkPolicy = decorator.NetworkPolicyAllow
