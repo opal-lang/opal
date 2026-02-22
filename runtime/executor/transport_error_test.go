@@ -25,9 +25,14 @@ func TestTransportError(t *testing.T) {
 		t.Fatalf("Retryable mismatch (-want +got):\n%s", diff)
 	}
 
-	wantError := "transport [TRANSPORT_CONNECT_FAILED]: ssh dial failed: dial tcp 127.0.0.1:22: connection refused"
+	wantError := "transport [TRANSPORT_CONNECT_FAILED]: ssh dial failed"
 	if diff := cmp.Diff(wantError, err.Error()); diff != "" {
 		t.Fatalf("Error() mismatch (-want +got):\n%s", diff)
+	}
+
+	wantDetailedError := "transport [TRANSPORT_CONNECT_FAILED]: ssh dial failed: dial tcp 127.0.0.1:22: connection refused"
+	if diff := cmp.Diff(wantDetailedError, err.DetailedError()); diff != "" {
+		t.Fatalf("DetailedError() mismatch (-want +got):\n%s", diff)
 	}
 
 	if !errors.Is(err, cause) {
