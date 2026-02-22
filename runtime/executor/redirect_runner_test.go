@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/sdk"
 )
+
+var stderrCaptureMu sync.Mutex
 
 type testSink struct {
 	openErr    error
@@ -126,7 +129,13 @@ func (r *closeFailReadCloser) Close() error {
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 
+	stderrCaptureMu.Lock()
 	original := os.Stderr
+	defer func() {
+		os.Stderr = original
+		stderrCaptureMu.Unlock()
+	}()
+
 	readPipe, writePipe, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("create stderr pipe: %v", err)
@@ -138,7 +147,6 @@ func captureStderr(t *testing.T, fn func()) string {
 	if closeErr := writePipe.Close(); closeErr != nil {
 		t.Fatalf("close stderr write pipe: %v", closeErr)
 	}
-	os.Stderr = original
 
 	content, readErr := io.ReadAll(readPipe)
 	if readErr != nil {
