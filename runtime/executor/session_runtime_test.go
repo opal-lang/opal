@@ -54,6 +54,10 @@ func (d *testSSHTransportDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
+func (d *testSSHTransportDecorator) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
+}
+
 func (d *sessionIDCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return &sessionIDCheckNode{params: params}
 }
