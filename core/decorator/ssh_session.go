@@ -73,7 +73,12 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return nil, fmt.Errorf("ssh dial failed: %w", err)
+		return nil, TransportError{
+			Code:      TransportErrorCodeConnect,
+			Message:   "ssh dial failed",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 
 	return &SSHSession{
@@ -88,12 +93,22 @@ func (s *SSHSession) Run(ctx context.Context, argv []string, opts RunOpts) (Resu
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
 	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, ctx.Err()
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.client.NewSession()
 	if err != nil {
-		return Result{}, fmt.Errorf("failed to create session: %w", err)
+		return Result{}, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -132,7 +147,12 @@ func (s *SSHSession) Run(ctx context.Context, argv []string, opts RunOpts) (Resu
 	select {
 	case <-ctx.Done():
 		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, ctx.Err()
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	case err := <-done:
 		exitCode := 0
 		if err != nil {
@@ -156,12 +176,22 @@ func (s *SSHSession) Put(ctx context.Context, data []byte, path string, mode fs.
 	invariant.Precondition(path != "", "path cannot be empty")
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "put context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -169,7 +199,16 @@ func (s *SSHSession) Put(ctx context.Context, data []byte, path string, mode fs.
 	cmd := fmt.Sprintf("cat > %s && chmod %o %s", shellQuote(path), mode, shellQuote(path))
 	session.Stdin = bytes.NewReader(data)
 
-	return session.Run(cmd)
+	if err := session.Run(cmd); err != nil {
+		return TransportError{
+			Code:      TransportErrorCodeIO,
+			Message:   "failed to write remote file",
+			Retryable: true,
+			Cause:     err,
+		}
+	}
+
+	return nil
 }
 
 // Get reads data from a file on the remote host.
@@ -178,12 +217,22 @@ func (s *SSHSession) Get(ctx context.Context, path string) ([]byte, error) {
 	invariant.Precondition(path != "", "path cannot be empty")
 
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "get context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.client.NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -192,7 +241,12 @@ func (s *SSHSession) Get(ctx context.Context, path string) ([]byte, error) {
 
 	cmd := fmt.Sprintf("cat %s", shellQuote(path))
 	if err := session.Run(cmd); err != nil {
-		return nil, err
+		return nil, TransportError{
+			Code:      TransportErrorCodeIO,
+			Message:   "failed to read remote file",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 
 	return stdout.Bytes(), nil
@@ -284,12 +338,22 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
 	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, ctx.Err()
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.base.client.NewSession()
 	if err != nil {
-		return Result{}, fmt.Errorf("failed to create session: %w", err)
+		return Result{}, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -336,7 +400,12 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 	select {
 	case <-ctx.Done():
 		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, ctx.Err()
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	case err := <-done:
 		exitCode := 0
 		if err != nil {
