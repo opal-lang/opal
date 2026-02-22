@@ -62,15 +62,20 @@ type TransportScope int
 const (
 	// TransportScopeAny means decorator works in any transport (local, SSH, Docker, etc.)
 	TransportScopeAny TransportScope = 0
-
-	// TransportScopeLocal means decorator only works in local transport
 	TransportScopeLocal TransportScope = 1
-
-	// TransportScopeSSH means decorator only works in SSH transport
 	TransportScopeSSH TransportScope = 2
-
-	// TransportScopeRemote means decorator works in any remote transport (SSH, Docker, etc.)
 	TransportScopeRemote TransportScope = 3
+	// TransportScopeIsolated means decorator only works in isolated namespace transport
+	TransportScopeIsolated TransportScope = 4
+
+	// TransportScopeContainer means decorator only works in container-based transport
+	TransportScopeContainer TransportScope = 5
+
+	// TransportScopeDocker means decorator only works in Docker transport
+	TransportScopeDocker TransportScope = 6
+
+	// TransportScopeK8s means decorator only works in Kubernetes transport
+	TransportScopeK8s TransportScope = 7
 )
 
 // String returns the string representation of TransportScope.
@@ -84,6 +89,14 @@ func (s TransportScope) String() string {
 		return "SSH"
 	case TransportScopeRemote:
 		return "Remote"
+	case TransportScopeIsolated:
+		return "Isolated"
+	case TransportScopeContainer:
+		return "Container"
+	case TransportScopeDocker:
+		return "Docker"
+	case TransportScopeK8s:
+		return "K8s"
 	default:
 		return "Unknown"
 	}
@@ -96,11 +109,11 @@ func (s TransportScope) Allows(current TransportScope) bool {
 		return true
 	}
 
-	// Remote scope allows any remote transport (SSH, Docker, etc.)
+	// Remote scope allows any remote transport (SSH, Docker, K8s, etc.)
 	if s == TransportScopeRemote {
-		return current == TransportScopeSSH || current == TransportScopeRemote
+		return current == TransportScopeSSH || current == TransportScopeRemote ||
+			current == TransportScopeDocker || current == TransportScopeK8s
 	}
-
 	// Otherwise, exact match required
 	return s == current
 }
