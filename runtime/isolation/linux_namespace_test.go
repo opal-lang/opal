@@ -1,3 +1,5 @@
+//go:build linux
+
 package isolation
 
 import (
@@ -107,7 +109,7 @@ func TestIsSupported(t *testing.T) {
 	}
 }
 
-func runHelper(t *testing.T, mode string, runExpr string) string {
+func runHelper(t *testing.T, mode, runExpr string) string {
 	t.Helper()
 
 	cmd := exec.Command(os.Args[0], "-test.run", runExpr)
