@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"sync"
 	"testing"
@@ -16,6 +17,10 @@ import (
 type sessionIDCheckDecorator struct{}
 
 type sessionBoundaryDecorator struct{}
+
+type transportSessionCheckDecorator struct{}
+
+type testSSHTransportDecorator struct{}
 
 func (d *sessionIDCheckDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("test.sessionid.check").
@@ -35,12 +40,38 @@ func (d *sessionBoundaryDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
+func (d *transportSessionCheckDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.transport.session.check").
+		Summary("Checks that execution uses a non-local transport session").
+		Roles(decorator.RoleWrapper).
+		Build()
+}
+
+func (d *testSSHTransportDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.transport.sshprobe").
+		Summary("Provides a deterministic SSH-scoped transport session for tests").
+		Roles(decorator.RoleBoundary).
+		Build()
+}
+
 func (d *sessionIDCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return &sessionIDCheckNode{params: params}
 }
 
 func (d *sessionBoundaryDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return &sessionBoundaryNode{next: next, params: params}
+}
+
+func (d *transportSessionCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return &transportSessionCheckNode{}
+}
+
+func (d *testSSHTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	return &testSSHSession{parent: parent}, nil
+}
+
+func (d *testSSHTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
 }
 
 type sessionIDCheckNode struct {
@@ -50,6 +81,12 @@ type sessionIDCheckNode struct {
 type sessionBoundaryNode struct {
 	next   decorator.ExecNode
 	params map[string]any
+}
+
+type transportSessionCheckNode struct{}
+
+type testSSHSession struct {
+	parent decorator.Session
 }
 
 func (n *sessionIDCheckNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
@@ -75,9 +112,68 @@ func (n *sessionBoundaryNode) Execute(ctx decorator.ExecContext) (decorator.Resu
 	return n.next.Execute(child)
 }
 
+func (n *transportSessionCheckNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+	wrapped, ok := ctx.Session.(*transportScopedSession)
+	if !ok {
+		return decorator.Result{ExitCode: 98}, fmt.Errorf("expected transportScopedSession, got %T", ctx.Session)
+	}
+
+	if _, isLocal := wrapped.session.(*decorator.LocalSession); isLocal {
+		return decorator.Result{ExitCode: 98}, fmt.Errorf("expected transport session, got local session")
+	}
+
+	if diff := cmp.Diff(decorator.TransportScopeSSH, wrapped.TransportScope()); diff != "" {
+		return decorator.Result{ExitCode: 98}, fmt.Errorf("transport scope mismatch (-want +got):\n%s", diff)
+	}
+
+	return decorator.Result{ExitCode: 0}, nil
+}
+
+func (s *testSSHSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	return s.parent.Run(ctx, argv, opts)
+}
+
+func (s *testSSHSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.parent.Put(ctx, data, path, mode)
+}
+
+func (s *testSSHSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.parent.Get(ctx, path)
+}
+
+func (s *testSSHSession) Env() map[string]string {
+	return s.parent.Env()
+}
+
+func (s *testSSHSession) WithEnv(delta map[string]string) decorator.Session {
+	return &testSSHSession{parent: s.parent.WithEnv(delta)}
+}
+
+func (s *testSSHSession) WithWorkdir(dir string) decorator.Session {
+	return &testSSHSession{parent: s.parent.WithWorkdir(dir)}
+}
+
+func (s *testSSHSession) Cwd() string {
+	return s.parent.Cwd()
+}
+
+func (s *testSSHSession) ID() string {
+	return "ssh:probe"
+}
+
+func (s *testSSHSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeSSH
+}
+
+func (s *testSSHSession) Close() error {
+	return nil
+}
+
 var (
 	registerSessionIDCheckDecoratorOnce  sync.Once
 	registerSessionBoundaryDecoratorOnce sync.Once
+	registerTransportSessionCheckOnce    sync.Once
+	registerTestSSHTransportOnce         sync.Once
 )
 
 func registerSessionIDCheckDecorator(t *testing.T) {
@@ -99,6 +195,28 @@ func registerSessionBoundaryDecorator(t *testing.T) {
 	})
 	if registerErr != nil {
 		t.Fatalf("register test.session.boundary: %v", registerErr)
+	}
+}
+
+func registerTransportSessionCheckDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerTransportSessionCheckOnce.Do(func() {
+		registerErr = decorator.Register("test.transport.session.check", &transportSessionCheckDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.transport.session.check: %v", registerErr)
+	}
+}
+
+func registerTestSSHTransportDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerTestSSHTransportOnce.Do(func() {
+		registerErr = decorator.Register("test.transport.sshprobe", &testSSHTransportDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.transport.sshprobe: %v", registerErr)
 	}
 }
 
@@ -139,6 +257,39 @@ func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
 			}},
 		},
 	}}}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecutePlan_TransportIDUsesTransportSession(t *testing.T) {
+	registerTransportSessionCheckDecorator(t)
+	registerTestSSHTransportDecorator(t)
+
+	const (
+		localTransportID = "local"
+		sshTransportID   = "transport:ssh"
+	)
+
+	plan := &planfmt.Plan{
+		Target: "transport-session-resolution",
+		Transports: []planfmt.Transport{
+			{ID: localTransportID, Decorator: "local", ParentID: ""},
+			{ID: sshTransportID, Decorator: "@test.transport.sshprobe", ParentID: localTransportID},
+		},
+		Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator:   "@test.transport.session.check",
+				TransportID: sshTransportID,
+			},
+		}},
+	}
 
 	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
 	if err != nil {

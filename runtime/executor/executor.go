@@ -113,6 +113,7 @@ func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt Dis
 		e.stderr = os.Stderr
 	}
 	e.workers = newShellWorkerPool(e.sessions)
+	e.sessions.registerPlanTransports(plan.Transports)
 	defer e.sessions.Close()
 	defer e.workers.Close()
 
