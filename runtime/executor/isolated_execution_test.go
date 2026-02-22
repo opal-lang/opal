@@ -193,9 +193,10 @@ func runIsolatedCryptoHelper() error {
 	}
 
 	cryptoDecorator := &runtimedecorators.CryptoValueDecorator{}
+	fn := "SHA256"
 	results, resolveErr := cryptoDecorator.Resolve(
 		decorator.ValueEvalContext{Session: session},
-		decorator.ValueCall{Path: "crypto", Params: map[string]any{"type": "ed25519"}},
+		decorator.ValueCall{Path: "crypto", Primary: &fn, Params: map[string]any{"arg1": "hello"}},
 	)
 	if resolveErr != nil {
 		return resolveErr
@@ -207,12 +208,12 @@ func runIsolatedCryptoHelper() error {
 		return fmt.Errorf("crypto resolve returned per-call error: %w", results[0].Error)
 	}
 
-	keyPair, ok := results[0].Value.(runtimedecorators.KeyPair)
+	hash, ok := results[0].Value.(string)
 	if !ok {
 		return fmt.Errorf("crypto resolve value type mismatch: got %T", results[0].Value)
 	}
-	if keyPair.IsZero() {
-		return fmt.Errorf("crypto returned empty key pair")
+	if diff := cmp.Diff("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", hash); diff != "" {
+		return fmt.Errorf("crypto hash mismatch (-want +got):\n%s", diff)
 	}
 
 	return nil

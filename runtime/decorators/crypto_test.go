@@ -1,13 +1,10 @@
 package decorators
 
 import (
-	"context"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/isolation"
-	"github.com/opal-lang/opal/runtime/vault"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,91 +12,76 @@ func TestCryptoValueDecorator_Descriptor(t *testing.T) {
 	d := &CryptoValueDecorator{}
 	desc := d.Descriptor()
 
-	assert.Equal(t, "crypto", desc.Path)
-	assert.Contains(t, desc.Summary, "Cryptographic")
-}
-
-func TestCryptoValueDecorator_Generate_Ed25519(t *testing.T) {
-	d := &CryptoValueDecorator{}
-	ctx := t.Context()
-
-	keyPair, err := d.Generate(ctx, "ed25519")
-
-	// Should work even without isolation (graceful degradation)
-	require.NoError(t, err)
-	assert.Equal(t, "ed25519", keyPair.Type)
-	assert.NotEmpty(t, keyPair.PublicKey)
-	assert.NotEmpty(t, keyPair.PrivateKey)
-	assert.NotEqual(t, keyPair.PublicKey, keyPair.PrivateKey)
-}
-
-func TestCryptoValueDecorator_Generate_UnsupportedType(t *testing.T) {
-	d := &CryptoValueDecorator{}
-	ctx := t.Context()
-
-	_, err := d.Generate(ctx, "rsa-4096")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported key type")
-}
-
-func TestCryptoValueDecorator_Generate_WithIsolation(t *testing.T) {
-	if !isolation.IsSupported() {
-		t.Skip("isolation not supported")
+	if diff := cmp.Diff("crypto", desc.Path); diff != "" {
+		t.Fatalf("descriptor path mismatch (-want +got):\n%s", diff)
 	}
-
-	d := &CryptoValueDecorator{}
-	ctx := t.Context()
-
-	// This will attempt to use isolation
-	keyPair, err := d.Generate(ctx, "ed25519")
-	// May fail in restricted environments, but should handle gracefully
-	if err != nil {
-		t.Logf("Isolation failed (expected in restricted env): %v", err)
-		return
+	if diff := cmp.Diff("Cryptographic helper functions", desc.Summary); diff != "" {
+		t.Fatalf("descriptor summary mismatch (-want +got):\n%s", diff)
 	}
-
-	assert.Equal(t, "ed25519", keyPair.Type)
-	assert.NotEmpty(t, keyPair.PublicKey)
-	assert.NotEmpty(t, keyPair.PrivateKey)
 }
 
-func TestKeyPair_IsZero(t *testing.T) {
-	empty := KeyPair{}
-	assert.True(t, empty.IsZero())
-
-	populated := KeyPair{
-		Type:       "ed25519",
-		PublicKey:  "abc123",
-		PrivateKey: "xyz789",
-	}
-	assert.False(t, populated.IsZero())
-}
-
-func TestCryptoValueDecorator_Resolve_StoresPrivateKeyInVault(t *testing.T) {
+func TestCryptoValueDecorator_Resolve_SHA256_Hello(t *testing.T) {
 	d := &CryptoValueDecorator{}
+	fn := "SHA256"
 
 	results, err := d.Resolve(decorator.ValueEvalContext{}, decorator.ValueCall{
-		Path: "crypto",
+		Path:    "crypto",
+		Primary: &fn,
 		Params: map[string]any{
-			"type":  "ed25519",
-			"store": true,
+			"arg1": "hello",
 		},
 	})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NoError(t, results[0].Error)
 
-	keyPair, ok := results[0].Value.(KeyPair)
+	hash, ok := results[0].Value.(string)
 	require.True(t, ok)
-	assert.NotEmpty(t, keyPair.PrivateKeyHandle)
-	assert.Empty(t, keyPair.PrivateKey)
+	expected := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if diff := cmp.Diff(expected, hash); diff != "" {
+		t.Fatalf("sha256 hash mismatch (-want +got):\n%s", diff)
+	}
+}
 
-	encrypted, err := cryptoVault.Retrieve(vault.SecretHandle{ID: keyPair.PrivateKeyHandle})
-	require.NoError(t, err)
-	decrypted, err := cryptoVault.Decrypt(encrypted)
-	require.NoError(t, err)
-	assert.NotEmpty(t, decrypted)
+func TestCryptoValueDecorator_Resolve_SHA256_EmptyString(t *testing.T) {
+	d := &CryptoValueDecorator{}
+	fn := "SHA256"
 
-	_, err = d.Generate(context.Background(), "ed25519")
+	results, err := d.Resolve(decorator.ValueEvalContext{}, decorator.ValueCall{
+		Path:    "crypto",
+		Primary: &fn,
+		Params: map[string]any{
+			"arg1": "",
+		},
+	})
 	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NoError(t, results[0].Error)
+
+	hash, ok := results[0].Value.(string)
+	require.True(t, ok)
+	expected := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if diff := cmp.Diff(expected, hash); diff != "" {
+		t.Fatalf("sha256 hash mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCryptoValueDecorator_Resolve_UnknownFunction(t *testing.T) {
+	d := &CryptoValueDecorator{}
+	fn := "Ed25519"
+
+	results, err := d.Resolve(decorator.ValueEvalContext{}, decorator.ValueCall{
+		Path:    "crypto",
+		Primary: &fn,
+		Params: map[string]any{
+			"arg1": "hello",
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Error(t, results[0].Error)
+
+	if diff := cmp.Diff("unsupported crypto method: Ed25519", results[0].Error.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
+	}
 }
