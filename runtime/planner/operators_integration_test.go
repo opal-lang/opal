@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/opal-lang/opal/core/planfmt"
 	_ "github.com/opal-lang/opal/runtime/decorators"
 	"github.com/opal-lang/opal/runtime/executor"
 	"github.com/opal-lang/opal/runtime/lexer"
@@ -133,6 +134,7 @@ func TestOperatorsEndToEnd(t *testing.T) {
 			// Plan
 			plan, err := planner.Plan(tree.Events, tokens, planner.Config{Target: tt.target})
 			require.NoError(t, err, "plan error")
+			forceLocalTransport(plan)
 
 			// Execute
 			result, err := executor.ExecutePlan(context.Background(), plan, executor.Config{}, nil)
@@ -141,5 +143,48 @@ func TestOperatorsEndToEnd(t *testing.T) {
 			// Verify
 			assert.Equal(t, tt.wantExit, result.ExitCode, "exit code mismatch")
 		})
+	}
+}
+
+func forceLocalTransport(plan *planfmt.Plan) {
+	plan.Transports = []planfmt.Transport{{ID: "local", Decorator: "local"}}
+	for i := range plan.Steps {
+		setNodeTransportLocal(plan.Steps[i].Tree)
+	}
+}
+
+func setNodeTransportLocal(node planfmt.ExecutionNode) {
+	switch n := node.(type) {
+	case *planfmt.CommandNode:
+		n.TransportID = "local"
+	case *planfmt.PipelineNode:
+		for i := range n.Commands {
+			setNodeTransportLocal(n.Commands[i])
+		}
+	case *planfmt.AndNode:
+		setNodeTransportLocal(n.Left)
+		setNodeTransportLocal(n.Right)
+	case *planfmt.OrNode:
+		setNodeTransportLocal(n.Left)
+		setNodeTransportLocal(n.Right)
+	case *planfmt.SequenceNode:
+		for i := range n.Nodes {
+			setNodeTransportLocal(n.Nodes[i])
+		}
+	case *planfmt.RedirectNode:
+		setNodeTransportLocal(n.Source)
+		n.Target.TransportID = "local"
+	case *planfmt.LogicNode:
+		setStepsTransportLocal(n.Block)
+	case *planfmt.TryNode:
+		setStepsTransportLocal(n.TryBlock)
+		setStepsTransportLocal(n.CatchBlock)
+		setStepsTransportLocal(n.FinallyBlock)
+	}
+}
+
+func setStepsTransportLocal(steps []planfmt.Step) {
+	for i := range steps {
+		setNodeTransportLocal(steps[i].Tree)
 	}
 }
