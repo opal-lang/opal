@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-22
+- **Security**: Added IsolationContext interface for Linux namespace-based execution isolation with network drop, filesystem restriction, privilege dropping, and memory locking capabilities
+- **Security**: Added @isolated decorator for executing commands in isolated Linux namespaces with configurable isolation levels (none, basic, standard, maximum) and network policies (allow, deny, loopback)
+- **Security**: Added @crypto decorator for secure cryptographic key generation in isolated environments with Ed25519 support and automatic fallback for non-Linux platforms
+- Added LinuxNamespaceIsolator implementation using syscall.Unshare() with CLONE_NEWNET, CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWUSER namespace flags
+- Added TransportCapIsolation capability flag for isolation-aware transports
+- Added graceful degradation for isolation features on Windows and macOS platforms
+- **Security**: Changed transport resolution to fail-closed (unknown transport IDs now return errors instead of falling back to local)
+- **Security**: Added SSH input validation for host (non-empty), port (1-65535), and key file (accessible)
+- **Security**: Sanitized TransportError messages to prevent leaking internal details; added DetailedError() for debug info
+- Added TransportCaps capability model to Transport interface for future isolation features
+- Added TransportError structured error type with codes, retryability flags, and error wrapping
+- Fixed TransportID to Session binding so SSH blocks actually execute over SSH (not locally)
+- Added SSH transport auto-registration via init() pattern
+- Unified parser and runtime transport registry authority (single source of truth)
+- Expanded transport scope types (Isolated, Container, Docker, K8s) for future transport kinds
+- Refactored SSH Run() methods to eliminate 68 lines of duplicate code
+
 ### 2026-02-20
 - Changed executor cancellation semantics to stop scheduling new work after cancellation, preserve finalized command status during late cancellation, and document interrupt/cleanup invariants for infrastructure runs
 - Changed executor transport boundary handling to source env/workdir from per-transport session snapshots (no implicit carry-over) and reduced per-command env/cwd reapplication overhead in shell dispatch

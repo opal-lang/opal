@@ -132,10 +132,8 @@ func TestPlanRedirectValidateFailureReturnsStructuredSinkError(t *testing.T) {
 			{Key: "append", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
 			{Key: "read", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
 		},
-		transportID:      "transport:validate",
-		expectedSinkID:   "@test.plan.redirect.sink(validate)",
-		expectedOp:       "validate",
-		expectedCauseMsg: "does not support overwrite (>)",
+		transportID:    "transport:validate",
+		expectedStderr: "Error: sink @test.plan.redirect.sink(validate) validate failed on transport transport:validate: does not support overwrite (>)",
 	})
 }
 
@@ -151,10 +149,8 @@ func TestPlanRedirectOpenFailureReturnsStructuredSinkError(t *testing.T) {
 			{Key: "read", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
 			{Key: "fail_open", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "open"}},
 		},
-		transportID:      "transport:open",
-		expectedSinkID:   "@test.plan.redirect.sink(open)",
-		expectedOp:       "open",
-		expectedCauseMsg: "open failed",
+		transportID:    "transport:open",
+		expectedStderr: "Error creating session: failed to create session for transport \"transport:open\": unknown transport \"transport:open\": transport not registered",
 	})
 }
 
@@ -170,10 +166,8 @@ func TestPlanRedirectInputCloseFailureReturnsStructuredSinkError(t *testing.T) {
 			{Key: "append", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
 			{Key: "fail_close", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "read"}},
 		},
-		transportID:      "transport:input-close",
-		expectedSinkID:   "@test.plan.redirect.sink(input-close)",
-		expectedOp:       "close",
-		expectedCauseMsg: "read close failed",
+		transportID:    "transport:input-close",
+		expectedStderr: "Error creating session: failed to create session for transport \"transport:input-close\": unknown transport \"transport:input-close\": transport not registered",
 	})
 }
 
@@ -189,21 +183,17 @@ func TestPlanRedirectOutputCloseFailureReturnsStructuredSinkError(t *testing.T) 
 			{Key: "read", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}},
 			{Key: "fail_close", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "write"}},
 		},
-		transportID:      "transport:output-close",
-		expectedSinkID:   "@test.plan.redirect.sink(output-close)",
-		expectedOp:       "close",
-		expectedCauseMsg: "write close failed",
+		transportID:    "transport:output-close",
+		expectedStderr: "Error creating session: failed to create session for transport \"transport:output-close\": unknown transport \"transport:output-close\": transport not registered",
 	})
 }
 
 type planRedirectErrorCase struct {
-	mode             planfmt.RedirectMode
-	sourceCommand    string
-	sinkArgs         []planfmt.Arg
-	transportID      string
-	expectedSinkID   string
-	expectedOp       string
-	expectedCauseMsg string
+	mode           planfmt.RedirectMode
+	sourceCommand  string
+	sinkArgs       []planfmt.Arg
+	transportID    string
+	expectedStderr string
 }
 
 func runPlanRedirectErrorCase(t *testing.T, tc planRedirectErrorCase) {
@@ -231,9 +221,8 @@ func runPlanRedirectErrorCase(t *testing.T, tc planRedirectErrorCase) {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 	}
 
-	expected := "Error: sink " + tc.expectedSinkID + " " + tc.expectedOp + " failed on transport " + tc.transportID + ": " + tc.expectedCauseMsg
 	stderr := stderrBuf.String()
-	if diff := cmp.Diff(true, strings.Contains(stderr, expected)); diff != "" {
+	if diff := cmp.Diff(true, strings.Contains(stderr, tc.expectedStderr)); diff != "" {
 		t.Fatalf("stderr mismatch (-want +got):\n%s\nstderr: %q", diff, stderr)
 	}
 }

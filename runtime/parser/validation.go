@@ -3,7 +3,7 @@ package parser
 import (
 	"fmt"
 
-	"github.com/opal-lang/opal/core/types"
+	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/runtime/lexer"
 )
 
@@ -126,8 +126,8 @@ func validateCommandMode(t *ParseTree) error {
 // This prevents confusing behavior where @env.HOME inside @ssh.connect would resolve
 // to the local environment instead of the remote environment.
 //
-// Uses the TransportScope interface: decorators declare their scope (RootOnly, Agnostic, RemoteAware)
-// and validation checks scope vs transportDepth.
+// Uses the decorator registry: decorators with RoleBoundary role are transport-switching,
+// and value decorators with TransportScopeLocal capability are root-only.
 func validateEnvInRemoteTransport(t *ParseTree) error {
 	// Track transport depth (increments when entering transport-switching decorators)
 	transportDepth := 0
@@ -145,11 +145,9 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 					// Look ahead to get decorator name
 					decoratorName := extractDecoratorNameFromTokens(t, i)
 					if decoratorName != "" {
-						// Check transport scope
-						scope := types.Global().GetTransportScope(decoratorName)
-
-						// If decorator is root-only and we're inside a transport, error
-						if scope == types.ScopeRootOnly && transportDepth > 0 {
+						// Check if this value decorator is restricted to local/RootOnly scope
+						// and we're inside a transport boundary
+						if transportDepth > 0 && isRootOnlyValueDecorator(decoratorName) {
 							// Find which transport we're inside
 							transportName := "remote transport"
 							if len(decoratorStack) > 0 {
@@ -179,11 +177,8 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 				if decoratorName != "" {
 					decoratorStack = append(decoratorStack, decoratorName)
 
-					// Check if this decorator switches transport
-					// For now, we check the schema's SwitchesTransport flag
-					// TODO: Add TransportSwitcher interface for execution decorators
-					schema, exists := types.Global().GetSchema(decoratorName)
-					if exists && schema.SwitchesTransport {
+					// Check if this decorator switches transport (has RoleBoundary role)
+					if isTransportSwitchingDecorator(decoratorName) {
 						transportDepth++
 					}
 				}
@@ -194,8 +189,7 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 			if nodeKind == NodeDecorator && len(decoratorStack) > 0 {
 				// Check if we're exiting a transport-switching decorator
 				decoratorName := decoratorStack[len(decoratorStack)-1]
-				schema, exists := types.Global().GetSchema(decoratorName)
-				if exists && schema.SwitchesTransport {
+				if isTransportSwitchingDecorator(decoratorName) {
 					transportDepth--
 				}
 
@@ -206,6 +200,62 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 	}
 
 	return nil
+}
+
+// isTransportSwitchingDecorator checks if a decorator switches transport context.
+// Returns true if the decorator has the RoleBoundary role (implements Transport interface).
+func isTransportSwitchingDecorator(path string) bool {
+	entry, ok := decorator.Global().Lookup(path)
+	if !ok {
+		return false
+	}
+	for _, role := range entry.Roles {
+		if role == decorator.RoleBoundary {
+			return true
+		}
+	}
+	return false
+}
+
+// isRootOnlyValueDecorator checks if a value decorator is restricted to local/RootOnly scope.
+// Returns true if the decorator is a value provider with TransportScopeLocal capability.
+// Tries progressively shorter paths to handle property accessors like @test.env.KEY
+func isRootOnlyValueDecorator(path string) bool {
+	// Try progressively shorter paths to find the decorator
+	// For @test.env.KEY, try test.env.KEY, then test.env, then test
+	for {
+		entry, ok := decorator.Global().Lookup(path)
+		if ok {
+			// Check if it's a value provider
+			hasValueRole := false
+			for _, role := range entry.Roles {
+				if role == decorator.RoleProvider {
+					hasValueRole = true
+					break
+				}
+			}
+			if !hasValueRole {
+				return false
+			}
+			// Check if it's restricted to local scope
+			return entry.Impl.Descriptor().Capabilities.TransportScope == decorator.TransportScopeLocal
+		}
+
+		// Try shorter path by removing last component
+		lastDot := -1
+		for i := len(path) - 1; i >= 0; i-- {
+			if path[i] == '.' {
+				lastDot = i
+				break
+			}
+		}
+		if lastDot == -1 {
+			break // No more components to remove
+		}
+		path = path[:lastDot]
+	}
+
+	return false
 }
 
 // extractDecoratorNameFromTokens extracts decorator name starting from @ token

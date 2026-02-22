@@ -790,6 +790,341 @@ var db_password = @env.DB_PASSWORD  # Resolve at root (local session)
 - Validation prevents confusing usage patterns
 - Error messages guide users to correct approach
 
+## Isolation Architecture
+
+The isolation system provides Linux namespace-based execution isolation for secure operations like cryptographic key generation. The `@isolated` decorator creates isolated execution environments with configurable security boundaries.
+
+### Isolation Context Interface
+
+The `IsolationContext` interface defines capabilities for process isolation:
+
+```go
+type IsolationContext interface {
+    // Isolate applies the specified isolation level.
+    Isolate(level IsolationLevel, config IsolationConfig) error
+
+    // DropNetwork removes network access.
+    DropNetwork() error
+
+    // RestrictFilesystem limits filesystem access.
+    RestrictFilesystem(readOnly []string, writable []string) error
+
+    // DropPrivileges drops unnecessary privileges.
+    DropPrivileges() error
+
+    // LockMemory prevents memory from being swapped.
+    LockMemory() error
+}
+```
+
+### Isolation Levels
+
+The isolation system supports four levels of isolation:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| **None** | No isolation | Standard execution |
+| **Basic** | Basic process isolation | Simple sandboxing |
+| **Standard** | Linux namespaces (network, PID, mount) | Most secure operations |
+| **Maximum** | Full isolation + seccomp + landlock | Cryptographic operations |
+
+### Network Policies
+
+| Policy | Description |
+|--------|-------------|
+| **Allow** | Full network access (default) |
+| **Deny** | No network access |
+| **LoopbackOnly** | Only loopback interface |
+
+### Filesystem Policies
+
+| Policy | Description |
+|--------|-------------|
+| **Full** | Full filesystem access (default) |
+| **ReadOnly** | Read-only filesystem |
+| **Ephemeral** | Ephemeral writable areas only |
+
+### Linux Namespace Implementation
+
+The `LinuxNamespaceIsolator` implements isolation using Linux kernel namespaces:
+
+```go
+type LinuxNamespaceIsolator struct {
+    namespaces []int
+}
+
+func (i *LinuxNamespaceIsolator) Isolate(level IsolationLevel, config IsolationConfig) error {
+    // Drop privileges first
+    if err := i.DropPrivileges(); err != nil {
+        return err
+    }
+
+    // Lock memory if requested
+    if config.MemoryLock {
+        if err := i.LockMemory(); err != nil {
+            return err
+        }
+    }
+
+    // Create namespaces for Standard level and above
+    if level >= IsolationLevelStandard {
+        // User, PID, and mount namespaces
+        if err := i.unshare(CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS); err != nil {
+            return err
+        }
+
+        // Apply network policy
+        if config.NetworkPolicy == NetworkPolicyDeny {
+            if err := i.DropNetwork(); err != nil {
+                return err
+            }
+        }
+
+        // Apply filesystem policy
+        if config.FilesystemPolicy != FilesystemPolicyFull {
+            if err := i.RestrictFilesystem(...); err != nil {
+                return err
+            }
+        }
+    }
+    return nil
+}
+```
+
+**Namespace flags used:**
+- `CLONE_NEWNET` - Network namespace (isolated network stack)
+- `CLONE_NEWPID` - PID namespace (isolated process IDs)
+- `CLONE_NEWNS` - Mount namespace (isolated filesystem view)
+- `CLONE_NEWUSER` - User namespace (isolated user/group IDs)
+
+### @isolated Decorator
+
+The `@isolated` decorator creates isolated execution contexts:
+
+```go
+func (d *IsolatedTransportDecorator) Descriptor() decorator.Descriptor {
+    return decorator.NewDescriptor("isolated").
+        Summary("Execute in isolated Linux namespace").
+        Roles(decorator.RoleBoundary).
+        ParamEnum("level", "Isolation level").
+        Values("none", "basic", "standard", "maximum").
+        Default("standard").
+        Done().
+        ParamEnum("network", "Network isolation policy").
+        Values("allow", "deny", "loopback").
+        Default("allow").
+        Done().
+        Block(decorator.BlockRequired).
+        Build()
+}
+```
+
+**Usage examples:**
+
+```opal
+# Deny network access for secure operations
+@isolated(network="deny") {
+    # No network access here
+    echo "Running in isolation"
+}
+
+# Maximum isolation for sensitive operations
+@isolated(level="maximum", network="deny", filesystem="ephemeral") {
+    # Fully isolated execution
+    var key = @crypto.generate(type="ed25519")
+}
+```
+
+### @crypto Decorator
+
+The `@crypto` decorator generates cryptographic keys in isolated environments:
+
+```go
+type CryptoValueDecorator struct{}
+
+func (d *CryptoValueDecorator) Generate(ctx context.Context, keyType string) (KeyPair, error) {
+    // Check if isolation is supported
+    if !isolation.IsSupported() {
+        return d.generateWithoutIsolation(keyType)
+    }
+
+    // Create isolated environment for key generation
+    isolator := isolation.NewLinuxNamespaceIsolator()
+
+    // Maximum isolation: no network, restricted filesystem
+    config := decorator.IsolationConfig{
+        NetworkPolicy:    decorator.NetworkPolicyDeny,
+        FilesystemPolicy: decorator.FilesystemPolicyEphemeral,
+        MemoryLock:       true,
+    }
+
+    if err := isolator.Isolate(decorator.IsolationLevelMaximum, config); err != nil {
+        return d.generateWithoutIsolation(keyType)
+    }
+
+    return d.generateKey(keyType)
+}
+```
+
+**Usage examples:**
+
+```opal
+# Generate Ed25519 key pair in isolated environment
+var keyPair = @crypto.generate(type="ed25519")
+
+# Combined isolation for key generation
+@isolated(network="deny", filesystem="ephemeral") {
+    var key = @crypto.generate(type="ed25519")
+    # Key generated with no network access
+    echo "Public key: @var.key.public_key"
+}
+```
+
+### Platform Support
+
+| Platform | Namespace Support | Behavior |
+|----------|------------------|----------|
+| **Linux** | Full support | All isolation features available |
+| **Windows** | Not supported | Graceful fallback to non-isolated execution |
+| **macOS** | Not supported | Graceful fallback to non-isolated execution |
+
+**Graceful degradation:** When namespace isolation is unavailable, the system falls back to non-isolated execution rather than failing. This ensures scripts work across platforms while providing enhanced security on Linux.
+
+```go
+func IsSupported() bool {
+    if runtime.GOOS != "linux" {
+        return false
+    }
+    if _, err := os.Stat("/proc/self/ns"); err != nil {
+        return false
+    }
+    return true
+}
+```
+
+### Security Considerations
+
+**Memory locking:** The `LockMemory()` method uses `mlockall()` to prevent sensitive data from being written to swap:
+
+```go
+func (i *LinuxNamespaceIsolator) LockMemory() error {
+    return syscall.Mlockall(syscall.MCL_CURRENT | syscall.MCL_FUTURE)
+}
+```
+
+**Privilege dropping:** Supplementary groups are dropped to reduce attack surface:
+
+```go
+func (i *LinuxNamespaceIsolator) DropPrivileges() error {
+    return syscall.Setgroups([]int{})
+}
+```
+
+### Transport Capabilities
+
+Isolation-aware transports expose their capabilities via `TransportCaps`:
+
+```go
+const (
+    TransportCapNetwork     TransportCaps = 1 << iota  // Can reach network endpoints
+    TransportCapFilesystem                                // Can read/write filesystem
+    TransportCapEnvironment                               // Can modify environment variables
+    TransportCapIsolation                                 // Supports isolation guarantees
+)
+
+func (d *IsolatedTransportDecorator) Capabilities() decorator.TransportCaps {
+    return TransportCapNetwork |
+        TransportCapFilesystem |
+        TransportCapEnvironment |
+        TransportCapIsolation
+}
+```
+
+### Isolation Strategies: @isolated vs @sandbox
+
+Opal provides two isolation decorators with different trade-offs between security, performance, and composability.
+
+#### @isolated (In-Process Isolation)
+
+`@isolated` applies isolation to the current process using Linux namespaces. This is the lighter-weight option.
+
+**Characteristics:**
+- **Lightweight**: No subprocess spawn overhead
+- **Composable**: Layers on top of any transport (`@ssh`, `@docker`, etc.)
+- **Medium security**: Isolation applies to the current process, but a compromised process may potentially escape
+
+**Best for:**
+- Secure crypto operations where secrets should not leave the process
+- Temporarily dropping network access for sensitive operations
+- Quick isolation without IPC overhead
+
+**Example:**
+```opal
+# In-process isolation - good for crypto key generation
+@isolated(network="deny") {
+    var key = @crypto.generate(type="ed25519")
+}
+
+# Compose @isolated with SSH - SSH out allowed, but no direct internet
+@isolated(network="deny") {
+    @ssh("prod-server") {
+        backup-tool
+    }
+}
+```
+
+#### @sandbox (Subprocess Isolation)
+
+`@sandbox` spawns a subprocess with isolation applied before execution. This creates a stronger security boundary.
+
+**Characteristics:**
+- **Strong isolation**: Compromised child process cannot escape to parent
+- **Resource control**: Memory, CPU, and filesystem limits can be applied per sandbox
+- **IPC overhead**: Communication between parent and child adds latency
+- **Self-contained**: Less composable - handles its own execution environment
+
+**Best for:**
+- Running untrusted or third-party code
+- Resource-constrained workloads with hard limits
+- Strong security boundaries where containment is critical
+
+**Example:**
+```opal
+# Subprocess sandbox - good for untrusted code
+@sandbox(network="deny", memory="512m") {
+    run-untrusted-script.sh
+}
+
+# Sandbox with resource limits for CI/CD workloads
+@sandbox(network="loopback", cpu="1", memory="2g", timeout="10m") {
+    npm test
+}
+```
+
+#### Comparison
+
+| Aspect | @isolated | @sandbox |
+|--------|-----------|----------|
+| Isolation strength | Medium (in-process) | High (subprocess boundary) |
+| Performance | Fast (no subprocess) | Slower (IPC overhead) |
+| Composability | High (works with any transport) | Lower (self-contained) |
+| Resource limits | Limited | Full control (memory, CPU, time) |
+| Use case | Secure operations, temporary isolation | Untrusted code, strong boundaries |
+| Platform support | Linux (graceful fallback) | Linux (graceful fallback) |
+
+#### Choosing Between @isolated and @sandbox
+
+**Use @isolated when:**
+- You need to protect secrets within your own trusted code
+- You want isolation without subprocess overhead
+- You need to compose isolation with other transports
+
+**Use @sandbox when:**
+- Running code you don't fully trust
+- You need hard resource limits
+- A process breach must not affect the parent
+
+
 ## Steps, Decorators, and Operators
 
 Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.

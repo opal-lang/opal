@@ -40,7 +40,11 @@ func childExecutionContextFromDecorator(base sdk.ExecutionContext, ctx decorator
 	}
 	if ctx.Session != nil {
 		if typed, ok := child.(*executionContext); ok {
-			child = typed.withTransportID(normalizedTransportID(ctx.Session.ID()))
+			sessionTransportID := normalizedTransportID(ctx.Session.ID())
+			currentTransportID := normalizedTransportID(typed.transportID)
+			if sessionTransportID != "local" || currentTransportID == "local" {
+				child = typed.withTransportID(sessionTransportID)
+			}
 		}
 		child = child.WithEnviron(ctx.Session.Env())
 		child = child.WithWorkdir(ctx.Session.Cwd())

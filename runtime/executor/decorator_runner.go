@@ -50,11 +50,18 @@ func withExecutionTransport(execCtx sdk.ExecutionContext, transportID string) sd
 	if !ok {
 		return execCtx
 	}
-	if transportID == "" {
+
+	requestedTransportID := normalizedTransportID(transportID)
+	currentTransportID := normalizedTransportID(ec.transportID)
+	if requestedTransportID == currentTransportID {
 		return execCtx
 	}
 
-	return ec.withTransportID(normalizedTransportID(transportID))
+	if currentTransportID != "local" {
+		return execCtx
+	}
+
+	return ec.withTransportID(requestedTransportID)
 }
 
 func executionTransportID(execCtx sdk.ExecutionContext) string {

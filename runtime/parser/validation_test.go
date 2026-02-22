@@ -2,7 +2,82 @@ package parser
 
 import (
 	"testing"
+
+	"github.com/opal-lang/opal/core/decorator"
+	"github.com/opal-lang/opal/core/types"
 )
+
+// mockTransportDecorator is a test decorator that simulates a transport-switching decorator.
+// It has RoleBoundary role which makes isTransportSwitchingDecorator return true.
+type mockTransportDecorator struct {
+	path string
+}
+
+func (m *mockTransportDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: m.path,
+		Schema: types.DecoratorSchema{
+			Path: m.path,
+			Kind: types.KindExecution,
+		},
+		Capabilities: decorator.Capabilities{
+			Block: decorator.BlockRequired,
+		},
+	}
+}
+
+func (m *mockTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	return parent, nil
+}
+
+func (m *mockTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
+func (m *mockTransportDecorator) MaterializeSession() bool {
+	return false
+}
+
+func (m *mockTransportDecorator) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
+}
+
+func (m *mockTransportDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
+// mockRootOnlyValueDecorator is a test decorator that simulates a root-only value decorator like @env.
+// It has RoleProvider role and TransportScopeLocal capability.
+type mockRootOnlyValueDecorator struct {
+	path string
+}
+
+func (m *mockRootOnlyValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{
+		Path: m.path,
+		Schema: types.DecoratorSchema{
+			Path: m.path,
+			Kind: types.KindValue,
+		},
+		Capabilities: decorator.Capabilities{
+			TransportScope: decorator.TransportScopeLocal,
+		},
+	}
+}
+
+func (m *mockRootOnlyValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: "mock-value"}
+	}
+	return results, nil
+}
+
+func init() {
+	// Register test decorators that simulate @ssh.connect and @env behavior
+	decorator.Register("test.ssh", &mockTransportDecorator{path: "test.ssh"})
+	decorator.Register("test.env", &mockRootOnlyValueDecorator{path: "test.env"})
+}
 
 func TestValidateScriptMode(t *testing.T) {
 	input := `var env = "production"
@@ -115,7 +190,7 @@ func TestValidateEnvInRemoteTransport(t *testing.T) {
 			reason:    "@env is allowed outside transport-switching decorators",
 		},
 		{
-			name: "@env allowed in non-transport decorator",
+			name: "@retry allowed in non-transport decorator",
 			input: `@retry(attempts=3) {
 				var home = @env.HOME
 			}`,
@@ -124,29 +199,26 @@ func TestValidateEnvInRemoteTransport(t *testing.T) {
 		},
 		{
 			name: "shell variables allowed everywhere",
-			input: `@ssh.connect(host="remote") {
+			input: `@test.ssh(host="remote") {
 				echo $HOME
 			}`,
 			shouldErr: false,
 			reason:    "shell variables ($HOME) are always allowed",
 		},
-		// Note: These tests will pass validation because ssh.connect, docker.exec
-		// are not registered decorators yet. When they are registered with
-		// SwitchesTransport=true, these tests will start failing as expected.
 		{
-			name: "@env forbidden in @ssh.connect (when registered)",
-			input: `@ssh.connect(host="remote") {
-				var home = @env.HOME
+			name: "root-only value decorator forbidden in transport decorator",
+			input: `@test.ssh(host="remote") {
+				var home = @test.env.KEY
 			}`,
-			shouldErr: false, // Will be true when ssh.connect is registered
-			reason:    "@env resolves to local environment, confusing in remote context",
+			shouldErr: true,
+			reason:    "root-only value decorators cannot be used inside transport decorators",
 		},
 		{
 			name: "@env forbidden in @docker.exec (when registered)",
 			input: `@docker.exec(container="app") {
 				var user = @env.USER
 			}`,
-			shouldErr: false, // Will be true when docker.exec is registered
+			shouldErr: false, // Will be true when docker.exec is registered with RoleBoundary
 			reason:    "@env resolves to local environment, confusing in container context",
 		},
 	}

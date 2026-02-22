@@ -409,12 +409,24 @@ func (m *mockTransportDecorator) Descriptor() Descriptor {
 	return Descriptor{Path: m.path}
 }
 
+func (m *mockTransportDecorator) Capabilities() TransportCaps {
+	return TransportCapNetwork
+}
+
 func (m *mockTransportDecorator) Open(parent Session, params map[string]any) (Session, error) {
 	return nil, nil // Stub
 }
 
 func (m *mockTransportDecorator) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return nil // Stub
+}
+
+func (m *mockTransportDecorator) MaterializeSession() bool {
+	return false
+}
+
+func (m *mockTransportDecorator) IsolationContext() IsolationContext {
+	return nil
 }
 
 type mockIODecorator struct {

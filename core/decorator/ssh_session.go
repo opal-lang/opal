@@ -34,9 +34,42 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		user = os.Getenv("USER")
 	}
 
-	port, ok := params["port"].(int)
-	if !ok {
-		port = 22
+	port := 22
+	switch v := params["port"].(type) {
+	case int:
+		port = v
+	case int64:
+		port = int(v)
+	}
+
+	// Validate host
+	if host == "" || strings.TrimSpace(host) == "" {
+		return nil, TransportError{
+			Code:      TransportErrorCodeValidationFailed,
+			Message:   "SSH host cannot be empty",
+			Retryable: false,
+		}
+	}
+
+	// Validate port range (1-65535)
+	if port < 1 || port > 65535 {
+		return nil, TransportError{
+			Code:      TransportErrorCodeValidationFailed,
+			Message:   fmt.Sprintf("SSH port must be between 1 and 65535, got %d", port),
+			Retryable: false,
+		}
+	}
+
+	// Validate key file if provided as string path
+	if keyStr, ok := params["key"].(string); ok && keyStr != "" {
+		if _, err := os.Stat(keyStr); err != nil {
+			return nil, TransportError{
+				Code:      TransportErrorCodeValidationFailed,
+				Message:   fmt.Sprintf("SSH key file not accessible: %v", err),
+				Retryable: false,
+				Cause:     err,
+			}
+		}
 	}
 
 	// Create SSH client config
@@ -73,7 +106,12 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return nil, fmt.Errorf("ssh dial failed: %w", err)
+		return nil, TransportError{
+			Code:      TransportErrorCodeConnect,
+			Message:   "ssh dial failed",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 
 	return &SSHSession{
@@ -87,67 +125,14 @@ func (s *SSHSession) Run(ctx context.Context, argv []string, opts RunOpts) (Resu
 	invariant.NotNil(ctx, "ctx")
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
-	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, ctx.Err()
-	}
-
-	session, err := s.client.NewSession()
-	if err != nil {
-		return Result{}, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer func() { _ = session.Close() }()
-
-	// Build command string with optional directory change
 	var cmd string
 	if opts.Dir != "" {
-		// Prepend cd command if directory specified
 		cmd = fmt.Sprintf("cd %s && %s", shellQuote(opts.Dir), shellEscape(argv))
 	} else {
 		cmd = shellEscape(argv)
 	}
 
-	// Wire up I/O
-	if opts.Stdin != nil {
-		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if opts.Stdout != nil {
-		session.Stdout = opts.Stdout
-	} else {
-		session.Stdout = &stdout
-	}
-	if opts.Stderr != nil {
-		session.Stderr = opts.Stderr
-	} else {
-		session.Stderr = &stderr
-	}
-
-	// Execute with context cancellation
-	done := make(chan error, 1)
-	go func() {
-		done <- session.Run(cmd)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, ctx.Err()
-	case err := <-done:
-		exitCode := 0
-		if err != nil {
-			if exitErr, ok := err.(*ssh.ExitError); ok {
-				exitCode = exitErr.ExitStatus()
-			} else {
-				exitCode = 1
-			}
-		}
-		return Result{
-			ExitCode: exitCode,
-			Stdout:   stdout.Bytes(),
-			Stderr:   stderr.Bytes(),
-		}, nil
-	}
+	return runSSHSession(ctx, s.client, cmd, opts, nil)
 }
 
 // Put writes data to a file on the remote host.
@@ -156,12 +141,22 @@ func (s *SSHSession) Put(ctx context.Context, data []byte, path string, mode fs.
 	invariant.Precondition(path != "", "path cannot be empty")
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "put context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -169,7 +164,16 @@ func (s *SSHSession) Put(ctx context.Context, data []byte, path string, mode fs.
 	cmd := fmt.Sprintf("cat > %s && chmod %o %s", shellQuote(path), mode, shellQuote(path))
 	session.Stdin = bytes.NewReader(data)
 
-	return session.Run(cmd)
+	if err := session.Run(cmd); err != nil {
+		return TransportError{
+			Code:      TransportErrorCodeIO,
+			Message:   "failed to write remote file",
+			Retryable: true,
+			Cause:     err,
+		}
+	}
+
+	return nil
 }
 
 // Get reads data from a file on the remote host.
@@ -178,12 +182,22 @@ func (s *SSHSession) Get(ctx context.Context, path string) ([]byte, error) {
 	invariant.Precondition(path != "", "path cannot be empty")
 
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "get context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
 	}
 
 	session, err := s.client.NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 	defer func() { _ = session.Close() }()
 
@@ -192,7 +206,12 @@ func (s *SSHSession) Get(ctx context.Context, path string) ([]byte, error) {
 
 	cmd := fmt.Sprintf("cat %s", shellQuote(path))
 	if err := session.Run(cmd); err != nil {
-		return nil, err
+		return nil, TransportError{
+			Code:      TransportErrorCodeIO,
+			Message:   "failed to read remote file",
+			Retryable: true,
+			Cause:     err,
+		}
 	}
 
 	return stdout.Bytes(), nil
@@ -267,6 +286,10 @@ func (s *SSHSession) TransportScope() TransportScope {
 	return TransportScopeSSH
 }
 
+func (s *SSHSession) IsolationContext() IsolationContext {
+	return nil
+}
+
 // Close closes the SSH connection.
 func (s *SSHSession) Close() error {
 	return s.client.Close()
@@ -283,22 +306,6 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 	invariant.NotNil(ctx, "ctx")
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
-	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, ctx.Err()
-	}
-
-	session, err := s.base.client.NewSession()
-	if err != nil {
-		return Result{}, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer func() { _ = session.Close() }()
-
-	// Set environment variables using session.Setenv (safer than VAR=val cmd)
-	for k, v := range s.delta {
-		_ = session.Setenv(k, v) // Best effort - some SSH servers don't allow Setenv
-	}
-
-	// Build command with optional cd
 	var cmd string
 	workdir := opts.Dir
 	if workdir == "" {
@@ -310,48 +317,7 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 		cmd = shellEscape(argv)
 	}
 
-	// Wire up I/O
-	if opts.Stdin != nil {
-		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if opts.Stdout != nil {
-		session.Stdout = opts.Stdout
-	} else {
-		session.Stdout = &stdout
-	}
-	if opts.Stderr != nil {
-		session.Stderr = opts.Stderr
-	} else {
-		session.Stderr = &stderr
-	}
-
-	// Execute with context cancellation
-	done := make(chan error, 1)
-	go func() {
-		done <- session.Run(cmd)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, ctx.Err()
-	case err := <-done:
-		exitCode := 0
-		if err != nil {
-			if exitErr, ok := err.(*ssh.ExitError); ok {
-				exitCode = exitErr.ExitStatus()
-			} else {
-				exitCode = 1
-			}
-		}
-		return Result{
-			ExitCode: exitCode,
-			Stdout:   stdout.Bytes(),
-			Stderr:   stderr.Bytes(),
-		}, nil
-	}
+	return runSSHSession(ctx, s.base.client, cmd, opts, s.delta)
 }
 
 func (s *SSHSessionWithEnv) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
@@ -420,10 +386,20 @@ func (s *SSHSessionWithEnv) Close() error {
 // SSHTransport implements Transport for SSH connections.
 type SSHTransport struct{}
 
+func init() {
+	if err := Register("ssh", &SSHTransport{}); err != nil {
+		panic(fmt.Sprintf("failed to register @ssh decorator: %v", err))
+	}
+}
+
 func (t *SSHTransport) Descriptor() Descriptor {
 	return Descriptor{
 		Path: "ssh",
 	}
+}
+
+func (t *SSHTransport) Capabilities() TransportCaps {
+	return TransportCapNetwork | TransportCapEnvironment
 }
 
 func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, error) {
@@ -431,14 +407,147 @@ func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, err
 }
 
 func (t *SSHTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
-	// TODO: Implement execution wrapping
-	return next
+	return &sshTransportNode{
+		next:   next,
+		params: params,
+	}
+}
+
+func (t *SSHTransport) MaterializeSession() bool {
+	return true
+}
+
+func (t *SSHTransport) IsolationContext() IsolationContext {
+	return nil
+}
+
+type sshTransportNode struct {
+	next   ExecNode
+	params map[string]any
+}
+
+func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
+	sshSession, err := NewSSHSession(n.params)
+	if err != nil {
+		return Result{ExitCode: ExitFailure}, err
+	}
+	defer func() { _ = sshSession.Close() }()
+
+	session := Session(sshSession)
+	if env := sshEnvDelta(n.params); len(env) > 0 {
+		session = session.WithEnv(env)
+	}
+	if workdir, ok := n.params["workdir"].(string); ok && workdir != "" {
+		session = session.WithWorkdir(workdir)
+	}
+
+	if n.next != nil {
+		return n.next.Execute(ctx.WithSession(session))
+	}
+
+	command, ok := n.params["command"].(string)
+	if !ok || strings.TrimSpace(command) == "" {
+		return Result{ExitCode: ExitSuccess}, nil
+	}
+
+	shellName := "bash"
+	if v, ok := n.params["shell"].(string); ok && v != "" {
+		shellName = v
+	}
+
+	argv, err := sshShellCommandArgs(shellName, command)
+	if err != nil {
+		return Result{ExitCode: ExitFailure}, err
+	}
+
+	execCtx := ctx.Context
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+
+	return session.Run(execCtx, argv, RunOpts{
+		Stdin:  ctx.Stdin,
+		Stdout: ctx.Stdout,
+		Stderr: ctx.Stderr,
+	})
 }
 
 // Helper functions
 
+func runSSHSession(ctx context.Context, client *ssh.Client, cmd string, opts RunOpts, env map[string]string) (Result, error) {
+	if ctx.Err() != nil {
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		return Result{}, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
+	}
+	defer func() { _ = session.Close() }()
+
+	for k, v := range env {
+		_ = session.Setenv(k, v)
+	}
+
+	if opts.Stdin != nil {
+		session.Stdin = opts.Stdin
+	}
+
+	var stdout, stderr bytes.Buffer
+	if opts.Stdout != nil {
+		session.Stdout = opts.Stdout
+	} else {
+		session.Stdout = &stdout
+	}
+	if opts.Stderr != nil {
+		session.Stderr = opts.Stderr
+	} else {
+		session.Stderr = &stderr
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(cmd)
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = session.Signal(ssh.SIGKILL)
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
+	case err := <-done:
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*ssh.ExitError); ok {
+				exitCode = exitErr.ExitStatus()
+			} else {
+				exitCode = 1
+			}
+		}
+		return Result{
+			ExitCode: exitCode,
+			Stdout:   stdout.Bytes(),
+			Stderr:   stderr.Bytes(),
+		}, nil
+	}
+}
+
 func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
-	// Check if strict host key checking is disabled (for testing)
+	// Check if strict host key checking is disabled (opt-in insecure mode)
 	if strictHostKey, ok := params["strict_host_key"].(bool); ok && !strictHostKey {
 		return ssh.InsecureIgnoreHostKey()
 	}
@@ -452,9 +561,10 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	// Try to load known_hosts file
 	callback, err := loadKnownHosts(knownHostsPath)
 	if err != nil {
-		// If known_hosts doesn't exist or can't be read, use InsecureIgnoreHostKey
-		// This allows first-time connections (TOFU - Trust On First Use)
-		return ssh.InsecureIgnoreHostKey()
+		// Fail closed: reject connection if host-key verification cannot be established
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return fmt.Errorf("host-key verification failed: known_hosts file not found or unreadable at %s (set strict_host_key=false to allow insecure connections)", knownHostsPath)
+		}
 	}
 
 	return callback
@@ -559,6 +669,45 @@ func parseEnv(output string) map[string]string {
 		}
 	}
 	return env
+}
+
+func sshEnvDelta(params map[string]any) map[string]string {
+	raw, ok := params["env"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	delta := make(map[string]string)
+
+	switch typed := raw.(type) {
+	case map[string]string:
+		for k, v := range typed {
+			delta[k] = v
+		}
+	case map[string]any:
+		for k, v := range typed {
+			delta[k] = fmt.Sprint(v)
+		}
+	}
+
+	if len(delta) == 0 {
+		return nil
+	}
+
+	return delta
+}
+
+func sshShellCommandArgs(shellName, command string) ([]string, error) {
+	switch shellName {
+	case "bash":
+		return []string{"bash", "-c", command}, nil
+	case "pwsh":
+		return []string{"pwsh", "-NoProfile", "-NonInteractive", "-Command", command}, nil
+	case "cmd":
+		return []string{"cmd", "/C", command}, nil
+	default:
+		return nil, fmt.Errorf("unsupported shell %q: expected one of bash, pwsh, cmd", shellName)
+	}
 }
 
 func shellEscape(argv []string) string {

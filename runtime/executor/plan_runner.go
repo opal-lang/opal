@@ -254,7 +254,8 @@ func (e *executor) executePlanDecorator(
 		node = next
 	}
 
-	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
+	transportID := executionTransportID(execCtx)
+	baseSession, sessionErr := e.sessions.SessionFor(transportID)
 	if sessionErr != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
