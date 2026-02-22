@@ -42,6 +42,36 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		port = int(v)
 	}
 
+	// Validate host
+	if host == "" || strings.TrimSpace(host) == "" {
+		return nil, TransportError{
+			Code:      TransportErrorCodeValidationFailed,
+			Message:   "SSH host cannot be empty",
+			Retryable: false,
+		}
+	}
+
+	// Validate port range (1-65535)
+	if port < 1 || port > 65535 {
+		return nil, TransportError{
+			Code:      TransportErrorCodeValidationFailed,
+			Message:   fmt.Sprintf("SSH port must be between 1 and 65535, got %d", port),
+			Retryable: false,
+		}
+	}
+
+	// Validate key file if provided as string path
+	if keyStr, ok := params["key"].(string); ok && keyStr != "" {
+		if _, err := os.Stat(keyStr); err != nil {
+			return nil, TransportError{
+				Code:      TransportErrorCodeValidationFailed,
+				Message:   fmt.Sprintf("SSH key file not accessible: %v", err),
+				Retryable: false,
+				Cause:     err,
+			}
+		}
+	}
+
 	// Create SSH client config
 	var authMethods []ssh.AuthMethod
 

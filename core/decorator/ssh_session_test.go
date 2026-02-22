@@ -2,6 +2,7 @@ package decorator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -412,5 +413,113 @@ func TestSSHSessionWithEnvModifiesRemoteEnvironment(t *testing.T) {
 	modEnv := sshWithEnv.Env()
 	if modEnv["OPAL_SSH_TEST"] != "ssh_value" {
 		t.Errorf("Modified SSH session OPAL_SSH_TEST: got %q, want %q", modEnv["OPAL_SSH_TEST"], "ssh_value")
+	}
+}
+
+
+// TestNewSSHSession_EmptyHostValidation tests that empty host fails validation
+func TestNewSSHSession_EmptyHostValidation(t *testing.T) {
+	// Test empty string host
+	_, err := NewSSHSession(map[string]any{
+		"host": "",
+		"port": 22,
+	})
+
+	if err == nil {
+		t.Fatal("Expected error for empty host, got nil")
+	}
+
+	transportErr, ok := err.(TransportError)
+	if !ok {
+		t.Fatalf("Expected TransportError, got %T: %v", err, err)
+	}
+
+	if transportErr.Code != TransportErrorCodeValidationFailed {
+		t.Errorf("Error code: got %q, want %q", transportErr.Code, TransportErrorCodeValidationFailed)
+	}
+
+	if transportErr.Message != "SSH host cannot be empty" {
+		t.Errorf("Error message: got %q, want %q", transportErr.Message, "SSH host cannot be empty")
+	}
+
+	// Test whitespace-only host
+	_, err = NewSSHSession(map[string]any{
+		"host": "   ",
+		"port": 22,
+	})
+
+	if err == nil {
+		t.Fatal("Expected error for whitespace-only host, got nil")
+	}
+}
+
+// TestNewSSHSession_InvalidPortValidation tests that invalid ports fail validation
+func TestNewSSHSession_InvalidPortValidation(t *testing.T) {
+	testCases := []struct {
+		name string
+		port int
+	}{
+		{"port 0", 0},
+		{"port -1", -1},
+		{"port 70000", 70000},
+		{"port 65536", 65536},
+		{"port -100", -100},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewSSHSession(map[string]any{
+				"host": "127.0.0.1",
+				"port": tc.port,
+			})
+
+			if err == nil {
+				t.Fatalf("Expected error for port %d, got nil", tc.port)
+			}
+
+			transportErr, ok := err.(TransportError)
+			if !ok {
+				t.Fatalf("Expected TransportError, got %T: %v", err, err)
+			}
+
+			if transportErr.Code != TransportErrorCodeValidationFailed {
+				t.Errorf("Error code: got %q, want %q", transportErr.Code, TransportErrorCodeValidationFailed)
+			}
+
+			expectedMsg := fmt.Sprintf("SSH port must be between 1 and 65535, got %d", tc.port)
+			if transportErr.Message != expectedMsg {
+				t.Errorf("Error message: got %q, want %q", transportErr.Message, expectedMsg)
+			}
+		})
+	}
+}
+
+// TestNewSSHSession_InvalidKeyFileValidation tests that non-existent key file fails validation
+func TestNewSSHSession_InvalidKeyFileValidation(t *testing.T) {
+	_, err := NewSSHSession(map[string]any{
+		"host": "127.0.0.1",
+		"port": 22,
+		"key":  "/nonexistent/path/to/key",
+	})
+
+	if err == nil {
+		t.Fatal("Expected error for non-existent key file, got nil")
+	}
+
+	transportErr, ok := err.(TransportError)
+	if !ok {
+		t.Fatalf("Expected TransportError, got %T: %v", err, err)
+	}
+
+	if transportErr.Code != TransportErrorCodeValidationFailed {
+		t.Errorf("Error code: got %q, want %q", transportErr.Code, TransportErrorCodeValidationFailed)
+	}
+
+	if !strings.Contains(transportErr.Message, "SSH key file not accessible") {
+		t.Errorf("Error message should contain 'SSH key file not accessible', got: %q", transportErr.Message)
+	}
+
+	if transportErr.Cause == nil {
+		t.Error("Expected Cause to be set for key file validation error")
 	}
 }

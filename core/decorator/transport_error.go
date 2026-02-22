@@ -7,7 +7,8 @@ const (
 	TransportErrorCodeSession = "TRANSPORT_SESSION_FAILED"
 	TransportErrorCodeExecute = "TRANSPORT_EXECUTE_FAILED"
 	TransportErrorCodeIO      = "TRANSPORT_IO_FAILED"
-	TransportErrorCodeContext = "TRANSPORT_CONTEXT_CANCELLED"
+	TransportErrorCodeContext          = "TRANSPORT_CONTEXT_CANCELLED"
+	TransportErrorCodeValidationFailed = "TRANSPORT_VALIDATION_FAILED"
 )
 
 type TransportError struct {
