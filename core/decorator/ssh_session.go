@@ -34,9 +34,12 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		user = os.Getenv("USER")
 	}
 
-	port, ok := params["port"].(int)
-	if !ok {
-		port = 22
+	port := 22
+	switch v := params["port"].(type) {
+	case int:
+		port = v
+	case int64:
+		port = int(v)
 	}
 
 	// Create SSH client config

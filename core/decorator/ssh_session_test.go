@@ -72,6 +72,42 @@ func TestSSHSessionRun(t *testing.T) {
 	}
 }
 
+func TestNewSSHSession_AcceptsInt64Port(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping SSH integration test in short mode")
+	}
+
+	server := getSSHTestServer(t)
+	if server == nil {
+		t.Skip("SSH test server not available")
+	}
+
+	session, err := NewSSHSession(map[string]any{
+		"host": "127.0.0.1",
+		"port": int64(server.Port),
+		"user": os.Getenv("USER"),
+		"key":  server.ClientKey, "strict_host_key": false,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create SSH session with int64 port: %v", err)
+	}
+	defer session.Close()
+
+	result, err := session.Run(context.Background(), []string{"echo", "int64-port"}, RunOpts{})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode: got %d, want 0", result.ExitCode)
+	}
+
+	output := strings.TrimSpace(string(result.Stdout))
+	if output != "int64-port" {
+		t.Errorf("Output: got %q, want %q", output, "int64-port")
+	}
+}
+
 // TestSSHSessionEnv tests reading remote environment
 func TestSSHSessionEnv(t *testing.T) {
 	if testing.Short() {
