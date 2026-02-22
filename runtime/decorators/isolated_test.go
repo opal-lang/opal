@@ -34,15 +34,15 @@ func TestIsolatedTransportCapabilities(t *testing.T) {
 	}
 }
 
-func TestIsolatedIsolationContextUsesLinuxNamespaceIsolator(t *testing.T) {
+func TestIsolatedIsolationContextUsesFactoryType(t *testing.T) {
 	dec := &IsolatedTransportDecorator{}
 	ctx := dec.IsolationContext()
 	if ctx == nil {
 		t.Fatal("expected non-nil isolation context")
 	}
 
-	if _, ok := ctx.(*isolation.LinuxNamespaceIsolator); !ok {
-		t.Fatalf("expected LinuxNamespaceIsolator, got %T", ctx)
+	if diff := cmp.Diff(fmt.Sprintf("%T", isolation.NewIsolator()), fmt.Sprintf("%T", ctx)); diff != "" {
+		t.Fatalf("isolation context type mismatch (-want +got):\n%s", diff)
 	}
 }
 

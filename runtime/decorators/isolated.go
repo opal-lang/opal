@@ -15,7 +15,7 @@ var _ decorator.Transport = (*IsolatedTransportDecorator)(nil)
 
 func (d *IsolatedTransportDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("isolated").
-		Summary("Execute in isolated Linux namespace").
+		Summary("Execute in an isolated transport context").
 		Roles(decorator.RoleBoundary).
 		ParamEnum("level", "Isolation level").
 		Values("none", "basic", "standard", "maximum").
@@ -77,15 +77,9 @@ func (d *IsolatedTransportDecorator) Open(parent decorator.Session, params map[s
 		MemoryLock:       false,
 	}
 
-	isolator := isolation.NewLinuxNamespaceIsolator()
+	isolator := isolation.NewIsolator()
 	if err := isolator.Isolate(level, config); err != nil {
 		return nil, fmt.Errorf("failed to create isolated environment: %w", err)
-	}
-
-	if networkPolicy == decorator.NetworkPolicyDeny {
-		if err := isolator.DropNetwork(); err != nil {
-			return nil, fmt.Errorf("failed to drop network: %w", err)
-		}
 	}
 
 	return &isolatedSession{parent: parent, isolator: isolator}, nil
@@ -96,7 +90,7 @@ func (d *IsolatedTransportDecorator) Wrap(next decorator.ExecNode, params map[st
 }
 
 func (d *IsolatedTransportDecorator) IsolationContext() decorator.IsolationContext {
-	return isolation.NewLinuxNamespaceIsolator()
+	return isolation.NewIsolator()
 }
 
 type isolatedSession struct {
