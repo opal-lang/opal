@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### 2026-02-22
+- **Security**: Added IsolationContext interface for Linux namespace-based execution isolation with network drop, filesystem restriction, privilege dropping, and memory locking capabilities
+- **Security**: Added @isolated decorator for executing commands in isolated Linux namespaces with configurable isolation levels (none, basic, standard, maximum) and network policies (allow, deny, loopback)
+- **Security**: Added @crypto decorator for secure cryptographic key generation in isolated environments with Ed25519 support and automatic fallback for non-Linux platforms
+- Added LinuxNamespaceIsolator implementation using syscall.Unshare() with CLONE_NEWNET, CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWUSER namespace flags
+- Added TransportCapIsolation capability flag for isolation-aware transports
+- Added graceful degradation for isolation features on Windows and macOS platforms
 - **Security**: Changed transport resolution to fail-closed (unknown transport IDs now return errors instead of falling back to local)
 - **Security**: Added SSH input validation for host (non-empty), port (1-65535), and key file (accessible)
 - **Security**: Sanitized TransportError messages to prevent leaking internal details; added DetailedError() for debug info
