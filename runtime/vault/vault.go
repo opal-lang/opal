@@ -1,11 +1,17 @@
 package vault
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -92,6 +98,9 @@ type Vault struct {
 	// Security
 	planKey []byte // For HMAC-based SiteIDs
 
+	masterKey   []byte
+	secretStore map[string][]byte
+
 	// Secret scrubbing (lazy initialization)
 	provider streamscrub.SecretProvider
 }
@@ -146,6 +155,7 @@ func newVault() *Vault {
 		touched:          make(map[string]bool),
 		scopes:           make(map[string]*VaultScope),
 		currentTransport: "local",
+		secretStore:      make(map[string][]byte),
 	}
 
 	// Initialize root scope
@@ -162,7 +172,133 @@ func newVault() *Vault {
 func NewWithPlanKey(planKey []byte) *Vault {
 	v := newVault()
 	v.planKey = planKey
+	v.masterKey = deriveMasterKey(planKey)
 	return v
+}
+
+// SecretHandle identifies encrypted bytes stored in the vault.
+type SecretHandle struct {
+	ID string `json:"id"`
+}
+
+// IsZero returns true when the handle does not reference stored data.
+func (h SecretHandle) IsZero() bool {
+	return h.ID == ""
+}
+
+// Encrypt encrypts plaintext with the vault master key.
+// Graceful degradation: if no encryption key is available, plaintext is returned unchanged.
+func (v *Vault) Encrypt(plaintext []byte) ([]byte, error) {
+	v.mu.RLock()
+	key := append([]byte(nil), v.masterKey...)
+	v.mu.RUnlock()
+
+	if len(key) == 0 {
+		return append([]byte(nil), plaintext...), nil
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create gcm: %w", err)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generate nonce: %w", err)
+	}
+
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	out := make([]byte, 0, len(nonce)+len(ciphertext))
+	out = append(out, nonce...)
+	out = append(out, ciphertext...)
+	return out, nil
+}
+
+// Decrypt decrypts ciphertext using the vault master key.
+// Graceful degradation: if no encryption key is available, ciphertext is returned unchanged.
+func (v *Vault) Decrypt(ciphertext []byte) ([]byte, error) {
+	v.mu.RLock()
+	key := append([]byte(nil), v.masterKey...)
+	v.mu.RUnlock()
+
+	if len(key) == 0 {
+		return append([]byte(nil), ciphertext...), nil
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create gcm: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+
+	nonce := ciphertext[:nonceSize]
+	enc := ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, enc, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// Store saves encrypted bytes and returns an opaque handle.
+func (v *Vault) Store(encrypted []byte) (SecretHandle, error) {
+	handleID, err := newHandleID()
+	if err != nil {
+		return SecretHandle{}, err
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.secretStore[handleID] = append([]byte(nil), encrypted...)
+
+	return SecretHandle{ID: handleID}, nil
+}
+
+// Retrieve loads encrypted bytes by handle.
+func (v *Vault) Retrieve(handle SecretHandle) ([]byte, error) {
+	if handle.IsZero() {
+		return nil, errors.New("empty secret handle")
+	}
+
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	encrypted, ok := v.secretStore[handle.ID]
+	if !ok {
+		return nil, fmt.Errorf("secret not found for handle %q", handle.ID)
+	}
+
+	return append([]byte(nil), encrypted...), nil
+}
+
+func deriveMasterKey(planKey []byte) []byte {
+	if len(planKey) == 0 {
+		return nil
+	}
+	sum := sha256.Sum256(planKey)
+	return sum[:]
+}
+
+func newHandleID() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+		return "", fmt.Errorf("generate handle id: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
 }
 
 // Push adds a segment to the path stack.
