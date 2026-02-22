@@ -1040,6 +1040,91 @@ func (d *IsolatedTransportDecorator) Capabilities() decorator.TransportCaps {
 }
 ```
 
+### Isolation Strategies: @isolated vs @sandbox
+
+Opal provides two isolation decorators with different trade-offs between security, performance, and composability.
+
+#### @isolated (In-Process Isolation)
+
+`@isolated` applies isolation to the current process using Linux namespaces. This is the lighter-weight option.
+
+**Characteristics:**
+- **Lightweight**: No subprocess spawn overhead
+- **Composable**: Layers on top of any transport (`@ssh`, `@docker`, etc.)
+- **Medium security**: Isolation applies to the current process, but a compromised process may potentially escape
+
+**Best for:**
+- Secure crypto operations where secrets should not leave the process
+- Temporarily dropping network access for sensitive operations
+- Quick isolation without IPC overhead
+
+**Example:**
+```opal
+# In-process isolation - good for crypto key generation
+@isolated(network="deny") {
+    var key = @crypto.generate(type="ed25519")
+}
+
+# Compose @isolated with SSH - SSH out allowed, but no direct internet
+@isolated(network="deny") {
+    @ssh("prod-server") {
+        backup-tool
+    }
+}
+```
+
+#### @sandbox (Subprocess Isolation)
+
+`@sandbox` spawns a subprocess with isolation applied before execution. This creates a stronger security boundary.
+
+**Characteristics:**
+- **Strong isolation**: Compromised child process cannot escape to parent
+- **Resource control**: Memory, CPU, and filesystem limits can be applied per sandbox
+- **IPC overhead**: Communication between parent and child adds latency
+- **Self-contained**: Less composable - handles its own execution environment
+
+**Best for:**
+- Running untrusted or third-party code
+- Resource-constrained workloads with hard limits
+- Strong security boundaries where containment is critical
+
+**Example:**
+```opal
+# Subprocess sandbox - good for untrusted code
+@sandbox(network="deny", memory="512m") {
+    run-untrusted-script.sh
+}
+
+# Sandbox with resource limits for CI/CD workloads
+@sandbox(network="loopback", cpu="1", memory="2g", timeout="10m") {
+    npm test
+}
+```
+
+#### Comparison
+
+| Aspect | @isolated | @sandbox |
+|--------|-----------|----------|
+| Isolation strength | Medium (in-process) | High (subprocess boundary) |
+| Performance | Fast (no subprocess) | Slower (IPC overhead) |
+| Composability | High (works with any transport) | Lower (self-contained) |
+| Resource limits | Limited | Full control (memory, CPU, time) |
+| Use case | Secure operations, temporary isolation | Untrusted code, strong boundaries |
+| Platform support | Linux (graceful fallback) | Linux (graceful fallback) |
+
+#### Choosing Between @isolated and @sandbox
+
+**Use @isolated when:**
+- You need to protect secrets within your own trusted code
+- You want isolation without subprocess overhead
+- You need to compose isolation with other transports
+
+**Use @sandbox when:**
+- Running code you don't fully trust
+- You need hard resource limits
+- A process breach must not affect the parent
+
+
 ## Steps, Decorators, and Operators
 
 Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.
