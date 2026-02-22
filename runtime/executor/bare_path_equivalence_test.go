@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -38,11 +39,11 @@ func TestBarePathEquivalence(t *testing.T) {
 			}},
 		}
 
-		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget)
+		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected bare target to resolve")
 		}
-		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget)
+		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected explicit target to resolve")
 		}
@@ -110,11 +111,11 @@ func TestBarePathEquivalence(t *testing.T) {
 			}},
 		}
 
-		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget)
+		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected bare target to resolve")
 		}
-		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget)
+		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected explicit target to resolve")
 		}

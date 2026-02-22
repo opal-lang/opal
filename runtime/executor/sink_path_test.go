@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -72,7 +73,7 @@ func TestFileSinkPathStyles(t *testing.T) {
 				}},
 			}
 
-			ioDecorator, identity, ok := resolvePlanIOSink(target)
+			ioDecorator, identity, ok := resolvePlanIOSink(target, os.Stderr)
 			if diff := cmp.Diff(true, ok); diff != "" {
 				t.Fatalf("expected target resolution success (-want +got):\n%s", diff)
 			}

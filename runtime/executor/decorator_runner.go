@@ -16,6 +16,13 @@ import (
 
 var displayIDPattern = regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
 
+func (e *executor) getStderr() io.Writer {
+	if e.stderr == nil {
+		return os.Stderr
+	}
+	return e.stderr
+}
+
 // executeCommandWithPipes executes a command with optional piped stdin/stdout.
 func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
@@ -69,13 +76,13 @@ func (e *executor) executeShellCommandWithPipes(execCtx sdk.ExecutionContext, cm
 
 func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params map[string]any, stdin io.Reader, stdout io.Writer) int {
 	if params == nil {
-		fmt.Fprintln(os.Stderr, "Error: @shell missing parameters")
+		fmt.Fprintln(e.getStderr(), "Error: @shell missing parameters")
 		return decorator.ExitFailure
 	}
 
 	command, ok := params["command"].(string)
 	if !ok || command == "" {
-		fmt.Fprintln(os.Stderr, "Error: @shell requires a non-empty string command")
+		fmt.Fprintln(e.getStderr(), "Error: @shell requires a non-empty string command")
 		return decorator.ExitFailure
 	}
 
@@ -90,7 +97,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	if shellArg, hasShellArg := params["shell"]; hasShellArg {
 		shellStr, ok := shellArg.(string)
 		if !ok {
-			fmt.Fprintln(os.Stderr, "Error: @shell expects 'shell' to be a string when provided")
+			fmt.Fprintln(e.getStderr(), "Error: @shell expects 'shell' to be a string when provided")
 			return decorator.ExitFailure
 		}
 		explicitShell = shellStr
@@ -99,7 +106,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	transportID := executionTransportID(execCtx)
 	shellName, err := resolveShellName(explicitShell, execCtx.Environ())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 		return decorator.ExitFailure
 	}
 
@@ -116,7 +123,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 			environ:     execCtx.Environ(),
 			workdir:     execCtx.Workdir(),
 			stdout:      stdout,
-			stderr:      os.Stderr,
+			stderr:      e.stderr,
 		})
 		if workerErr == nil {
 			return exitCode
@@ -127,16 +134,16 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		}
 
 		if !canFallbackToSessionRun(workerErr) {
-			fmt.Fprintf(os.Stderr, "Error: shell worker execution failed after command start: %v\n", workerErr)
+			fmt.Fprintf(e.getStderr(), "Error: shell worker execution failed after command start: %v\n", workerErr)
 			return decorator.ExitFailure
 		}
 
-		fmt.Fprintf(os.Stderr, "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
+		fmt.Fprintf(e.getStderr(), "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
 	}
 
 	baseSession, sessionErr := e.sessions.SessionFor(transportID)
 	if sessionErr != nil {
-		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 
@@ -144,7 +151,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 
 	argv, err := shellCommandArgs(shellName, command)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 		return decorator.ExitFailure
 	}
 
@@ -155,10 +162,10 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	result, err := session.Run(runCtx, argv, decorator.RunOpts{
 		Stdin:  stdin,
 		Stdout: stdout,
-		Stderr: os.Stderr,
+		Stderr: e.stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -288,7 +295,7 @@ func (e *executor) executeDecorator(
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
 		return 1
 	}
 	session := sessionForExecutionContext(baseSession, execCtx)
@@ -302,13 +309,13 @@ func (e *executor) executeDecorator(
 		Session: session,
 		Stdin:   stdin,
 		Stdout:  stdout,
-		Stderr:  os.Stderr,
+		Stderr:  e.stderr,
 		Trace:   nil,
 	}
 
 	result, err := node.Execute(decoratorExecCtx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -330,7 +337,7 @@ func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorN
 
 	resolved, err := e.resolveDisplayIDs(params, decoratorName, executionTransportID(execCtx))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving secrets: %v\n", err)
+		fmt.Fprintf(e.getStderr(), "Error resolving secrets: %v\n", err)
 		return nil, false
 	}
 
