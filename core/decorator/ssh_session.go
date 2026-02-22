@@ -125,82 +125,14 @@ func (s *SSHSession) Run(ctx context.Context, argv []string, opts RunOpts) (Resu
 	invariant.NotNil(ctx, "ctx")
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
-	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, TransportError{
-			Code:      TransportErrorCodeContext,
-			Message:   "command context cancelled",
-			Retryable: false,
-			Cause:     ctx.Err(),
-		}
-	}
-
-	session, err := s.client.NewSession()
-	if err != nil {
-		return Result{}, TransportError{
-			Code:      TransportErrorCodeSession,
-			Message:   "failed to create ssh session",
-			Retryable: true,
-			Cause:     err,
-		}
-	}
-	defer func() { _ = session.Close() }()
-
-	// Build command string with optional directory change
 	var cmd string
 	if opts.Dir != "" {
-		// Prepend cd command if directory specified
 		cmd = fmt.Sprintf("cd %s && %s", shellQuote(opts.Dir), shellEscape(argv))
 	} else {
 		cmd = shellEscape(argv)
 	}
 
-	// Wire up I/O
-	if opts.Stdin != nil {
-		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if opts.Stdout != nil {
-		session.Stdout = opts.Stdout
-	} else {
-		session.Stdout = &stdout
-	}
-	if opts.Stderr != nil {
-		session.Stderr = opts.Stderr
-	} else {
-		session.Stderr = &stderr
-	}
-
-	// Execute with context cancellation
-	done := make(chan error, 1)
-	go func() {
-		done <- session.Run(cmd)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, TransportError{
-			Code:      TransportErrorCodeContext,
-			Message:   "command context cancelled",
-			Retryable: false,
-			Cause:     ctx.Err(),
-		}
-	case err := <-done:
-		exitCode := 0
-		if err != nil {
-			if exitErr, ok := err.(*ssh.ExitError); ok {
-				exitCode = exitErr.ExitStatus()
-			} else {
-				exitCode = 1
-			}
-		}
-		return Result{
-			ExitCode: exitCode,
-			Stdout:   stdout.Bytes(),
-			Stderr:   stderr.Bytes(),
-		}, nil
-	}
+	return runSSHSession(ctx, s.client, cmd, opts, nil)
 }
 
 // Put writes data to a file on the remote host.
@@ -370,32 +302,6 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 	invariant.NotNil(ctx, "ctx")
 	invariant.Precondition(len(argv) > 0, "argv cannot be empty")
 
-	if ctx.Err() != nil {
-		return Result{ExitCode: -1}, TransportError{
-			Code:      TransportErrorCodeContext,
-			Message:   "command context cancelled",
-			Retryable: false,
-			Cause:     ctx.Err(),
-		}
-	}
-
-	session, err := s.base.client.NewSession()
-	if err != nil {
-		return Result{}, TransportError{
-			Code:      TransportErrorCodeSession,
-			Message:   "failed to create ssh session",
-			Retryable: true,
-			Cause:     err,
-		}
-	}
-	defer func() { _ = session.Close() }()
-
-	// Set environment variables using session.Setenv (safer than VAR=val cmd)
-	for k, v := range s.delta {
-		_ = session.Setenv(k, v) // Best effort - some SSH servers don't allow Setenv
-	}
-
-	// Build command with optional cd
 	var cmd string
 	workdir := opts.Dir
 	if workdir == "" {
@@ -407,53 +313,7 @@ func (s *SSHSessionWithEnv) Run(ctx context.Context, argv []string, opts RunOpts
 		cmd = shellEscape(argv)
 	}
 
-	// Wire up I/O
-	if opts.Stdin != nil {
-		session.Stdin = opts.Stdin // Pass io.Reader directly (was: bytes.NewReader)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if opts.Stdout != nil {
-		session.Stdout = opts.Stdout
-	} else {
-		session.Stdout = &stdout
-	}
-	if opts.Stderr != nil {
-		session.Stderr = opts.Stderr
-	} else {
-		session.Stderr = &stderr
-	}
-
-	// Execute with context cancellation
-	done := make(chan error, 1)
-	go func() {
-		done <- session.Run(cmd)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL) // Best effort kill
-		return Result{ExitCode: -1}, TransportError{
-			Code:      TransportErrorCodeContext,
-			Message:   "command context cancelled",
-			Retryable: false,
-			Cause:     ctx.Err(),
-		}
-	case err := <-done:
-		exitCode := 0
-		if err != nil {
-			if exitErr, ok := err.(*ssh.ExitError); ok {
-				exitCode = exitErr.ExitStatus()
-			} else {
-				exitCode = 1
-			}
-		}
-		return Result{
-			ExitCode: exitCode,
-			Stdout:   stdout.Bytes(),
-			Stderr:   stderr.Bytes(),
-		}, nil
-	}
+	return runSSHSession(ctx, s.base.client, cmd, opts, s.delta)
 }
 
 func (s *SSHSessionWithEnv) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
@@ -601,6 +461,78 @@ func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
 }
 
 // Helper functions
+
+func runSSHSession(ctx context.Context, client *ssh.Client, cmd string, opts RunOpts, env map[string]string) (Result, error) {
+	if ctx.Err() != nil {
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		return Result{}, TransportError{
+			Code:      TransportErrorCodeSession,
+			Message:   "failed to create ssh session",
+			Retryable: true,
+			Cause:     err,
+		}
+	}
+	defer func() { _ = session.Close() }()
+
+	for k, v := range env {
+		_ = session.Setenv(k, v)
+	}
+
+	if opts.Stdin != nil {
+		session.Stdin = opts.Stdin
+	}
+
+	var stdout, stderr bytes.Buffer
+	if opts.Stdout != nil {
+		session.Stdout = opts.Stdout
+	} else {
+		session.Stdout = &stdout
+	}
+	if opts.Stderr != nil {
+		session.Stderr = opts.Stderr
+	} else {
+		session.Stderr = &stderr
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(cmd)
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = session.Signal(ssh.SIGKILL)
+		return Result{ExitCode: -1}, TransportError{
+			Code:      TransportErrorCodeContext,
+			Message:   "command context cancelled",
+			Retryable: false,
+			Cause:     ctx.Err(),
+		}
+	case err := <-done:
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*ssh.ExitError); ok {
+				exitCode = exitErr.ExitStatus()
+			} else {
+				exitCode = 1
+			}
+		}
+		return Result{
+			ExitCode: exitCode,
+			Stdout:   stdout.Bytes(),
+			Stderr:   stderr.Bytes(),
+		}, nil
+	}
+}
 
 func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	// Check if strict host key checking is disabled (opt-in insecure mode)
