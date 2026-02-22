@@ -504,6 +504,10 @@ func (t *SSHTransport) Descriptor() Descriptor {
 	}
 }
 
+func (t *SSHTransport) Capabilities() TransportCaps {
+	return TransportCapNetwork | TransportCapEnvironment
+}
+
 func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, error) {
 	return NewSSHSession(params)
 }

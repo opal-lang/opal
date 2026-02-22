@@ -33,6 +33,27 @@ func getSSHTestServer(t *testing.T) *SSHTestServer {
 	return sshServer
 }
 
+func TestTransportCaps(t *testing.T) {
+	transport := &SSHTransport{}
+	caps := transport.Capabilities()
+
+	if !caps.Has(TransportCapNetwork) {
+		t.Fatalf("expected SSH transport to have network capability")
+	}
+
+	if !caps.Has(TransportCapEnvironment) {
+		t.Fatalf("expected SSH transport to have environment capability")
+	}
+
+	if caps.Has(TransportCapIsolation) {
+		t.Fatalf("did not expect SSH transport isolation capability")
+	}
+
+	if caps.Has(TransportCapFilesystem) {
+		t.Fatalf("did not expect SSH transport filesystem capability")
+	}
+}
+
 // TestSSHSessionRun tests real SSH connection to pure Go server
 func TestSSHSessionRun(t *testing.T) {
 	if testing.Short() {

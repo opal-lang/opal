@@ -207,6 +207,10 @@ func (m *mockTransport) Descriptor() Descriptor {
 	return Descriptor{Path: "mock"}
 }
 
+func (m *mockTransport) Capabilities() TransportCaps {
+	return TransportCapNetwork | TransportCapFilesystem | TransportCapEnvironment
+}
+
 func (m *mockTransport) Open(parent Session, params map[string]any) (Session, error) {
 	m.openCount++
 	return &mockSession{}, nil

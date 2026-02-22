@@ -142,6 +142,10 @@ func (m *MonitoredTransport) Descriptor() Descriptor {
 	return m.wrapped.Descriptor()
 }
 
+func (m *MonitoredTransport) Capabilities() TransportCaps {
+	return m.wrapped.Capabilities()
+}
+
 func (m *MonitoredTransport) Open(parent Session, params map[string]any) (Session, error) {
 	m.mu.Lock()
 	m.OpenCalls++
@@ -186,6 +190,10 @@ func (t *TestTransport) Descriptor() Descriptor {
 		Roles(RoleBoundary).
 		Block(BlockRequired).
 		Build()
+}
+
+func (t *TestTransport) Capabilities() TransportCaps {
+	return TransportCapNetwork | TransportCapFilesystem | TransportCapEnvironment
 }
 
 // Open creates a new session with the transport's scope.

@@ -199,6 +199,10 @@ func (t *localTransport) Descriptor() Descriptor {
 	return Descriptor{Path: "local"}
 }
 
+func (t *localTransport) Capabilities() TransportCaps {
+	return TransportCapNetwork | TransportCapFilesystem | TransportCapEnvironment
+}
+
 func (t *localTransport) Open(parent Session, params map[string]any) (Session, error) {
 	t.openCount++
 	return NewLocalSession(), nil
