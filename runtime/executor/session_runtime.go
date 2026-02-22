@@ -93,7 +93,7 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, e
 	}
 
 	if normalizedTransportID(transport.Decorator) == "local" {
-		return decorator.NewLocalSession(), nil
+		return r.factory(transportID)
 	}
 
 	name := strings.TrimPrefix(transport.Decorator, "@")
