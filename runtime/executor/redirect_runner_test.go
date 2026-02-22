@@ -51,10 +51,6 @@ func (s *testSink) OpenRead(_ sdk.ExecutionContext, _ sdk.SinkOpts) (io.ReadClos
 	return &countingReadCloser{inner: io.NopCloser(strings.NewReader("")), closeCount: &s.closeCount}, nil
 }
 
-func (s *testSink) Open(ctx sdk.ExecutionContext, mode sdk.RedirectMode, meta map[string]any) (io.WriteCloser, error) {
-	return s.OpenWrite(ctx, sdk.SinkOpts{Mode: mode, Meta: meta})
-}
-
 func (s *testSink) Identity() (kind, identifier string) {
 	return "test.sink", "capture"
 }

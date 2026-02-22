@@ -348,11 +348,6 @@ type Sink interface {
 	//   - DockerTransport: reads from file inside container
 	OpenRead(ctx ExecutionContext, opts SinkOpts) (io.ReadCloser, error)
 
-	// Open opens the sink for writing using the current context's transport.
-	//
-	// Deprecated: Open is deprecated. Use OpenWrite instead.
-	Open(ctx ExecutionContext, mode RedirectMode, meta map[string]any) (io.WriteCloser, error)
-
 	// Identity returns (kind, identifier) for error messages and logging.
 	// kind: "fs.file", "s3.object", "http.post", etc.
 	// identifier: human-readable sink identifier (e.g., "output.txt", "s3://bucket/key")
@@ -385,23 +380,6 @@ func (s FsPathSink) Caps() SinkCaps {
 		Streaming:      true,
 		EarlyOpen:      true,
 	}
-}
-
-// Open opens the file for writing using the current context's transport.
-// This ensures the file opens in the right place (local/remote/container).
-func (s FsPathSink) Open(ctx ExecutionContext, mode RedirectMode, _ map[string]any) (io.WriteCloser, error) {
-	// Get transport from context
-	transport := ctx.Transport()
-
-	// Type assert to executor.Transport
-	// This is safe because all contexts must provide a valid transport
-	transportImpl, ok := transport.(executor.Transport)
-	if !ok {
-		return nil, errors.New("transport does not implement executor.Transport")
-	}
-
-	// Open file using transport (works for local/SSH/Docker/etc)
-	return transportImpl.OpenFileWriter(ctx.Context(), s.Path, mode, s.Perm)
 }
 
 // OpenWrite opens the file for writing using the current context's transport.
