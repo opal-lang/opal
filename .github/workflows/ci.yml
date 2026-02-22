@@ -22,7 +22,7 @@ jobs:
 
   format-check:
     name: Format Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +75,7 @@ jobs:
 
   lint:
     name: Lint (${{ matrix.module }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     strategy:
       matrix:
         module: [core, runtime, cli]
@@ -102,9 +102,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest, blacksmith-4vcpu-windows-2025]
+        os: [blacksmith-2vcpu-ubuntu-2404, macos-latest, blacksmith-2vcpu-windows-2025]
         include:
-          - os: blacksmith-4vcpu-ubuntu-2404
+          - os: blacksmith-2vcpu-ubuntu-2404
             goos: linux
             goarch: amd64
             binary_name: opal-linux-amd64
@@ -112,7 +112,7 @@ jobs:
             goos: darwin
             goarch: amd64
             binary_name: opal-darwin-amd64
-          - os: blacksmith-4vcpu-windows-2025
+          - os: blacksmith-2vcpu-windows-2025
             goos: windows
             goarch: amd64
             binary_name: opal-windows-amd64.exe
@@ -256,7 +256,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2404, macos-latest]
+        os: [blacksmith-2vcpu-ubuntu-2404, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -287,7 +287,7 @@ jobs:
           nix develop --command gofumpt --version || echo "gofumpt not required in shell"
 
       - name: Cross-check Windows compile in Nix shell
-        if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
+        if: matrix.os == 'blacksmith-2vcpu-ubuntu-2404'
         run: |
           echo "Cross-checking Windows build target from Linux Nix shell..."
           nix develop --command bash -lc 'GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -run TestDoesNotExist -count=1 -exec=true ./core/... ./runtime/... ./cli/...'
@@ -298,7 +298,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.module }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [lint]
     timeout-minutes: 15
     permissions:
@@ -376,7 +376,7 @@ jobs:
 
   aggregate-coverage:
     name: Aggregate Coverage
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [test]
     steps:
       - name: Checkout
@@ -414,7 +414,7 @@ jobs:
 
   summary:
     name: CI Summary
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [format-check, lint, build, nix-development, test, aggregate-coverage]
     if: always()
     steps:
@@ -460,7 +460,7 @@ jobs:
 
   latest-builds:
     name: Latest Development Builds
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [summary]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
@@ -496,7 +496,7 @@ jobs:
 
   release:
     name: Create Release
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout
