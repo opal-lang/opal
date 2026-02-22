@@ -569,7 +569,7 @@ func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
 // Helper functions
 
 func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
-	// Check if strict host key checking is disabled (for testing)
+	// Check if strict host key checking is disabled (opt-in insecure mode)
 	if strictHostKey, ok := params["strict_host_key"].(bool); ok && !strictHostKey {
 		return ssh.InsecureIgnoreHostKey()
 	}
@@ -583,9 +583,10 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	// Try to load known_hosts file
 	callback, err := loadKnownHosts(knownHostsPath)
 	if err != nil {
-		// If known_hosts doesn't exist or can't be read, use InsecureIgnoreHostKey
-		// This allows first-time connections (TOFU - Trust On First Use)
-		return ssh.InsecureIgnoreHostKey()
+		// Fail closed: reject connection if host-key verification cannot be established
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return fmt.Errorf("host-key verification failed: known_hosts file not found or unreadable at %s (set strict_host_key=false to allow insecure connections)", knownHostsPath)
+		}
 	}
 
 	return callback
