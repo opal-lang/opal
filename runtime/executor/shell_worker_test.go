@@ -28,7 +28,7 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 	transportB1 := filepath.Join(tmpDir, "transport-b-1.txt")
 	transportB2 := filepath.Join(tmpDir, "transport-b-2.txt")
 
-	plan := &planfmt.Plan{Target: "worker-reuse", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "worker-reuse", Transports: localTestTransports("transport:A", "transport:B"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
 			shellPlanCommand(":"),
@@ -43,7 +43,7 @@ func TestShellWorkerReusesPerTransportAndShell(t *testing.T) {
 		}},
 	}}}
 
-	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}

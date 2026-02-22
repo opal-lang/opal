@@ -44,12 +44,11 @@ func (r *sessionRuntime) registerPlanTransports(transports []planfmt.Transport) 
 }
 
 func defaultSessionFactory(transportID string) (decorator.Session, error) {
-	session := decorator.NewLocalSession()
-	if normalizedTransportID(transportID) == "local" {
-		return session, nil
+	if normalizedTransportID(transportID) != "local" {
+		return nil, fmt.Errorf("unknown transport %q: transport not registered", transportID)
 	}
 
-	return &transportScopedSession{id: normalizedTransportID(transportID), session: session}, nil
+	return decorator.NewLocalSession(), nil
 }
 
 func normalizedTransportID(transportID string) string {
@@ -86,7 +85,11 @@ func (r *sessionRuntime) SessionFor(transportID string) (decorator.Session, erro
 func (r *sessionRuntime) createSession(transportID string) (decorator.Session, error) {
 	transport, ok := r.lookupTransport(transportID)
 	if !ok {
-		return r.factory(transportID)
+		if transportID == "local" {
+			return r.factory(transportID)
+		}
+
+		return nil, fmt.Errorf("unknown transport %q: transport not registered", transportID)
 	}
 
 	if normalizedTransportID(transport.Decorator) == "local" {

@@ -154,6 +154,8 @@ func TestContextTransportUsesTransportSession(t *testing.T) {
 		}
 		return &transportScopedSession{id: transportID, session: base}, nil
 	})}
+	defer exec.sessions.Close()
+	exec.sessions.registerPlanTransports(localTestTransports("transport:A"))
 
 	ctx := newExecutionContext(map[string]interface{}{}, exec, context.Background())
 	transportCtx := ctx.(*executionContext).withTransportID("transport:A")
@@ -182,8 +184,9 @@ func TestContextTransportBoundaryResetsEnvAndWorkdirToTransportSnapshot(t *testi
 	}
 	t.Setenv("OPAL_CONTEXT_BOUNDARY_TEST", "local")
 
-	exec := &executor{sessions: newSessionRuntime(nil)}
+	exec := &executor{sessions: newSessionRuntime(scopedLocalSessionFactory)}
 	defer exec.sessions.Close()
+	exec.sessions.registerPlanTransports(localTestTransports("transport:A"))
 
 	root := newExecutionContext(map[string]interface{}{}, exec, context.Background()).(*executionContext)
 

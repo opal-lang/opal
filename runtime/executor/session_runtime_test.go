@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -227,7 +228,7 @@ func registerTestSSHTransportDecorator(t *testing.T) {
 func TestExecuteRoutesSessionByTransportID(t *testing.T) {
 	registerSessionIDCheckDecorator(t)
 
-	plan := &planfmt.Plan{Target: "route-by-transport", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "route-by-transport", Transports: localTestTransports("transport:A", "transport:B"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
 			planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "local"}}, ""),
@@ -237,7 +238,7 @@ func TestExecuteRoutesSessionByTransportID(t *testing.T) {
 		}},
 	}}}
 
-	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -250,7 +251,7 @@ func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
 	registerSessionIDCheckDecorator(t)
 	registerSessionBoundaryDecorator(t)
 
-	plan := &planfmt.Plan{Target: "wrapper-session-inherit", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "wrapper-session-inherit", Transports: localTestTransports("transport:boundary"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.CommandNode{
 			Decorator: "@test.session.boundary",
@@ -262,7 +263,7 @@ func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
 		},
 	}}}
 
-	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -328,6 +329,7 @@ func TestSessionRuntimeReusesAndClosesSessions(t *testing.T) {
 		stats[transportID] = monitored.Stats()
 		return monitored, nil
 	})
+	runtime.registerPlanTransports(localTestTransports("transport:A", "transport:B"))
 
 	sessionA1, err := runtime.SessionFor("transport:A")
 	if err != nil {
@@ -363,8 +365,9 @@ func TestSessionRuntimeReusesAndClosesSessions(t *testing.T) {
 func TestSessionRuntimeFreezesEnvPerTransportOnFirstUse(t *testing.T) {
 	t.Setenv("OPAL_FREEZE_PER_TRANSPORT", "first")
 
-	runtime := newSessionRuntime(nil)
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
 	defer runtime.Close()
+	runtime.registerPlanTransports(localTestTransports("transport:A", "transport:B"))
 
 	sessionA1, err := runtime.SessionFor("transport:A")
 	if err != nil {
@@ -415,8 +418,9 @@ func TestSessionRuntimeFreezesWorkdirPerTransportOnFirstUse(t *testing.T) {
 		t.Fatalf("chdir dirA: %v", err)
 	}
 
-	runtime := newSessionRuntime(nil)
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
 	defer runtime.Close()
+	runtime.registerPlanTransports(localTestTransports("transport:A", "transport:B"))
 
 	sessionA1, err := runtime.SessionFor("transport:A")
 	if err != nil {
@@ -447,5 +451,19 @@ func TestSessionRuntimeFreezesWorkdirPerTransportOnFirstUse(t *testing.T) {
 	}
 	if diff := cmp.Diff(dirB, sessionB.Cwd()); diff != "" {
 		t.Fatalf("transport:B cwd mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimeReturnsErrorForUnknownTransportID(t *testing.T) {
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
+	defer runtime.Close()
+
+	_, err := runtime.SessionFor("transport:missing")
+	if err == nil {
+		t.Fatalf("expected unknown transport error")
+	}
+
+	if diff := cmp.Diff(true, strings.Contains(err.Error(), "unknown transport \"transport:missing\": transport not registered")); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s\nerr: %q", diff, err.Error())
 	}
 }

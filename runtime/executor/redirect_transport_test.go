@@ -131,7 +131,7 @@ func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
 	id := t.TempDir() + "/capture-A"
 	testSinkStore.reset(id)
 
-	plan := &planfmt.Plan{Target: "redirect-source-transport", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "redirect-source-transport", Transports: localTestTransports("transport:A"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.RedirectNode{
 			Source: &planfmt.CommandNode{
@@ -147,7 +147,7 @@ func TestRedirectSinkUsesSourceTransportContext(t *testing.T) {
 		},
 	}}}
 
-	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestRedirectSinkInheritsWrapperTransportContext(t *testing.T) {
 	id := t.TempDir() + "/capture-boundary"
 	testSinkStore.reset(id)
 
-	plan := &planfmt.Plan{Target: "redirect-wrapper-transport", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "redirect-wrapper-transport", Transports: localTestTransports("transport:boundary"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.CommandNode{
 			Decorator: "@test.session.boundary",
@@ -197,7 +197,7 @@ func TestRedirectSinkInheritsWrapperTransportContext(t *testing.T) {
 		},
 	}}}
 
-	result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}

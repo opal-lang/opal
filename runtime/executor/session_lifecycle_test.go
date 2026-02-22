@@ -36,7 +36,7 @@ func TestExecuteClosesSessionsOnSuccess(t *testing.T) {
 	t.Parallel()
 
 	factory, stats := monitoredFactory()
-	plan := &planfmt.Plan{Target: "session-close-success", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "session-close-success", Transports: localTestTransports("transport:A"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
 			planShell("echo local"),
@@ -64,7 +64,7 @@ func TestExecuteClosesSessionsOnFailure(t *testing.T) {
 	t.Parallel()
 
 	factory, stats := monitoredFactory()
-	plan := &planfmt.Plan{Target: "session-close-failure", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "session-close-failure", Transports: localTestTransports("transport:A"), Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
 			planShell("echo local"),
@@ -98,7 +98,7 @@ func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	plan := &planfmt.Plan{Target: "session-close-cancel", Steps: []planfmt.Step{{
+	plan := &planfmt.Plan{Target: "session-close-cancel", Transports: localTestTransports("transport:A"), Steps: []planfmt.Step{{
 		ID:   1,
 		Tree: planShellOn("transport:A", "sleep 5"),
 	}}}
@@ -111,7 +111,11 @@ func TestExecuteClosesSessionsOnCancellation(t *testing.T) {
 		t.Fatalf("expected non-zero exit code on cancellation (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(1, stats["transport:A"].CloseCalls); diff != "" {
+	transportStats, ok := stats["transport:A"]
+	if !ok || transportStats == nil {
+		t.Fatalf("missing transport:A session stats")
+	}
+	if diff := cmp.Diff(1, transportStats.CloseCalls); diff != "" {
 		t.Fatalf("transport:A close calls mismatch (-want +got):\n%s", diff)
 	}
 }
