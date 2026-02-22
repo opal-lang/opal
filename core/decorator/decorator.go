@@ -61,9 +61,9 @@ type TransportScope int
 
 const (
 	// TransportScopeAny means decorator works in any transport (local, SSH, Docker, etc.)
-	TransportScopeAny TransportScope = 0
-	TransportScopeLocal TransportScope = 1
-	TransportScopeSSH TransportScope = 2
+	TransportScopeAny    TransportScope = 0
+	TransportScopeLocal  TransportScope = 1
+	TransportScopeSSH    TransportScope = 2
 	TransportScopeRemote TransportScope = 3
 	// TransportScopeIsolated means decorator only works in isolated namespace transport
 	TransportScopeIsolated TransportScope = 4

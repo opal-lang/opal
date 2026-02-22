@@ -29,7 +29,7 @@ type IsolationContext interface {
 	DropNetwork() error
 
 	// RestrictFilesystem limits filesystem access.
-	RestrictFilesystem(readOnly []string, writable []string) error
+	RestrictFilesystem(readOnly, writable []string) error
 
 	// DropPrivileges drops unnecessary privileges.
 	DropPrivileges() error
@@ -91,6 +91,6 @@ const (
 )
 
 // Has reports whether the transport includes a given capability.
-func (c TransportCaps) Has(cap TransportCaps) bool {
-	return c&cap != 0
+func (c TransportCaps) Has(capability TransportCaps) bool {
+	return c&capability != 0
 }

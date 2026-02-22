@@ -416,7 +416,6 @@ func TestSSHSessionWithEnvModifiesRemoteEnvironment(t *testing.T) {
 	}
 }
 
-
 // TestNewSSHSession_EmptyHostValidation tests that empty host fails validation
 func TestNewSSHSession_EmptyHostValidation(t *testing.T) {
 	// Test empty string host

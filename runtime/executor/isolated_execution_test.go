@@ -259,7 +259,7 @@ func openIsolatedSession(params map[string]any) (decorator.Session, error) {
 	return dec.Open(parent, params)
 }
 
-func runIsolatedExecutionHelper(t *testing.T, mode string, runExpr string, extraEnv ...string) string {
+func runIsolatedExecutionHelper(t *testing.T, mode, runExpr string, extraEnv ...string) string {
 	t.Helper()
 
 	cmd := exec.Command(os.Args[0], "-test.run", runExpr)
