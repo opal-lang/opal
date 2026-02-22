@@ -15,3 +15,7 @@ func (e SinkError) Error() string {
 	}
 	return fmt.Sprintf("sink %s %s failed on transport %s: %v", e.SinkID, e.Operation, e.TransportID, e.Cause)
 }
+
+func (e SinkError) Unwrap() error {
+	return e.Cause
+}

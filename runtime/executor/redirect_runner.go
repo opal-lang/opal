@@ -3,7 +3,6 @@ package executor
 import (
 	"fmt"
 	"io"
-	"os"
 	"sync"
 
 	"github.com/opal-lang/opal/core/invariant"
@@ -34,14 +33,6 @@ func (c *sinkWriteErrorCapture) Err() error {
 	return c.err
 }
 
-// safeStderr returns e.stderr if set, otherwise os.Stderr.
-func (e *executor) safeStderr() io.Writer {
-	if e.stderr != nil {
-		return e.stderr
-	}
-	return os.Stderr
-}
-
 // executeRedirect executes a redirect operation (> or >>).
 // stdin is optional and used when redirect appears in a pipeline.
 func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.RedirectNode, stdin io.Reader) int {
@@ -61,7 +52,7 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 		if err := sdk.ValidateSinkForRead(redirect.Sink); err != nil {
 			kind, id := redirect.Sink.Identity()
 			sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "validate", TransportID: transportID, Cause: err}
-			_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 			return 1
 		}
 
@@ -69,7 +60,7 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 		if err != nil {
 			kind, id := redirect.Sink.Identity()
 			sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "open", TransportID: transportID, Cause: err}
-			_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 			return 1
 		}
 
@@ -77,7 +68,7 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 		if closeErr := reader.Close(); closeErr != nil {
 			kind, id := redirect.Sink.Identity()
 			sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "close", TransportID: transportID, Cause: closeErr}
-			_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 			return 1
 		}
 
@@ -87,7 +78,7 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 	if err := sdk.ValidateSinkForWrite(redirect.Sink, redirect.Mode); err != nil {
 		kind, id := redirect.Sink.Identity()
 		sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "validate", TransportID: transportID, Cause: err}
-		_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 		return 1
 	}
 
@@ -95,7 +86,7 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 	if err != nil {
 		kind, id := redirect.Sink.Identity()
 		sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "open", TransportID: transportID, Cause: err}
-		_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 		return 1
 	}
 
@@ -104,18 +95,18 @@ func (e *executor) executeRedirect(execCtx sdk.ExecutionContext, redirect *sdk.R
 	if writeErr := writeCapture.Err(); writeErr != nil {
 		kind, id := redirect.Sink.Identity()
 		sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "write", TransportID: transportID, Cause: writeErr}
-		_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 		if closeErr := writer.Close(); closeErr != nil {
 			kind, id := redirect.Sink.Identity()
 			sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "close", TransportID: transportID, Cause: closeErr}
-			_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 		}
 		return 1
 	}
 	if closeErr := writer.Close(); closeErr != nil {
 		kind, id := redirect.Sink.Identity()
 		sinkErr := SinkError{SinkID: kind + " (" + id + ")", Operation: "close", TransportID: transportID, Cause: closeErr}
-		_, _ = fmt.Fprintf(e.safeStderr(), "Error: %v\n", sinkErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", sinkErr)
 		return 1
 	}
 
@@ -151,7 +142,7 @@ func withRedirectedStderrSource(node sdk.TreeNode, stderrOnly bool) sdk.TreeNode
 		return node
 	}
 
-	params["command"] = "(" + raw + ") 3>&1 1>&2 2>&3"
+	params["command"] = "(" + raw + ") 3>&1 1>&2 2>&3 3>&-"
 
 	return &sdk.CommandNode{
 		Name:        cmd.Name,

@@ -391,7 +391,7 @@ func withPlanRedirectedStderrSource(node planfmt.ExecutionNode, stderrOnly bool)
 			continue
 		}
 
-		args[i].Val.Str = "(" + args[i].Val.Str + ") 3>&1 1>&2 2>&3"
+		args[i].Val.Str = "(" + args[i].Val.Str + ") 3>&1 1>&2 2>&3 3>&-"
 		return &planfmt.CommandNode{
 			Decorator:   cmd.Decorator,
 			TransportID: cmd.TransportID,
