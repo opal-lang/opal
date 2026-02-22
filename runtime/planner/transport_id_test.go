@@ -34,6 +34,10 @@ func (d *envTransportDecorator) Wrap(next decorator.ExecNode, params map[string]
 	return next
 }
 
+func (d *envTransportDecorator) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
+}
+
 func init() {
 	_ = decorator.Register("test.transport.env", &envTransportDecorator{})
 }
