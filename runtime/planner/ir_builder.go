@@ -983,6 +983,8 @@ func (b *irBuilder) buildRedirect() (string, *CommandExpr, error) {
 				mode = ">"
 			case lexer.APPEND:
 				mode = ">>"
+			case lexer.LT:
+				mode = "<"
 			}
 			b.pos++
 			continue

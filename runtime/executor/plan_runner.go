@@ -94,7 +94,7 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 		return e.executePlanBlock(execCtx, n.Block)
 
 	case *planfmt.TryNode:
-		fmt.Fprintln(os.Stderr, "Error: try/catch/finally execution is not implemented")
+		_, _ = fmt.Fprintln(e.stderr, "Error: try/catch/finally execution is not implemented")
 		return decorator.ExitFailure
 
 	default:
@@ -256,7 +256,7 @@ func (e *executor) executePlanDecorator(
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, execCtx)
@@ -270,13 +270,13 @@ func (e *executor) executePlanDecorator(
 		Session: session,
 		Stdin:   stdin,
 		Stdout:  stdout,
-		Stderr:  os.Stderr,
+		Stderr:  e.stderr,
 		Trace:   nil,
 	}
 
 	result, err := node.Execute(decoratorExecCtx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -290,25 +290,31 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 	}
 
 	redirectExecCtx := withExecutionTransport(execCtx, sourceTransportIDForPlan(redirect.Source))
+	stderrOnly := planRedirectStderrEnabled(redirect.Source)
+	transportID := executionTransportID(redirectExecCtx)
 
-	ioDecorator, sinkIdentity, ok := resolvePlanIOSink(&redirect.Target)
+	ioDecorator, sinkIdentity, ok := resolvePlanIOSink(&redirect.Target, e.stderr)
 	if !ok {
 		return decorator.ExitFailure
 	}
 
 	caps := ioDecorator.IOCaps()
+	if redirect.Mode == planfmt.RedirectInput && !caps.Read {
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support input (<)")})
+		return decorator.ExitFailure
+	}
 	if redirect.Mode == planfmt.RedirectOverwrite && !caps.Write {
-		fmt.Fprintf(os.Stderr, "Error: sink %s does not support overwrite (>)\n", sinkIdentity)
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support overwrite (>)")})
 		return decorator.ExitFailure
 	}
 	if redirect.Mode == planfmt.RedirectAppend && !caps.Append {
-		fmt.Fprintf(os.Stderr, "Error: sink %s does not support append (>>)\n", sinkIdentity)
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support append (>>)")})
 		return decorator.ExitFailure
 	}
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(redirectExecCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(os.Stderr, "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, redirectExecCtx)
@@ -316,22 +322,85 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 		return decorator.ExitCanceled
 	}
 
-	writer, err := ioDecorator.OpenWrite(decorator.ExecContext{
+	decoratorCtx := decorator.ExecContext{
 		Context: redirectExecCtx.Context(),
 		Session: session,
-		Stderr:  os.Stderr,
-	}, redirect.Mode == planfmt.RedirectAppend)
+		Stderr:  e.stderr,
+	}
+
+	if redirect.Mode == planfmt.RedirectInput {
+		reader, err := ioDecorator.OpenRead(decoratorCtx)
+		if err != nil {
+			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
+			return decorator.ExitFailure
+		}
+
+		exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), reader, nil)
+		if closeErr := reader.Close(); closeErr != nil {
+			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
+			return decorator.ExitFailure
+		}
+		return exitCode
+	}
+
+	writer, err := ioDecorator.OpenWrite(decoratorCtx, redirect.Mode == planfmt.RedirectAppend)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to open sink %s: %v\n", sinkIdentity, err)
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
 		return decorator.ExitFailure
 	}
-	defer func() {
-		if closeErr := writer.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to close sink %s: %v\n", sinkIdentity, closeErr)
-		}
-	}()
 
-	return e.executePlanTreeIO(redirectExecCtx, redirect.Source, stdin, writer)
+	exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), stdin, writer)
+	if closeErr := writer.Close(); closeErr != nil {
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
+		return decorator.ExitFailure
+	}
+
+	return exitCode
+}
+
+func planRedirectStderrEnabled(node planfmt.ExecutionNode) bool {
+	cmd, ok := node.(*planfmt.CommandNode)
+	if !ok {
+		return false
+	}
+
+	for _, arg := range cmd.Args {
+		if arg.Key == "stderr" && arg.Val.Kind == planfmt.ValueBool {
+			return arg.Val.Bool
+		}
+	}
+
+	return false
+}
+
+func withPlanRedirectedStderrSource(node planfmt.ExecutionNode, stderrOnly bool) planfmt.ExecutionNode {
+	if !stderrOnly {
+		return node
+	}
+
+	cmd, ok := node.(*planfmt.CommandNode)
+	if !ok || normalizeDecoratorName(cmd.Decorator) != "shell" {
+		return node
+	}
+
+	args := make([]planfmt.Arg, len(cmd.Args))
+	copy(args, cmd.Args)
+
+	for i := range args {
+		if args[i].Key != "command" || args[i].Val.Kind != planfmt.ValueString || args[i].Val.Str == "" {
+			continue
+		}
+
+		args[i].Val.Str = "(" + args[i].Val.Str + ") 3>&1 1>&2 2>&3 3>&-"
+		return &planfmt.CommandNode{
+			Decorator:   cmd.Decorator,
+			TransportID: cmd.TransportID,
+			Args:        args,
+			Block:       cmd.Block,
+		}
+	}
+
+	return node
 }
 
 func isExecutionCanceled(execCtx sdk.ExecutionContext) bool {
@@ -405,36 +474,57 @@ func normalizeDecoratorName(name string) string {
 	return name
 }
 
-func resolvePlanIOSink(target *planfmt.CommandNode) (decorator.IO, string, bool) {
+func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (decorator.IO, string, bool) {
 	if target == nil {
-		fmt.Fprintln(os.Stderr, "Error: redirect target is nil")
+		_, _ = fmt.Fprintln(stderr, "Error: redirect target is nil")
 		return nil, "", false
 	}
 
-	decoratorPath := normalizeDecoratorName(target.Decorator)
+	decoratorPath, args := normalizePlanIOArgs(target.Decorator, planArgsToMap(target.Args))
 	entry, exists := decorator.Global().Lookup(decoratorPath)
 	if !exists {
-		fmt.Fprintf(os.Stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
+		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
 		return nil, target.Decorator, false
 	}
 
 	ioDecorator, ok := entry.Impl.(decorator.IO)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
+		_, _ = fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
 		return nil, target.Decorator, false
 	}
 
-	args := planArgsToMap(target.Args)
 	if factory, ok := ioDecorator.(decorator.IOFactory); ok {
 		ioDecorator = factory.WithParams(args)
 	}
 
 	identity := target.Decorator
+	if decoratorPath == "file" {
+		if path, ok := args["path"].(string); ok && path != "" {
+			identity = "@file(" + path + ")"
+		}
+		return ioDecorator, identity, true
+	}
+
 	if commandPath, ok := args["command"].(string); ok && commandPath != "" {
 		identity = identity + "(" + commandPath + ")"
 	}
 
 	return ioDecorator, identity, true
+}
+
+func normalizePlanIOArgs(decoratorName string, args map[string]any) (string, map[string]any) {
+	normalizedDecorator := normalizeDecoratorName(decoratorName)
+	if normalizedDecorator == "shell" {
+		if path, ok := args["command"].(string); ok && path != "" {
+			normalizedArgs := map[string]any{"path": path}
+			if perm, ok := args["perm"]; ok {
+				normalizedArgs["perm"] = perm
+			}
+			return "file", normalizedArgs
+		}
+	}
+
+	return normalizedDecorator, args
 }
 
 func planArgsToMap(args []planfmt.Arg) map[string]any {

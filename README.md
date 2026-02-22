@@ -183,6 +183,16 @@ cd runtime && go test ./...
 - Value decorators (`@env`, `@var`, `@aws.secret`)
 - Plugin system for custom decorators
 
+## Pre-Alpha Compatibility Policy
+
+Opal is pre-alpha. Breaking changes are expected. When syntax or behavior changes:
+
+- Old patterns are removed directly, not deprecated
+- No migration tools or compatibility layers unless explicitly requested
+- Tests and docs update immediately to the current canonical form
+
+This keeps the codebase clean during rapid iteration. Once Opal reaches alpha, a formal deprecation policy will apply.
+
 ## How It Works
 
 Opal treats operations as plans that can be reviewed before execution:

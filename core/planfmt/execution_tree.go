@@ -68,6 +68,7 @@ type RedirectMode int
 const (
 	RedirectOverwrite RedirectMode = iota // > (truncate file)
 	RedirectAppend                        // >> (append to file)
+	RedirectInput
 )
 
 // RedirectNode redirects stdout from Source to Target decorator.

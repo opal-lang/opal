@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/opal-lang/opal/core/decorator"
@@ -19,6 +21,7 @@ type DisplayIDResolver interface {
 type Config struct {
 	Debug          DebugLevel     // Debug tracing (development only)
 	Telemetry      TelemetryLevel // Telemetry collection (production-safe)
+	Stderr         io.Writer
 	sessionFactory sessionFactory
 }
 
@@ -82,6 +85,7 @@ type executor struct {
 	// Execution state
 	stepsRun int
 	exitCode int
+	stderr   io.Writer
 
 	// Observability
 	debugEvents []DebugEvent
@@ -102,7 +106,11 @@ func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt Dis
 		vault:     vlt,
 		sessions:  newSessionRuntime(config.sessionFactory),
 		workers:   nil,
+		stderr:    config.Stderr,
 		startTime: time.Now(),
+	}
+	if e.stderr == nil {
+		e.stderr = os.Stderr
 	}
 	e.workers = newShellWorkerPool(e.sessions)
 	defer e.sessions.Close()

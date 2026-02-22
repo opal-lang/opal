@@ -427,7 +427,7 @@ func (v *semanticValidator) validateStdinSupport(decoratorName string, pipeToken
 func (v *semanticValidator) validateRedirectOperators() {
 	// Walk through tokens to find redirect operators (> and >>)
 	for i := 0; i < len(v.tokens); i++ {
-		if v.tokens[i].Type != lexer.GT && v.tokens[i].Type != lexer.APPEND {
+		if v.tokens[i].Type != lexer.GT && v.tokens[i].Type != lexer.APPEND && v.tokens[i].Type != lexer.LT {
 			continue
 		}
 
@@ -448,6 +448,24 @@ func (v *semanticValidator) validateRedirectSupport(decoratorName string, redire
 	schema, exists := v.tree.getSchema(decoratorName)
 	if !exists {
 		return // Decorator not registered - parser already reported error
+	}
+
+	if ioCaps, hasIO := v.lookupIOCaps(decoratorName); hasIO {
+		v.validateRedirectIOCaps(decoratorName, redirectToken, ioCaps)
+		return
+	}
+
+	if redirectToken.Type == lexer.LT {
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support input redirect (<)",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Use a decorator that implements source I/O (read)",
+			Example:    "cat < @file(\"input.txt\")",
+			Note:       "Input redirect requires runtime I/O read capability",
+		})
+		return
 	}
 
 	// Check if decorator supports redirect at all
@@ -490,6 +508,76 @@ func (v *semanticValidator) validateRedirectSupport(decoratorName string, redire
 			Suggestion: "Use a different redirect mode or a decorator that supports " + modeStr,
 			Example:    "echo \"test\" " + operatorStr + " output.txt",
 			Note:       "@" + decoratorName + " only supports " + schema.Redirect.Support.String(),
+		})
+	}
+}
+
+func (v *semanticValidator) lookupIOCaps(decoratorName string) (decorator.IOCaps, bool) {
+	entry, exists := decorator.Global().Lookup(decoratorName)
+	if !exists {
+		return decorator.IOCaps{}, false
+	}
+
+	ioDecorator, ok := entry.Impl.(decorator.IO)
+	if !ok {
+		return decorator.IOCaps{}, false
+	}
+
+	return ioDecorator.IOCaps(), true
+}
+
+func (v *semanticValidator) validateRedirectIOCaps(decoratorName string, redirectToken lexer.Token, caps decorator.IOCaps) {
+	if redirectToken.Type == lexer.LT {
+		if !caps.Read {
+			v.errors = append(v.errors, ParseError{
+				Position:   redirectToken.Position,
+				Message:    "@" + decoratorName + " does not support input redirect (<)",
+				Context:    "redirect operator",
+				Got:        redirectToken.Type,
+				Suggestion: "Use a decorator that implements source I/O (read)",
+				Example:    "cat < @file(\"input.txt\")",
+				Note:       "Input redirect targets must support source reads",
+			})
+		}
+		return
+	}
+
+	supportsRedirect := caps.Write || caps.Append
+	if !supportsRedirect {
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support redirect sinks",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Use a decorator that implements sink I/O (write or append)",
+			Example:    "echo \"test\" > @file(\"output.txt\")",
+			Note:       "Redirect targets must support sink writes",
+		})
+		return
+	}
+
+	if redirectToken.Type == lexer.GT && !caps.Write {
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support overwrite (>)",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Use >> or a sink decorator that supports overwrite",
+			Example:    "echo \"test\" >> @" + decoratorName + "(...)",
+			Note:       "@" + decoratorName + " does not advertise overwrite sink capability",
+		})
+		return
+	}
+
+	if redirectToken.Type == lexer.APPEND && !caps.Append {
+		v.errors = append(v.errors, ParseError{
+			Position:   redirectToken.Position,
+			Message:    "@" + decoratorName + " does not support append (>>)",
+			Context:    "redirect operator",
+			Got:        redirectToken.Type,
+			Suggestion: "Use > or a sink decorator that supports append",
+			Example:    "echo \"test\" > @" + decoratorName + "(...)",
+			Note:       "@" + decoratorName + " does not advertise append sink capability",
 		})
 	}
 }

@@ -65,6 +65,15 @@ func (t *sessionTransport) OpenFileWriter(ctx context.Context, path string, mode
 	}, nil
 }
 
+func (t *sessionTransport) OpenFileReader(ctx context.Context, path string) (io.ReadCloser, error) {
+	data, err := t.session.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
 func (t *sessionTransport) Close() error {
 	return nil
 }

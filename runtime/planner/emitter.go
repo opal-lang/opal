@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/opal-lang/opal/runtime/vault"
@@ -321,8 +322,11 @@ func (e *Emitter) buildRedirectNode(source planfmt.ExecutionNode, cmd *CommandSt
 	}
 
 	mode := planfmt.RedirectOverwrite
-	if cmd.RedirectMode == ">>" {
+	switch cmd.RedirectMode {
+	case ">>":
 		mode = planfmt.RedirectAppend
+	case "<":
+		mode = planfmt.RedirectInput
 	}
 
 	return &planfmt.RedirectNode{
@@ -335,6 +339,12 @@ func (e *Emitter) buildRedirectNode(source planfmt.ExecutionNode, cmd *CommandSt
 func (e *Emitter) buildRedirectTargetNode(cmd *CommandStmtIR) (*planfmt.CommandNode, error) {
 	if cmd.RedirectTarget == nil {
 		return nil, fmt.Errorf("redirect target is nil")
+	}
+
+	if target, ok, err := e.buildRedirectDecoratorTargetNode(cmd.RedirectTarget); err != nil {
+		return nil, err
+	} else if ok {
+		return target, nil
 	}
 
 	displayIDs := make(map[string]string)
@@ -353,6 +363,68 @@ func (e *Emitter) buildRedirectTargetNode(cmd *CommandStmtIR) (*planfmt.CommandN
 			},
 		},
 	}, nil
+}
+
+func (e *Emitter) buildRedirectDecoratorTargetNode(target *CommandExpr) (*planfmt.CommandNode, bool, error) {
+	if target == nil || len(target.Parts) == 0 {
+		return nil, false, nil
+	}
+
+	var part *ExprIR
+	for _, candidate := range target.Parts {
+		if candidate == nil {
+			continue
+		}
+		if candidate.Kind == ExprLiteral {
+			lit, ok := candidate.Value.(string)
+			if ok && strings.TrimSpace(lit) == "" {
+				continue
+			}
+			return nil, false, nil
+		}
+		if candidate.Kind != ExprDecoratorRef {
+			return nil, false, nil
+		}
+		if part != nil {
+			return nil, false, nil
+		}
+		part = candidate
+	}
+
+	if part == nil || part.Decorator == nil || part.Decorator.Name == "" {
+		return nil, false, nil
+	}
+
+	decoratorName := "@" + part.Decorator.Name
+	if len(part.Decorator.Selector) > 0 {
+		decoratorName += "." + strings.Join(part.Decorator.Selector, ".")
+	}
+
+	displayIDs := make(map[string]string)
+	args := make([]planfmt.Arg, 0, len(part.Decorator.Args))
+	for idx, argExpr := range part.Decorator.Args {
+		e.collectDisplayID(argExpr, displayIDs, "redirect-target")
+		argVal, err := e.buildArgValue(argExpr, displayIDs)
+		if err != nil {
+			return nil, false, err
+		}
+
+		argName := ""
+		if idx < len(part.Decorator.ArgNames) {
+			argName = part.Decorator.ArgNames[idx]
+		}
+		if argName == "" {
+			argName = fmt.Sprintf("arg%d", idx)
+		}
+
+		args = append(args, planfmt.Arg{Key: argName, Val: argVal})
+	}
+
+	return &planfmt.CommandNode{
+		Decorator:   decoratorName,
+		TransportID: e.currentTransportID(),
+		Args:        args,
+	}, true, nil
 }
 
 // parseSequence splits on semicolon operators (lowest precedence).
