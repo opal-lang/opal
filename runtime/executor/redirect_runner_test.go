@@ -1,20 +1,19 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opal-lang/opal/core/sdk"
 )
 
-var stderrCaptureMu sync.Mutex
 
 type testSink struct {
 	openErr    error
@@ -126,37 +125,26 @@ func (r *closeFailReadCloser) Close() error {
 	return errors.New("close read failed")
 }
 
-func captureStderr(t *testing.T, fn func()) string {
+// newExecutorWithStderr creates an executor with an injected stderr buffer for testing.
+// Returns the executor, the stderr buffer, and a cleanup function.
+func newExecutorWithStderr(t *testing.T) (*executor, *bytes.Buffer, func()) {
 	t.Helper()
+	stderrBuf := &bytes.Buffer{}
 
-	stderrCaptureMu.Lock()
-	original := os.Stderr
-	defer func() {
-		os.Stderr = original
-		stderrCaptureMu.Unlock()
-	}()
-
-	readPipe, writePipe, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stderr pipe: %v", err)
-	}
-	os.Stderr = writePipe
-
-	fn()
-
-	if closeErr := writePipe.Close(); closeErr != nil {
-		t.Fatalf("close stderr write pipe: %v", closeErr)
+	e := &executor{
+		sessions: newSessionRuntime(nil),
+		workers:  nil,
+		stderr:   stderrBuf,
 	}
 
-	content, readErr := io.ReadAll(readPipe)
-	if readErr != nil {
-		t.Fatalf("read captured stderr: %v", readErr)
-	}
-	if closeErr := readPipe.Close(); closeErr != nil {
-		t.Fatalf("close stderr read pipe: %v", closeErr)
+	e.workers = newShellWorkerPool(e.sessions)
+
+	cleanup := func() {
+		e.workers.Close()
+		e.sessions.Close()
 	}
 
-	return string(content)
+	return e, stderrBuf, cleanup
 }
 
 func assertSinkErrorOutput(t *testing.T, output string, sinkErr SinkError) {
@@ -180,25 +168,21 @@ func assertSinkErrorOutput(t *testing.T, output string, sinkErr SinkError) {
 func TestRedirectSinkOpenFailsBeforeCommandExecution(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "not-created.txt")
 	sink := &testSink{openErr: errors.New("open failed")}
-	e := &executor{sessions: newSessionRuntime(nil), workers: nil}
-	t.Cleanup(func() { e.sessions.Close() })
-	e.workers = newShellWorkerPool(e.sessions)
-	t.Cleanup(func() { e.workers.Close() })
+	e, stderrBuf, cleanup := newExecutorWithStderr(t)
+	t.Cleanup(cleanup)
 
 	execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
-	stderr := captureStderr(t, func() {
-		exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
-			Source: &sdk.CommandNode{
-				Name: "@shell",
-				Args: map[string]any{"command": "echo run > " + marker},
-			},
-			Sink: sink,
-			Mode: sdk.RedirectOverwrite,
-		}, nil)
-		if diff := cmp.Diff(1, exitCode); diff != "" {
-			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-		}
-	})
+	exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
+		Source: &sdk.CommandNode{
+			Name: "@shell",
+			Args: map[string]any{"command": "echo run > " + marker},
+		},
+		Sink: sink,
+		Mode: sdk.RedirectOverwrite,
+	}, nil)
+	if diff := cmp.Diff(1, exitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
 
 	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("marker file should not exist, stat err: %v", statErr)
@@ -206,7 +190,7 @@ func TestRedirectSinkOpenFailsBeforeCommandExecution(t *testing.T) {
 	if diff := cmp.Diff(1, sink.openCount); diff != "" {
 		t.Fatalf("open count mismatch (-want +got):\n%s", diff)
 	}
-	assertSinkErrorOutput(t, stderr, SinkError{
+	assertSinkErrorOutput(t, stderrBuf.String(), SinkError{
 		SinkID:      "test.sink (capture)",
 		Operation:   "open",
 		TransportID: "local",
@@ -216,24 +200,20 @@ func TestRedirectSinkOpenFailsBeforeCommandExecution(t *testing.T) {
 
 func TestRedirectSinkWriteFailureReturnsFailure(t *testing.T) {
 	sink := &testSink{writer: &testSinkWriter{failWrite: true}}
-	e := &executor{sessions: newSessionRuntime(nil), workers: nil}
-	t.Cleanup(func() { e.sessions.Close() })
-	e.workers = newShellWorkerPool(e.sessions)
-	t.Cleanup(func() { e.workers.Close() })
+	e, stderrBuf, cleanup := newExecutorWithStderr(t)
+	t.Cleanup(cleanup)
 
 	execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
-	stderr := captureStderr(t, func() {
-		exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
-			Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo fail"}},
-			Sink:   sink,
-			Mode:   sdk.RedirectOverwrite,
-		}, nil)
+	exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
+		Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo fail"}},
+		Sink:   sink,
+		Mode:   sdk.RedirectOverwrite,
+	}, nil)
 
-		if diff := cmp.Diff(1, exitCode); diff != "" {
-			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-		}
-	})
-	assertSinkErrorOutput(t, stderr, SinkError{
+	if diff := cmp.Diff(1, exitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	assertSinkErrorOutput(t, stderrBuf.String(), SinkError{
 		SinkID:      "test.sink (capture)",
 		Operation:   "write",
 		TransportID: "local",
@@ -243,24 +223,20 @@ func TestRedirectSinkWriteFailureReturnsFailure(t *testing.T) {
 
 func TestRedirectSinkCloseFailureReturnsFailure(t *testing.T) {
 	sink := &testSink{writer: &testSinkWriter{failClose: true}}
-	e := &executor{sessions: newSessionRuntime(nil), workers: nil}
-	t.Cleanup(func() { e.sessions.Close() })
-	e.workers = newShellWorkerPool(e.sessions)
-	t.Cleanup(func() { e.workers.Close() })
+	e, stderrBuf, cleanup := newExecutorWithStderr(t)
+	t.Cleanup(cleanup)
 
 	execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
-	stderr := captureStderr(t, func() {
-		exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
-			Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo close"}},
-			Sink:   sink,
-			Mode:   sdk.RedirectOverwrite,
-		}, nil)
+	exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
+		Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "echo close"}},
+		Sink:   sink,
+		Mode:   sdk.RedirectOverwrite,
+	}, nil)
 
-		if diff := cmp.Diff(1, exitCode); diff != "" {
-			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-		}
-	})
-	assertSinkErrorOutput(t, stderr, SinkError{
+	if diff := cmp.Diff(1, exitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	assertSinkErrorOutput(t, stderrBuf.String(), SinkError{
 		SinkID:      "test.sink (capture)",
 		Operation:   "close",
 		TransportID: "local",
@@ -367,24 +343,20 @@ func TestInputOperator(t *testing.T) {
 
 	t.Run("returns failure when source open fails", func(t *testing.T) {
 		sink := &testSink{readErr: errors.New("open read failed")}
-		e := &executor{sessions: newSessionRuntime(nil), workers: nil}
-		t.Cleanup(func() { e.sessions.Close() })
-		e.workers = newShellWorkerPool(e.sessions)
-		t.Cleanup(func() { e.workers.Close() })
+		e, stderrBuf, cleanup := newExecutorWithStderr(t)
+		t.Cleanup(cleanup)
 
 		execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
-		stderr := captureStderr(t, func() {
-			exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
-				Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "cat"}},
-				Sink:   sink,
-				Mode:   sdk.RedirectInput,
-			}, nil)
+		exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
+			Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "cat"}},
+			Sink:   sink,
+			Mode:   sdk.RedirectInput,
+		}, nil)
 
-			if diff := cmp.Diff(1, exitCode); diff != "" {
-				t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-			}
-		})
-		assertSinkErrorOutput(t, stderr, SinkError{
+		if diff := cmp.Diff(1, exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+		assertSinkErrorOutput(t, stderrBuf.String(), SinkError{
 			SinkID:      "test.sink (capture)",
 			Operation:   "open",
 			TransportID: "local",
@@ -419,24 +391,20 @@ func TestInputOperator(t *testing.T) {
 
 	t.Run("returns failure when source close fails", func(t *testing.T) {
 		sink := &testSink{reader: &closeFailReadCloser{inner: strings.NewReader("alpha\n")}}
-		e := &executor{sessions: newSessionRuntime(nil), workers: nil}
-		t.Cleanup(func() { e.sessions.Close() })
-		e.workers = newShellWorkerPool(e.sessions)
-		t.Cleanup(func() { e.workers.Close() })
+		e, stderrBuf, cleanup := newExecutorWithStderr(t)
+		t.Cleanup(cleanup)
 
 		execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
-		stderr := captureStderr(t, func() {
-			exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
-				Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "cat"}},
-				Sink:   sink,
-				Mode:   sdk.RedirectInput,
-			}, nil)
+		exitCode := e.executeRedirect(execCtx, &sdk.RedirectNode{
+			Source: &sdk.CommandNode{Name: "@shell", Args: map[string]any{"command": "cat"}},
+			Sink:   sink,
+			Mode:   sdk.RedirectInput,
+		}, nil)
 
-			if diff := cmp.Diff(1, exitCode); diff != "" {
-				t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-			}
-		})
-		assertSinkErrorOutput(t, stderr, SinkError{
+		if diff := cmp.Diff(1, exitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+		assertSinkErrorOutput(t, stderrBuf.String(), SinkError{
 			SinkID:      "test.sink (capture)",
 			Operation:   "close",
 			TransportID: "local",

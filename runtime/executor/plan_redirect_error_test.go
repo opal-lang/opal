@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -221,17 +222,17 @@ func runPlanRedirectErrorCase(t *testing.T, tc planRedirectErrorCase) {
 		},
 	}}}
 
-	stderr := captureStderr(t, func() {
-		result, err := ExecutePlan(context.Background(), plan, Config{}, testVault())
-		if err != nil {
-			t.Fatalf("execute failed: %v", err)
-		}
-		if diff := cmp.Diff(1, result.ExitCode); diff != "" {
-			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
-		}
-	})
+	stderrBuf := &bytes.Buffer{}
+	result, err := ExecutePlan(context.Background(), plan, Config{Stderr: stderrBuf}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(1, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
 
 	expected := "Error: sink " + tc.expectedSinkID + " " + tc.expectedOp + " failed on transport " + tc.transportID + ": " + tc.expectedCauseMsg
+	stderr := stderrBuf.String()
 	if diff := cmp.Diff(true, strings.Contains(stderr, expected)); diff != "" {
 		t.Fatalf("stderr mismatch (-want +got):\n%s\nstderr: %q", diff, stderr)
 	}
