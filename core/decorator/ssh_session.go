@@ -286,6 +286,10 @@ func (s *SSHSession) TransportScope() TransportScope {
 	return TransportScopeSSH
 }
 
+func (s *SSHSession) IsolationContext() IsolationContext {
+	return nil
+}
+
 // Close closes the SSH connection.
 func (s *SSHSession) Close() error {
 	return s.client.Close()
@@ -407,6 +411,10 @@ func (t *SSHTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 		next:   next,
 		params: params,
 	}
+}
+
+func (t *SSHTransport) IsolationContext() IsolationContext {
+	return nil
 }
 
 type sshTransportNode struct {

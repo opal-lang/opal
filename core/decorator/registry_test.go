@@ -421,6 +421,10 @@ func (m *mockTransportDecorator) Wrap(next ExecNode, params map[string]any) Exec
 	return nil // Stub
 }
 
+func (m *mockTransportDecorator) IsolationContext() IsolationContext {
+	return nil
+}
+
 type mockIODecorator struct {
 	path string
 }

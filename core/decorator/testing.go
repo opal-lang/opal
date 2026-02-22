@@ -164,6 +164,10 @@ func (m *MonitoredTransport) Wrap(next ExecNode, params map[string]any) ExecNode
 	return m.wrapped.Wrap(next, params)
 }
 
+func (m *MonitoredTransport) IsolationContext() IsolationContext {
+	return m.wrapped.IsolationContext()
+}
+
 // ========== TestTransport ==========
 
 // TestTransport is a mock transport decorator for testing transport boundaries.
@@ -211,6 +215,10 @@ func (t *TestTransport) Open(parent Session, params map[string]any) (Session, er
 // For TestTransport, this is a no-op that just passes through.
 func (t *TestTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
 	return next
+}
+
+func (t *TestTransport) IsolationContext() IsolationContext {
+	return nil
 }
 
 // deriveScope determines the TransportScope from the transport name.

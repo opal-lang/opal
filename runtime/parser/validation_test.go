@@ -38,6 +38,10 @@ func (m *mockTransportDecorator) Capabilities() decorator.TransportCaps {
 	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
 }
 
+func (m *mockTransportDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
 // mockRootOnlyValueDecorator is a test decorator that simulates a root-only value decorator like @env.
 // It has RoleProvider role and TransportScopeLocal capability.
 type mockRootOnlyValueDecorator struct {

@@ -75,6 +75,10 @@ func (d *testSSHTransportDecorator) Open(parent decorator.Session, params map[st
 	return &testSSHSession{parent: parent}, nil
 }
 
+func (d *testSSHTransportDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
 func (d *testSSHTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return next
 }
