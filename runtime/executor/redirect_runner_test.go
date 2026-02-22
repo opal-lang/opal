@@ -14,7 +14,6 @@ import (
 	"github.com/opal-lang/opal/core/sdk"
 )
 
-
 type testSink struct {
 	openErr    error
 	readErr    error

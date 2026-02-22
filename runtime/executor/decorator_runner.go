@@ -76,13 +76,13 @@ func (e *executor) executeShellCommandWithPipes(execCtx sdk.ExecutionContext, cm
 
 func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params map[string]any, stdin io.Reader, stdout io.Writer) int {
 	if params == nil {
-		fmt.Fprintln(e.getStderr(), "Error: @shell missing parameters")
+		_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell missing parameters")
 		return decorator.ExitFailure
 	}
 
 	command, ok := params["command"].(string)
 	if !ok || command == "" {
-		fmt.Fprintln(e.getStderr(), "Error: @shell requires a non-empty string command")
+		_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell requires a non-empty string command")
 		return decorator.ExitFailure
 	}
 
@@ -97,7 +97,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	if shellArg, hasShellArg := params["shell"]; hasShellArg {
 		shellStr, ok := shellArg.(string)
 		if !ok {
-			fmt.Fprintln(e.getStderr(), "Error: @shell expects 'shell' to be a string when provided")
+			_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell expects 'shell' to be a string when provided")
 			return decorator.ExitFailure
 		}
 		explicitShell = shellStr
@@ -106,7 +106,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	transportID := executionTransportID(execCtx)
 	shellName, err := resolveShellName(explicitShell, execCtx.Environ())
 	if err != nil {
-		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 		return decorator.ExitFailure
 	}
 
@@ -134,16 +134,16 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		}
 
 		if !canFallbackToSessionRun(workerErr) {
-			fmt.Fprintf(e.getStderr(), "Error: shell worker execution failed after command start: %v\n", workerErr)
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: shell worker execution failed after command start: %v\n", workerErr)
 			return decorator.ExitFailure
 		}
 
-		fmt.Fprintf(e.getStderr(), "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
 	}
 
 	baseSession, sessionErr := e.sessions.SessionFor(transportID)
 	if sessionErr != nil {
-		fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 
@@ -151,7 +151,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 
 	argv, err := shellCommandArgs(shellName, command)
 	if err != nil {
-		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 		return decorator.ExitFailure
 	}
 
@@ -165,7 +165,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		Stderr: e.stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -295,7 +295,7 @@ func (e *executor) executeDecorator(
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
 		return 1
 	}
 	session := sessionForExecutionContext(baseSession, execCtx)
@@ -315,7 +315,7 @@ func (e *executor) executeDecorator(
 
 	result, err := node.Execute(decoratorExecCtx)
 	if err != nil {
-		fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -337,7 +337,7 @@ func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorN
 
 	resolved, err := e.resolveDisplayIDs(params, decoratorName, executionTransportID(execCtx))
 	if err != nil {
-		fmt.Fprintf(e.getStderr(), "Error resolving secrets: %v\n", err)
+		_, _ = fmt.Fprintf(e.getStderr(), "Error resolving secrets: %v\n", err)
 		return nil, false
 	}
 

@@ -94,7 +94,7 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 		return e.executePlanBlock(execCtx, n.Block)
 
 	case *planfmt.TryNode:
-		fmt.Fprintln(e.stderr, "Error: try/catch/finally execution is not implemented")
+		_, _ = fmt.Fprintln(e.stderr, "Error: try/catch/finally execution is not implemented")
 		return decorator.ExitFailure
 
 	default:
@@ -256,7 +256,7 @@ func (e *executor) executePlanDecorator(
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, execCtx)
@@ -276,7 +276,7 @@ func (e *executor) executePlanDecorator(
 
 	result, err := node.Execute(decoratorExecCtx)
 	if err != nil {
-		fmt.Fprintf(e.stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", err)
 	}
 
 	return result.ExitCode
@@ -300,21 +300,21 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 
 	caps := ioDecorator.IOCaps()
 	if redirect.Mode == planfmt.RedirectInput && !caps.Read {
-		fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support input (<)")})
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support input (<)")})
 		return decorator.ExitFailure
 	}
 	if redirect.Mode == planfmt.RedirectOverwrite && !caps.Write {
-		fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support overwrite (>)")})
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support overwrite (>)")})
 		return decorator.ExitFailure
 	}
 	if redirect.Mode == planfmt.RedirectAppend && !caps.Append {
-		fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support append (>>)")})
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support append (>>)")})
 		return decorator.ExitFailure
 	}
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(redirectExecCtx))
 	if sessionErr != nil {
-		fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
+		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
 		return decorator.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, redirectExecCtx)
@@ -331,13 +331,13 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 	if redirect.Mode == planfmt.RedirectInput {
 		reader, err := ioDecorator.OpenRead(decoratorCtx)
 		if err != nil {
-			fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
+			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
 			return decorator.ExitFailure
 		}
 
 		exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), reader, nil)
 		if closeErr := reader.Close(); closeErr != nil {
-			fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
+			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
 			return decorator.ExitFailure
 		}
 		return exitCode
@@ -345,13 +345,13 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 
 	writer, err := ioDecorator.OpenWrite(decoratorCtx, redirect.Mode == planfmt.RedirectAppend)
 	if err != nil {
-		fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
 		return decorator.ExitFailure
 	}
 
 	exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), stdin, writer)
 	if closeErr := writer.Close(); closeErr != nil {
-		fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
+		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
 		return decorator.ExitFailure
 	}
 
@@ -476,20 +476,20 @@ func normalizeDecoratorName(name string) string {
 
 func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (decorator.IO, string, bool) {
 	if target == nil {
-		fmt.Fprintln(stderr, "Error: redirect target is nil")
+		_, _ = fmt.Fprintln(stderr, "Error: redirect target is nil")
 		return nil, "", false
 	}
 
 	decoratorPath, args := normalizePlanIOArgs(target.Decorator, planArgsToMap(target.Args))
 	entry, exists := decorator.Global().Lookup(decoratorPath)
 	if !exists {
-		fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
+		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
 		return nil, target.Decorator, false
 	}
 
 	ioDecorator, ok := entry.Impl.(decorator.IO)
 	if !ok {
-		fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
+		_, _ = fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
 		return nil, target.Decorator, false
 	}
 
