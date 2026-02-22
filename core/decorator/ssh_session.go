@@ -420,6 +420,12 @@ func (s *SSHSessionWithEnv) Close() error {
 // SSHTransport implements Transport for SSH connections.
 type SSHTransport struct{}
 
+func init() {
+	if err := Register("ssh", &SSHTransport{}); err != nil {
+		panic(fmt.Sprintf("failed to register @ssh decorator: %v", err))
+	}
+}
+
 func (t *SSHTransport) Descriptor() Descriptor {
 	return Descriptor{
 		Path: "ssh",

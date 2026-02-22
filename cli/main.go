@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/planfmt"
 	"github.com/opal-lang/opal/core/sdk/secret"
 	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
