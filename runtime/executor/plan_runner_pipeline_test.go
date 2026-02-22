@@ -120,11 +120,7 @@ func TestPlanPipelinePanicsOnNilNode(t *testing.T) {
 }
 
 func TestStderrCaptureWithFileSink(t *testing.T) {
-	t.Parallel()
-
 	t.Run("defaults to stdout", func(t *testing.T) {
-		t.Parallel()
-
 		outPath := filepath.Join(t.TempDir(), "stdout.txt")
 		plan := &planfmt.Plan{Target: "redirect-stdout-file", Steps: []planfmt.Step{{
 			ID: 1,
@@ -159,8 +155,6 @@ func TestStderrCaptureWithFileSink(t *testing.T) {
 	})
 
 	t.Run("routes stderr when enabled", func(t *testing.T) {
-		t.Parallel()
-
 		outPath := filepath.Join(t.TempDir(), "stderr.txt")
 		plan := &planfmt.Plan{Target: "redirect-stderr-file", Steps: []planfmt.Step{{
 			ID: 1,

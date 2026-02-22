@@ -261,11 +261,7 @@ func TestRedirectSinkCloseFailureReturnsFailure(t *testing.T) {
 }
 
 func TestStderrCapture(t *testing.T) {
-	t.Parallel()
-
 	t.Run("defaults to stdout", func(t *testing.T) {
-		t.Parallel()
-
 		sink := &testSink{}
 		e := &executor{sessions: newSessionRuntime(nil), workers: nil}
 		t.Cleanup(func() { e.sessions.Close() })
@@ -297,8 +293,6 @@ func TestStderrCapture(t *testing.T) {
 	})
 
 	t.Run("routes stderr when enabled", func(t *testing.T) {
-		t.Parallel()
-
 		sink := &testSink{}
 		e := &executor{sessions: newSessionRuntime(nil), workers: nil}
 		t.Cleanup(func() { e.sessions.Close() })
