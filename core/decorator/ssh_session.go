@@ -509,8 +509,61 @@ func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, err
 }
 
 func (t *SSHTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
-	// TODO: Implement execution wrapping
-	return next
+	return &sshTransportNode{
+		next:   next,
+		params: params,
+	}
+}
+
+type sshTransportNode struct {
+	next   ExecNode
+	params map[string]any
+}
+
+func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
+	sshSession, err := NewSSHSession(n.params)
+	if err != nil {
+		return Result{ExitCode: ExitFailure}, err
+	}
+	defer func() { _ = sshSession.Close() }()
+
+	session := Session(sshSession)
+	if env := sshEnvDelta(n.params); len(env) > 0 {
+		session = session.WithEnv(env)
+	}
+	if workdir, ok := n.params["workdir"].(string); ok && workdir != "" {
+		session = session.WithWorkdir(workdir)
+	}
+
+	if n.next != nil {
+		return n.next.Execute(ctx.WithSession(session))
+	}
+
+	command, ok := n.params["command"].(string)
+	if !ok || strings.TrimSpace(command) == "" {
+		return Result{ExitCode: ExitSuccess}, nil
+	}
+
+	shellName := "bash"
+	if v, ok := n.params["shell"].(string); ok && v != "" {
+		shellName = v
+	}
+
+	argv, err := sshShellCommandArgs(shellName, command)
+	if err != nil {
+		return Result{ExitCode: ExitFailure}, err
+	}
+
+	execCtx := ctx.Context
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+
+	return session.Run(execCtx, argv, RunOpts{
+		Stdin:  ctx.Stdin,
+		Stdout: ctx.Stdout,
+		Stderr: ctx.Stderr,
+	})
 }
 
 // Helper functions
@@ -637,6 +690,45 @@ func parseEnv(output string) map[string]string {
 		}
 	}
 	return env
+}
+
+func sshEnvDelta(params map[string]any) map[string]string {
+	raw, ok := params["env"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	delta := make(map[string]string)
+
+	switch typed := raw.(type) {
+	case map[string]string:
+		for k, v := range typed {
+			delta[k] = v
+		}
+	case map[string]any:
+		for k, v := range typed {
+			delta[k] = fmt.Sprint(v)
+		}
+	}
+
+	if len(delta) == 0 {
+		return nil
+	}
+
+	return delta
+}
+
+func sshShellCommandArgs(shellName, command string) ([]string, error) {
+	switch shellName {
+	case "bash":
+		return []string{"bash", "-c", command}, nil
+	case "pwsh":
+		return []string{"pwsh", "-NoProfile", "-NonInteractive", "-Command", command}, nil
+	case "cmd":
+		return []string{"cmd", "/C", command}, nil
+	default:
+		return nil, fmt.Errorf("unsupported shell %q: expected one of bash, pwsh, cmd", shellName)
+	}
 }
 
 func shellEscape(argv []string) string {
