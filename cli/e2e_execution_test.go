@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -279,4 +281,213 @@ func TestE2EConsistency_ResolvedPlan(t *testing.T) {
 
 	output := runE2E(t, opalBin, "--plan", planFile, "-f", testFile)
 	assert.Equal(t, "Hello\n", output)
+}
+
+func TestE2ERedirect_Overwrite(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "output.txt")
+	testFile := createE2ETestFile(t, fmt.Sprintf(`
+fun write = echo "Hello" > %s
+`, outFile))
+	runE2E(t, opalBin, "-f", testFile, "write")
+	data, _ := os.ReadFile(outFile)
+	assert.Equal(t, "Hello\n", string(data))
+}
+
+func TestE2ERedirect_Append(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "output.txt")
+	testFile := createE2ETestFile(t, fmt.Sprintf(`
+fun write = echo "Hello" > %s; echo "World" >> %s
+`, outFile, outFile))
+	runE2E(t, opalBin, "-f", testFile, "write")
+	data, _ := os.ReadFile(outFile)
+	assert.Equal(t, "Hello\nWorld\n", string(data))
+}
+
+func TestE2ERedirect_Pipe(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+fun pipe = echo "hello world" | grep hello
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "pipe")
+	assert.Contains(t, output, "hello world")
+}
+
+func TestE2EMeta_ConditionalPrunesUntakenBranch(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var env = "prod"
+fun deploy {
+	if @var.env == "prod" { echo "PROD-BRANCH" } else { echo "DEV-BRANCH" }
+}
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "deploy")
+	assert.Contains(t, output, "PROD-BRANCH")
+	assert.NotContains(t, output, "DEV-BRANCH")
+}
+
+func TestE2EMeta_ConditionalWithVariable(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var target = "staging"
+fun deploy {
+	if @var.target == "production" { echo "PRODUCTION-BRANCH" } else { echo "STAGING-BRANCH" }
+}
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "deploy")
+	assert.Contains(t, output, "STAGING-BRANCH")
+	assert.NotContains(t, output, "PRODUCTION-BRANCH")
+}
+
+func TestE2EVariable_Expansion(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var name = "World"
+fun greet = echo "Hello @var.name!"
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "greet")
+	assert.Contains(t, output, "Hello ")
+	assert.Contains(t, output, "!")
+	assert.NotContains(t, output, "@var.name", "Decorator should be expanded, not literal")
+}
+
+func TestE2EVariable_EnvAccess(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+fun check = echo "Home: @env.HOME"
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "check")
+	assert.Contains(t, output, "Home: ")
+	assert.NotContains(t, output, "@env.HOME", "Decorator should be expanded, not literal")
+}
+
+func TestE2EVariable_Interpolation(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var name = "Alice"
+fun test = echo "Hello @var.name!"
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "test")
+	assert.NotContains(t, output, "@var.name", "Decorator should be expanded")
+	assert.Contains(t, output, "Hello ")
+	assert.Contains(t, output, "!")
+}
+
+func TestE2EDecorator_Retry(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+	fun flaky = @retry(times=3, delay=100ms) { echo "attempt"; false; }
+  echo "attempt"
+  exit 1
+}
+`)
+	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "flaky")
+	assert.Contains(t, stderr, "exit code 1")
+}
+
+func TestE2EDecorator_Timeout(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+	fun slow = @timeout(duration="1s") { sleep 10; }
+	  sleep 10
+	}
+`)
+	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "slow")
+	assert.Contains(t, stderr, "timeout")
+}
+
+func TestE2EDecorator_Parallel(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+fun concurrent = @parallel { echo "Task A"; echo "Task B"; echo "Task C"; }
+	  echo "Task A"
+	  echo "Task B"
+	  echo "Task C"
+	}
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "concurrent")
+	assert.Contains(t, output, "Task A")
+	assert.Contains(t, output, "Task B")
+	assert.Contains(t, output, "Task C")
+}
+
+func TestE2EWorkflow_BuildTestDeploy(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+fun build = echo "Building..."
+fun test = echo "Testing..."
+fun deploy = echo "Deploying..."
+
+fun release = { build; test; deploy }
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "release")
+	assert.Contains(t, output, "Building...")
+	assert.Contains(t, output, "Testing...")
+	assert.Contains(t, output, "Deploying...")
+}
+
+func TestE2EWorkflow_WithVariables(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var appName = "myapp"
+fun deploy = echo "Deploying @var.appName"
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "deploy")
+	t.Logf("Actual output: %q", output)
+	assert.Contains(t, output, "Deploying myapp")
+}
+
+func TestE2EMeta_ForRange(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+fun loop {
+	for i in [1, 2, 3] { echo "item @var.i" }
+}
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "loop")
+	assert.Contains(t, output, "item 1")
+	assert.Contains(t, output, "item 2")
+	assert.Contains(t, output, "item 3")
+}
+
+func TestE2EMeta_ForVariable(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+var items = ["apple", "banana", "cherry"]
+fun loop {
+	for fruit in @var.items { echo "@var.fruit" }
+}
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "loop")
+	assert.Contains(t, output, "apple")
+	assert.Contains(t, output, "banana")
+	assert.Contains(t, output, "cherry")
+}
+
+func TestE2EMeta_RetryTimeout(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+@timeout("5s")
+@retry(2)
+fun flaky = test -f /nonexistent || echo "success"
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "flaky")
+	assert.Contains(t, output, "success")
+}
+
+func TestE2EMeta_ParallelWithRetry(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	testFile := createE2ETestFile(t, `
+@parallel
+fun multi = (
+	@retry(2) { echo "A" }
+	@retry(2) { echo "B" }
+)
+`)
+	output := runE2E(t, opalBin, "-f", testFile, "multi")
+	assert.Contains(t, output, "A")
+	assert.Contains(t, output, "B")
 }
