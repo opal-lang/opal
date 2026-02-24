@@ -306,6 +306,8 @@ func (l *Lexer) fillBuffer() {
 	// See OBSERVABILITY.md for integration guidance
 	if l.telemetryMode >= TelemetryTiming {
 		_ = time.Since(start)
+	}
+
 }
 
 // nextToken returns the next token from the input (internal implementation)
