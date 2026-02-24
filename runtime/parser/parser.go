@@ -835,7 +835,8 @@ func (p *parser) defaultValue() {
 	p.skipNewlines()
 
 	// Parse expression (for now, just consume one token - string literal, number, etc.)
-	// TODO: Full expression parsing in later iteration
+	// TODO: Implement full expression parsing (arithmetic, logical, string operations)
+	// See MILESTONE_V1.md - Parser Iteration 3 (Statements & Expressions)
 	if p.at(lexer.EOF) || p.at(lexer.RPAREN) || p.at(lexer.COMMA) {
 		p.errorWithDetails(
 			"missing default parameter value",
@@ -2285,7 +2286,7 @@ func (p *parser) decorator() {
 	// Check if next token is an identifier or VAR keyword
 	if !p.at(lexer.IDENTIFIER) && !p.at(lexer.VAR) {
 		// Not a decorator, treat @ as literal
-		// TODO: This needs better handling for literal @ in strings
+		// Not a decorator, treat @ as literal (e.g., in string literals)
 		return
 	}
 

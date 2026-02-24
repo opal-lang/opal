@@ -1,0 +1,5 @@
+fun test_and = echo "A" && echo "B"
+fun test_or = echo "A" || echo "B"
+fun test_or_fallback = false || echo "fallback"
+fun test_sequence = echo "first" ; echo "second"
+fun test_complex = echo "A" && echo "B" || echo "C"

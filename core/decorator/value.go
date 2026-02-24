@@ -68,7 +68,9 @@ type ResolvedValue struct {
 	Value any
 
 	// Handle is the secret handle for scrubbing (nil if not a secret)
-	Handle any // TODO: Replace with actual *secret.Handle type in Phase 2
+	// Handle is the secret handle for scrubbing (nil if not a secret)
+	// TODO: Replace with actual *secret.Handle type for v1.0 (see MILESTONE_V1.md lines 206-219)
+	Handle any
 
 	// DisplayID is the deterministic secret ID (e.g., "opal:s:3J98t56A")
 	DisplayID string

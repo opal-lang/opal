@@ -1,0 +1,3 @@
+var name = "world"
+fun greet = echo "Hello @var.name!"
+fun env_check = echo "Home is @env.HOME"

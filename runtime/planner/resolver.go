@@ -2819,7 +2819,7 @@ func matchPattern(pattern *ExprIR, value any, getValue ValueLookup) bool {
 	}
 
 	// Simple equality check for now
-	// TODO: Support regex, ranges, etc.
+	// TODO: Support advanced pattern matching: regex, ranges, glob (post-v1.0)
 	return compareEqual(patternValue, value)
 }
 

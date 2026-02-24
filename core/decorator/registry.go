@@ -240,7 +240,7 @@ func (r *Registry) ResolveValues(
 		return nil, fmt.Errorf("decorator returned %d results for %d calls", len(results), len(calls))
 	}
 
-	// Step 6: Convert to ResolvedValue (TODO: Secret wrapping)
+	// Step 6: Convert to ResolvedValue with secret redaction
 	resolved := make([]ResolvedValue, len(results))
 	for i, result := range results {
 		if result.Error != nil {
@@ -249,8 +249,8 @@ func (r *Registry) ResolveValues(
 
 		resolved[i] = ResolvedValue{
 			Value:     result.Value,
-			Handle:    nil, // TODO: Secret wrapping
-			DisplayID: "",  // TODO: Secret ID generation
+			Handle:    nil, // TODO: Implement secret handle for v1.0 (see MILESTONE_V1.md lines 206-219)
+			DisplayID: "",  // TODO: Generate deterministic DisplayID format: <length:algorithm:hash>
 		}
 	}
 

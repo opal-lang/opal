@@ -1,0 +1,11 @@
+@retry(2)
+fun retry_test = false
+
+@timeout("1s")
+fun timeout_test = sleep 10
+
+@parallel
+fun parallel_test = (
+    echo "A"
+    echo "B"
+)

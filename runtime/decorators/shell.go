@@ -143,7 +143,7 @@ func (d *ShellDecorator) IOCaps() decorator.IOCaps {
 		Read:   true,  // < file.txt
 		Write:  true,  // > file.txt
 		Append: true,  // >> file.txt
-		Atomic: false, // TODO: implement atomic writes via temp + rename
+		Atomic: false, // TODO: Implement atomic writes via temp + rename (post-v1.0)
 	}
 }
 

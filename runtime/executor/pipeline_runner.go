@@ -83,6 +83,7 @@ func (e *executor) executePipelineIO(execCtx sdk.ExecutionContext, pipeline *sdk
 
 	wg.Wait()
 
-	// TODO: Store PIPESTATUS in telemetry for debugging.
+	// TODO: Store PIPESTATUS (all exit codes) in telemetry for debugging (post-v1.0)
+	// See OBSERVABILITY.md for telemetry integration guidance
 	return exitCodes[numCommands-1]
 }
