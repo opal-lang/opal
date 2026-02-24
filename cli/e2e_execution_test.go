@@ -234,7 +234,7 @@ func TestE2EConsistency_DirectVsContract(t *testing.T) {
 	cmd := exec.Command(opalBin, "-f", testFile, "hello", "--dry-run", "--resolve")
 	planData, err := cmd.Output()
 	require.NoError(t, err)
-	os.WriteFile(planFile, planData, 0o644)
+	require.NoError(t, os.WriteFile(planFile, planData, 0o644))
 
 	contractOutput := runE2E(t, opalBin, "--plan", planFile, "-f", testFile)
 
@@ -265,7 +265,7 @@ func TestE2EConsistency_ResolvedPlan(t *testing.T) {
 	assert.Greater(t, len(planData), 4, "Plan should have magic bytes")
 	assert.Equal(t, "OPAL", string(planData[0:4]), "Plan should start with OPAL magic")
 
-	os.WriteFile(planFile, planData, 0o644)
+	require.NoError(t, os.WriteFile(planFile, planData, 0o644))
 
 	output := runE2E(t, opalBin, "--plan", planFile, "-f", testFile)
 	assert.Equal(t, "Hello\n", output)
