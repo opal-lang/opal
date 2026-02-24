@@ -609,5 +609,4 @@ func (v *semanticValidator) validateDecoratorParameters() {
 	//   3. Validate against schemas using core/decorator validator
 	//   4. Generate rich error messages
 	//
-
 }
