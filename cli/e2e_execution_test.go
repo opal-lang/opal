@@ -90,17 +90,6 @@ func runE2EExpectError(t *testing.T, opalBin string, args ...string) (stderr str
 	return ""
 }
 
-func loadE2EFixture(t *testing.T, name string) string {
-	t.Helper()
-
-	fixturePath := filepath.Join("..", "testdata", "e2e", name)
-	content, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("failed to load fixture %s: %v", name, err)
-	}
-
-	return string(content)
-}
 
 func TestE2EPlaceholder(t *testing.T) {
 	opalBin := buildE2EBinary(t)
