@@ -90,7 +90,6 @@ func runE2EExpectError(t *testing.T, opalBin string, args ...string) (stderr str
 	return ""
 }
 
-
 func TestE2EPlaceholder(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	assert.FileExists(t, opalBin)
@@ -280,7 +279,10 @@ func TestE2ERedirect_Overwrite(t *testing.T) {
 fun write = echo "Hello" > %s
 `, outFile))
 	runE2E(t, opalBin, "-f", testFile, "write")
-	data, _ := os.ReadFile(outFile)
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
 	assert.Equal(t, "Hello\n", string(data))
 }
 
@@ -292,7 +294,10 @@ func TestE2ERedirect_Append(t *testing.T) {
 fun write = echo "Hello" > %s; echo "World" >> %s
 `, outFile, outFile))
 	runE2E(t, opalBin, "-f", testFile, "write")
-	data, _ := os.ReadFile(outFile)
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
 	assert.Equal(t, "Hello\nWorld\n", string(data))
 }
 
@@ -368,9 +373,10 @@ fun test = echo "Hello @var.name!"
 func TestE2EDecorator_Retry(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
-	fun flaky = @retry(times=3, delay=100ms) { echo "attempt"; false; }
-  echo "attempt"
-  exit 1
+fun flaky {
+    @retry(delay=100ms, times=3) {
+        exit 1
+    }
 }
 `)
 	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "flaky")
@@ -380,9 +386,11 @@ func TestE2EDecorator_Retry(t *testing.T) {
 func TestE2EDecorator_Timeout(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
-	fun slow = @timeout(duration="1s") { sleep 10; }
-	  sleep 10
-	}
+fun slow {
+    @timeout(1s) {
+        sleep 10
+    }
+}
 `)
 	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "slow")
 	assert.Contains(t, stderr, "timeout")
@@ -391,11 +399,13 @@ func TestE2EDecorator_Timeout(t *testing.T) {
 func TestE2EDecorator_Parallel(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
-fun concurrent = @parallel { echo "Task A"; echo "Task B"; echo "Task C"; }
-	  echo "Task A"
-	  echo "Task B"
-	  echo "Task C"
-	}
+fun concurrent {
+    @parallel {
+        echo "Task A"
+        echo "Task B"
+        echo "Task C"
+    }
+}
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "concurrent")
 	assert.Contains(t, output, "Task A")

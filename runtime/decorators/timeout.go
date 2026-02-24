@@ -69,7 +69,7 @@ func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 
 	result, execErr := n.next.Execute(ctx.WithContext(timeoutCtx))
 	if timeoutCtx.Err() != nil {
-		return decorator.Result{ExitCode: decorator.ExitCanceled}, timeoutCtx.Err()
+		return decorator.Result{ExitCode: decorator.ExitCanceled}, fmt.Errorf("timeout: execution exceeded %s", cfg.Duration)
 	}
 
 	return result, execErr
