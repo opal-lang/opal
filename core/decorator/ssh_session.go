@@ -564,7 +564,6 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	}
 
 	// Try to load known_hosts file using stdlib
-	// Try to load known_hosts file using stdlib
 	callback, err := knownhosts.New(knownHostsPath)
 	if err != nil {
 		// Fail closed: reject connection if host-key verification cannot be established

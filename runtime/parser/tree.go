@@ -602,8 +602,12 @@ func (v *semanticValidator) validateDecoratorParameters() {
 	// Phase 5: Validate literal values (int, string, bool, duration, enum)
 	// Skip variables and expressions (validated at runtime)
 
-	// TODO: Extract decorator calls from events
-	// TODO: Extract literal parameter values
-	// TODO: Validate against schemas using core/types validator
-	// TODO: Generate rich error messages
+	// TODO: Implement decorator parameter validation (post-v1.0)
+	// Requirements:
+	//   1. Extract decorator calls from events
+	//   2. Extract literal parameter values (int, string, bool, duration, enum)
+	//   3. Validate against schemas using core/decorator validator
+	//   4. Generate rich error messages
+	//
+
 }

@@ -2286,7 +2286,7 @@ func (p *parser) decorator() {
 	// Check if next token is an identifier or VAR keyword
 	if !p.at(lexer.IDENTIFIER) && !p.at(lexer.VAR) {
 		// Not a decorator, treat @ as literal
-		// TODO: This needs better handling for literal @ in strings
+		// Not a decorator, treat @ as literal (e.g., in string literals)
 		return
 	}
 
