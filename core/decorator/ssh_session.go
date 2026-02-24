@@ -3,7 +3,6 @@ package decorator
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"net"
@@ -12,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/opal-lang/opal/core/invariant"
 )
@@ -24,46 +24,64 @@ type SSHSession struct {
 
 // NewSSHSession creates a new SSH session from connection parameters.
 func NewSSHSession(params map[string]any) (*SSHSession, error) {
-	host, ok := params["host"].(string)
-	if !ok {
-		return nil, fmt.Errorf("host parameter required")
+	host, user, port, err := validateSSHParams(params)
+	if err != nil {
+		return nil, err
 	}
 
-	user, ok := params["user"].(string)
+	authMethods := buildSSHAuthMethods(params)
+	hostKeyCallback := getHostKeyCallback(params)
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: hostKeyCallback,
+	}
+
+	client, err := connectSSH(host, port, config)
+	if err != nil {
+		return nil, err
+	}
+	return &SSHSession{
+		client: client,
+		host:   host,
+	}, nil
+}
+
+func validateSSHParams(params map[string]any) (host, user string, port int, err error) {
+	host, ok := params["host"].(string)
+	if !ok {
+		return "", "", 0, fmt.Errorf("host parameter required")
+	}
+
+	user, ok = params["user"].(string)
 	if !ok {
 		user = os.Getenv("USER")
 	}
 
-	port := 22
+	port = 22
 	switch v := params["port"].(type) {
 	case int:
 		port = v
 	case int64:
 		port = int(v)
 	}
-
-	// Validate host
 	if host == "" || strings.TrimSpace(host) == "" {
-		return nil, TransportError{
+		return "", "", 0, TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   "SSH host cannot be empty",
 			Retryable: false,
 		}
 	}
-
-	// Validate port range (1-65535)
 	if port < 1 || port > 65535 {
-		return nil, TransportError{
+		return "", "", 0, TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   fmt.Sprintf("SSH port must be between 1 and 65535, got %d", port),
 			Retryable: false,
 		}
 	}
-
-	// Validate key file if provided as string path
 	if keyStr, ok := params["key"].(string); ok && keyStr != "" {
 		if _, err := os.Stat(keyStr); err != nil {
-			return nil, TransportError{
+			return "", "", 0, TransportError{
 				Code:      TransportErrorCodeValidationFailed,
 				Message:   fmt.Sprintf("SSH key file not accessible: %v", err),
 				Retryable: false,
@@ -72,37 +90,28 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		}
 	}
 
-	// Create SSH client config
-	var authMethods []ssh.AuthMethod
+	return host, user, port, nil
+}
 
-	// Try direct signer first (for testing)
+func buildSSHAuthMethods(params map[string]any) []ssh.AuthMethod {
+	var authMethods []ssh.AuthMethod
 	switch key := params["key"].(type) {
 	case ssh.Signer:
 		authMethods = append(authMethods, ssh.PublicKeys(key))
 	case string:
-		// Try keyfile auth if string path provided
 		if keyAuth := sshKeyAuth(key); keyAuth != nil {
 			authMethods = append(authMethods, keyAuth)
 		}
 	}
-
-	// Fall back to SSH agent
 	if len(authMethods) == 0 {
 		if agentAuth := sshAgentAuth(); agentAuth != nil {
 			authMethods = append(authMethods, agentAuth)
 		}
 	}
+	return authMethods
+}
 
-	// Host key verification
-	hostKeyCallback := getHostKeyCallback(params)
-
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCallback,
-	}
-
-	// Connect
+func connectSSH(host string, port int, config *ssh.ClientConfig) (*ssh.Client, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
@@ -113,11 +122,7 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 			Cause:     err,
 		}
 	}
-
-	return &SSHSession{
-		client: client,
-		host:   host,
-	}, nil
+	return client, nil
 }
 
 // Run executes a command on the remote host.
@@ -558,8 +563,9 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 		knownHostsPath = path
 	}
 
-	// Try to load known_hosts file
-	callback, err := loadKnownHosts(knownHostsPath)
+	// Try to load known_hosts file using stdlib
+	// Try to load known_hosts file using stdlib
+	callback, err := knownhosts.New(knownHostsPath)
 	if err != nil {
 		// Fail closed: reject connection if host-key verification cannot be established
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -568,65 +574,6 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	}
 
 	return callback
-}
-
-func loadKnownHosts(path string) (ssh.HostKeyCallback, error) {
-	// Read known_hosts file
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse known_hosts
-	knownHosts := make(map[string]ssh.PublicKey)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Parse line: hostname key-type key-data
-		parts := strings.Fields(line)
-		if len(parts) < 3 {
-			continue
-		}
-
-		hostname := parts[0]
-		keyType := parts[1]
-		keyData := parts[2]
-
-		// Decode base64 key
-		keyBytes, err := base64.StdEncoding.DecodeString(keyData)
-		if err != nil {
-			continue
-		}
-
-		pubKey, err := ssh.ParsePublicKey(keyBytes)
-		if err != nil {
-			continue
-		}
-
-		knownHosts[hostname+":"+keyType] = pubKey
-	}
-
-	// Return callback that checks against known_hosts
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		// Build lookup key
-		lookupKey := hostname + ":" + key.Type()
-
-		// Check if host key is known
-		knownKey, ok := knownHosts[lookupKey]
-		if !ok {
-			return fmt.Errorf("host key not found in known_hosts: %s", hostname)
-		}
-
-		// Compare keys
-		if !bytes.Equal(key.Marshal(), knownKey.Marshal()) {
-			return fmt.Errorf("host key mismatch for %s", hostname)
-		}
-
-		return nil
-	}, nil
 }
 
 func sshKeyAuth(keyPath string) ssh.AuthMethod {

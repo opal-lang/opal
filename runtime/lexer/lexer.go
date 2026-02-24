@@ -302,10 +302,10 @@ func (l *Lexer) fillBuffer() {
 	}
 
 	// Update timing (accumulate across buffer fills)
+	// Timing telemetry not yet implemented (telemetryMode flag ready for future use)
+	// See OBSERVABILITY.md for integration guidance
 	if l.telemetryMode >= TelemetryTiming {
-		// TODO: Implement buffer-level timing telemetry
 		_ = time.Since(start)
-	}
 }
 
 // nextToken returns the next token from the input (internal implementation)

@@ -55,7 +55,7 @@ func (rd *Reader) ReadPlan() (*Plan, [32]byte, error) {
 		return nil, [32]byte{}, fmt.Errorf("unsupported flags: 0x%04x (unknown bits: 0x%04x)", flags, flags&^knownFlags)
 	}
 
-	// TODO: Implement compression and signature verification
+	// TODO: Implement compression and signature verification (post-v1.0)
 	if flags&FlagCompressed != 0 {
 		return nil, [32]byte{}, fmt.Errorf("compressed plans not yet supported")
 	}

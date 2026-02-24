@@ -835,7 +835,8 @@ func (p *parser) defaultValue() {
 	p.skipNewlines()
 
 	// Parse expression (for now, just consume one token - string literal, number, etc.)
-	// TODO: Full expression parsing in later iteration
+	// TODO: Implement full expression parsing (arithmetic, logical, string operations)
+	// See MILESTONE_V1.md - Parser Iteration 3 (Statements & Expressions)
 	if p.at(lexer.EOF) || p.at(lexer.RPAREN) || p.at(lexer.COMMA) {
 		p.errorWithDetails(
 			"missing default parameter value",
