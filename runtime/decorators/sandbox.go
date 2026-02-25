@@ -521,8 +521,4 @@ func init() {
 		}
 		os.Exit(0)
 	}
-
-	if err := decorator.Register("sandbox", &SandboxTransportDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @sandbox decorator: %v", err))
-	}
 }

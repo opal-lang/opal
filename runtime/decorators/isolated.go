@@ -143,9 +143,3 @@ func (s *isolatedSession) TransportScope() decorator.TransportScope {
 func (s *isolatedSession) Close() error {
 	return nil
 }
-
-func init() {
-	if err := decorator.Register("isolated", &IsolatedTransportDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @isolated decorator: %v", err))
-	}
-}
