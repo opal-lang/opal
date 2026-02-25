@@ -123,6 +123,8 @@ type Capabilities struct {
 	// TransportScope defines where this decorator can be used
 	TransportScope TransportScope
 
+	SupportedOS []string
+
 	// TransportSensitive marks values as tied to the transport where they were resolved.
 	// When true, values cannot cross transport boundaries (e.g., local to SSH).
 	// Default: false
@@ -142,6 +144,20 @@ type Capabilities struct {
 
 	// IO describes I/O behavior for pipe and redirect operators
 	IO IOSemantics
+}
+
+func (c *Capabilities) IsSupportedOn(os string) bool {
+	if c == nil || len(c.SupportedOS) == 0 {
+		return true
+	}
+
+	for _, supported := range c.SupportedOS {
+		if supported == os {
+			return true
+		}
+	}
+
+	return false
 }
 
 // BlockRequirement specifies whether a decorator accepts/requires a block
