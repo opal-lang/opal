@@ -61,6 +61,10 @@ func (s *sessionCallTracker) Cwd() string {
 	return s.delegate.Cwd()
 }
 
+func (s *sessionCallTracker) Platform() string {
+	return ""
+}
+
 func (s *sessionCallTracker) ID() string {
 	return s.sessionID
 }

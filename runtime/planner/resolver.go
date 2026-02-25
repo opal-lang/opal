@@ -2371,6 +2371,9 @@ func (r *Resolver) collectExprForVar(expr *ExprIR, exprID, varName string) {
 	}
 
 	if expr.Kind == ExprDecoratorRef {
+		if !r.validateDecoratorPlatform(expr) {
+			return
+		}
 		if !r.checkEnvAllowed(expr) {
 			return
 		}
@@ -2430,6 +2433,9 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 		// when the variable was declared. If not, it will fail during evaluation.
 
 	case ExprDecoratorRef:
+		if !r.validateDecoratorPlatform(expr) {
+			return
+		}
 		if !r.checkEnvAllowed(expr) {
 			return
 		}
@@ -2481,6 +2487,26 @@ func (r *Resolver) checkEnvAllowed(expr *ExprIR) bool {
 		Span:    expr.Span,
 	})
 	return false
+}
+
+func (r *Resolver) validateDecoratorPlatform(expr *ExprIR) bool {
+	if expr == nil || expr.Decorator == nil {
+		return true
+	}
+	platform := ""
+	if r.session != nil {
+		platform = r.session.Platform()
+	}
+
+	if err := decorator.Global().ValidatePlatform(expr.Decorator.Name, platform); err != nil {
+		r.errors = append(r.errors, &EvalError{
+			Message: err.Error(),
+			Span:    expr.Span,
+		})
+		return false
+	}
+
+	return true
 }
 
 func (r *Resolver) checkTransportBoundaryCommand(cmd *CommandStmtIR) error {

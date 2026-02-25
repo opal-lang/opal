@@ -45,6 +45,10 @@ type Session interface {
 	// Used to enforce decorator transport-scope guards
 	TransportScope() TransportScope
 
+	// Platform returns the target OS for this session.
+	// Returns: "linux", "darwin", "windows", etc.
+	Platform() string
+
 	// Close cleans up the session
 	Close() error
 }

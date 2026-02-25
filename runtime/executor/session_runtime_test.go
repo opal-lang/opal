@@ -170,6 +170,10 @@ func (s *testSSHSession) Cwd() string {
 	return s.parent.Cwd()
 }
 
+func (s *testSSHSession) Platform() string {
+	return ""
+}
+
 func (s *testSSHSession) ID() string {
 	return "ssh:probe"
 }

@@ -132,6 +132,10 @@ func (s *isolatedSession) Cwd() string {
 	return s.parent.Cwd()
 }
 
+func (s *isolatedSession) Platform() string {
+	return s.parent.Platform()
+}
+
 func (s *isolatedSession) ID() string {
 	return s.parent.ID() + "/isolated"
 }

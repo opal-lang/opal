@@ -147,6 +147,10 @@ type Capabilities struct {
 }
 
 func (c *Capabilities) IsSupportedOn(os string) bool {
+	if os == "" {
+		return true
+	}
+
 	if c == nil || len(c.SupportedOS) == 0 {
 		return true
 	}

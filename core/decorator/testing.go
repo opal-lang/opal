@@ -117,6 +117,10 @@ func (m *MonitoredSession) TransportScope() TransportScope {
 	return m.wrapped.TransportScope()
 }
 
+func (m *MonitoredSession) Platform() string {
+	return ""
+}
+
 func (m *MonitoredSession) Close() error {
 	m.stats.mu.Lock()
 	m.stats.CloseCalls++
@@ -293,6 +297,10 @@ func (s *testTransportSession) ID() string {
 
 func (s *testTransportSession) TransportScope() TransportScope {
 	return s.scope
+}
+
+func (s *testTransportSession) Platform() string {
+	return ""
 }
 
 func (s *testTransportSession) Close() error {
