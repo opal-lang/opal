@@ -1,0 +1,8 @@
+# E2E fixture demonstrating isolation stacking
+# Stack network isolation with memory locking
+
+@isolated.network.loopback() {
+    @isolated.memory.lock() {
+        echo "isolated and locked"
+    }
+}
