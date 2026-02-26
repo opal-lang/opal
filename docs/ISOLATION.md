@@ -69,7 +69,7 @@ Locks process memory to prevent swapping. Useful for handling sensitive data tha
 }
 ```
 
-**Platform support:** Linux and macOS. Windows is a no-op (decorator succeeds but does not lock memory).
+**Platform support:** Linux and macOS only. Returns plan-time error on Windows.
 
 ---
 
@@ -84,7 +84,7 @@ Drops supplementary privileges from the process. Reduces attack surface by remov
 }
 ```
 
-**Platform support:** Linux and macOS. Windows is a no-op (decorator succeeds but does not modify privileges).
+**Platform support:** Linux and macOS only. Returns plan-time error on Windows.
 
 ---
 
@@ -95,8 +95,8 @@ Drops supplementary privileges from the process. Reduces attack surface by remov
 | `network.loopback` | Full support | Error | Error |
 | `filesystem.readonly` | Full support | Error | Error |
 | `filesystem.ephemeral` | Full support | Error | Error |
-| `memory.lock` | Full support | Full support | No-op |
-| `privileges.drop` | Full support | Full support | No-op |
+| `memory.lock` | Full support | Full support | Error |
+| `privileges.drop` | Full support | Full support | Error |
 
 **Legend:**
 - **Full support:** Isolation feature works as documented
