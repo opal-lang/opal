@@ -37,7 +37,7 @@ func (i *DarwinSandboxIsolator) Isolate(level decorator.IsolationLevel, config d
 }
 
 func (i *DarwinSandboxIsolator) DropNetwork() error {
-	return nil
+	return fmt.Errorf("network isolation on macOS requires sandbox-exec which must be applied at process spawn time")
 }
 
 func (i *DarwinSandboxIsolator) RestrictFilesystem(readOnly, writable []string) error {
