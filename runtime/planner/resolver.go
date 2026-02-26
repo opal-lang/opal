@@ -752,6 +752,15 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 
 	var restoreTransport string
 	if transportDec, desc, ok := lookupTransportDecorator(cmd.Decorator); ok {
+		platform := ""
+		if r.session != nil {
+			platform = r.session.Platform()
+		}
+		decoratorName := strings.TrimPrefix(cmd.Decorator, "@")
+		if err := decorator.Global().ValidatePlatform(decoratorName, platform); err != nil {
+			return err
+		}
+
 		params, err := evaluateArgs(cmd.Args, r.getValue)
 		if err != nil {
 			return err
@@ -2860,10 +2869,23 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 		Params: make(map[string]any),
 	}
 
-	// If there's a selector, use the first element as Primary
 	if len(d.Selector) > 0 {
-		primary := d.Selector[0]
-		call.Primary = &primary
+		fullPath := d.Name + "." + d.Selector[0]
+		if decorator.Global().IsRegistered(fullPath) {
+			call.Path = fullPath
+			if len(d.Selector) > 1 {
+				remaining := d.Selector[1:]
+				if len(remaining) == 1 && decorator.Global().IsRegistered(fullPath+"."+remaining[0]) {
+					call.Path = fullPath + "." + remaining[0]
+				} else {
+					primary := remaining[0]
+					call.Primary = &primary
+				}
+			}
+		} else {
+			primary := d.Selector[0]
+			call.Primary = &primary
+		}
 	}
 
 	for i, arg := range d.Args {

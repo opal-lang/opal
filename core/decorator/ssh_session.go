@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -294,7 +293,7 @@ func (s *SSHSession) TransportScope() TransportScope {
 // Platform returns the remote target OS for this SSH session.
 func (s *SSHSession) Platform() string {
 	if s.platform == "" {
-		return runtime.GOOS
+		return ""
 	}
 	return s.platform
 }
@@ -700,7 +699,7 @@ func detectRemotePlatform(client *ssh.Client) string {
 		return platform
 	}
 
-	return runtime.GOOS
+	return ""
 }
 
 func probeRemoteUname(client *ssh.Client) string {
