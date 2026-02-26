@@ -752,6 +752,15 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 
 	var restoreTransport string
 	if transportDec, desc, ok := lookupTransportDecorator(cmd.Decorator); ok {
+		platform := ""
+		if r.session != nil {
+			platform = r.session.Platform()
+		}
+		decoratorName := strings.TrimPrefix(cmd.Decorator, "@")
+		if err := decorator.Global().ValidatePlatform(decoratorName, platform); err != nil {
+			return err
+		}
+
 		params, err := evaluateArgs(cmd.Args, r.getValue)
 		if err != nil {
 			return err
@@ -2371,6 +2380,9 @@ func (r *Resolver) collectExprForVar(expr *ExprIR, exprID, varName string) {
 	}
 
 	if expr.Kind == ExprDecoratorRef {
+		if !r.validateDecoratorPlatform(expr) {
+			return
+		}
 		if !r.checkEnvAllowed(expr) {
 			return
 		}
@@ -2430,6 +2442,9 @@ func (r *Resolver) collectExpr(expr *ExprIR, exprID string) {
 		// when the variable was declared. If not, it will fail during evaluation.
 
 	case ExprDecoratorRef:
+		if !r.validateDecoratorPlatform(expr) {
+			return
+		}
 		if !r.checkEnvAllowed(expr) {
 			return
 		}
@@ -2481,6 +2496,26 @@ func (r *Resolver) checkEnvAllowed(expr *ExprIR) bool {
 		Span:    expr.Span,
 	})
 	return false
+}
+
+func (r *Resolver) validateDecoratorPlatform(expr *ExprIR) bool {
+	if expr == nil || expr.Decorator == nil {
+		return true
+	}
+	platform := ""
+	if r.session != nil {
+		platform = r.session.Platform()
+	}
+
+	if err := decorator.Global().ValidatePlatform(expr.Decorator.Name, platform); err != nil {
+		r.errors = append(r.errors, &EvalError{
+			Message: err.Error(),
+			Span:    expr.Span,
+		})
+		return false
+	}
+
+	return true
 }
 
 func (r *Resolver) checkTransportBoundaryCommand(cmd *CommandStmtIR) error {
@@ -2834,10 +2869,23 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 		Params: make(map[string]any),
 	}
 
-	// If there's a selector, use the first element as Primary
 	if len(d.Selector) > 0 {
-		primary := d.Selector[0]
-		call.Primary = &primary
+		fullPath := d.Name + "." + d.Selector[0]
+		if decorator.Global().IsRegistered(fullPath) {
+			call.Path = fullPath
+			if len(d.Selector) > 1 {
+				remaining := d.Selector[1:]
+				if len(remaining) == 1 && decorator.Global().IsRegistered(fullPath+"."+remaining[0]) {
+					call.Path = fullPath + "." + remaining[0]
+				} else {
+					primary := remaining[0]
+					call.Primary = &primary
+				}
+			}
+		} else {
+			primary := d.Selector[0]
+			call.Primary = &primary
+		}
 	}
 
 	for i, arg := range d.Args {

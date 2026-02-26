@@ -40,6 +40,10 @@ func (s *transportScopedSession) Cwd() string {
 	return s.session.Cwd()
 }
 
+func (s *transportScopedSession) Platform() string {
+	return s.session.Platform()
+}
+
 func (s *transportScopedSession) ID() string {
 	return s.id
 }

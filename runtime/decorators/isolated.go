@@ -132,6 +132,10 @@ func (s *isolatedSession) Cwd() string {
 	return s.parent.Cwd()
 }
 
+func (s *isolatedSession) Platform() string {
+	return s.parent.Platform()
+}
+
 func (s *isolatedSession) ID() string {
 	return s.parent.ID() + "/isolated"
 }
@@ -142,10 +146,4 @@ func (s *isolatedSession) TransportScope() decorator.TransportScope {
 
 func (s *isolatedSession) Close() error {
 	return nil
-}
-
-func init() {
-	if err := decorator.Register("isolated", &IsolatedTransportDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @isolated decorator: %v", err))
-	}
 }

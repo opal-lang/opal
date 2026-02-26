@@ -308,6 +308,10 @@ func (s *sandboxSession) Cwd() string {
 	return s.parent.Cwd()
 }
 
+func (s *sandboxSession) Platform() string {
+	return s.parent.Platform()
+}
+
 func (s *sandboxSession) ID() string {
 	return s.parent.ID() + sandboxIDSuffix
 }
@@ -520,9 +524,5 @@ func init() {
 			os.Exit(1)
 		}
 		os.Exit(0)
-	}
-
-	if err := decorator.Register("sandbox", &SandboxTransportDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @sandbox decorator: %v", err))
 	}
 }

@@ -645,6 +645,10 @@ func (m *mockSession) Cwd() string {
 	return "/test"
 }
 
+func (m *mockSession) Platform() string {
+	return ""
+}
+
 func (m *mockSession) ID() string {
 	return "local"
 }

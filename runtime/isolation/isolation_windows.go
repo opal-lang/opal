@@ -76,7 +76,7 @@ func (i *WindowsJobObjectIsolator) Isolate(level decorator.IsolationLevel, confi
 }
 
 func (i *WindowsJobObjectIsolator) DropNetwork() error {
-	return nil
+	return fmt.Errorf("network isolation on Windows requires Windows Filtering Platform (WFP) which requires administrator privileges")
 }
 
 func (i *WindowsJobObjectIsolator) RestrictFilesystem(readOnly, writable []string) error {

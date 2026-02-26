@@ -72,6 +72,21 @@ func (r *Registry) Lookup(path string) (Entry, bool) {
 	return entry, ok
 }
 
+// ValidatePlatform checks whether a decorator supports the given OS.
+func (r *Registry) ValidatePlatform(path, os string) error {
+	entry, ok := r.Lookup(path)
+	if !ok {
+		return nil
+	}
+
+	caps := entry.Impl.Descriptor().Capabilities
+	if !caps.IsSupportedOn(os) {
+		return fmt.Errorf("@%s is not supported on %s", path, os)
+	}
+
+	return nil
+}
+
 // IsRegistered checks if a decorator path is registered.
 func (r *Registry) IsRegistered(path string) bool {
 	r.mu.RLock()

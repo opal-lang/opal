@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/opal-lang/opal/core/invariant"
@@ -214,6 +215,11 @@ func (s *LocalSession) ID() string {
 // TransportScope returns the transport scope for local sessions.
 func (s *LocalSession) TransportScope() TransportScope {
 	return TransportScopeLocal
+}
+
+// Platform returns the local runtime OS.
+func (s *LocalSession) Platform() string {
+	return runtime.GOOS
 }
 
 // Close is a no-op for LocalSession (no resources to clean up).

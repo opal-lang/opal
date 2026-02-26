@@ -16,8 +16,8 @@ import (
 )
 
 func TestIsolatedDecoratorRegistered(t *testing.T) {
-	if !decorator.Global().IsRegistered("isolated") {
-		t.Fatal("built-in decorator 'isolated' should be registered")
+	if decorator.Global().IsRegistered("isolated") {
+		t.Error("decorator 'isolated' should NOT be registered - it's a namespace now")
 	}
 }
 

@@ -3,6 +3,7 @@ package decorator
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"net"
@@ -11,77 +12,59 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/opal-lang/opal/core/invariant"
 )
 
 // SSHSession implements Session for remote command execution over SSH.
 type SSHSession struct {
-	client *ssh.Client
-	host   string
+	client   *ssh.Client
+	host     string
+	platform string
 }
 
 // NewSSHSession creates a new SSH session from connection parameters.
 func NewSSHSession(params map[string]any) (*SSHSession, error) {
-	host, user, port, err := validateSSHParams(params)
-	if err != nil {
-		return nil, err
-	}
-
-	authMethods := buildSSHAuthMethods(params)
-	hostKeyCallback := getHostKeyCallback(params)
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCallback,
-	}
-
-	client, err := connectSSH(host, port, config)
-	if err != nil {
-		return nil, err
-	}
-	return &SSHSession{
-		client: client,
-		host:   host,
-	}, nil
-}
-
-func validateSSHParams(params map[string]any) (host, user string, port int, err error) {
 	host, ok := params["host"].(string)
 	if !ok {
-		return "", "", 0, fmt.Errorf("host parameter required")
+		return nil, fmt.Errorf("host parameter required")
 	}
 
-	user, ok = params["user"].(string)
+	user, ok := params["user"].(string)
 	if !ok {
 		user = os.Getenv("USER")
 	}
 
-	port = 22
+	port := 22
 	switch v := params["port"].(type) {
 	case int:
 		port = v
 	case int64:
 		port = int(v)
 	}
+
+	// Validate host
 	if host == "" || strings.TrimSpace(host) == "" {
-		return "", "", 0, TransportError{
+		return nil, TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   "SSH host cannot be empty",
 			Retryable: false,
 		}
 	}
+
+	// Validate port range (1-65535)
 	if port < 1 || port > 65535 {
-		return "", "", 0, TransportError{
+		return nil, TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   fmt.Sprintf("SSH port must be between 1 and 65535, got %d", port),
 			Retryable: false,
 		}
 	}
+
+	// Validate key file if provided as string path
 	if keyStr, ok := params["key"].(string); ok && keyStr != "" {
 		if _, err := os.Stat(keyStr); err != nil {
-			return "", "", 0, TransportError{
+			return nil, TransportError{
 				Code:      TransportErrorCodeValidationFailed,
 				Message:   fmt.Sprintf("SSH key file not accessible: %v", err),
 				Retryable: false,
@@ -90,28 +73,37 @@ func validateSSHParams(params map[string]any) (host, user string, port int, err 
 		}
 	}
 
-	return host, user, port, nil
-}
-
-func buildSSHAuthMethods(params map[string]any) []ssh.AuthMethod {
+	// Create SSH client config
 	var authMethods []ssh.AuthMethod
+
+	// Try direct signer first (for testing)
 	switch key := params["key"].(type) {
 	case ssh.Signer:
 		authMethods = append(authMethods, ssh.PublicKeys(key))
 	case string:
+		// Try keyfile auth if string path provided
 		if keyAuth := sshKeyAuth(key); keyAuth != nil {
 			authMethods = append(authMethods, keyAuth)
 		}
 	}
+
+	// Fall back to SSH agent
 	if len(authMethods) == 0 {
 		if agentAuth := sshAgentAuth(); agentAuth != nil {
 			authMethods = append(authMethods, agentAuth)
 		}
 	}
-	return authMethods
-}
 
-func connectSSH(host string, port int, config *ssh.ClientConfig) (*ssh.Client, error) {
+	// Host key verification
+	hostKeyCallback := getHostKeyCallback(params)
+
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: hostKeyCallback,
+	}
+
+	// Connect
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
@@ -122,7 +114,14 @@ func connectSSH(host string, port int, config *ssh.ClientConfig) (*ssh.Client, e
 			Cause:     err,
 		}
 	}
-	return client, nil
+
+	platform := detectRemotePlatform(client)
+
+	return &SSHSession{
+		client:   client,
+		host:     host,
+		platform: platform,
+	}, nil
 }
 
 // Run executes a command on the remote host.
@@ -291,6 +290,14 @@ func (s *SSHSession) TransportScope() TransportScope {
 	return TransportScopeSSH
 }
 
+// Platform returns the remote target OS for this SSH session.
+func (s *SSHSession) Platform() string {
+	if s.platform == "" {
+		return ""
+	}
+	return s.platform
+}
+
 func (s *SSHSession) IsolationContext() IsolationContext {
 	return nil
 }
@@ -382,6 +389,11 @@ func (s *SSHSessionWithEnv) ID() string {
 // TransportScope returns the transport scope, delegating to the base SSH session.
 func (s *SSHSessionWithEnv) TransportScope() TransportScope {
 	return s.base.TransportScope()
+}
+
+// Platform returns the remote target OS, delegating to the base SSH session.
+func (s *SSHSessionWithEnv) Platform() string {
+	return s.base.Platform()
 }
 
 func (s *SSHSessionWithEnv) Close() error {
@@ -563,8 +575,8 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 		knownHostsPath = path
 	}
 
-	// Try to load known_hosts file using stdlib
-	callback, err := knownhosts.New(knownHostsPath)
+	// Try to load known_hosts file
+	callback, err := loadKnownHosts(knownHostsPath)
 	if err != nil {
 		// Fail closed: reject connection if host-key verification cannot be established
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -573,6 +585,65 @@ func getHostKeyCallback(params map[string]any) ssh.HostKeyCallback {
 	}
 
 	return callback
+}
+
+func loadKnownHosts(path string) (ssh.HostKeyCallback, error) {
+	// Read known_hosts file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse known_hosts
+	knownHosts := make(map[string]ssh.PublicKey)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse line: hostname key-type key-data
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+
+		hostname := parts[0]
+		keyType := parts[1]
+		keyData := parts[2]
+
+		// Decode base64 key
+		keyBytes, err := base64.StdEncoding.DecodeString(keyData)
+		if err != nil {
+			continue
+		}
+
+		pubKey, err := ssh.ParsePublicKey(keyBytes)
+		if err != nil {
+			continue
+		}
+
+		knownHosts[hostname+":"+keyType] = pubKey
+	}
+
+	// Return callback that checks against known_hosts
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		// Build lookup key
+		lookupKey := hostname + ":" + key.Type()
+
+		// Check if host key is known
+		knownKey, ok := knownHosts[lookupKey]
+		if !ok {
+			return fmt.Errorf("host key not found in known_hosts: %s", hostname)
+		}
+
+		// Compare keys
+		if !bytes.Equal(key.Marshal(), knownKey.Marshal()) {
+			return fmt.Errorf("host key mismatch for %s", hostname)
+		}
+
+		return nil
+	}, nil
 }
 
 func sshKeyAuth(keyPath string) ssh.AuthMethod {
@@ -615,6 +686,76 @@ func parseEnv(output string) map[string]string {
 		}
 	}
 	return env
+}
+
+func detectRemotePlatform(client *ssh.Client) string {
+	platform := probeRemoteUname(client)
+	if platform != "" {
+		return platform
+	}
+
+	platform = probeRemoteWindowsVer(client)
+	if platform != "" {
+		return platform
+	}
+
+	return ""
+}
+
+func probeRemoteUname(client *ssh.Client) string {
+	session, err := client.NewSession()
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = session.Close() }()
+
+	var stdout bytes.Buffer
+	session.Stdout = &stdout
+	if err := session.Run("uname -s"); err != nil {
+		return ""
+	}
+
+	return normalizePlatform(stdout.String())
+}
+
+func probeRemoteWindowsVer(client *ssh.Client) string {
+	session, err := client.NewSession()
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = session.Close() }()
+
+	var stdout bytes.Buffer
+	session.Stdout = &stdout
+	if err := session.Run("cmd /C ver"); err != nil {
+		return ""
+	}
+
+	return normalizePlatform(stdout.String())
+}
+
+func normalizePlatform(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return ""
+	}
+
+	switch {
+	case strings.Contains(value, "linux"):
+		return "linux"
+	case strings.Contains(value, "darwin"):
+		return "darwin"
+	case strings.Contains(value, "windows"):
+		return "windows"
+	case strings.Contains(value, "freebsd"):
+		return "freebsd"
+	case strings.Contains(value, "openbsd"):
+		return "openbsd"
+	case strings.Contains(value, "netbsd"):
+		return "netbsd"
+	default:
+		return ""
+	}
 }
 
 func sshEnvDelta(params map[string]any) map[string]string {

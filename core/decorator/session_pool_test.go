@@ -270,6 +270,10 @@ func (m *mockSession) TransportScope() TransportScope {
 	return TransportScopeLocal
 }
 
+func (m *mockSession) Platform() string {
+	return ""
+}
+
 func (m *mockSession) Close() error {
 	m.closed = true
 	return nil

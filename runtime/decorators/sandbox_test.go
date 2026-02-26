@@ -15,8 +15,8 @@ import (
 )
 
 func TestSandboxDecoratorRegistered(t *testing.T) {
-	if !decorator.Global().IsRegistered("sandbox") {
-		t.Fatal("built-in decorator 'sandbox' should be registered")
+	if decorator.Global().IsRegistered("sandbox") {
+		t.Error("decorator 'sandbox' should NOT be registered - it's a namespace now")
 	}
 }
 
