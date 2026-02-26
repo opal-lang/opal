@@ -20,7 +20,7 @@ func (d *NetworkLoopbackDecorator) Descriptor() decorator.Descriptor {
 		Block(decorator.BlockRequired).
 		Build()
 
-	desc.Capabilities.SupportedOS = []string{"linux", "darwin", "windows"}
+	desc.Capabilities.SupportedOS = []string{"linux"}
 
 	return desc
 }

@@ -2,7 +2,6 @@ package decorators
 
 import (
 	"fmt"
-	"runtime"
 
 	"github.com/opal-lang/opal/core/decorator"
 	"github.com/opal-lang/opal/core/types"
@@ -21,11 +20,15 @@ func (d *osGetDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-func (d *osGetDecorator) Resolve(_ decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+func (d *osGetDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
 	results := make([]decorator.ResolveResult, len(calls))
+	platform := ""
+	if ctx.Session != nil {
+		platform = ctx.Session.Platform()
+	}
 	for i := range calls {
 		results[i] = decorator.ResolveResult{
-			Value:  runtime.GOOS,
+			Value:  platform,
 			Origin: "@os.Get",
 		}
 	}
@@ -45,10 +48,14 @@ func (d *osLinuxDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-func (d *osLinuxDecorator) Resolve(_ decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+func (d *osLinuxDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
 	results := make([]decorator.ResolveResult, len(calls))
+	platform := ""
+	if ctx.Session != nil {
+		platform = ctx.Session.Platform()
+	}
 	value := "false"
-	if runtime.GOOS == "linux" {
+	if platform == "linux" {
 		value = "true"
 	}
 
@@ -74,10 +81,14 @@ func (d *osMacOSDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-func (d *osMacOSDecorator) Resolve(_ decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+func (d *osMacOSDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
 	results := make([]decorator.ResolveResult, len(calls))
+	platform := ""
+	if ctx.Session != nil {
+		platform = ctx.Session.Platform()
+	}
 	value := "false"
-	if runtime.GOOS == "darwin" {
+	if platform == "darwin" {
 		value = "true"
 	}
 
@@ -103,10 +114,14 @@ func (d *osWindowsDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
-func (d *osWindowsDecorator) Resolve(_ decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+func (d *osWindowsDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
 	results := make([]decorator.ResolveResult, len(calls))
+	platform := ""
+	if ctx.Session != nil {
+		platform = ctx.Session.Platform()
+	}
 	value := "false"
-	if runtime.GOOS == "windows" {
+	if platform == "windows" {
 		value = "true"
 	}
 
