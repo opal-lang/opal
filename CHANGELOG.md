@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-26
+- **Breaking**: Removed `@isolated(level=...)` and `@sandbox(level=...)` parameter-based decorators in favor of namespace approach
+- Added `@os.Get`, `@os.Linux`, `@os.macOS`, `@os.Windows` value decorators for platform detection
+- Added `@isolated.network.loopback()` decorator for loopback-only networking (Linux: namespace, macOS/Windows: explicit error)
+- Added `@isolated.filesystem.readonly()` decorator for read-only filesystem (Linux only)
+- Added `@isolated.filesystem.ephemeral()` decorator for limited writable areas (Linux only)
+- Added `@isolated.memory.lock()` decorator to prevent memory swapping (Linux/macOS, Windows no-op)
+- Added `@isolated.privileges.drop()` decorator to drop supplementary groups (Linux/macOS, Windows no-op)
+- Added plan-time platform validation with `Session.Platform()` for transport-aware OS detection
+- Added `SupportedOS` field to decorator Capabilities with `IsSupportedOn(os string) bool` method
+- Added `ValidatePlatform(path, os string) error` to decorator registry for plan-time validation
+- macOS `DropNetwork()` now returns explicit error explaining sandbox-exec process-spawn requirement
+- Windows `DropNetwork()` now returns explicit error explaining WFP admin requirement
+
+
 ### 2026-02-22
 - **Security**: Added IsolationContext interface for Linux namespace-based execution isolation with network drop, filesystem restriction, privilege dropping, and memory locking capabilities
 - **Security**: Added @isolated decorator for executing commands in isolated Linux namespaces with configurable isolation levels (none, basic, standard, maximum) and network policies (allow, deny, loopback)
