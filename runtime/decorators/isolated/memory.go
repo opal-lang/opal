@@ -42,10 +42,6 @@ func (d *MemoryLockDecorator) Open(parent decorator.Session, params map[string]a
 		MemoryLock:       true,
 	}
 
-	if parent.Platform() == "windows" {
-		return &memoryLockSession{parent: parent, isolator: isolator}, nil
-	}
-
 	if err := isolator.Isolate(decorator.IsolationLevelStandard, config); err != nil {
 		return nil, fmt.Errorf("failed to create memory-lock isolation: %w", err)
 	}
