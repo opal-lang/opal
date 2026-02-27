@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // TestByteAccounting verifies the byte-accounting invariant:

@@ -3,8 +3,8 @@ package decorator_test
 import (
 	"testing"
 
+	coredecorator "github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/google/go-cmp/cmp"
-	coredecorator "github.com/opal-lang/opal/core/decorator"
 )
 
 func TestSSHTransportRegistration(t *testing.T) {

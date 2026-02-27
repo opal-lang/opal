@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/crypto/blake2b"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 const (

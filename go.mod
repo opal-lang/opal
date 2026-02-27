@@ -1,3 +1,3 @@
-module github.com/opal-lang/opal
+module github.com/builtwithtofu/sigil
 
 go 1.25.0

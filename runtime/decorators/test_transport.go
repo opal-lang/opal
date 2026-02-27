@@ -3,7 +3,7 @@ package decorators
 import (
 	"fmt"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // Register @test.transport decorator with the global registry.

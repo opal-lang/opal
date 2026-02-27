@@ -1,9 +1,9 @@
 package executor
 
 import (
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 type blockNode struct {

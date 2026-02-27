@@ -16,7 +16,7 @@ These decorators use namespace-based isolation on Linux. Other platforms have li
 
 Executes commands with loopback-only network access. External network calls fail.
 
-```opal
+```sigil
 @isolated.network.loopback() {
     curl http://localhost:8080/health  # works
     curl https://external.api.com      # fails
@@ -31,7 +31,7 @@ Executes commands with loopback-only network access. External network calls fail
 
 Executes commands with read-only filesystem access. Write operations fail.
 
-```opal
+```sigil
 @isolated.filesystem.readonly() {
     cat /etc/config.yaml    # works
     echo "test" > /tmp/out  # fails
@@ -46,7 +46,7 @@ Executes commands with read-only filesystem access. Write operations fail.
 
 Executes commands with an ephemeral filesystem. Changes are discarded after the block completes.
 
-```opal
+```sigil
 @isolated.filesystem.ephemeral() {
     echo "temp data" > /tmp/tempfile
     cat /tmp/tempfile  # works, shows "temp data"
@@ -62,7 +62,7 @@ Executes commands with an ephemeral filesystem. Changes are discarded after the 
 
 Locks process memory to prevent swapping. Useful for handling sensitive data that should not be written to disk.
 
-```opal
+```sigil
 @isolated.memory.lock() {
     # Sensitive operations with secrets in memory
     decrypt-secrets --key @secret.api_key
@@ -77,7 +77,7 @@ Locks process memory to prevent swapping. Useful for handling sensitive data tha
 
 Drops supplementary privileges from the process. Reduces attack surface by removing unnecessary capabilities.
 
-```opal
+```sigil
 @isolated.privileges.drop() {
     # Run with minimal privileges
     process-user-data --input @var.data_file
@@ -109,7 +109,7 @@ Drops supplementary privileges from the process. Reduces attack surface by remov
 
 Isolation decorators can be nested to combine protections:
 
-```opal
+```sigil
 @isolated.network.loopback() {
     @isolated.memory.lock() {
         @isolated.privileges.drop() {

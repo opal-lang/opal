@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/sdk"
-	_ "github.com/opal-lang/opal/runtime/decorators"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/sdk"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/stretchr/testify/assert"
 )
 

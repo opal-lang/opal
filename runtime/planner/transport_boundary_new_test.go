@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"testing"
 
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/google/go-cmp/cmp"
-	_ "github.com/opal-lang/opal/runtime/decorators"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
 )
 
 func parsePlanNew(t *testing.T, source string, v *vault.Vault) (*PlanResult, error) {

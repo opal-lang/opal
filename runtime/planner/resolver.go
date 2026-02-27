@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 // Resolver processes an ExecutionGraph, resolving all expressions and determining

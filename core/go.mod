@@ -1,4 +1,4 @@
-module github.com/opal-lang/opal/core
+module github.com/builtwithtofu/sigil/core
 
 go 1.25.0
 

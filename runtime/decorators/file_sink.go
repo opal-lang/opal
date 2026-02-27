@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // FileSinkDecorator implements the @file decorator for file I/O operations.

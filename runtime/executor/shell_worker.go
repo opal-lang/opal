@@ -15,8 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 const (

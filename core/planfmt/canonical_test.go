@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // TestCanonicalFormByteStability verifies that canonical form is deterministic

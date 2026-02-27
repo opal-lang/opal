@@ -3,7 +3,7 @@ package decorators
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // resolveSingle is a test helper that calls Resolve with a single call and returns the result.

@@ -5,8 +5,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 // executePipelineIO executes a pipeline with optional stdin for the first command

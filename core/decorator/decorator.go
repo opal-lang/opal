@@ -1,6 +1,6 @@
 package decorator
 
-import "github.com/opal-lang/opal/core/types"
+import "github.com/builtwithtofu/sigil/core/types"
 
 // Role represents behavioral capabilities of a decorator.
 // Decorators can have multiple roles (e.g., @aws.s3.object is both Provider and Endpoint).

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/executor"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/executor"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 type executorScenario struct {

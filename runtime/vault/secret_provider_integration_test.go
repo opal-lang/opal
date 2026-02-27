@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/streamscrub"
+	"github.com/builtwithtofu/sigil/runtime/streamscrub"
 )
 
 // TestSecretProvider_VariableDeclaration tests that variables declared in Vault

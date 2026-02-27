@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
-	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
 func monitoredFactory() (sessionFactory, map[string]*decorator.SessionStats) {

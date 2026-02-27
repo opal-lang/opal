@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // DisplayIDResolver resolves display IDs in an execution transport context.

@@ -98,7 +98,7 @@ Error: <specific problem with types/constraints>
 #### Type Mismatch
 ```
 Error: parameter 'times' expects integer between 1 and 100, got string "not_a_number"
-  --> test.opl:1:15
+  --> test.sgl:1:15
    |
  1 | @retry(times="not_a_number") { echo "test" }
    |               ^^^^^^^^^^^^^^ expected integer, found string
@@ -109,7 +109,7 @@ Error: parameter 'times' expects integer between 1 and 100, got string "not_a_nu
 #### Range Violation
 ```
 Error: parameter 'times' value 200 exceeds maximum of 100
-  --> test.opl:1:15
+  --> test.sgl:1:15
    |
  1 | @retry(times=200) { echo "test" }
    |               ^^^ must be between 1 and 100
@@ -120,7 +120,7 @@ Error: parameter 'times' value 200 exceeds maximum of 100
 #### Invalid Enum Value
 ```
 Error: parameter 'backoff' has invalid value "invalid"
-  --> test.opl:1:17
+  --> test.sgl:1:17
    |
  1 | @retry(backoff="invalid") { echo "test" }
    |                 ^^^^^^^^^ must be one of: linear, exponential, constant
@@ -131,7 +131,7 @@ Error: parameter 'backoff' has invalid value "invalid"
 #### Missing Required Parameter
 ```
 Error: missing required parameter 'property'
-  --> test.opl:1:1
+  --> test.sgl:1:1
    |
  1 | @env
    |     ^ expected environment variable name
@@ -144,7 +144,7 @@ Error: missing required parameter 'property'
 #### Object Field Type Mismatch
 ```
 Error: object field 'timeout' expects duration, got integer 300
-  --> test.opl:1:30
+  --> test.sgl:1:30
    |
  1 | @config(settings={timeout: 300})
    |                            ^^^ expected duration like "5m", found integer
@@ -221,7 +221,7 @@ return fmt.Errorf(
 **Error codes are for programmatic handling, not human display:**
 - Store in `ParseError.Code` field ✅
 - Use for `--verbose` output ✅
-- Use for `opal explain <CODE>` command ✅
+- Use for `sigil explain <CODE>` command ✅
 - Use for IDE integration ✅
 - **Don't show in default error output** ❌
 
@@ -349,7 +349,7 @@ Error codes are stored in `ParseError.Code` for programmatic handling (LSP, tool
 **Example**:
 ```
 Error: parameter 'times' expects integer between 1 and 100, got string
-  --> test.opl:3:15
+  --> test.sgl:3:15
    |
  3 | @retry(times="not_a_number") {
    |               ^^^^^^^^^^^^^^
@@ -372,7 +372,7 @@ Error: parameter 'times' expects integer between 1 and 100, got string
 **Example**:
 ```
 Error: missing required parameter 'times'
-  --> test.opl:3:1
+  --> test.sgl:3:1
    |
  3 | @retry {
    | ^^^^^^
@@ -395,7 +395,7 @@ Error: missing required parameter 'times'
 **Example**:
 ```
 Error: parameter 'backoff' has invalid value "invalid"
-  --> test.opl:3:18
+  --> test.sgl:3:18
    |
  3 | @retry(backoff="invalid") {
    |                ^^^^^^^^^
@@ -418,7 +418,7 @@ Error: parameter 'backoff' has invalid value "invalid"
 **Example**:
 ```
 Warning: parameter 'strategy' value "old_name" is deprecated
-  --> test.opl:3:20
+  --> test.sgl:3:20
    |
  3 | @config(strategy="old_name") {
    |                  ^^^^^^^^^^
@@ -441,7 +441,7 @@ Warning: parameter 'strategy' value "old_name" is deprecated
 **Example**:
 ```
 Error: invalid value for parameter 'times'
-  --> test.opl:3:15
+  --> test.sgl:3:15
    |
  3 | @retry(times=200) {
    |               ^^^
@@ -464,7 +464,7 @@ Error: invalid value for parameter 'times'
 **Example**:
 ```
 Error: invalid value for parameter 'name'
-  --> test.opl:3:14
+  --> test.sgl:3:14
    |
  3 | @config(name="123-invalid") {
    |              ^^^^^^^^^^^^^
@@ -487,7 +487,7 @@ Error: invalid value for parameter 'name'
 **Example**:
 ```
 Error: invalid value for parameter 'endpoint'
-  --> test.opl:3:19
+  --> test.sgl:3:19
    |
  3 | @api(endpoint="not-a-uri") {
    |               ^^^^^^^^^^^^
@@ -513,7 +513,7 @@ Error: invalid value for parameter 'endpoint'
 **Example**:
 ```
 Error: invalid value for parameter 'times'
-  --> test.opl:3:15
+  --> test.sgl:3:15
    |
  3 | @retry(times=3.5) {
    |               ^^^
@@ -537,7 +537,7 @@ Error: invalid value for parameter 'times'
 **Example**:
 ```
 Error: invalid value for parameter 'name'
-  --> test.opl:3:14
+  --> test.sgl:3:14
    |
  3 | @config(name="ab") {
    |              ^^^^
@@ -560,7 +560,7 @@ Error: invalid value for parameter 'name'
 **Example**:
 ```
 Error: invalid value for parameter 'config'
-  --> test.opl:3:16
+  --> test.sgl:3:16
    |
  3 | @deploy(config={timeout: "5m", unknown: "value"}) {
    |                                ^^^^^^^^^^^^^^^^
@@ -584,7 +584,7 @@ Error: invalid value for parameter 'config'
 **Example**:
 ```
 Error: invalid value for parameter 'ports'
-  --> test.opl:3:15
+  --> test.sgl:3:15
    |
  3 | @expose(ports=[80, "443", 8080]) {
    |                    ^^^^^
@@ -607,7 +607,7 @@ Error: invalid value for parameter 'ports'
 **Example**:
 ```
 Error: object field 'timeout' expects duration, got integer
-  --> test.opl:3:16
+  --> test.sgl:3:16
    |
  3 | @config(settings={timeout: 300}) {
    |                            ^^^

@@ -1,14 +1,14 @@
 ---
-title: "Opal Testing Strategy"
+title: "Sigil Testing Strategy"
 audience: "Core Developers & Contributors"
 summary: "Systematic testing approach for contract-based operations"
 ---
 
-# Opal Testing Strategy
+# Sigil Testing Strategy
 
 **Goal: Ridiculously stable contract-based operations through systematic testing**
 
-**Audience**: Core developers and contributors implementing tests for the Opal runtime.
+**Audience**: Core developers and contributors implementing tests for the Sigil runtime.
 
 Build stability into the process, not just the code. Start with high-value tests that catch 80% of issues, then layer in comprehensive testing as the system matures.
 
@@ -51,9 +51,9 @@ func TestSecretNotLeakedInPlan(t *testing.T) {
     // Test that secrets are replaced with placeholders
     secret := secret.NewHandle("my-secret-password")
     
-    // Verify placeholder format: 🔒 opal:secret:ID
+    // Verify placeholder format: 🔒 sigil:secret:ID
     placeholder := secret.IDWithEmoji()
-    assert.Contains(t, placeholder, "🔒 opal:secret:")
+    assert.Contains(t, placeholder, "🔒 sigil:secret:")
     assert.NotContains(t, placeholder, "my-secret-password")
 }
 
@@ -66,7 +66,7 @@ func TestSecretNotLeakedInOutput(t *testing.T) {
     
     assert.NoError(t, err)
     assert.NotContains(t, string(output), "api-key-12345")
-    assert.Contains(t, string(output), "opal:secret:")
+    assert.Contains(t, string(output), "sigil:secret:")
 }
 
 func TestSecretNotLeakedInLogs(t *testing.T) {
@@ -332,7 +332,7 @@ func TestContractVerification(t *testing.T) {
                 errorMsg := getVerificationError(resolvedPlan, newPlan)
                 assert.Contains(t, errorMsg, "Expected:", "Error must show expected state")
                 assert.Contains(t, errorMsg, "Actual:", "Error must show actual state") 
-                assert.Contains(t, errorMsg, "Run 'opal plan", "Error must suggest remediation")
+                assert.Contains(t, errorMsg, "Run 'sigil plan", "Error must suggest remediation")
             }
         })
     }
@@ -1162,4 +1162,4 @@ As the system matures, add:
 - **PSE security testing**: Verify Plan Seed Envelope implementation
 - **Chaos engineering**: Randomly inject failures during soak tests
 
-This testing strategy ensures opal becomes ridiculously stable through systematic, incremental improvements while maintaining full alignment with the specification's contract verification model and architecture's plugin system design.
+This testing strategy ensures sigil becomes ridiculously stable through systematic, incremental improvements while maintaining full alignment with the specification's contract verification model and architecture's plugin system design.

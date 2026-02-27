@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // ParallelDecorator implements the @parallel execution decorator.

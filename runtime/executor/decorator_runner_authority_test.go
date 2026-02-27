@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	runtimedecorators "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
-	runtimedecorators "github.com/opal-lang/opal/runtime/decorators"
 )
 
 type shellSentinelDecorator struct{}

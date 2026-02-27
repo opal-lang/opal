@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-02-27
+- **Breaking**: Renamed project from "Opal" to "Sigil" and moved to builtwithtofu org
+- Changed module path from `github.com/opal-lang/opal` to `github.com/builtwithtofu/sigil`
+- Changed binary name from `opal` to `sigil`
+- Changed file extension from `.opl` to `.sgl`
+- Changed stream scrubber placeholder format from `opal:s:` to `sigil:s:`
+
 ### 2026-02-26
 - **Breaking**: Removed `@isolated(level=...)` and `@sandbox(level=...)` parameter-based decorators in favor of namespace approach
 - Added `@os.Get`, `@os.Linux`, `@os.macOS`, `@os.Windows` value decorators for platform detection

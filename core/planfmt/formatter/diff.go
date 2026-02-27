@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // DiffResult represents the differences between two plans.

@@ -1,10 +1,10 @@
 ---
-title: "AST Design for Opal"
+title: "AST Design for Sigil"
 audience: "Tooling Developers & LSP Implementers"
 summary: "Event-based parser implementation for execution and tooling"
 ---
 
-# AST Design for Opal
+# AST Design for Sigil
 
 **Goal**: Fast, resilient parser that supports LSP tooling and development tools.
 
@@ -14,7 +14,7 @@ summary: "Event-based parser implementation for execution and tooling"
 - [GRAMMAR.md](GRAMMAR.md) - Formal EBNF syntax specification
 - [ARCHITECTURE.md](ARCHITECTURE.md#dual-path-architecture-execution-vs-tooling) - Dual-path design rationale
 
-**Important**: The AST is **optional** and only built for tooling (LSP, formatters, linters). For execution, Opal generates plans directly from parser events without constructing an AST.
+**Important**: The AST is **optional** and only built for tooling (LSP, formatters, linters). For execution, Sigil generates plans directly from parser events without constructing an AST.
 
 ## Dual-Path Pipeline
 
@@ -69,7 +69,7 @@ type Position struct {
 
 ### Two-Path Design
 
-Opal's parser produces events that can be consumed in two ways:
+Sigil's parser produces events that can be consumed in two ways:
 
 **Path 1: Events → Plan (Execution)**
 - Direct event consumption by interpreter
@@ -626,7 +626,7 @@ func (i *Interpreter) generatePlan(events []Event) *ExecutionPlan {
 
 When conditionals are evaluated, only the selected branch is processed:
 
-```opal
+```sigil
 when @var.ENV {
     "production" -> kubectl apply -f k8s/prod/
     "staging" -> kubectl apply -f k8s/staging/
@@ -664,7 +664,7 @@ func (i *Interpreter) skipBranch(branch BranchInfo) {
 
 Loops expand into concrete steps by replaying body events:
 
-```opal
+```sigil
 for service in ["api", "worker"] {
     kubectl scale deployment/@var.service --replicas=3
 }
@@ -682,7 +682,7 @@ The interpreter captures loop body events once, then replays them for each itera
 
 Independent value decorators can resolve concurrently:
 
-```opal
+```sigil
 deploy: {
     @env.DATABASE_URL        # Resolve in parallel
     @aws.secret.api_key      # Resolve in parallel
@@ -771,11 +771,11 @@ func BenchmarkParser(b *testing.B) {
 ### Golden Tests
 ```
 tests/parser/golden/
-  simple.opl          → simple.events
-  errors.opl          → errors.events  (with error markers)
-  complex.opl         → complex.events
-  decorators.opl      → decorators.events
-  control_flow.opl    → control_flow.events
+  simple.sgl          → simple.events
+  errors.sgl          → errors.events  (with error markers)
+  complex.sgl         → complex.events
+  decorators.sgl      → decorators.events
+  control_flow.sgl    → control_flow.events
 ```
 
 Event format for golden tests:

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 // TestPreconditionPass verifies Precondition does not panic when condition is true

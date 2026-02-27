@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/opal-lang/opal/core/types"
+	"github.com/builtwithtofu/sigil/core/types"
 )
 
 // DeprecationInfo holds information about a deprecated parameter.

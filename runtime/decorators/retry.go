@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // RetryDecorator implements the @retry execution decorator.

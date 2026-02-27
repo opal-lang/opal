@@ -31,7 +31,7 @@ func buildE2EBinary(t *testing.T) string {
 func createE2ETestFile(t *testing.T, content string) string {
 	t.Helper()
 
-	tmpFile := filepath.Join(t.TempDir(), "test.opl")
+	tmpFile := filepath.Join(t.TempDir(), "test.sgl")
 	err := os.WriteFile(tmpFile, []byte(strings.TrimSpace(content)), 0o644)
 	require.NoError(t, err)
 

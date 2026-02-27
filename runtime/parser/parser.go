@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/types"
-	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/types"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
 // Parse parses the input bytes and returns a parse tree

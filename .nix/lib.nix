@@ -66,10 +66,10 @@ rec {
 
       processedContent = preProcess finalContent;
 
-      # Get opal binary
-      opalBin =
-        if self != null then self.packages.${system}.opal or self.packages.${system}.default
-        else throw "Self reference required for CLI generation. Cannot build '${name}' without opal parser.";
+      # Get sigil binary
+      sigilBin =
+        if self != null then self.packages.${system}.sigil or self.packages.${system}.default
+        else throw "Self reference required for CLI generation. Cannot build '${name}' without sigil parser.";
 
       # Create a shell script that checks for existing binary first
       cliScript = pkgs.writeShellScriptBin binaryName ''

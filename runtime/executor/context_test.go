@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 // Emitter transforms a resolved IR tree into a planfmt.Plan.

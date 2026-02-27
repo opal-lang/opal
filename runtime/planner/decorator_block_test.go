@@ -3,10 +3,10 @@ package planner
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register decorators for parser
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register decorators for parser
 )
 
 // Decorator Block Structure Tests

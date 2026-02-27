@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 )
 
 // TestVarDeclaration_SimpleString tests that a simple string variable is:

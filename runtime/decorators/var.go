@@ -3,8 +3,8 @@ package decorators
 import (
 	"fmt"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
 )
 
 // VarDecorator implements the @var value decorator for accessing plan-time variables.

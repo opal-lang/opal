@@ -3,8 +3,8 @@ package decorators
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

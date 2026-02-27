@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
 // Fuzz tests for parser determinism and robustness.

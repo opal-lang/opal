@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/sdk"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/sdk"
 )
 
 type testSink struct {

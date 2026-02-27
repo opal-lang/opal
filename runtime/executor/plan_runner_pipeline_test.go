@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
-	_ "github.com/opal-lang/opal/runtime/decorators"
 )
 
 func TestPlanPipelineReturnsLastCommandExitCode(t *testing.T) {

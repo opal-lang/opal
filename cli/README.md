@@ -1,15 +1,15 @@
 # CLI Module
 
-The `cli` module provides the command-line interface and main executable for opal.
+The `cli` module provides the command-line interface and main executable for sigil.
 
 ## Purpose
 
 This module contains the CLI application that users interact with:
 
-- **Main CLI Application**: The `opal` command-line tool
+- **Main CLI Application**: The `sigil` command-line tool
 - **Built-in Decorators**: Core decorator implementations
 - **Engine**: Execution engine for interpreter and generator modes
-- **Language Processing**: Lexer and parser for the opal language
+- **Language Processing**: Lexer and parser for the sigil language
 
 ## Key Components
 
@@ -42,8 +42,8 @@ This module contains the CLI application that users interact with:
 ## CLI Commands
 
 ### Main Commands
-- `opal <command>`: Execute a command from commands.cli
-- `opal version`: Show version information
+- `sigil <command>`: Execute a command from commands.cli
+- `sigil version`: Show version information
 
 ### Options  
 - `--dry-run`: Show execution plan without running
@@ -54,16 +54,16 @@ This module contains the CLI application that users interact with:
 
 ```bash
 # Run a command
-opal run build
+sigil run build
 
 # Dry-run to see execution plan
-opal run deploy --dry-run
+sigil run deploy --dry-run
 
 # Use custom commands file
-opal run test -f my-commands.cli
+sigil run test -f my-commands.cli
 
 # Show execution plan  
-opal build --dry-run
+sigil build --dry-run
 ```
 
 ## Architecture

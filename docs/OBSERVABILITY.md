@@ -1,14 +1,14 @@
 ---
-title: "Opal Observability"
+title: "Sigil Observability"
 audience: "Operators & DevOps Engineers"
 summary: "Tracing, artifacts, and debugging for production deployments"
 ---
 
-# Opal Observability
+# Sigil Observability
 
 **Making "what ran in prod" trivial**
 
-**Audience**: Operators, DevOps engineers, and SREs running Opal in production.
+**Audience**: Operators, DevOps engineers, and SREs running Sigil in production.
 
 The dual-end story is the clincher: **safe to review before** and **observable after**.
 
@@ -18,7 +18,7 @@ Answer "what ran, where it got to, and what changed" in seconds when prod is spi
 
 ## Integration Points
 
-Opal's observability model connects directly to the architecture:
+Sigil's observability model connects directly to the architecture:
 
 - **Run ID**: Unique identifier for each execution
 - **Plan Hash**: From [ARCHITECTURE.md](ARCHITECTURE.md) contract verification - ensures reviewed plan matches execution
@@ -54,28 +54,28 @@ Opal's observability model connects directly to the architecture:
 ### List and Filter
 ```bash
 # Recent prod runs
-opal runs list --env prod --target deploy --since 48h
+sigil runs list --env prod --target deploy --since 48h
 
 # Filter by plan (approved artifact → all executions)
-opal runs list --plan-hash 5f6c…
+sigil runs list --plan-hash 5f6c…
 
 # Grep for recurring issues
-opal runs grep --env prod --like "rollout status" --since 7d
+sigil runs grep --env prod --like "rollout status" --since 7d
 ```
 
 ### Inspect and Debug
 ```bash
 # Show run details (status, critical path, failing step)
-opal runs show run-2025-09-20T10:22:31Z-3f2a
+sigil runs show run-2025-09-20T10:22:31Z-3f2a
 
 # Open visual timeline
-opal runs open run-…            # Launches report.html
+sigil runs open run-…            # Launches report.html
 
 # Compare runs (or last success vs failure)  
-opal runs diff run-A run-B
+sigil runs diff run-A run-B
 
 # Stream failing step logs
-opal runs tail run-… --step main/verify/healthz
+sigil runs tail run-… --step main/verify/healthz
 ```
 
 ## OpenTelemetry Integration
@@ -84,7 +84,7 @@ opal runs tail run-… --step main/verify/healthz
 
 - **trace_id**: `hash(plan-hash + env + target)`
 - **span**: Each decorator/step (`kind=INTERNAL`)
-- **attributes**: `opal.env`, `opal.target`, `opal.step_path`, `exit_code`, `runner.id`
+- **attributes**: `sigil.env`, `sigil.target`, `sigil.step_path`, `exit_code`, `runner.id`
 - **events**: `retry {n, exit_code}`, `stderr_tail`
 - **status**: OK/ERROR with message
 
@@ -103,13 +103,13 @@ opal runs tail run-… --step main/verify/healthz
 
 ### 1. Triage
 ```bash
-opal runs list --env prod --target deploy --since 24h
+sigil runs list --env prod --target deploy --since 24h
 ```
 
 ### 2. Investigate
 ```bash
-opal runs show run-…     # See failing step + attempt history
-opal runs open run-…     # Visual timeline
+sigil runs show run-…     # See failing step + attempt history
+sigil runs open run-…     # Visual timeline
 ```
 
 ### 3. Correlate
@@ -118,12 +118,12 @@ opal runs open run-…     # Visual timeline
 
 ### 4. Compare
 ```bash
-opal runs diff run-fail run-ok    # Shows changed steps/args/env
+sigil runs diff run-fail run-ok    # Shows changed steps/args/env
 ```
 
 ### 5. Verify Safety
 ```bash
-opal verify plan.json --sig ...   # Confirm approved plan executed
+sigil verify plan.json --sig ...   # Confirm approved plan executed
 ```
 
 ## Data Structures
@@ -183,45 +183,45 @@ opal verify plan.json --sig ...   # Confirm approved plan executed
 ### Advanced Debugging
 ```bash
 # Stream logs for specific step
-opal runs tail run-… --step main/deploy/api
+sigil runs tail run-… --step main/deploy/api
 
 # Find patterns across runs  
-opal runs analyze --env prod --pattern "timeout" --since 30d
+sigil runs analyze --env prod --pattern "timeout" --since 30d
 
 # Export for external analysis
-opal runs export --env prod --format csv --since 7d
+sigil runs export --env prod --format csv --since 7d
 ```
 
 ### Security and Compliance
 ```bash
 # Audit trail
-opal runs audit --env prod --user alice --since 24h
+sigil runs audit --env prod --user alice --since 24h
 
 # Verify execution integrity
-opal runs verify run-… --cert prod.pem
+sigil runs verify run-… --cert prod.pem
 
 # Export compliance reports
-opal runs report --env prod --format sox --month 2025-01
+sigil runs report --env prod --format sox --month 2025-01
 ```
 
 ### Decorator Usage Tracking & Security Audit
-opal automatically tracks all value decorator and execution decorator usage for comprehensive security and performance audit:
+sigil automatically tracks all value decorator and execution decorator usage for comprehensive security and performance audit:
 
 ```bash
 # Complete decorator audit - see all value decorator and execution decorator usage
-opal runs audit-decorators --env prod --since 24h
-# Shows: @env.AWS_SECRET_KEY at deploy.opl:23, @shell("kubectl apply") at deploy.opl:45
+sigil runs audit-decorators --env prod --since 24h
+# Shows: @env.AWS_SECRET_KEY at deploy.sgl:23, @shell("kubectl apply") at deploy.sgl:45
 
 # Security-focused audit - track sensitive data access  
-opal runs audit-security --env prod --since 24h
+sigil runs audit-security --env prod --since 24h
 # Shows: @env.SECRET_*, @var.PROD_*, @file.*.key, @shell("sudo *")
 
 # Performance audit - find bottlenecks
-opal runs audit-performance --env prod --since 24h --slowest 10
+sigil runs audit-performance --env prod --since 24h --slowest 10
 # Shows: @shell("kubectl rollout status") avg 5.4s, @http("healthcheck") avg 2.1s
 
 # Compliance reporting - complete audit trail
-opal runs export-audit --env prod --format soc2 --month 2025-01
+sigil runs export-audit --env prod --format soc2 --month 2025-01
 # Generates: Complete decorator usage for SOC2/ISO27001 compliance
 ```
 
@@ -241,7 +241,7 @@ The telemetry system captures comprehensive value decorator and execution decora
     {
       "decorator": "@env", 
       "parameter": "AWS_SECRET_ACCESS_KEY",
-      "script": "deploy.opl",
+      "script": "deploy.sgl",
       "line": 23,
       "timestamp": "2025-09-20T14:32:15Z",
       "duration_ms": 0.1,
@@ -251,7 +251,7 @@ The telemetry system captures comprehensive value decorator and execution decora
     {
       "decorator": "@shell",
       "parameter": "kubectl apply -f k8s/",
-      "script": "deploy.opl", 
+      "script": "deploy.sgl", 
       "line": 45,
       "timestamp": "2025-09-20T14:32:18Z",
       "duration_ms": 1250,
@@ -261,7 +261,7 @@ The telemetry system captures comprehensive value decorator and execution decora
     {
       "decorator": "@http",
       "parameter": "https://api.internal/health",
-      "script": "verify.opl",
+      "script": "verify.sgl",
       "line": 12,
       "timestamp": "2025-09-20T14:32:20Z", 
       "duration_ms": 180,
@@ -287,7 +287,7 @@ The telemetry system captures comprehensive value decorator and execution decora
 
 ### Phase 2: Query Interface  
 - SQLite indexing
-- `opal runs` CLI commands
+- `sigil runs` CLI commands
 - HTML report generation
 
 ### Phase 3: Observability Integration
@@ -304,7 +304,7 @@ The telemetry system captures comprehensive value decorator and execution decora
 
 ### Local Development
 ```
-~/.opal/runs/
+~/.sigil/runs/
 ├── runs.db
 └── dev/
     └── deploy/
@@ -314,7 +314,7 @@ The telemetry system captures comprehensive value decorator and execution decora
 
 ### Production
 ```
-s3://company-opal-runs/
+s3://company-sigil-runs/
 ├── runs.db.gz          # Periodic snapshots
 └── prod/
     └── deploy/
@@ -329,7 +329,7 @@ s3://company-opal-runs/
 
 ## Why This Matters
 
-This observability design transforms opal from a deployment tool into a **deployment intelligence platform**:
+This observability design transforms sigil from a deployment tool into a **deployment intelligence platform**:
 
 - **Before**: Plan review and approval workflows
 - **During**: Live execution monitoring and debugging

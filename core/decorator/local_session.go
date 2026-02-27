@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 // LocalSession implements Session for local command execution.

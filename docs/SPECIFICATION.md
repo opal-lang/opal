@@ -1,20 +1,20 @@
 ---
-title: "Opal Language Specification"
+title: "Sigil Language Specification"
 audience: "End Users and Script Authors"
 summary: "Language semantics, execution contract, and operational guarantees"
 ---
 
-# Opal Language Specification
+# Sigil Language Specification
 
-Opal is a plan-first language for operational workflows.
+Sigil is a plan-first language for operational workflows.
 
-Opal authors write metaprogramming constructs that build an execution plan. The runtime executes shell commands and execution decorators from that plan.
+Sigil authors write metaprogramming constructs that build an execution plan. The runtime executes shell commands and execution decorators from that plan.
 
 See `docs/GRAMMAR.md` for formal EBNF syntax.
 
 ## 1. Language Boundary
 
-Opal has two semantic layers.
+Sigil has two semantic layers.
 
 - **Metaprogramming layer**: `fun`, function calls, `var`, `if`, `for`, `when`
 - **Execution layer**: shell commands, pipes, redirects, and execution decorators such as `@retry`, `@timeout`, and `@parallel`
@@ -29,7 +29,7 @@ This boundary is the core language meaning:
 
 ## 2. Program Lifecycle
 
-Opal execution follows a stable lifecycle.
+Sigil execution follows a stable lifecycle.
 
 1. **Parse** source into a syntax/event tree.
 2. **Plan** by resolving metaprogramming constructs and value dependencies.
@@ -46,7 +46,7 @@ A plan file is a verification target, not an executable artifact.
 
 ## 3. Program Forms and Modes
 
-Opal validation supports two top-level modes.
+Sigil validation supports two top-level modes.
 
 ### 3.1 Script mode
 
@@ -72,9 +72,9 @@ This mode models a task file where declarations define callable commands.
 
 ## 4.1 Variable declaration
 
-Opal supports single and grouped declarations.
+Sigil supports single and grouped declarations.
 
-```opal
+```sigil
 var service = "api"
 
 var (
@@ -85,19 +85,19 @@ var (
 
 ## 4.2 Variable usage
 
-Opal variable references use decorator syntax.
+Sigil variable references use decorator syntax.
 
-```opal
+```sigil
 kubectl scale deployment/@var.service --replicas=@var.replicas
 ```
 
-`${NAME}` is shell interpolation syntax and is not Opal variable syntax.
+`${NAME}` is shell interpolation syntax and is not Sigil variable syntax.
 
 ## 4.3 Naming style
 
 Variable names are case-sensitive identifiers.
 
-Opal does not enforce a casing convention. Teams choose their own naming style.
+Sigil does not enforce a casing convention. Teams choose their own naming style.
 
 Documentation examples use `lower_snake_case` for consistency.
 
@@ -157,7 +157,7 @@ Assignment updates the binding in scope.
 
 ## 5. Scope Semantics
 
-Opal uses lexical read visibility with isolation guarantees.
+Sigil uses lexical read visibility with isolation guarantees.
 
 ## 5.1 Block boundary semantics
 
@@ -197,7 +197,7 @@ Defining `fun` inside `if`, `for`, `when`, `try`, or decorator blocks fails pars
 
 ### 6.2 Declaration forms
 
-```opal
+```sigil
 fun greet(name String) = echo "hello @var.name"
 
 fun build(module String, target String = "dist") {
@@ -221,7 +221,7 @@ Defaults attach to parameters and validate against declared types.
 
 `struct` declarations define reusable object shapes for typed function parameters.
 
-```opal
+```sigil
 struct DeployConfig {
     env String
     retries Int = 3
@@ -246,7 +246,7 @@ Struct declarations are top-level declarations.
 
 `enum` declarations define global named value sets for typed function parameters and struct fields.
 
-```opal
+```sigil
 enum DeployStage String {
     Dev
     Prod = "production"
@@ -269,7 +269,7 @@ Enum declarations are top-level declarations.
 
 Enum member references are plan-time constants.
 
-```opal
+```sigil
 when @var.os {
     OS.Windows -> echo "running on Windows"
     OS.Linux -> echo "running on Linux"
@@ -280,7 +280,7 @@ when @var.os {
 
 Function calls use direct call syntax:
 
-```opal
+```sigil
 build(module="cli")
 ```
 
@@ -312,7 +312,7 @@ Cycle errors include deterministic call-path traces.
 
 Decorators are namespaced operations invoked with `@`.
 
-```opal
+```sigil
 @env.PORT(default=3000)
 @retry(attempts=3, delay=2s) { kubectl rollout status deployment/app }
 ```
@@ -358,7 +358,7 @@ Decorator references can appear in interpolated strings.
 
 When ASCII characters follow a decorator reference without spacing, use `()` to terminate the decorator name:
 
-```opal
+```sigil
 echo "@var.service()_backup"
 ```
 
@@ -384,10 +384,10 @@ Shell support policy:
 
 Execution contract:
 
-- Opal preserves command text and passes it to the selected shell.
-- Opal does not normalize shell syntax across shells (env syntax, quoting, builtins, and path rules remain shell-native).
+- Sigil preserves command text and passes it to the selected shell.
+- Sigil does not normalize shell syntax across shells (env syntax, quoting, builtins, and path rules remain shell-native).
 - Use explicit `shell=...` when command text depends on shell-specific syntax.
-- Opal-owned operators (`|`, `&&`, `||`, `;`, `>`, `>>`) are parsed and planned before shell execution.
+- Sigil-owned operators (`|`, `&&`, `||`, `;`, `>`, `>>`) are parsed and planned before shell execution.
 
 ## 8. Shell Execution Semantics
 
@@ -430,11 +430,11 @@ Block lines execute in order.
 
 Operator semantics are runtime-contract semantics, not shell-dialect semantics.
 
-- Opal parses operator structure and builds execution trees independent of selected shell.
+- Sigil parses operator structure and builds execution trees independent of selected shell.
 - Selected shell affects only leaf command execution (`command` text in `@shell`).
-- Changing shell (`bash`, `pwsh`, `cmd`) does not change Opal operator precedence or control flow behavior.
+- Changing shell (`bash`, `pwsh`, `cmd`) does not change Sigil operator precedence or control flow behavior.
 
-Future extensions may introduce shell-dialect-aware execution modes for specific transports, but this contract keeps operator ownership in Opal.
+Future extensions may introduce shell-dialect-aware execution modes for specific transports, but this contract keeps operator ownership in Sigil.
 
 ## 9. Control Flow Semantics
 
@@ -499,7 +499,7 @@ Values do not cross transport boundaries implicitly.
 
 To pass a value across a boundary, bind it explicitly:
 
-```opal
+```sigil
 var deployer = @env.USER
 @ssh.connect(host="example", env={"DEPLOYER": @var.deployer}) {
     echo $DEPLOYER
@@ -517,7 +517,7 @@ Use one of:
 
 ## 11. Planning Modes and Execution Modes
 
-Opal supports four operational modes.
+Sigil supports four operational modes.
 
 | Mode | Invocation shape | Resolution behavior | Primary purpose |
 |---|---|---|---|
@@ -632,7 +632,7 @@ Decorator policy decides handling strategy for each type.
 
 Invalid:
 
-```opal
+```sigil
 for module in ["cli", "runtime"] {
     fun build_module(module String) = npm run build
 }
@@ -640,7 +640,7 @@ for module in ["cli", "runtime"] {
 
 Valid:
 
-```opal
+```sigil
 fun build_module(module String) = npm run build
 
 for module in ["cli", "runtime"] {
@@ -648,18 +648,18 @@ for module in ["cli", "runtime"] {
 }
 ```
 
-### 16.2 Using shell interpolation syntax for Opal variables
+### 16.2 Using shell interpolation syntax for Sigil variables
 
 Invalid:
 
-```opal
+```sigil
 var service = "api"
 kubectl scale deployment/${service} --replicas=3
 ```
 
 Valid:
 
-```opal
+```sigil
 var service = "api"
 kubectl scale deployment/@var.service --replicas=3
 ```
@@ -668,13 +668,13 @@ kubectl scale deployment/@var.service --replicas=3
 
 Invalid:
 
-```opal
+```sigil
 @retry(attempts=3, attempts=5) { echo "x" }
 ```
 
 Valid:
 
-```opal
+```sigil
 @retry(3, delay=2s) { echo "x" }
 @retry(delay=2s, 3) { echo "x" }
 ```
@@ -683,13 +683,13 @@ Valid:
 
 Invalid:
 
-```opal
+```sigil
 echo "@var.name_suffix"
 ```
 
 Valid:
 
-```opal
+```sigil
 echo "@var.name()_suffix"
 ```
 
@@ -697,7 +697,7 @@ echo "@var.name()_suffix"
 
 Invalid for resolved contract generation:
 
-```opal
+```sigil
 var stamp = @time.now()
 ```
 
@@ -705,7 +705,7 @@ Use deterministic inputs or seeded deterministic decorators for contract-safe wo
 
 ## 17. End-to-End Example
 
-```opal
+```sigil
 var (
     env = @env.ENV(default="development")
     version = @env.VERSION(default="latest")

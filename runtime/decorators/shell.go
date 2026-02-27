@@ -7,7 +7,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // ShellDecorator implements the @shell decorator using the new decorator architecture.

@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 // planCanonical consumes parser events and generates an execution plan using

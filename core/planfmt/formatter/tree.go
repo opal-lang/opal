@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // ANSI color codes

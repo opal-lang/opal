@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/isolation"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/isolation"
 )
 
 func TestIsolatedDecoratorRegistered(t *testing.T) {

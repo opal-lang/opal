@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register decorators for parser + resolver
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register decorators for parser + resolver
 )
 
 func planWithPipeline(t *testing.T, source, target string) (*planfmt.Plan, *vault.Vault, *ExecutionGraph, error) {

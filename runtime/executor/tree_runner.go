@@ -3,8 +3,8 @@ package executor
 import (
 	"io"
 
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 // executeStep executes a single step by executing its tree.

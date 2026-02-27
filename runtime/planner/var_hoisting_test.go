@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 // ========== No Hoisting Tests ==========
