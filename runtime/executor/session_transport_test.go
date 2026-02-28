@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
 )
 
 func TestSessionTransportOpenFileReader(t *testing.T) {

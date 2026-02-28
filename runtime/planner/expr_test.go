@@ -183,14 +183,14 @@ func TestExprIR_SourceSpan(t *testing.T) {
 		Kind:  ExprLiteral,
 		Value: "test",
 		Span: SourceSpan{
-			File:  "test.opl",
+			File:  "test.sgl",
 			Start: 10,
 			End:   14,
 		},
 	}
 
-	if expr.Span.File != "test.opl" {
-		t.Errorf("Span.File = %q, want %q", expr.Span.File, "test.opl")
+	if expr.Span.File != "test.sgl" {
+		t.Errorf("Span.File = %q, want %q", expr.Span.File, "test.sgl")
 	}
 	if expr.Span.Start != 10 {
 		t.Errorf("Span.Start = %d, want 10", expr.Span.Start)

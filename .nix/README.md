@@ -1,18 +1,18 @@
-# Nix Configuration for Opal
+# Nix Configuration for Sigil
 
-Simple Nix flake configuration for building and developing Opal.
+Simple Nix flake configuration for building and developing Sigil.
 
 ## Basic Usage
 
 ```bash
-# Build the opal binary
+# Build the sigil binary
 nix build
 
 # Enter development environment
 nix develop
 
 # Run directly without installing
-nix run github:aledsdavies/opal -- deploy --dry-run
+nix run github:builtwithtofu/sigil -- deploy --dry-run
 ```
 
 ## Development Environment
@@ -20,24 +20,24 @@ nix run github:aledsdavies/opal -- deploy --dry-run
 The development shell provides:
 - Go toolchain
 - All required development dependencies
-- `opal` binary built from current source
+- `sigil` binary built from current source
 
 ```bash
 nix develop
-opal --version
+sigil --version
 ```
 
 ## Integration
 
-Add Opal to your project's development environment:
+Add Sigil to your project's development environment:
 
 ```nix
 {
-  inputs.opal.url = "github:aledsdavies/opal";
+  inputs.sigil.url = "github:builtwithtofu/sigil";
   
-  outputs = { nixpkgs, opal, ... }: {
+  outputs = { nixpkgs, sigil, ... }: {
     devShells.default = nixpkgs.mkShell {
-      buildInputs = [ opal.packages.x86_64-linux.default ];
+      buildInputs = [ sigil.packages.x86_64-linux.default ];
     };
   };
 }

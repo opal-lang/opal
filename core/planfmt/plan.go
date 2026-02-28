@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 // Format limits (enforced by wire types):

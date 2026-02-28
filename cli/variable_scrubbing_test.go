@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/streamscrub"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/runtime/streamscrub"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +19,7 @@ import (
 func TestVariableScrubbing_EndToEnd(t *testing.T) {
 	// Create temporary opal file
 	tmpDir := t.TempDir()
-	opalFile := filepath.Join(tmpDir, "test.opl")
+	opalFile := filepath.Join(tmpDir, "test.sgl")
 
 	secretValue := "my-secret-value"
 	source := `var SECRET = "my-secret-value"
@@ -38,14 +38,14 @@ echo "The secret is: @var.SECRET"`
 	}
 	vlt := vault.NewWithPlanKey(planKey)
 
-	opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
+	sigilGen, err := streamscrub.NewSigilPlaceholderGenerator()
 	if err != nil {
 		t.Fatalf("Failed to create placeholder generator: %v", err)
 	}
 
 	var outputBuf bytes.Buffer
 	scrubber := streamscrub.New(&outputBuf,
-		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+		streamscrub.WithPlaceholderFunc(sigilGen.PlaceholderFunc()),
 		streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
 	// Redirect stdout/stderr through scrubber
@@ -87,7 +87,7 @@ echo "The secret is: @var.SECRET"`
 // TestVariableScrubbing_MultipleVariables tests that multiple variables are scrubbed in output.
 func TestVariableScrubbing_MultipleVariables(t *testing.T) {
 	tmpDir := t.TempDir()
-	opalFile := filepath.Join(tmpDir, "multiple.opl")
+	opalFile := filepath.Join(tmpDir, "multiple.sgl")
 
 	source := `var API_KEY = "sk-secret-123"
 var TOKEN = "token-456"
@@ -107,14 +107,14 @@ echo "API: @var.API_KEY, Token: @var.TOKEN, Pass: @var.PASSWORD"`
 	}
 	vlt := vault.NewWithPlanKey(planKey)
 
-	opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
+	sigilGen, err := streamscrub.NewSigilPlaceholderGenerator()
 	if err != nil {
 		t.Fatalf("Failed to create placeholder generator: %v", err)
 	}
 
 	var outputBuf bytes.Buffer
 	scrubber := streamscrub.New(&outputBuf,
-		streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+		streamscrub.WithPlaceholderFunc(sigilGen.PlaceholderFunc()),
 		streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
 	// Run command in dry-run mode (plan only, don't execute)

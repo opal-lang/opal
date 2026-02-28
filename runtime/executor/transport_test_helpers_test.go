@@ -1,8 +1,8 @@
 package executor
 
 import (
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 func localTestTransports(ids ...string) []planfmt.Transport {

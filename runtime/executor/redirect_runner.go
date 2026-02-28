@@ -5,8 +5,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 type sinkWriteErrorCapture struct {

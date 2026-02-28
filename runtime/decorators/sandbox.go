@@ -13,8 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/isolation"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/isolation"
 )
 
 const (

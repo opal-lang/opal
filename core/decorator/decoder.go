@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opal-lang/opal/core/types"
+	"github.com/builtwithtofu/sigil/core/types"
 )
 
 type DecodeWarning struct {

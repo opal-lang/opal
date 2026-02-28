@@ -1,4 +1,4 @@
-# Opal
+# Sigil
 
 **Plan-first execution platform for deployments, infrastructure, and operations**
 
@@ -22,16 +22,16 @@ No state files. No "desired state" to maintain. The plan is your contract.
 
 ## Language Model
 
-Opal is intentionally a two-lane system:
+Sigil is intentionally a two-lane system:
 
 - **Shell lane (runtime work):** Commands, pipes, redirects, and operator chains execute with shell semantics.
 - **Metaprogramming lane (plan-time structure):** `fun`, `if`, `for`, `when`, and decorators shape and validate what will execute.
 
-This is a departure from plain shell scripting by design. Opal keeps shell as the execution substrate, then adds typed plan-time contracts and deterministic expansion on top.
+This is a departure from plain shell scripting by design. Sigil keeps shell as the execution substrate, then adds typed plan-time contracts and deterministic expansion on top.
 
 ## North Star
 
-Opal is one operations language: start with commands, scale to full contract-driven workflows.
+Sigil is one operations language: start with commands, scale to full contract-driven workflows.
 
 The thesis is a single language for infra changes, run scripts, and day-2 operations without split-brain tooling.
 
@@ -44,7 +44,7 @@ Does this make operations more describable in one language without losing practi
 Define your tasks:
 
 ```bash
-# commands.opl
+# commands.sgl
 fun build = npm run build
 fun test = npm test
 fun deploy = kubectl apply -f k8s/
@@ -53,15 +53,15 @@ fun deploy = kubectl apply -f k8s/
 Run them:
 
 ```bash
-opal deploy
+sigil deploy
 ```
 
 ## Execution Modes
 
-1. **Direct execution**: `opal hello` - parse, plan, execute
-2. **Quick plan**: `opal hello --dry-run` - show tree without executing
-3. **Contract generation**: `opal hello --dry-run --resolve > hello.contract`
-4. **Contract execution**: `opal --plan hello.contract` - verify and execute
+1. **Direct execution**: `sigil hello` - parse, plan, execute
+2. **Quick plan**: `sigil hello --dry-run` - show tree without executing
+3. **Contract generation**: `sigil hello --dry-run --resolve > hello.contract`
+4. **Contract execution**: `sigil --plan hello.contract` - verify and execute
 
 ## Current Scope
 
@@ -70,7 +70,7 @@ opal deploy
 
 ## Basic Syntax
 
-```opal
+```sigil
 # Simple commands
 fun build = npm run build
 fun test = npm test
@@ -109,21 +109,21 @@ fun migrate = {
 
 ### With Go
 ```bash
-go install github.com/opal-lang/opal/cli@latest
+go install github.com/sigil-lang/sigil/cli@latest
 ```
 
 ### With Nix
 ```bash
 # Direct run
-nix run github:aledsdavies/opal -- deploy --dry-run
+nix run github:aledsdavies/sigil -- deploy --dry-run
 
 # Add to flake
 {
-  inputs.opal.url = "github:aledsdavies/opal";
+  inputs.sigil.url = "github:aledsdavies/sigil";
   
-  outputs = { nixpkgs, opal, ... }: {
+  outputs = { nixpkgs, sigil, ... }: {
     devShells.default = nixpkgs.mkShell {
-      buildInputs = [ opal.packages.x86_64-linux.default ];
+      buildInputs = [ sigil.packages.x86_64-linux.default ];
     };
   };
 }
@@ -132,7 +132,7 @@ nix run github:aledsdavies/opal -- deploy --dry-run
 ## Examples
 
 ### Web Application Deployment
-```opal
+```sigil
 fun deploy = {
     kubectl apply -f k8s/
     kubectl set image deployment/app app=$VERSION
@@ -141,7 +141,7 @@ fun deploy = {
 ```
 
 ### Database Migration
-```opal
+```sigil
 fun migrate = {
     echo "Starting migration..."
     psql $DATABASE_URL -f migrations/001-users.sql
@@ -159,7 +159,7 @@ This project uses Nix for development environments:
 nix develop
 
 # Build and test
-cd cli && go build -o opal .
+cd cli && go build -o sigil .
 cd runtime && go test ./...
 ```
 
@@ -185,17 +185,17 @@ cd runtime && go test ./...
 
 ## Pre-Alpha Compatibility Policy
 
-Opal is pre-alpha. Breaking changes are expected. When syntax or behavior changes:
+Sigil is pre-alpha. Breaking changes are expected. When syntax or behavior changes:
 
 - Old patterns are removed directly, not deprecated
 - No migration tools or compatibility layers unless explicitly requested
 - Tests and docs update immediately to the current canonical form
 
-This keeps the codebase clean during rapid iteration. Once Opal reaches alpha, a formal deprecation policy will apply.
+This keeps the codebase clean during rapid iteration. Once Sigil reaches alpha, a formal deprecation policy will apply.
 
 ## How It Works
 
-Opal treats operations as plans that can be reviewed before execution:
+Sigil treats operations as plans that can be reviewed before execution:
 
 1. **Plan** your operation and see exactly what will execute
 2. **Review** the plan (or save it for later)

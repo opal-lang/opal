@@ -6,7 +6,7 @@ summary: "Patterns, conventions, and best practices for building composable deco
 
 # Decorator Design Guide
 
-**Patterns, conventions, and best practices for building composable, deterministic decorators in Opal**
+**Patterns, conventions, and best practices for building composable, deterministic decorators in Sigil**
 
 ## Invariants
 
@@ -23,7 +23,7 @@ Every decorator must maintain these guarantees:
 
 Every decorator call has three optional components:
 
-```opal
+```sigil
 @path.primary(param1=value1, param2=value2) { block }
 ```
 
@@ -31,7 +31,7 @@ Every decorator call has three optional components:
 
 The **primary property** is a shorthand for the most important parameter. Decorator authors decide if their decorator uses it.
 
-```opal
+```sigil
 # These are equivalent:
 @env.HOME
 @env("HOME")
@@ -69,7 +69,7 @@ Non-string primary parameters don't make semantic sense in this context.
 
 Supplemental configuration beyond the primary property.
 
-```opal
+```sigil
 @file.read("config.yaml", encoding="utf-8", cache=true)
 @retry(times=3, delay=2s, backoff="exponential")
 @aws.secret.db_password(auth=prodAuth, version="latest")
@@ -84,7 +84,7 @@ Supplemental configuration beyond the primary property.
 
 A **lambda/unit of execution** passed to the decorator (Kotlin-style). The block is a parameter containing code to execute.
 
-```opal
+```sigil
 # Block as lambda for execution control:
 @retry(times=3) {
     kubectl apply -f deployment.yaml
@@ -112,13 +112,13 @@ A **lambda/unit of execution** passed to the decorator (Kotlin-style). The block
 
 ## Decorator Kinds
 
-Opal distinguishes between two kinds of decorators:
+Sigil distinguishes between two kinds of decorators:
 
 ### Value Decorators
 
 **Return data with no side effects.** Can be used in expressions and string interpolation.
 
-```opal
+```sigil
 # Value decorators return data:
 var home = @env.HOME
 var config = @file.read("config.yaml")
@@ -139,7 +139,7 @@ echo "Config: @file.read('settings.json')"
 
 **Perform actions with side effects.** Cannot be interpolated in strings.
 
-```opal
+```sigil
 # Execution decorators perform actions:
 @file.write("output.txt", content="Hello World")
 @shell("kubectl apply -f deployment.yaml")
@@ -159,7 +159,7 @@ echo "Running @shell('ls')"  # Prints literally: "Running @shell('ls')"
 
 A namespace can have both value and execution decorators:
 
-```opal
+```sigil
 # Value decorator (read):
 var content = @file.read("config.yaml")
 
@@ -221,7 +221,7 @@ schema := types.NewSchema("retry", "execution").
 ```
 
 **Usage:**
-```opal
+```sigil
 @retry(times=5, delay=2s) {
     kubectl apply -f deployment.yaml
 }
@@ -261,7 +261,7 @@ The **primary parameter** enables dot-notation syntax sugar:
 ```
 
 **Path matching:** Registry uses longest-match routing:
-```opal
+```sigil
 @aws.secret.db_password
     ^^^^^^^^^^           ← Registered path: "aws.secret"
               ^^^^^^^^^^^^ ← Primary parameter: "db_password"
@@ -283,13 +283,13 @@ Error: invalid schema for "retry": primary parameter "attempts" not found in par
 ## Naming Conventions
 
 **Verb-first naming** for clarity:
-```opal
+```sigil
 ✅ Good: @retry, @timeout, @log, @aws.secret, @k8s.rollout
 ❌ Bad:  @retryPolicy, @timeoutHandler, @logger
 ```
 
 **Avoid synonyms** - one concept, one name:
-```opal
+```sigil
 ✅ Good: @retry (standard)
 ❌ Bad:  @repeat, @redo, @again (confusing alternatives)
 ```
@@ -297,7 +297,7 @@ Error: invalid schema for "retry": primary parameter "attempts" not found in par
 ## Parameter Flexibility
 
 **Kotlin-style flexibility** - all forms supported:
-```opal
+```sigil
 @retry(3, 2s)                    # Positional
 @retry(attempts=3, delay=2s)     # Named
 @retry(3, delay=2s)              # Mixed
@@ -307,27 +307,27 @@ All three forms are valid. Use what's clearest for your use case.
 - Consistent patterns: `maxAttempts` not `max_attempts` or `attemptsMax`
 
 **Duration format**:
-```opal
+```sigil
 ✅ Good: 500ms, 30s, 5m, 2h
 ❌ Bad:  300, 2000, "5 minutes"
 ```
 
 **Enum values**:
-```opal
+```sigil
 ✅ Good: level="info|warn|error|debug|trace"
 ❌ Bad:  level="INFO|Warning|err"  # Inconsistent casing
 ```
 
 ## SDK for Decorator Authors
 
-Opal provides a secure-by-default SDK for building decorators safely.
+Sigil provides a secure-by-default SDK for building decorators safely.
 
 ### Secret Handling (`core/sdk/secret`)
 
 All value decorators return `secret.Handle` for automatic scrubbing:
 
 ```go
-import "github.com/opal-lang/opal/core/sdk/secret"
+import "github.com/sigil-lang/sigil/core/sdk/secret"
 
 func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error) {
     secretName := ctx.ArgString("secretName")
@@ -337,8 +337,8 @@ func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error
 ```
 
 **Safe operations (always available):**
-- `handle.ID()` - Opaque display ID: `opal:3J98t56A`
-- `handle.IDWithEmoji()` - Display with emoji: `🔒 opal:3J98t56A`
+- `handle.ID()` - Opaque display ID: `sigil:3J98t56A`
+- `handle.IDWithEmoji()` - Display with emoji: `🔒 sigil:3J98t56A`
 - `handle.Mask(3)` - Masked display: `abc***xyz`
 - `handle.Len()` - Length without exposing value
 - `handle.Equal(other)` - Constant-time comparison
@@ -355,7 +355,7 @@ func awsSecretHandler(ctx ExecutionContext, args []Param) (*secret.Handle, error
 Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
 
 ```go
-import "github.com/opal-lang/opal/core/sdk/executor"
+import "github.com/sigil-lang/sigil/core/sdk/executor"
 
 cmd := executor.Command("kubectl", "get", "pods")
 cmd.AppendEnv(map[string]string{
@@ -401,7 +401,7 @@ See `docs/SDK_GUIDE.md` for complete API reference and examples.
 **Use case**: Pass authentication, configuration, or connection context between decorators without embedding secrets.
 
 **Value decorator returns a handle:**
-```opal
+```sigil
 var prodAuth = @aws.auth(profile="prod", roleArn="arn:aws:iam::123:role/ci")
 var dbConn = @postgres.connection(host="db.prod", database="app")
 ```
@@ -409,7 +409,7 @@ var dbConn = @postgres.connection(host="db.prod", database="app")
 The value is a **pure spec** (immutable parameters only, not live connections).
 
 **Other decorators accept the handle:**
-```opal
+```sigil
 var db_password = @aws.secret.db_password(auth=prodAuth)
 var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 ```
@@ -417,7 +417,7 @@ var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 **Scoped vs Handle Style:**
 
 Scoped (ergonomic for blocks):
-```opal
+```sigil
 @aws.auth(profile="prod") {
     var db_pass = @aws.secret.db_password
     var api_key = @aws.secret.api_key
@@ -425,7 +425,7 @@ Scoped (ergonomic for blocks):
 ```
 
 Handle (composable, passable to functions):
-```opal
+```sigil
 var prodAuth = @aws.auth(profile="prod")
 
 fun deploy(auth) {
@@ -441,7 +441,7 @@ deploy(auth=prodAuth)
 **Use case**: Work with multiple cloud resources as a collection.
 
 **Value decorator returns collection:**
-```opal
+```sigil
 var webServers = @aws.ec2.instances(
     tags={role: "web", env: "prod"},
     state="running"
@@ -449,14 +449,14 @@ var webServers = @aws.ec2.instances(
 ```
 
 **Execution decorator operates on collection:**
-```opal
+```sigil
 @aws.ec2.run(instances=webServers, transport="ssm") {
     sudo systemctl restart nginx
 }
 ```
 
 **Iteration:**
-```opal
+```sigil
 for instance in @var.webServers {
     echo "Checking @var.instance.id at @var.instance.privateIp"
 }
@@ -467,7 +467,7 @@ for instance in @var.webServers {
 **Use case**: Organize related decorators logically.
 
 **Dot notation for hierarchy:**
-```opal
+```sigil
 # AWS services
 @aws.secret.db_password
 @aws.ec2.instances
@@ -486,7 +486,7 @@ for instance in @var.webServers {
 
 **Use case:** Avoid redundant API calls for the same value.
 
-```opal
+```sigil
 # First access: API call (~150ms)
 var db_pass = @aws.secret.db_password(prodAuth)
 
@@ -507,7 +507,7 @@ var api_key = @aws.secret.api_key(prodAuth)
 
 When a value decorator is used inside a scoped execution decorator, provenance includes the context chain:
 
-```opal
+```sigil
 # Outside auth block - uses default auth context
 var secret1 = @aws.secret.db_password
 # Provenance: decorator="aws.secret.db_password", auth=<default>
@@ -533,7 +533,7 @@ var secret1 = @aws.secret.db_password
 
 **Use case**: Multiple decorators fetching from same provider batch requests.
 
-```opal
+```sigil
 var prodAuth = @aws.auth(profile="prod")
 
 # All three collected during planning
@@ -551,7 +551,7 @@ var cert = @aws.secret.tls_cert(auth=prodAuth)
 
 **Recommended pattern** for decorators that ensure resources/state exists. Decorator authors can choose to implement this pattern for consistency across the ecosystem.
 
-```opal
+```sigil
 # Pragmatic: use existing if name matches
 var web = @aws.instance.deploy(
     name="web-server",
@@ -606,7 +606,7 @@ var db = @aws.rds.deploy(
 - `onMismatch="error"` - Fail and abort execution (production safety)
 - `onMismatch="create"` - Create new resource with modified identifier (e.g., "app-db-2")
 
-**How this works**: The runtime provides `idempotenceKey` and `onMismatch` as standard parameters. Decorator authors opt in by implementing the query logic to check existing state. This pattern aligns with Opal's outcome-focused philosophy - match what matters for your use case, not rigid state enforcement.
+**How this works**: The runtime provides `idempotenceKey` and `onMismatch` as standard parameters. Decorator authors opt in by implementing the query logic to check existing state. This pattern aligns with Sigil's outcome-focused philosophy - match what matters for your use case, not rigid state enforcement.
 
 **Decorators that benefit from this pattern:**
 - Resource creation: `@aws.instance.deploy`, `@k8s.deployment.ensure`, `@docker.container.ensure`
@@ -625,7 +625,7 @@ var db = @aws.rds.deploy(
 
 **Use case**: Don't resolve values on code paths that won't execute.
 
-```opal
+```sigil
 when @var.ENV {
     "production" -> {
         var secret = @aws.secret.prod_db(prodAuth)  # Only if ENV=production
@@ -649,7 +649,7 @@ If `ENV=production`, staging secret is never fetched.
 4. Environment variable
 5. Default value
 
-```opal
+```sigil
 # Explicit wins
 var auth = @aws.auth(profile="prod")
 var secret = @aws.secret.db_password(auth)  # Uses "prod"
@@ -668,7 +668,7 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
 
 **Block decorators only apply to their blocks:**
 
-```opal
+```sigil
 # Timeout applies to the entire block
 @timeout(5m) {
     kubectl apply -f k8s/
@@ -690,7 +690,7 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
 - Not a style preference - understanding what the decorator applies to
 
 **Chaining blocks works as expected:**
-```opal
+```sigil
 # Both decorators apply to their respective blocks
 @timeout(5m) { kubectl apply } && @retry(3) { kubectl rollout status }
 ```
@@ -701,7 +701,7 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
 
 Each branch in `@parallel` gets its own isolated execution context:
 
-```opal
+```sigil
 @parallel {
     cd /tmp && echo "Branch A: $(pwd)"     # Step 1
     cd /var && echo "Branch B: $(pwd)"     # Step 2
@@ -729,7 +729,7 @@ Branch C: /home/user  # Original directory
 
 When parallel execution completes, final output is ordered by step ID (not completion time):
 
-```opal
+```sigil
 @parallel {
     sleep 2 && echo "Slow"   # Step 1: completes last
     echo "Fast"              # Step 2: completes first
@@ -752,7 +752,7 @@ Even though "Fast" completes first, final output is reordered by step ID for det
 - Fail-fast: Remaining branches cancelled on first failure
 
 **Example with failure:**
-```opal
+```sigil
 @parallel {
     echo "Success"     # Step 1: exit 0
     exit 1             # Step 2: exit 1 (fails)
@@ -781,7 +781,7 @@ Breaking this order requires a comment explaining why.
 
 ### 1. Fail Fast at Plan-Time
 
-```opal
+```sigil
 # Good: Clear error at plan-time
 var secret = @aws.secret.db_password  # ERROR: no auth specified
 
@@ -790,7 +790,7 @@ var secret = @aws.secret.db_password  # ERROR: no auth specified
 
 ### 2. Make Ambiguity Explicit
 
-```opal
+```sigil
 # Bad: Implicit, ambiguous
 var instances = @aws.ec2.instances  # Which region? Which account?
 
@@ -812,7 +812,7 @@ Decorator execution summary:
 ### 4. Redact Secrets
 
 Never log, print, or store raw credentials:
-```opal
+```sigil
 var secret = @aws.secret.db_password(prodAuth)
 echo "Secret: @var.secret"  # Output: "Secret: <secret:redacted>"
 ```
@@ -820,7 +820,7 @@ echo "Secret: @var.secret"  # Output: "Secret: <secret:redacted>"
 ### 5. Support Composition
 
 Decorators should compose naturally:
-```opal
+```sigil
 var prodAuth = @aws.auth(profile="prod")
 var dbPass = @aws.secret.db_password(auth=prodAuth)
 var dbConn = @postgres.connection(host="db.prod", password=dbPass)
@@ -842,19 +842,19 @@ var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 ### Lint Rules (Enforced)
 
 **D001: Chain complexity** (ERROR)
-```opal
+```sigil
 ❌ @timeout(5m) && @retry(3) && @log("x") && command
 ✅ Fix: Use block structure
 ```
 
 **D002: Unknown decorators** (ERROR)
-```opal
+```sigil
 ❌ @retrry(3) { command }
 ✅ Fix: Did you mean @retry? (auto-fixable)
 ```
 
 **D003: Deprecated decorator usage** (WARNING)
-```opal
+```sigil
 ❌ @retryPolicy(3) { command }  # Old naming convention
 ✅ Fix: @retry(3) { command } (auto-fixable)
 ```
@@ -862,9 +862,9 @@ var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 ### CI Integration
 
 ```bash
-opal lint --strict    # Fail on D001-D003
-opal lint --fix       # Auto-fix D002 and D003
-opal fmt --check      # Verify formatting
+sigil lint --strict    # Fail on D001-D003
+sigil lint --fix       # Auto-fix D002 and D003
+sigil fmt --check      # Verify formatting
 ```
 
 ## Common Decorator Types
@@ -896,7 +896,7 @@ Create context for nested blocks:
 
 ## Example: Well-Designed Composition
 
-```opal
+```sigil
 var ENV = "production"
 var TIMEOUT = 10m
 
@@ -952,7 +952,7 @@ Before implementing a new decorator, verify all requirements:
 **Quick validation:**
 ```bash
 # Run decorator conformance suite
-opal test decorators/@your.decorator
+sigil test decorators/@your.decorator
 
 # Verify all checks pass:
 # ✓ Referential transparency
@@ -970,7 +970,7 @@ opal test decorators/@your.decorator
 
 **Core insight:** Decorators take a declaration of what needs to run and wrap it in their execution context.
 
-```opal
+```sigil
 # User writes a declaration:
 @aws.instance.ssh(host="prod-server") {
     cat /var/log/app.log
@@ -1032,7 +1032,7 @@ type ExecutionContext interface {
 
 Decorators have **no direct access to I/O streams**. All output flows through the executor which:
 1. Maintains a registry of secret values from value decorator resolutions
-2. Automatically replaces secret values with plan placeholders: `opal:ID`
+2. Automatically replaces secret values with plan placeholders: `sigil:ID`
 3. Ensures audit trail shows which secrets were used without exposing values
 
 This prevents decorators from accidentally (or maliciously) leaking secrets.
@@ -1147,7 +1147,7 @@ func (s *SSHExecutionContext) ExecuteBlock(steps []Step) (int, error) {
 **3. Recursive Composition**
 Decorators can be nested arbitrarily deep:
 
-```opal
+```sigil
 @retry(times=3) {
     @timeout(30s) {
         @aws.instance.ssh(host="prod") {
@@ -1226,4 +1226,4 @@ These patterns enable:
 - **Context wrapping** - Decorators establish execution environments
 - **Recursive execution** - Arbitrary nesting of decorators
 
-All while maintaining Opal's core guarantee: **resolved plans are execution contracts**.
+All while maintaining Sigil's core guarantee: **resolved plans are execution contracts**.

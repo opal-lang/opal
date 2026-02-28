@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 // Cmd represents a safe command execution wrapper

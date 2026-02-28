@@ -1,16 +1,16 @@
 ---
-title: "Opal Documentation"
+title: "Sigil Documentation"
 audience: "All"
 summary: "Navigation guide for contributors, users, and operators"
 ---
 
-# Opal Documentation
+# Sigil Documentation
 
 **Navigation guide for contributors, users, and operators**
 
 ## For End Users & Script Authors
 
-**Start here** if you're writing Opal scripts for deployments, operations, or automation:
+**Start here** if you're writing Sigil scripts for deployments, operations, or automation:
 
 - **[SPECIFICATION.md](SPECIFICATION.md)** - Complete language guide with examples
   - Mental model: source → plan → contract → execute
@@ -26,7 +26,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 ## For Core Developers & Contributors
 
-**Start here** if you're working on the Opal runtime, parser, or execution engine:
+**Start here** if you're working on the Sigil runtime, parser, or execution engine:
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design and implementation model
   - Plan → contract → execute pipeline
@@ -48,7 +48,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 ## For Decorator Authors & Plugin Developers
 
-**Start here** if you're building decorators or extending Opal:
+**Start here** if you're building decorators or extending Sigil:
 
 - **[DECORATOR_GUIDE.md](DECORATOR_GUIDE.md)** - Design patterns and best practices
   - Invariants: referential transparency, determinism, observability
@@ -58,7 +58,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 ## For Operators & DevOps Engineers
 
-**Start here** if you're running Opal in production:
+**Start here** if you're running Sigil in production:
 
 - **[OBSERVABILITY.md](OBSERVABILITY.md)** - Tracing, artifacts, and debugging
   - Run identification and plan hashes
@@ -70,7 +70,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 **Experimental ideas and long-term direction:**
 
-- **[proposals/](proposals/)** - Opal Enhancement Proposals (OEPs)
+- **[proposals/](proposals/)** - Sigil Enhancement Proposals (OEPs)
   - Formal design documents for future features
   - Language evolution, tooling, ecosystem extensions
   - See [proposals/README.md](proposals/README.md) for full list
@@ -84,7 +84,7 @@ summary: "Navigation guide for contributors, users, and operators"
 
 | I want to... | Read this |
 |--------------|-----------|
-| Write Opal scripts | [SPECIFICATION.md](SPECIFICATION.md) |
+| Write Sigil scripts | [SPECIFICATION.md](SPECIFICATION.md) |
 | Look up syntax | [GRAMMAR.md](GRAMMAR.md) |
 | Understand the architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Work on the parser | [AST_DESIGN.md](AST_DESIGN.md) |
@@ -98,10 +98,10 @@ summary: "Navigation guide for contributors, users, and operators"
 
 Each document targets a specific audience:
 
-- **User-facing** (SPECIFICATION, GRAMMAR): Focus on what Opal feels like to use
+- **User-facing** (SPECIFICATION, GRAMMAR): Focus on what Sigil feels like to use
 - **Developer-facing** (ARCHITECTURE, AST_DESIGN, TESTING): Focus on how it works
-- **Contributor-facing** (DECORATOR_GUIDE): Focus on extending Opal
-- **Operator-facing** (OBSERVABILITY): Focus on running Opal in production
+- **Contributor-facing** (DECORATOR_GUIDE): Focus on extending Sigil
+- **Operator-facing** (OBSERVABILITY): Focus on running Sigil in production
 
 Cross-references link related concepts across documents.
 

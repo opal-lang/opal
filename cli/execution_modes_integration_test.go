@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,20 +29,20 @@ fun complex = echo "A" && echo "B" || echo "C"
 	defer os.Remove(testFile)
 
 	t.Run("Mode1_DirectExecution", func(t *testing.T) {
-		// Direct execution: opal -f file.opl command
+		// Direct execution: opal -f file.sgl command
 		output := runOpal(t, opalBin, "-f", testFile, "hello")
 		assert.Equal(t, "Hello from Opal!\n", output)
 	})
 
 	t.Run("Mode2_QuickPlan", func(t *testing.T) {
-		// Quick plan: opal -f file.opl command --dry-run
+		// Quick plan: opal -f file.sgl command --dry-run
 		output := runOpal(t, opalBin, "-f", testFile, "hello", "--dry-run", "--no-color")
 		assert.Contains(t, output, "hello:")
 		assert.Contains(t, output, "@shell echo \"Hello from Opal!\"")
 	})
 
 	t.Run("Mode3_ResolvedPlan", func(t *testing.T) {
-		// Resolved plan: opal -f file.opl command --dry-run --resolve > plan
+		// Resolved plan: opal -f file.sgl command --dry-run --resolve > plan
 		planFile := filepath.Join(t.TempDir(), "test.plan")
 
 		// Generate plan
@@ -65,7 +65,7 @@ fun complex = echo "A" && echo "B" || echo "C"
 	})
 
 	t.Run("Mode4_ContractVerifiedExecution", func(t *testing.T) {
-		// Contract-verified execution: opal --plan file.plan -f file.opl
+		// Contract-verified execution: opal --plan file.plan -f file.sgl
 		planFile := filepath.Join(t.TempDir(), "test.plan")
 
 		// Generate plan
@@ -410,7 +410,7 @@ func buildOpalBinary(t *testing.T) string {
 func createTestFile(t *testing.T, content string) string {
 	t.Helper()
 
-	tmpFile := filepath.Join(t.TempDir(), "test.opl")
+	tmpFile := filepath.Join(t.TempDir(), "test.sgl")
 	err := os.WriteFile(tmpFile, []byte(strings.TrimSpace(content)), 0o644)
 	require.NoError(t, err)
 

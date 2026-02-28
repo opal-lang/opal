@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
 )
 
 // getPlanDecorator extracts the first command decorator name from a plan tree.

@@ -1,14 +1,14 @@
 ---
-title: "Opal Architecture"
+title: "Sigil Architecture"
 audience: "Core Developers & Contributors"
 summary: "System design and implementation of the plan-verify-execute model"
 ---
 
-# Opal Architecture
+# Sigil Architecture
 
 **Implementation requirements for the plan-verify-execute model**
 
-**Audience**: Core developers, plugin authors, and contributors working on the Opal runtime, parser, or execution engine.
+**Audience**: Core developers, plugin authors, and contributors working on the Sigil runtime, parser, or execution engine.
 
 **See also**: [SPECIFICATION.md](SPECIFICATION.md) for user-facing language semantics and guarantees.
 
@@ -42,9 +42,9 @@ These principles implement the guarantees defined in [SPECIFICATION.md](SPECIFIC
 
 **Stateless, reality-driven execution:**
 
-> Opal's architecture treats *reality* as its database.
+> Sigil's architecture treats *reality* as its database.
 
-Traditional IaC tools maintain state files to track "what should exist." Opal takes a different approach:
+Traditional IaC tools maintain state files to track "what should exist." Sigil takes a different approach:
 
 1. **Query reality** - Decorators check actual current state (API calls, file checks, etc.)
 2. **Generate plan** - Based on reality + user intent, create execution contract
@@ -56,7 +56,7 @@ Traditional IaC tools maintain state files to track "what should exist." Opal ta
 - Reality is the source of truth, not a state file
 - Re-query on every run - always current
 - No state drift, no state locking, no state corruption
-- Mix Opal with other tools freely - no coordination needed
+- Mix Sigil with other tools freely - no coordination needed
 
 **Plans as contracts:**
 
@@ -68,7 +68,7 @@ Plans aren't previews - they're immutable execution contracts. Hash-based verifi
 User writes natural syntax  →  Parser converts to value decorators and execution decorators  →  Contract execution
 ```
 
-Opal has two distinct layers that work together:
+Sigil has two distinct layers that work together:
 
 **Language boundary (intentional):**
 - Plan-time metaprogramming (`fun`, `if`, `for`, `when`, decorators) defines and validates execution contracts.
@@ -76,9 +76,9 @@ Opal has two distinct layers that work together:
 - Function signatures are typed plan-time interfaces; shell command syntax stays shell-native.
 - Runtime does not rewrite shell dialect differences; selected shell semantics remain authoritative.
 - `@shell(..., shell=...)` and `OPAL_SHELL` choose shell execution explicitly when portability matters.
-- Operator ownership stays in Opal (`|`, `&&`, `||`, `;`, `>`, `>>`); shell choice affects leaf command execution, not operator planning.
+- Operator ownership stays in Sigil (`|`, `&&`, `||`, `;`, `>`, `>>`); shell choice affects leaf command execution, not operator planning.
 
-This boundary is a deliberate departure from plain shell scripts: Opal wraps and enhances shell with deterministic planning instead of replacing shell semantics.
+This boundary is a deliberate departure from plain shell scripts: Sigil wraps and enhances shell with deterministic planning instead of replacing shell semantics.
 
 **Metaprogramming constructs** decide execution structure:
 
@@ -112,7 +112,7 @@ This means metaprogramming constructs like `for`, `if`, `when` are **not** decor
 - `@parallel { ... }` runs commands concurrently
 
 Even plain shell commands become `@shell` decorators internally:
-```opal
+```sigil
 // You write
 npm run build
 
@@ -131,7 +131,7 @@ This separation means:
 
 **Resolution happens in dependency waves**:
 
-```opal
+```sigil
 # Wave 1: Resolve @env first (no dependencies)
 var ENVIRONMENT = @env.DEPLOY_ENV  # Resolves to "prod" or "dev"
 
@@ -166,7 +166,7 @@ kubectl create secret --from-literal=key=@var.API_KEY
 - Repeat until entire execution path is traversed
 
 **Batch resolution within waves**:
-```opal
+```sigil
 var prodAuth = @aws.auth(profile="prod")
 
 # All three in same wave → batched into ONE AWS API call
@@ -229,7 +229,7 @@ func (v *Vault) ResolveTouchedBatch(ctx ValueEvalContext) error {
 **Core insight:** Decorators take a declaration of what needs to run and wrap it in their execution context.
 
 When you write:
-```opal
+```sigil
 @aws.instance.ssh(host="prod-server") {
     cat /var/log/app.log
 }
@@ -301,7 +301,7 @@ type ExecutionContext interface {
 
 All I/O flows through the Session interface, not directly through ExecutionContext. The executor:
 1. Maintains a registry of secret values from value decorator resolutions
-2. Automatically replaces secret values with opaque DisplayIDs: `opal:s:3J98t56A`
+2. Automatically replaces secret values with opaque DisplayIDs: `sigil:s:3J98t56A`
 3. Ensures audit trail shows which secrets were used without exposing values
 
 Decorators execute commands via `Session.Run()`, which handles I/O routing and secret scrubbing.
@@ -310,7 +310,7 @@ Decorators execute commands via `Session.Run()`, which handles I/O routing and s
 
 When decorators are nested, each wraps the next:
 
-```opal
+```sigil
 @retry(times=3) {
     @aws.instance.ssh(host="prod") {
         cat /var/log/app.log
@@ -379,13 +379,13 @@ This allows decorators to:
 
 ## Transport Abstraction: Remote Execution
 
-The Transport abstraction enables decorators to execute commands in different environments (local machine, remote servers, containers, cloud instances) while preserving Opal's security model and execution semantics.
+The Transport abstraction enables decorators to execute commands in different environments (local machine, remote servers, containers, cloud instances) while preserving Sigil's security model and execution semantics.
 
 **Current Status:** LocalTransport is implemented. Remote transports (SSH, Docker, cloud) follow the same interface pattern and can be added without breaking changes.
 
 ### The Two-Environment Model
 
-Opal distinguishes between **plan-time** and **execution-time** environments:
+Sigil distinguishes between **plan-time** and **execution-time** environments:
 
 | Environment | When | Purpose | Syntax | Example |
 |-------------|------|---------|--------|---------|
@@ -539,7 +539,7 @@ session := decorator.NewLocalSession()
 ```
 
 **Remote session (idempotent transports):**
-```opal
+```sigil
 @ssh.connect(host="remote", env={"VERSION": "3.0"}) {
     # 1. SSH connects to remote server
     # 2. Captures remote environment (one-time snapshot)
@@ -558,7 +558,7 @@ session := decorator.NewLocalSession()
 
 **`@env.X` reads from the current session's environment:**
 
-```opal
+```sigil
 # Root context (local session)
 var user = @env.USER  # Reads from os.Environ() snapshot → "alice"
 
@@ -571,7 +571,7 @@ var user = @env.USER  # Reads from os.Environ() snapshot → "alice"
 
 **Both `@env.X` and `$X` read from the same session environment:**
 
-```opal
+```sigil
 @ssh.connect(host="remote", env={"VERSION": "3.0"}) {
     var v1 = @env.VERSION  # Plan-time: reads from session → "3.0"
     echo $VERSION          # Execution-time: reads from session → "3.0"
@@ -582,7 +582,7 @@ var user = @env.USER  # Reads from os.Environ() snapshot → "alice"
 
 Decorators modify environment through context wrapping:
 
-```opal
+```sigil
 # Root context: USER=alice, DB=<not set>
 
 @env(DB="prod") {
@@ -609,7 +609,7 @@ var db4 = @env.DB  # <not set> (root context unchanged)
 
 **Critical constraint:** Environments do NOT automatically pass between transport boundaries.
 
-```opal
+```sigil
 # Local environment: USER=alice, HOME=/home/alice
 # Remote environment: USER=deploy, HOME=/home/deploy
 
@@ -625,7 +625,7 @@ var local_user = @env.USER  # "alice" from local session
 
 **To pass values between transports, use explicit `env={}` argument:**
 
-```opal
+```sigil
 var local_user = @env.USER  # "alice" from local session
 
 @ssh.connect(host="remote", env={"DEPLOYER": @var.local_user}) {
@@ -648,7 +648,7 @@ var local_user = @env.USER  # "alice" from local session
 - `@env` can be used in blocks (reads from connected session)
 - Examples: `@ssh.connect`, `@docker.exec`
 
-```opal
+```sigil
 @ssh.connect(host="existing-server", env={"VERSION": "3.0"}) {
     var v = @env.VERSION  # ✅ OK: SSH connects at plan-time
                           # Reads from SSH session environment
@@ -661,7 +661,7 @@ var local_user = @env.USER  # "alice" from local session
 - `@env` FORBIDDEN in blocks (can't connect to non-existent resource)
 - Examples: `@aws.instance.deploy`, `@aws.rds.deploy`
 
-```opal
+```sigil
 @aws.instance.deploy(name="web") {
     var home = @env.HOME  # ❌ ERROR: Instance doesn't exist yet
                           # Can't connect at plan-time
@@ -695,13 +695,13 @@ Solution: Use shell variables ($HOME, $USER) which resolve at execution-time
 ### Example Usage Patterns
 
 **Local execution:**
-```opal
+```sigil
 var replicas = @env.REPLICAS  # Reads from os.Environ() snapshot
 kubectl scale --replicas=@var.replicas deployment/app
 ```
 
 **Remote execution with @env in transport block:**
-```opal
+```sigil
 var local_user = @env.USER  # "alice" from local session
 
 @ssh.connect(host="prod-server", user="deploy", env={"DATABASE_URL": "postgres://prod"}) {
@@ -719,7 +719,7 @@ var local_user = @env.USER  # "alice" from local session
 ```
 
 **Container execution with isolated environment:**
-```opal
+```sigil
 @docker.exec(container="app-prod", env={"NODE_ENV": "production"}) {
     # @env reads from container session
     var env = @env.NODE_ENV  # "production" (env={} override)
@@ -732,7 +732,7 @@ var local_user = @env.USER  # "alice" from local session
 ```
 
 **Parallel deployment to multiple targets:**
-```opal
+```sigil
 var version = @env.APP_VERSION  # "3.0" from local session
 
 @parallel {
@@ -753,7 +753,7 @@ var version = @env.APP_VERSION  # "3.0" from local session
 ```
 
 **Provisioning with non-idempotent decorator:**
-```opal
+```sigil
 var db_password = @env.DB_PASSWORD  # Resolve at root (local session)
 
 @aws.rds.deploy(name="app-db", engine="postgres") {
@@ -921,7 +921,7 @@ func (d *IsolatedTransportDecorator) Descriptor() decorator.Descriptor {
 
 **Usage examples:**
 
-```opal
+```sigil
 # Deny network access for secure operations
 @isolated(network="deny") {
     # No network access here
@@ -968,7 +968,7 @@ func (d *CryptoValueDecorator) Generate(ctx context.Context, keyType string) (Ke
 
 **Usage examples:**
 
-```opal
+```sigil
 # Generate Ed25519 key pair in isolated environment
 var keyPair = @crypto.generate(type="ed25519")
 
@@ -1042,7 +1042,7 @@ func (d *IsolatedTransportDecorator) Capabilities() decorator.TransportCaps {
 
 ### Isolation Strategies: @isolated vs @sandbox
 
-Opal provides two isolation decorators with different trade-offs between security, performance, and composability.
+Sigil provides two isolation decorators with different trade-offs between security, performance, and composability.
 
 #### @isolated (In-Process Isolation)
 
@@ -1059,7 +1059,7 @@ Opal provides two isolation decorators with different trade-offs between securit
 - Quick isolation without IPC overhead
 
 **Example:**
-```opal
+```sigil
 # In-process isolation - good for crypto key generation
 @isolated(network="deny") {
     var key = @crypto.generate(type="ed25519")
@@ -1089,7 +1089,7 @@ Opal provides two isolation decorators with different trade-offs between securit
 - Strong security boundaries where containment is critical
 
 **Example:**
-```opal
+```sigil
 # Subprocess sandbox - good for untrusted code
 @sandbox(network="deny", memory="512m") {
     run-untrusted-script.sh
@@ -1127,37 +1127,37 @@ Opal provides two isolation decorators with different trade-offs between securit
 
 ## Steps, Decorators, and Operators
 
-Understanding the distinction between steps, decorators, and operators is critical to Opal's execution model.
+Understanding the distinction between steps, decorators, and operators is critical to Sigil's execution model.
 
 ### What is a Step?
 
-A **step** is a unit of work in Opal - one line of code that performs an action. Steps are the building blocks of execution plans.
+A **step** is a unit of work in Sigil - one line of code that performs an action. Steps are the building blocks of execution plans.
 
-```opal
+```sigil
 // Three steps (three lines)
 echo "First"
 echo "Second"
 echo "Third"
 ```
 
-**Key insight**: Newlines separate steps. Each step is independently controlled by Opal's execution engine.
+**Key insight**: Newlines separate steps. Each step is independently controlled by Sigil's execution engine.
 
 ### Operators: Intra-Step Control Flow
 
-**Operators** (`&&`, `||`, `|`, `;`) control flow **within a single step**. Opal implements bash-compatible operator semantics for cross-platform consistency.
+**Operators** (`&&`, `||`, `|`, `;`) control flow **within a single step**. Sigil implements bash-compatible operator semantics for cross-platform consistency.
 
-```opal
-// ONE step with operators (Opal controls flow within step)
+```sigil
+// ONE step with operators (Sigil controls flow within step)
 echo "First" && echo "Second" || echo "Fallback"
 ```
 
 When this executes:
-- Opal sees **one step** with multiple commands
-- Opal executes each command sequentially, applying operator logic
+- Sigil sees **one step** with multiple commands
+- Sigil executes each command sequentially, applying operator logic
 - Operator semantics match bash behavior exactly
 - Result: Cross-platform consistency (same behavior on Windows, Linux, macOS)
 
-**Operator semantics** (Opal-controlled, bash-compatible):
+**Operator semantics** (Sigil-controlled, bash-compatible):
 - `&&` - Execute next command only if previous succeeded (exit 0)
 - `||` - Execute next command only if previous failed (exit non-zero)
 - `|` - Pipe stdout of previous command to stdin of next (concurrent execution with streaming)
@@ -1169,22 +1169,22 @@ See [SPECIFICATION.md](SPECIFICATION.md#line-by-line-execution) for user-facing 
 
 ### Newlines: Inter-Step Boundaries
 
-**Newlines** separate steps and give Opal control over execution order, error handling, and flow.
+**Newlines** separate steps and give Sigil control over execution order, error handling, and flow.
 
-```opal
-// TWO steps (Opal controls flow between steps)
+```sigil
+// TWO steps (Sigil controls flow between steps)
 echo "First"
 echo "Second"
 ```
 
 When this executes:
-- Opal sees **two steps**
+- Sigil sees **two steps**
 - Step 1: `@shell("echo \"First\"")`
 - Step 2: `@shell("echo \"Second\"")`
-- Opal controls: Should step 2 run? When? In parallel? With retry?
-- Opal can log, time, and track each step independently
+- Sigil controls: Should step 2 run? When? In parallel? With retry?
+- Sigil can log, time, and track each step independently
 
-**Newline semantics** (Opal-controlled):
+**Newline semantics** (Sigil-controlled):
 - Sequential execution by default
 - Fail-fast: Stop on first error (unless wrapped in `@retry` or `try/catch`)
 - Independent logging and telemetry per step
@@ -1192,9 +1192,9 @@ When this executes:
 
 ### Decorators: Work Execution
 
-**Decorators** wrap steps and control how they execute. All work in Opal is performed by decorators.
+**Decorators** wrap steps and control how they execute. All work in Sigil is performed by decorators.
 
-```opal
+```sigil
 // Explicit decorator
 @retry(3) {
     curl https://api.example.com/deploy
@@ -1249,35 +1249,35 @@ This allows named arguments anywhere while keeping positional binding stable:
 
 ### Examples: Operators vs Newlines
 
-**Example 1: Operators (Opal controls)**
-```opal
-// ONE step - Opal handles && logic
+**Example 1: Operators (Sigil controls)**
+```sigil
+// ONE step - Sigil handles && logic
 mkdir -p /tmp/build && cd /tmp/build && npm install
 ```
 
-If `mkdir` fails, Opal stops and never runs `cd` or `npm install`. Opal sees one step with three commands and applies `&&` semantics.
+If `mkdir` fails, Sigil stops and never runs `cd` or `npm install`. Sigil sees one step with three commands and applies `&&` semantics.
 
-**Example 2: Newlines (Opal controls)**
-```opal
-// THREE steps - Opal handles each independently
+**Example 2: Newlines (Sigil controls)**
+```sigil
+// THREE steps - Sigil handles each independently
 mkdir -p /tmp/build
 cd /tmp/build
 npm install
 ```
 
-If `mkdir` fails, Opal stops execution and never runs `cd` or `npm install`. Each step is logged separately with timing and exit codes.
+If `mkdir` fails, Sigil stops execution and never runs `cd` or `npm install`. Each step is logged separately with timing and exit codes.
 
 **Example 3: Mixed (both)**
-```opal
-// TWO steps - Opal controls within and between
+```sigil
+// TWO steps - Sigil controls within and between
 mkdir -p /tmp/build && cd /tmp/build
 npm install && npm run build
 ```
 
-Step 1: `mkdir -p /tmp/build && cd /tmp/build` (Opal handles `&&`)
-Step 2: `npm install && npm run build` (Opal handles `&&`)
+Step 1: `mkdir -p /tmp/build && cd /tmp/build` (Sigil handles `&&`)
+Step 2: `npm install && npm run build` (Sigil handles `&&`)
 
-Opal controls whether step 2 runs based on step 1's exit code (newline = fail-fast).
+Sigil controls whether step 2 runs based on step 1's exit code (newline = fail-fast).
 
 ### Why This Matters
 
@@ -1287,8 +1287,8 @@ Opal controls whether step 2 runs based on step 1's exit code (newline = fail-fa
 - Each step gets a unique ID and can be tracked independently
 
 **For execution**:
-- Operators are Opal's responsibility (cross-platform consistency)
-- Newlines are Opal's responsibility (logging, telemetry, error handling)
+- Operators are Sigil's responsibility (cross-platform consistency)
+- Newlines are Sigil's responsibility (logging, telemetry, error handling)
 - Decorators wrap steps and control execution behavior
 - All decorators automatically support operators (no decorator-specific code needed)
 
@@ -1299,16 +1299,16 @@ Opal controls whether step 2 runs based on step 1's exit code (newline = fail-fa
 
 ### Design Principle: Cross-Platform Consistency
 
-**Opal controls all operators** to ensure consistent behavior across platforms:
+**Sigil controls all operators** to ensure consistent behavior across platforms:
 - Same `&&`, `||`, `;` semantics on Windows, Linux, macOS
 - No dependency on shell-specific behavior
 - Operators work with all decorators (`@retry`, `@timeout`, etc.)
 
-By implementing bash-compatible operator semantics in Go, Opal provides the familiarity of bash with the reliability of cross-platform execution.
+By implementing bash-compatible operator semantics in Go, Sigil provides the familiarity of bash with the reliability of cross-platform execution.
 
 ## TreeNode Execution Model
 
-Opal represents operator precedence and execution flow using a tree structure. This separates parsing from execution and enables recursive evaluation of complex command chains.
+Sigil represents operator precedence and execution flow using a tree structure. This separates parsing from execution and enables recursive evaluation of complex command chains.
 
 ### TreeNode Hierarchy
 
@@ -1359,7 +1359,7 @@ Operators are parsed into tree structure following precedence (high to low):
 **Note:** This matches the user-facing precedence rules in [SPECIFICATION.md](SPECIFICATION.md#line-by-line-execution).
 
 **Example:**
-```opal
+```sigil
 echo "a" | grep "a" && echo "b" || echo "c" > out.txt
 ```
 
@@ -1418,7 +1418,7 @@ RedirectNode {
 
 **Design Choice:** `os.Pipe()` instead of `io.Pipe()`
 
-Opal uses `os.Pipe()` for process-to-process pipes to enable proper SIGPIPE semantics:
+Sigil uses `os.Pipe()` for process-to-process pipes to enable proper SIGPIPE semantics:
 
 **Why os.Pipe():**
 - Kernel sends SIGPIPE to writers when readers close
@@ -1436,7 +1436,7 @@ Opal uses `os.Pipe()` for process-to-process pipes to enable proper SIGPIPE sema
 **Implementation:** See `runtime/executor/executor.go` lines 239-342
 
 **Example:**
-```opal
+```sigil
 yes | head -n1  // Completes in ~5ms (not timeout)
 ```
 
@@ -1447,7 +1447,7 @@ Without `os.Pipe()`, `yes` would run forever because it never receives SIGPIPE w
 **Key insight:** Decorators wrap entire steps, including their operator trees. This means decorators automatically support all operators without special handling.
 
 **Example:**
-```opal
+```sigil
 @retry(attempts=3) {
     npm run build && npm test
 }
@@ -1460,7 +1460,7 @@ Without `os.Pipe()`, `yes` would run forever because it never receives SIGPIPE w
 4. Retry doesn't need to know about `&&` - it just executes the tree
 
 **Another example:**
-```opal
+```sigil
 @timeout(5m) {
     kubectl logs api | grep ERROR > errors.txt
 }
@@ -1587,7 +1587,7 @@ if runtime.GOOS != "windows" && cmd.Process != nil {
 Variables must be declared before use. No forward references allowed.
 Name resolution uses the most recent visible declaration from that point in source order.
 
-```opal
+```sigil
 echo "@var.NAME"  # ❌ ERROR: NAME not declared yet
 var NAME = "Aled"
 echo "@var.NAME"  # ✅ OK: NAME declared above
@@ -1607,7 +1607,7 @@ echo "@var.COUNT"  # Prints 2
 - **Metaprogramming blocks:** `if`, `for`, `when`, `fun` are resolved at plan time with lexical scope
   - Declarations stay block-local and do not leak to outer scope
 
-```opal
+```sigil
 var COUNT = 5
 
 @retry {
@@ -1631,7 +1631,7 @@ Variables declared after the function are not visible unless passed explicitly.
 
 Variables cannot cross transport boundaries (security isolation).
 
-```opal
+```sigil
 var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in "local" transport
 
 @ssh(host="server") {
@@ -1664,7 +1664,7 @@ Same literal value → same exprID (resolved only once). DisplayIDs are generate
 per value within a plan, so the same value shares the same DisplayID even when
 used in multiple sites; SiteIDs carry the per-site binding instead.
 
-```opal
+```sigil
 var NAME1 = "Aled"
 var NAME2 = "Aled"
 # Both share same exprID (hash-based deduplication)
@@ -1676,7 +1676,7 @@ var NAME2 = "Aled"
 
 **Every secret usage is recorded at a specific site in the plan tree.**
 
-```opal
+```sigil
 var API_KEY = "sk-secret"
 @retry(apiKey=@var.API_KEY) {
     echo "test"
@@ -1686,7 +1686,7 @@ var API_KEY = "sk-secret"
 **Plan contains SecretUse:**
 ```go
 SecretUse{
-    DisplayID: "opal:ABC123",
+    DisplayID: "sigil:ABC123",
     SiteID:    "Xj9K...",  // HMAC(planKey, "root/retry[0]/params/apiKey")
     Site:      "root/retry[0]/params/apiKey",
 }
@@ -1792,7 +1792,7 @@ uses := vault.BuildSecretUses()
 
 **Example:**
 
-```opal
+```sigil
 var SECRET = @aws.secret("unused")  # Declared but never used
 var NAME = "Aled"                   # Declared and used below
 echo "Hello, @var.NAME"             # NAME is touched
@@ -1807,7 +1807,7 @@ echo "Home: @env.HOME"              # Direct usage - also touched
 
 **1. String Interpolation** (most common)
 
-```opal
+```sigil
 var NAME = "Aled"
 echo "Hello, @var.NAME"  # Variable in shell command string
 ```
@@ -1818,7 +1818,7 @@ echo "Hello, @var.NAME"  # Variable in shell command string
 
 **2. Meta-Programming Evaluation** (future - control flow)
 
-```opal
+```sigil
 var ENV = "prod"
 if @var.ENV == "prod" {  # Variable in condition
     echo "Production"
@@ -1833,7 +1833,7 @@ if @var.ENV == "prod" {  # Variable in condition
 
 **Only expressions in the execution path are resolved.**
 
-```opal
+```sigil
 var SECRET = @aws.secret("unused")  # Declared but never used
 var NAME = "Aled"                   # Used below
 echo "Hello, @var.NAME"             # NAME is touched
@@ -1841,12 +1841,12 @@ echo "Hello, @var.NAME"             # NAME is touched
 
 **Result:** SECRET is pruned (not resolved, not in plan). Saves API calls and reduces secrets.
 
-**Script Mode** (`opal run deploy.opl`):
+**Script Mode** (`sigil run deploy.sgl`):
 - Scan entire file
 - Resolve only touched expressions
 - Prune untouched
 
-**Command Mode** (`opal run deploy.opl deploy_prod`):
+**Command Mode** (`sigil run deploy.sgl deploy_prod`):
 - Scan only target function
 - Resolve only touched expressions within function
 - Top-level code NOT executed
@@ -1949,7 +1949,7 @@ type Vault struct {
 type Expression struct {
     Raw       string // "@env.HOME", "@aws.secret('key')"
     Value     string // Resolved value
-    DisplayID string // "opal:3J98t56A"
+    DisplayID string // "sigil:3J98t56A"
     Resolved  bool   // True if resolved
 }
 
@@ -1962,7 +1962,7 @@ type SiteRef struct {
 
 ### Path Tracking Example
 
-```opal
+```sigil
 @retry {
     @timeout {
         echo "test"
@@ -1976,7 +1976,7 @@ root/@retry[0]/@timeout[0]/@shell[0]/params/command
 ```
 
 **Multiple instances tracked:**
-```opal
+```sigil
 echo "one"   # root/step-1/@shell[0]/params/command
 echo "two"   # root/step-2/@shell[0]/params/command
 ```
@@ -2047,7 +2047,7 @@ Scope tracking is implemented in IR/Resolver (`ScopeStack`) with source-order vi
 
 ### Transport Boundary Example
 
-```opal
+```sigil
 var LOCAL_TOKEN = @env.GITHUB_TOKEN  # Resolved in "local" transport
 
 @ssh(host="server") {
@@ -2113,7 +2113,7 @@ Runtime Layer (Work Execution):
 
 ## Dual-Path Architecture: Execution vs Tooling
 
-Opal's parser produces a stream of events that can be consumed in two different ways:
+Sigil's parser produces a stream of events that can be consumed in two different ways:
 
 ### Path 1: Events → Plan (Execution)
 
@@ -2126,8 +2126,8 @@ Source → Lexer → Parser → Events → Interpreter → Plan → Execute
 ```
 
 **Use cases:**
-- CLI execution: `opal deploy production`
-- Script execution: `opal run build.opl`
+- CLI execution: `sigil deploy production`
+- Script execution: `sigil run build.sgl`
 - CI/CD pipelines
 - Automated workflows
 
@@ -2176,7 +2176,7 @@ Source → Lexer → Parser → Events → AST Builder → Typed AST
 
 ## Plan Generation Process
 
-Opal generates execution plans through a three-phase pipeline:
+Sigil generates execution plans through a three-phase pipeline:
 
 ```
 Source → Parse → Plan → Execute
@@ -2191,7 +2191,7 @@ Source → Parse → Plan → Execute
 ### Key Mechanisms
 
 **Branch pruning**: Conditionals (`if`/`when`) evaluate at plan-time, only selected branch enters plan
-```opal
+```sigil
 when @var.ENV {
     "production" -> kubectl apply -f k8s/prod/  # Only this if ENV="production"
     "staging" -> kubectl apply -f k8s/staging/  # Pruned
@@ -2199,7 +2199,7 @@ when @var.ENV {
 ```
 
 **Loop unrolling**: `for` loops expand into concrete steps at plan-time
-```opal
+```sigil
 for service in ["api", "worker"] {
     kubectl scale deployment/@var.service --replicas=3
 }
@@ -2207,7 +2207,7 @@ for service in ["api", "worker"] {
 ```
 
 **Parallel resolution**: Independent value decorators resolve concurrently
-```opal
+```sigil
 deploy: {
     @env.DATABASE_URL        # Resolve in parallel
     @aws.secret.api_key      # Resolve in parallel
@@ -2260,7 +2260,7 @@ type ExecutionStep struct {
 }
 
 type ResolvedValue struct {
-    Placeholder ValuePlaceholder    // opal:s:ID for display/hashing
+    Placeholder ValuePlaceholder    // sigil:s:ID for display/hashing
     value       interface{}         // Actual value (memory only, never serialized)
 }
 
@@ -2285,7 +2285,7 @@ Plans serve two purposes:
 **1. Resolve Variables Ahead of Time**
 
 Before planning:
-```opal
+```sigil
 var replicas = @env.REPLICAS
 kubectl scale --replicas=@var.replicas deployment/app
 ```
@@ -2307,7 +2307,7 @@ Steps: [
 **2. Determine Execution Path Ahead of Time**
 
 Before planning:
-```opal
+```sigil
 if @env.ENV == "production" {
     kubectl apply -f k8s/prod/
 } else {
@@ -2326,7 +2326,7 @@ Steps: [
 // The else branch is PRUNED - not in the plan!
 ```
 
-**Contract verification:** When executing with `--plan file.plan`, Opal replans fresh and compares hashes. If environment changed (REPLICAS went from "3" to "5"), hashes won't match and execution aborts.
+**Contract verification:** When executing with `--plan file.plan`, Sigil replans fresh and compares hashes. If environment changed (REPLICAS went from "3" to "5"), hashes won't match and execution aborts.
 
 ### Serialization Format (.plan files)
 
@@ -2409,13 +2409,13 @@ Plans support four execution modes:
 
 **1. Direct Execution** (no plan file)
 ```bash
-opal deploy
+sigil deploy
 ```
 Flow: Source → Parse → Plan (resolve fresh) → Execute
 
 **2. Quick Plan** (preview, defer expensive decorators)
 ```bash
-opal deploy --dry-run
+sigil deploy --dry-run
 ```
 Flow: Source → Parse → Plan (cheap values only) → Display
 - Resolves control flow and cheap decorators (@var, @env)
@@ -2424,7 +2424,7 @@ Flow: Source → Parse → Plan (cheap values only) → Display
 
 **3. Resolved Plan** (generate contract)
 ```bash
-opal deploy --dry-run --resolve > prod.plan
+sigil deploy --dry-run --resolve > prod.plan
 ```
 Flow: Source → Parse → Plan (resolve ALL) → Serialize
 - Resolves all value decorators (including expensive ones)
@@ -2433,7 +2433,7 @@ Flow: Source → Parse → Plan (resolve ALL) → Serialize
 
 **4. Contract Execution** (verify + execute)
 ```bash
-opal run --plan prod.plan
+sigil run --plan prod.plan
 ```
 Flow: Load contract → Replan fresh → Compare hashes → Execute if match
 - **Critical**: Plan files are NEVER executed directly
@@ -2444,7 +2444,7 @@ Flow: Load contract → Replan fresh → Compare hashes → Execute if match
 **Why replan instead of execute?**
 - Prevents executing stale plans against changed reality
 - Detects drift (source changed, environment changed, infrastructure changed)
-- Unlike Terraform (applies old plan to new state), Opal verifies current reality would produce same plan
+- Unlike Terraform (applies old plan to new state), Sigil verifies current reality would produce same plan
 
 ### Hash Algorithm
 
@@ -2460,12 +2460,12 @@ Flow: Load contract → Replan fresh → Compare hashes → Execute if match
 
 ### Value Placeholder Format
 
-All resolved values use security placeholder format: `opal:s:ID`
+All resolved values use security placeholder format: `sigil:s:ID`
 
 Examples:
-- `opal:s:3J98t56A` - single character (e.g., "3")
-- `opal:s:7Kx9mN2p` - 32 characters (e.g., secret token)
-- `opal:s:mQp4Tn8X` - 8 characters (e.g., hostname)
+- `sigil:s:3J98t56A` - single character (e.g., "3")
+- `sigil:s:7Kx9mN2p` - 32 characters (e.g., secret token)
+- `sigil:s:mQp4Tn8X` - 8 characters (e.g., hostname)
 
 **Benefits:**
 - **No value leakage** in plans or logs
@@ -2557,7 +2557,7 @@ Plans have three distinct representations for different consumers:
 
 | Layer | Purpose | Contains | Consumers | Format |
 |-------|---------|----------|-----------|--------|
-| **In-Memory Plan** | Runtime execution contract | `PlanHeader` + `ExecutionStep[]` + resolved values | Opal runtime | Go structs |
+| **In-Memory Plan** | Runtime execution contract | `PlanHeader` + `ExecutionStep[]` + resolved values | Sigil runtime | Go structs |
 | **Contract Plan** | Persisted verification artifact | Header + Steps + Value placeholders + Provenance | `.plan` files, audit systems | Binary (gob/protobuf) |
 | **View Plan** | Human/API consumption | Formatted representation | CLI, web UI, REST API | Tree/JSON/HTML |
 
@@ -2567,7 +2567,7 @@ Plans have three distinct representations for different consumers:
 
 **File extension**: `.plan`
 
-**MIME type**: `application/x-opal-plan`
+**MIME type**: `application/x-sigil-plan`
 
 **Magic number**: `0x4F50414C` ("OPAL" in ASCII)
 
@@ -2795,7 +2795,7 @@ const (
       "properties": {
         "compiler_version": {
           "type": "string",
-          "description": "Opal compiler version (e.g., '1.0.0')"
+          "description": "Sigil compiler version (e.g., '1.0.0')"
         },
         "source_commit": {
           "type": "string",
@@ -2858,9 +2858,9 @@ const (
     }
   ],
   "values": {
-    "var.REPLICAS": "opal:s:3J98t56A",
-    "env.HOME": "opal:s:nR5wKp2Y",
-    "aws.secret.api_key": "opal:s:sQ9aTt6C"
+    "var.REPLICAS": "sigil:s:3J98t56A",
+    "env.HOME": "sigil:s:nR5wKp2Y",
+    "aws.secret.api_key": "sigil:s:sQ9aTt6C"
   },
   "provenance": {
     "compiler_version": "1.0.0",
@@ -2906,12 +2906,12 @@ Plan Hash: <algorithm>:<hash>
 ```
 deploy:
 ├─ kubectl apply -f k8s/
-├─ kubectl create secret --token=opal:s:qN7yOr4A
-└─ kubectl scale --replicas=opal:s:rP8zQs5B deployment/app
+├─ kubectl create secret --token=sigil:s:qN7yOr4A
+└─ kubectl scale --replicas=sigil:s:rP8zQs5B deployment/app
 
 Values:
-  var.REPLICAS = opal:s:rP8zQs5B
-  env.HOME = opal:s:pL6xMq3Z
+  var.REPLICAS = sigil:s:rP8zQs5B
+  env.HOME = sigil:s:pL6xMq3Z
 
 Plan Hash: sha256:xyz789...
 ```
@@ -2943,7 +2943,7 @@ Plan Hash: sha256:xyz789...
 
 ### Contract Verification Algorithm
 
-When executing with a plan file (`opal run --plan prod.plan`):
+When executing with a plan file (`sigil run --plan prod.plan`):
 
 ```
 1. Load contract plan from file
@@ -2998,21 +2998,21 @@ const (
 ```
 ERROR: Contract verification failed
 
-Expected: kubectl scale --replicas=opal:s:3J98t56A deployment/app
-Actual:   kubectl scale --replicas=opal:s:tR1bUv7D deployment/app
+Expected: kubectl scale --replicas=sigil:s:3J98t56A deployment/app
+Actual:   kubectl scale --replicas=sigil:s:tR1bUv7D deployment/app
 
 Value changed:
   var.REPLICAS
-    Contract: opal:s:3J98t56A (was "3")
-    Current:  opal:s:tR1bUv7D (now "5")
+    Contract: sigil:s:3J98t56A (was "3")
+    Current:  sigil:s:tR1bUv7D (now "5")
 
 Drift Code: env_changed
-Action: Run 'opal deploy --dry-run --resolve' to generate new plan
+Action: Run 'sigil deploy --dry-run --resolve' to generate new plan
 ```
 
 ### External Tool Integration
 
-**For Opal Cloud / Web UI**:
+**For Sigil Cloud / Web UI**:
 - Consume JSON format via REST API
 - Display tree format for human review
 - Store binary format for efficient storage
@@ -3038,7 +3038,7 @@ Action: Run 'opal deploy --dry-run --resolve' to generate new plan
 
 ## Safety Guarantees
 
-Opal guarantees that all operations halt with deterministic results.
+Sigil guarantees that all operations halt with deterministic results.
 
 ### Plan-Time Safety
 
@@ -3065,10 +3065,10 @@ Opal guarantees that all operations halt with deterministic results.
 
 **Resource limits**: Memory and process limits prevent system exhaustion.
 
-**Interrupt model (Ctrl+C / SIGINT)**: Interrupt behavior matches shell expectations while preserving Opal safety guarantees.
+**Interrupt model (Ctrl+C / SIGINT)**: Interrupt behavior matches shell expectations while preserving Sigil safety guarantees.
 - **First interrupt** cancels the run context and stops scheduling new work
 - In-flight commands receive cancellation and are terminated with best-effort process-tree cleanup
-- Cancellation return is bounded; Opal prefers prompt interrupt response over unbounded output draining
+- Cancellation return is bounded; Sigil prefers prompt interrupt response over unbounded output draining
 - If a command exit status is already finalized, later cancellation does not rewrite it to canceled
 - **Second interrupt** forces immediate termination
 
@@ -3089,15 +3089,15 @@ Opal guarantees that all operations halt with deterministic results.
 **Graceful cancellation**: `finally` blocks run on interruption for safe cleanup.
 
 **Cancellation invariants (must hold):**
-- **No new scheduling after cancel**: once cancellation is observed, Opal does not start new commands/branches
-- **No replay after start**: if command start is ambiguous or confirmed, Opal does not fallback-reexecute that command
+- **No new scheduling after cancel**: once cancellation is observed, Sigil does not start new commands/branches
+- **No replay after start**: if command start is ambiguous or confirmed, Sigil does not fallback-reexecute that command
 - **Status precedence**: if command completion status is known, that status is preserved even if cancellation arrives during output flush
-- **Bounded cleanup**: cleanup is best-effort and time-bounded; Opal does not wait forever for drains/teardown
+- **Bounded cleanup**: cleanup is best-effort and time-bounded; Sigil does not wait forever for drains/teardown
 - **Operator propagation**: cancellation short-circuits operator trees (`sequence`, `and`, `or`, `pipeline`, `redirect`) to prevent post-cancel side effects
 
 **Infrastructure deployment expectation:** cancellation is not a transactional rollback.
 - External systems may observe partial progress at cancel boundaries
-- If a cloud/provider create request is already accepted, cancellation stops further Opal work but does not automatically "un-create" that resource
+- If a cloud/provider create request is already accepted, cancellation stops further Sigil work but does not automatically "un-create" that resource
 - `finally` is for stabilization and cleanup, not a global undo primitive
 - Deployment decorators expose idempotency keys and safe re-entry so reruns reconcile cleanly
 - Operators rely on explicit health checks and reconciliation steps after interruption
@@ -3116,7 +3116,7 @@ When building decorators, follow these principles to maintain the contract model
 
 ## SDK for Decorator Authors
 
-Opal provides a secure-by-default SDK in `core/sdk/` for building decorators:
+Sigil provides a secure-by-default SDK in `core/sdk/` for building decorators:
 
 ### Secret Handling (Vault-Based)
 
@@ -3126,7 +3126,7 @@ Opal provides a secure-by-default SDK in `core/sdk/` for building decorators:
 
 Secrets are accessible **only at their use-site**. No propagation to parent/child decorators.
 
-```opal
+```sigil
 var API_KEY = "sk-..."
 var MAX_RETRIES = "5"
 
@@ -3158,7 +3158,7 @@ var MAX_RETRIES = "5"
 
 **Example:**
 
-```opal
+```sigil
 var API_KEY = "sk-secret"
 var RETRY_COUNT = "3"
 
@@ -3177,12 +3177,12 @@ var RETRY_COUNT = "3"
 ```go
 Plan.SecretUses = []SecretUse{
     {
-        DisplayID: "opal:ABC123",  // API_KEY
+        DisplayID: "sigil:ABC123",  // API_KEY
         SiteID:    "Xj9K...",         // HMAC(planKey, "root/http.post[0]/params/headers/Authorization")
         Site:      "root/http.post[0]/params/headers/Authorization",  // Path to object field
     },
     {
-        DisplayID: "opal:XYZ789",  // RETRY_COUNT
+        DisplayID: "sigil:XYZ789",  // RETRY_COUNT
         SiteID:    "mN2p...",         // HMAC(planKey, "root/retry[0]/params/times")
         Site:      "root/retry[0]/params/times",
     },
@@ -3191,7 +3191,7 @@ Plan.SecretUses = []SecretUse{
 
 **Transport boundary tracking:**
 
-```opal
+```sigil
 var LOCAL_SECRET = "secret"
 
 @ssh.connect(host="remote") {
@@ -3201,7 +3201,7 @@ var LOCAL_SECRET = "secret"
 
 ```go
 SecretUse{
-    DisplayID:        "opal:DEF456",
+    DisplayID:        "sigil:DEF456",
     SiteID:           "pQ8r...",
     Site:             "root/ssh.connect[0]/body/shell[0]",
     CrossesTransport: true,
@@ -3221,7 +3221,7 @@ SecretUse{
 
 If someone writes `@retry(times=@var.API_KEY)`, that's a bug in their code. The planner will:
 1. Record that `times` parameter uses `API_KEY` secret
-2. Store DisplayID in plan: `times: "opal:ABC123"`
+2. Store DisplayID in plan: `times: "sigil:ABC123"`
 3. At execution, @retry tries to parse as integer, fails with clear error showing DisplayID
 
 The security model prevents @retry from unwrapping the secret, but it can't prevent users from passing secrets to wrong parameters.
@@ -3281,7 +3281,7 @@ func (e *Executor) DeliverSecret(cmd *exec.Cmd, secret string) error {
 ```go
 // Plan tracks where secrets are used with canonical site IDs
 type SecretUse struct {
-    DisplayID string  // "opal:3J98t56A"
+    DisplayID string  // "sigil:3J98t56A"
     SiteID    string  // HMAC(planHash, canonicalPath) - unforgeable
     Site      string  // "root/retry[0]/params/times" or "root/http.post[0]/params/headers/Authorization"
 }
@@ -3371,35 +3371,35 @@ func (e *Executor) unwrap(displayID string, frame *ExecutionFrame) (string, erro
 Secret unwrap events are emitted as OpenTelemetry span events with standardized attributes:
 
 ```go
-// Emit as span event (conforms to existing opal.* attribute convention)
+// Emit as span event (conforms to existing sigil.* attribute convention)
 span.AddEvent("secret.unwrap", trace.WithAttributes(
-    attribute.String("opal.secret.display_id", displayID),
-    attribute.String("opal.secret.site_id", frame.SiteID),
-    attribute.String("opal.secret.site", frame.Site),
-    attribute.String("opal.decorator", frame.Decorator),
-    attribute.String("opal.param", frame.ParamPath),
-    attribute.Bool("opal.secret.success", true),
+    attribute.String("sigil.secret.display_id", displayID),
+    attribute.String("sigil.secret.site_id", frame.SiteID),
+    attribute.String("sigil.secret.site", frame.Site),
+    attribute.String("sigil.decorator", frame.Decorator),
+    attribute.String("sigil.param", frame.ParamPath),
+    attribute.Bool("sigil.secret.success", true),
 ))
 
 // Failed unwrap attempts also logged
 span.AddEvent("secret.unwrap.denied", trace.WithAttributes(
-    attribute.String("opal.secret.display_id", displayID),
-    attribute.String("opal.secret.site_id", frame.SiteID),
-    attribute.String("opal.secret.site", frame.Site),
-    attribute.String("opal.decorator", frame.Decorator),
-    attribute.String("opal.param", frame.ParamPath),
+    attribute.String("sigil.secret.display_id", displayID),
+    attribute.String("sigil.secret.site_id", frame.SiteID),
+    attribute.String("sigil.secret.site", frame.Site),
+    attribute.String("sigil.decorator", frame.Decorator),
+    attribute.String("sigil.param", frame.ParamPath),
     attribute.String("error", "no authority at site"),
 ))
 ```
 
-**Attributes follow existing `opal.*` convention:**
-- `opal.env`, `opal.target`, `opal.step_path` - Existing run context
-- `opal.secret.display_id` - Which secret (DisplayID, never raw value)
-- `opal.secret.site_id` - Canonical site ID (unforgeable)
-- `opal.secret.site` - Human-readable path (diagnostic)
-- `opal.decorator` - Which decorator requested unwrap
-- `opal.param` - Which parameter
-- `opal.secret.success` - Unwrap succeeded or denied
+**Attributes follow existing `sigil.*` convention:**
+- `sigil.env`, `sigil.target`, `sigil.step_path` - Existing run context
+- `sigil.secret.display_id` - Which secret (DisplayID, never raw value)
+- `sigil.secret.site_id` - Canonical site ID (unforgeable)
+- `sigil.secret.site` - Human-readable path (diagnostic)
+- `sigil.decorator` - Which decorator requested unwrap
+- `sigil.param` - Which parameter
+- `sigil.secret.success` - Unwrap succeeded or denied
 
 **Security properties:**
 - Raw secret values NEVER logged
@@ -3411,7 +3411,7 @@ span.AddEvent("secret.unwrap.denied", trace.WithAttributes(
 
 **All value decorators are treated as secrets** - no classification needed:
 
-In Opal's security model, ALL value decorators produce secrets:
+In Sigil's security model, ALL value decorators produce secrets:
 - `@var.X` → secret (tracked by Vault)
 - `@env.X` → secret (tracked by Vault)
 - `@aws.secret()` → secret (tracked by Vault)
@@ -3424,7 +3424,7 @@ In Opal's security model, ALL value decorators produce secrets:
 - Uniform treatment - all values go through Vault's `Access()` checks
 
 **Examples:**
-```opal
+```sigil
 var NAME = "alice"          # Tracked by Vault, access controlled
 var RETRIES = 3             # Tracked by Vault, access controlled
 var API_KEY = "sk-..."      # Tracked by Vault, access controlled
@@ -3447,7 +3447,7 @@ const (
 ```
 
 **Boundary enforcement:**
-```opal
+```sigil
 var LOCAL_SECRET = "secret123"
 
 # ❌ ERROR: Implicit cross-boundary use
@@ -3512,7 +3512,7 @@ remoteExecutor := NewExecutor(plan, remoteVault, remoteCapability)
 
 Plan-time control flow is just another site with planner authority:
 
-```opal
+```sigil
 var ENVIRONMENT = "production"
 
 if @var.ENVIRONMENT == "production" {  # Site: "planner/if[0]/condition"
@@ -3552,7 +3552,7 @@ func (d *MyDecorator) Execute(params map[string]any) {
 
 // ✅ GOOD: Decorator gets DisplayIDs only
 func (d *Decorator) Execute(params map[string]string) {
-    displayID := params["apiKey"]  // Just a string "opal:3J98t56A"
+    displayID := params["apiKey"]  // Just a string "sigil:3J98t56A"
 }
 ```
 
@@ -3659,7 +3659,7 @@ value, err := vault.Access(exprID, paramName)
 Use `executor.Command()` instead of `os/exec` for automatic scrubbing:
 
 ```go
-import "github.com/opal-lang/opal/core/sdk/executor"
+import "github.com/sigil-lang/sigil/core/sdk/executor"
 
 cmd := executor.Command("kubectl", "get", "pods")
 cmd.AppendEnv(map[string]string{
@@ -3775,8 +3775,8 @@ Deferred: 1. @aws.secret.api_token → <expensive: AWS lookup>
 
 **Resolved plans** materialize all values for deterministic execution:
 ```  
-kubectl create secret --token=¹opal:s:qN7yOr4A
-Resolved: 1. @aws.secret.api_token → opal:s:qN7yOr4A
+kubectl create secret --token=¹sigil:s:qN7yOr4A
+Resolved: 1. @aws.secret.api_token → sigil:s:qN7yOr4A
 ```
 
 Smart optimizations happen automatically:
@@ -3788,7 +3788,7 @@ Smart optimizations happen automatically:
 
 The placeholder system protects sensitive values while enabling change detection using a **two-track identity model**:
 
-**Placeholder format (user-visible)**: `🔒 opal:s:3J98t56A` - opaque random ID, no length leak, no correlation across runs.
+**Placeholder format (user-visible)**: `🔒 sigil:s:3J98t56A` - opaque random ID, no length leak, no correlation across runs.
 
 **Security invariant**: Raw secrets never appear in plans, logs, or error messages. This applies to all value decorators - `@env.NAME`, `@aws.secret.NAME`, whatever. Compliance teams can review plans confidently.
 
@@ -3799,7 +3799,7 @@ The placeholder system protects sensitive values while enabling change detection
 Secrets have two representations for different purposes:
 
 **Track 1: Display (User-Visible)**
-- Format: `🔒 opal:s:3J98t56A` (value-based ID)
+- Format: `🔒 sigil:s:3J98t56A` (value-based ID)
 - Used in: Terminal output, logs, CLI display, plan files
 - Deterministic within a plan for a given value (same across sites/transports)
 
@@ -3850,7 +3850,7 @@ All resolved plans include provenance metadata for audit trails:
     "plan_version": "2024.1",
     "generated_at": "2024-09-20T10:22:30Z",
     "source_commit": "abc123def456",
-    "compiler_version": "opal-1.4.2",
+    "compiler_version": "sigil-1.4.2",
     "plugins": {
       "aws.ec2": {
         "version": "1.4.2",
@@ -3942,7 +3942,7 @@ This dual-path approach avoids "walled garden" criticism while maintaining secur
 
 ## Secret Scrubbing Architecture
 
-Opal prevents secrets from leaking into **plans and terminal output** through automatic scrubbing. All value decorator results are treated as secrets - no exceptions.
+Sigil prevents secrets from leaking into **plans and terminal output** through automatic scrubbing. All value decorator results are treated as secrets - no exceptions.
 
 ### Vault as SecretProvider
 
@@ -3984,7 +3984,7 @@ output := scrubber.Scrub(commandOutput)  // Replaces secrets with DisplayIDs
 ### Design Philosophy
 
 **Scrubbing scope (by design):**
-- ✅ **Plans**: All value decorators replaced with DisplayIDs (`opal:s:3J98t56A`)
+- ✅ **Plans**: All value decorators replaced with DisplayIDs (`sigil:s:3J98t56A`)
 - ✅ **Terminal output**: Stdout/stderr scrubbed before display
 - ✅ **Logs**: All logging output scrubbed
 - ❌ **Pipes**: Raw values flow between operators (needed for work)
@@ -4064,7 +4064,7 @@ cmd.Stderr = scrubbedStderr
 **Runtime replacement:**
 ```
 Input:  "Connecting to API with key: sk-abc123xyz"
-Output: "Connecting to API with key: 🔒 opal:s:3J98t56A"
+Output: "Connecting to API with key: 🔒 sigil:s:3J98t56A"
 ```
 
 ### Scrubbing Layers
@@ -4078,11 +4078,11 @@ Output: "Connecting to API with key: 🔒 opal:s:3J98t56A"
 **Layer 2: Error Messages**
 - All errors flow through scrubber before display
 - Catches secrets in exception messages, stack traces
-- Example: `panic("Failed to connect: sk-abc123xyz")` → `panic("Failed to connect: 🔒 opal:s:3J98t56A")`
+- Example: `panic("Failed to connect: sk-abc123xyz")` → `panic("Failed to connect: 🔒 sigil:s:3J98t56A")`
 
 **Layer 3: Plan Files**
 - Resolved plans never contain raw secrets
-- All values represented as DisplayIDs: `🔒 opal:s:3J98t56A`
+- All values represented as DisplayIDs: `🔒 sigil:s:3J98t56A`
 - Plan files are safe to commit, share, review
 
 **Layer 4: Logs and Telemetry**
@@ -4092,26 +4092,26 @@ Output: "Connecting to API with key: 🔒 opal:s:3J98t56A"
 
 ### Encoding Detection
 
-Secrets can leak in encoded forms. Opal scrubs common encodings:
+Secrets can leak in encoded forms. Sigil scrubs common encodings:
 
 **URL encoding:**
 ```
 Raw:     "sk-abc123xyz"
 Encoded: "sk-abc123xyz" (no change) or "sk%2Dabc123xyz" (percent-encoded)
-Scrubbed: "🔒 opal:s:3J98t56A"
+Scrubbed: "🔒 sigil:s:3J98t56A"
 ```
 
 **Base64 encoding:**
 ```
 Raw:     "sk-abc123xyz"
 Encoded: "c2stYWJjMTIzeHl6"
-Scrubbed: "🔒 opal:s:3J98t56A"
+Scrubbed: "🔒 sigil:s:3J98t56A"
 ```
 
 **JSON encoding:**
 ```
 Raw:     {"key": "sk-abc123xyz"}
-Scrubbed: {"key": "🔒 opal:s:3J98t56A"}
+Scrubbed: {"key": "🔒 sigil:s:3J98t56A"}
 ```
 
 ### Performance
@@ -4221,7 +4221,7 @@ This architecture ensures secrets never leak while maintaining performance and u
 
 ## Seeded Determinism
 
-For operations requiring randomness or cryptography, opal will use seeded determinism to maintain contract verification while enabling secure random generation.
+For operations requiring randomness or cryptography, sigil will use seeded determinism to maintain contract verification while enabling secure random generation.
 
 ### Plan Seed Envelope (PSE)
 
@@ -4252,7 +4252,7 @@ HKDF(seed, info=plan_hash || step_path || decorator_name || counter)
 ### Implementation Requirements
 
 **API surface**:
-```opal
+```sigil
 var DB_PASS = @random.password(length=24, alphabet="A-Za-z0-9!@#")
 var API_KEY = @crypto.generate_key(type="ed25519")
 
@@ -4263,7 +4263,7 @@ deploy: {
 
 **Plan display**: Shows placeholders maintaining security invariant:
 ```
-kubectl create secret generic db --from-literal=password=¹opal:s:uS2cVw8E
+kubectl create secret generic db --from-literal=password=¹sigil:s:uS2cVw8E
 ```
 
 **Execution flow**:
@@ -4301,7 +4301,7 @@ output = DRBG(subkey, requested_length)
 
 **Regeneration keys**: Decorators use explicit regeneration keys to control when values change:
 
-```opal
+```sigil
 // Default: regenerates on every plan (plan hash as key)
 var TEMP_TOKEN = @random.password(length=16)
 
@@ -4341,7 +4341,7 @@ This approach provides cryptographically sound randomness while maintaining dete
 
 Control flow expands during plan generation, not execution:
 
-```opal
+```sigil
 // Source code
 for service in ["api", "worker"] {
     kubectl apply -f k8s/@var.service/
@@ -4399,7 +4399,7 @@ Dependencies flow one way: `cli/` → `runtime/` → `core/`
 
 Try/catch is special - it's the only construct that creates non-deterministic execution paths:
 
-```opal
+```sigil
 deploy: {
     try {
         kubectl apply -f k8s/
@@ -4452,7 +4452,7 @@ The key insight: meta-programming happens during transform, so all downstream st
 
 A novel capability emerges from the decorator architecture: seamless mixing of infrastructure-as-code with operations scripts in a single language.
 
-```opal
+```sigil
 deploy: {
     // Infrastructure deployment
     @aws.ec2.deploy(name="web-prod", count=3)
@@ -4490,7 +4490,7 @@ This eliminates the traditional boundary between "infrastructure tools" and "con
 
 Here's how complex scenarios work within the decorator model:
 
-```opal
+```sigil
 maintenance: {
     // Select running instances
     @aws.ec2.instances(

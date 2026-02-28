@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 // TestDepthLimit verifies that deeply nested plans are rejected

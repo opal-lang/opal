@@ -3,11 +3,11 @@ package parser
 import (
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register built-in decorators
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
-	"github.com/opal-lang/opal/runtime/lexer"
 )
 
 // Test decorator implementations for parser tests

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 // SimulateBlockFailure returns an ExecuteBlock function that fails with given exit code.

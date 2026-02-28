@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register decorators
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register decorators
-	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // TestEmit_SimpleCommand tests emitting a simple command with no variables.

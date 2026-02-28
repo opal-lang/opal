@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 func init() {

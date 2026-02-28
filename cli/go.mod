@@ -1,10 +1,10 @@
-module github.com/opal-lang/opal/cli
+module github.com/builtwithtofu/sigil/cli
 
 go 1.25.0
 
 require (
-	github.com/opal-lang/opal/core v0.0.0-20251105223424-05107dc292f1
-	github.com/opal-lang/opal/runtime v0.0.0-00010101000000-000000000000
+	github.com/builtwithtofu/sigil/core v0.0.0-20251105223424-05107dc292f1
+	github.com/builtwithtofu/sigil/runtime v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 )
@@ -23,6 +23,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/opal-lang/opal/runtime => ../runtime
+replace github.com/builtwithtofu/sigil/runtime => ../runtime
 
-replace github.com/opal-lang/opal/core => ../core
+replace github.com/builtwithtofu/sigil/core => ../core

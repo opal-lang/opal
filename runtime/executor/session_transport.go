@@ -7,8 +7,8 @@ import (
 	"io"
 	"io/fs"
 
-	"github.com/opal-lang/opal/core/decorator"
-	sdkexec "github.com/opal-lang/opal/core/sdk/executor"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	sdkexec "github.com/builtwithtofu/sigil/core/sdk/executor"
 )
 
 type sessionTransport struct {

@@ -1,8 +1,8 @@
-# Package definition for Opal CLI (built from cli module with Go workspace support)
+# Package definition for Sigil CLI (built from cli module with Go workspace support)
 { pkgs, lib, version ? "dev" }:
 
 pkgs.buildGoModule rec {
-  pname = "opal";
+  pname = "sigil";
   inherit version;
 
   src = ./..; # repo root that contains go.work
@@ -33,19 +33,19 @@ pkgs.buildGoModule rec {
     "-X main.BuildTime=1970-01-01T00:00:00Z"
   ];
 
-  # Rename binary from 'cli' to 'opal'
+  # Rename binary from 'cli' to 'sigil'
   postInstall = ''
-    mv $out/bin/cli $out/bin/opal
+    mv $out/bin/cli $out/bin/sigil
   '';
 
   doCheck = false; # Skip tests during build for now
 
   meta = with lib; {
-    description = "Opal - The Operations Planning Language";
-    homepage = "https://github.com/aledsdavies/opal";
+    description = "Sigil - The Operations Planning Language";
+    homepage = "https://github.com/builtwithtofu/sigil";
     license = licenses.mit;
     maintainers = [ maintainers.aledsdavies ];
     platforms = platforms.unix;
-    mainProgram = "opal";
+    mainProgram = "sigil";
   };
 }

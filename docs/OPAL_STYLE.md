@@ -1,6 +1,6 @@
-# Opal Coding Style Guide
+# Sigil Coding Style Guide
 
-Opal's coding style is inspired by **Tiger Style** from TigerBeetle, adapted for Go. Our design goals are **safety**, **performance**, and **developer experience**, in that order.
+Sigil's coding style is inspired by **Tiger Style** from TigerBeetle, adapted for Go. Our design goals are **safety**, **performance**, and **developer experience**, in that order.
 
 ## The Essence
 
@@ -233,7 +233,7 @@ if step.ID == 0 {
 ### Use the Invariant Package
 
 ```go
-import "github.com/opal-lang/opal/runtime/invariant"
+import "github.com/sigil-lang/sigil/runtime/invariant"
 
 func Process(data []byte) error {
     // Preconditions: what we require from caller

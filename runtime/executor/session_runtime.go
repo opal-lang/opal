@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 )
 
 type sessionFactory func(transportID string) (decorator.Session, error)

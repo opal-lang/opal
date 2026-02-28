@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register decorators for resolver
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register decorators for resolver
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
 )
 
 // TestResolve_SimpleCommand tests resolving a simple command with no variables.

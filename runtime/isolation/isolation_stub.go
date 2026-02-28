@@ -2,7 +2,7 @@
 
 package isolation
 
-import "github.com/opal-lang/opal/core/decorator"
+import "github.com/builtwithtofu/sigil/core/decorator"
 
 func init() {
 	registerIsolator(

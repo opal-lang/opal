@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // TimeoutDecorator implements the @timeout execution decorator.

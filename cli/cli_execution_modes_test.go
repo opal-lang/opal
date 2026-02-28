@@ -15,7 +15,7 @@ import (
 // TestCLIExecutionModes tests the 3 modes of CLI operation:
 // 1. stdin mode (explicit with -f - or piped input)
 // 2. file argument mode (user provides specific file)
-// 3. default mode (looks for commands.opl)
+// 3. default mode (looks for commands.sgl)
 func TestCLIExecutionModes(t *testing.T) {
 	// Sample command content for testing
 	sampleCommands := `test-cmd: echo "hello world"`
@@ -68,7 +68,7 @@ func TestCLIExecutionModes(t *testing.T) {
 			defer func() { os.Stdin = oldStdin }()
 
 			// Test getInputReader with default file name
-			reader, closeFunc, err := getInputReader("commands.opl")
+			reader, closeFunc, err := getInputReader("commands.sgl")
 			require.NoError(t, err)
 			defer func() { _ = closeFunc() }()
 
@@ -290,11 +290,11 @@ func TestStdinDetection(t *testing.T) {
 
 		defer func() { os.Stdin = oldStdin }()
 
-		reader, closeFunc, err := getInputReader("commands.opl")
+		reader, closeFunc, err := getInputReader("commands.sgl")
 		require.NoError(t, err)
 		defer func() { _ = closeFunc() }()
 
-		// Should read from stdin, not try to open commands.opl
+		// Should read from stdin, not try to open commands.sgl
 		content, err := io.ReadAll(reader)
 		require.NoError(t, err)
 		assert.Equal(t, testData, string(content))
@@ -338,7 +338,7 @@ func TestScriptMode(t *testing.T) {
 	t.Run("ScriptModeWithTopLevelCommands", func(t *testing.T) {
 		// Create a script with top-level commands (no functions)
 		tempDir := t.TempDir()
-		scriptFile := filepath.Join(tempDir, "script.opl")
+		scriptFile := filepath.Join(tempDir, "script.sgl")
 
 		scriptContent := `echo "Line 1"
 echo "Line 2"
@@ -365,7 +365,7 @@ echo "Line 3"`
 	t.Run("ScriptModeWithShebang", func(t *testing.T) {
 		// Create a script with shebang line
 		tempDir := t.TempDir()
-		scriptFile := filepath.Join(tempDir, "script.opl")
+		scriptFile := filepath.Join(tempDir, "script.sgl")
 
 		scriptContent := `#!/usr/bin/env opal
 echo "Line 1"
@@ -387,7 +387,7 @@ echo "Line 2"`
 	t.Run("ScriptModeWithFunctionsAndTopLevel", func(t *testing.T) {
 		// Script mode should execute only top-level commands, not functions
 		tempDir := t.TempDir()
-		scriptFile := filepath.Join(tempDir, "mixed.opl")
+		scriptFile := filepath.Join(tempDir, "mixed.sgl")
 
 		scriptContent := `fun deploy = echo "deploying"
 fun test = echo "testing"

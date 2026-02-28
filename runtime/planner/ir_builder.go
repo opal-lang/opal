@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 )
 
 // BuildIR constructs an ExecutionGraph from parser events and tokens.

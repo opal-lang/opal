@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
 )
 
 // TestShellDecorator_NewArch_SimpleCommand tests basic command execution with new architecture

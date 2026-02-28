@@ -111,7 +111,7 @@ These are the critical technical challenges that determine success or failure:
 ## Powerful v1 Checklist
 
 ### Core Language Features
-- [ ] **Command mode**: Organized tasks in `commands.opl` **(RELEASE-BLOCKING)**
+- [ ] **Command mode**: Organized tasks in `commands.sgl` **(RELEASE-BLOCKING)**
 - [ ] **Script mode**: Direct execution scripts **(RELEASE-BLOCKING)**
 - [ ] **Function declarations**: `fun deploy(env: String) { ... }` **(RELEASE-BLOCKING)**
 - [ ] **Variable declarations**: `var ENV = @env.ENVIRONMENT` **(RELEASE-BLOCKING)**
@@ -157,10 +157,10 @@ These are the critical technical challenges that determine success or failure:
 - [ ] **Plan diff**: Friendly comparison on mismatch **(RELEASE-BLOCKING)**
 
 ### Execution Engine
-- [ ] **Direct execution**: `opal deploy` **(RELEASE-BLOCKING)**
-- [ ] **Contract execution**: `opal run --plan prod.plan` **(RELEASE-BLOCKING)**
-- [ ] **Dry-run mode**: `opal deploy --dry-run` **(RELEASE-BLOCKING)**
-- [ ] **Resolved plan mode**: `opal deploy --dry-run --resolve` **(RELEASE-BLOCKING)**
+- [ ] **Direct execution**: `sigil deploy` **(RELEASE-BLOCKING)**
+- [ ] **Contract execution**: `sigil run --plan prod.plan` **(RELEASE-BLOCKING)**
+- [ ] **Dry-run mode**: `sigil deploy --dry-run` **(RELEASE-BLOCKING)**
+- [ ] **Resolved plan mode**: `sigil deploy --dry-run --resolve` **(RELEASE-BLOCKING)**
 - [ ] **Error taxonomy**: Plan errors vs execution errors vs provider errors **(RELEASE-BLOCKING)**
 - [ ] **Friendly error messages**: Context + suggestion + example **(RELEASE-BLOCKING)**
 
@@ -173,9 +173,9 @@ These are the critical technical challenges that determine success or failure:
   - [ ] `otlp-traces.json` - Execution traces **(RELEASE-BLOCKING)**
   - [ ] `summary.json` - Status, durations, metadata
 - [ ] **CLI commands**:
-  - [ ] `opal runs list` - List recent runs
-  - [ ] `opal runs show <run-id>` - Show run details
-  - [ ] `opal runs open <run-id>` - Open HTML report
+  - [ ] `sigil runs list` - List recent runs
+  - [ ] `sigil runs show <run-id>` - Show run details
+  - [ ] `sigil runs open <run-id>` - Open HTML report
 
 ### Testing Infrastructure
 - [ ] **Golden plan tests**: Byte-exact plan output **(RELEASE-BLOCKING)**
@@ -187,9 +187,9 @@ These are the critical technical challenges that determine success or failure:
 - [ ] **Error message quality**: All errors include position + suggestion **(RELEASE-BLOCKING)**
 
 ### Release Gate Script
-- [ ] **`opal verify-ci`**: Single command that runs all critical checks **(RELEASE-BLOCKING)**
+- [ ] **`sigil verify-ci`**: Single command that runs all critical checks **(RELEASE-BLOCKING)**
   ```bash
-  opal verify-ci
+  sigil verify-ci
   # Runs in sequence:
   # 1. Golden plan tests (byte-exact output)
   # 2. Performance benchmarks (p50/p95/p99 SLOs)
@@ -473,7 +473,7 @@ Each excluded feature is valuable but non-essential for proving the core model. 
 **Mitigation**:
 - Shared test suite for both paths (same events, verify consistency)
 - Golden tests verify both paths produce expected output
-- CI gate: `opal verify-ci` runs both paths on every commit
+- CI gate: `sigil verify-ci` runs both paths on every commit
 - Regular cross-validation during development
 
 **Status**: Mitigated by architecture (single parser, dual consumers)
@@ -501,7 +501,7 @@ Each excluded feature is valuable but non-essential for proving the core model. 
 - Conformance test suite verifies no side effects during planning
 - Monitoring test suite detects file/network/process activity during plan generation
 - Code review checklist for all decorators
-- CI gate: `opal verify-ci` runs sandbox leak detection
+- CI gate: `sigil verify-ci` runs sandbox leak detection
 - Clear separation: value decorators = pure resolution, execution decorators = plan structure only
 
 **Status**: Mitigated by testing (conformance suite catches violations)
@@ -527,7 +527,7 @@ Each excluded feature is valuable but non-essential for proving the core model. 
 
 **Mitigation**:
 - Benchmark suite runs on every commit
-- CI gate: `opal verify-ci` enforces SLOs (p50 <10ms, p95 <25ms, p99 <50ms)
+- CI gate: `sigil verify-ci` enforces SLOs (p50 <10ms, p95 <25ms, p99 <50ms)
 - Performance budgets tracked in CI
 - Profiling infrastructure built-in (telemetry mode)
 - Regular performance reviews during development

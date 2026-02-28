@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
-	_ "github.com/opal-lang/opal/runtime/decorators"
-	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 )
 
 // planSource is a test helper that parses and plans source code.

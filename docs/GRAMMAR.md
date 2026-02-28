@@ -1,12 +1,12 @@
 ---
-title: "Opal Grammar"
+title: "Sigil Grammar"
 audience: "Language Reference"
-summary: "Lexer and parser grammar for Opal"
+summary: "Lexer and parser grammar for Sigil"
 ---
 
-# Opal Grammar
+# Sigil Grammar
 
-Opal is a script builder.
+Sigil is a script builder.
 
 Metaprogramming constructs shape an execution plan, and runtime constructs execute shell and decorator behavior.
 
@@ -253,7 +253,7 @@ object_field   = identifier ":" expr ;
 
 Examples:
 
-```opal
+```sigil
 echo "Deploying @var.service"
 echo '@var.service'
 echo `HOME=@env.HOME`
@@ -268,7 +268,7 @@ Parser validation supports two modes:
 
 ## Language boundary
 
-Opal metaprogramming wraps shell and decorator execution.
+Sigil metaprogramming wraps shell and decorator execution.
 
 - Metaprogramming constructs build the plan and expand scripts.
 - Shell commands and execution decorators perform runtime work.

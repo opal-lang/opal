@@ -94,7 +94,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opal-lang/opal/core/sdk/executor"
+	"github.com/builtwithtofu/sigil/core/sdk/executor"
 )
 
 // Step represents a unit of work to execute (runtime execution model).

@@ -3,8 +3,8 @@ package planner
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/parser"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 )
 
 // TestLiteralVariablesAreSessionAgnostic verifies that literal values

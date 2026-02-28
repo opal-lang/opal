@@ -3,12 +3,12 @@ package planner
 import (
 	"testing"
 
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
 
 	// Import decorators to populate the registry for @var detection
-	_ "github.com/opal-lang/opal/runtime/decorators"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 )
 
 // Helper to parse source and build IR

@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/opal-lang/opal/core/invariant"
+	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
 // PlaceholderFunc generates a placeholder for a secret.

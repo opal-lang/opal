@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	_ "github.com/opal-lang/opal/runtime/decorators"
-	"github.com/opal-lang/opal/runtime/executor"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/planner"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
+	"github.com/builtwithtofu/sigil/runtime/executor"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/planner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

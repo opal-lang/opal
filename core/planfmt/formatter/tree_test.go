@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
 )
 
 func TestFormatTree_EmptyPlan(t *testing.T) {

@@ -3,9 +3,9 @@ package formatter_test
 import (
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt/formatter"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/planfmt/formatter"
 )
 
 // TestFormatStep verifies step formatting with trees

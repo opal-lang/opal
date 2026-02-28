@@ -3,7 +3,7 @@ package isolation
 import (
 	"errors"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 type IsolationContext = decorator.IsolationContext

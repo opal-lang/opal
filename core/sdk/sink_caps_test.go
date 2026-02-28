@@ -4,8 +4,8 @@ import (
 	"io"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/sdk"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/sdk"
 )
 
 // mockSink is a test sink with configurable capabilities

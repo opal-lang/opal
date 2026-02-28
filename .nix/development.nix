@@ -1,8 +1,8 @@
-# Development environment for Opal project - interpreter mode only
+# Development environment for Sigil project - interpreter mode only
 { pkgs, self ? null, gitRev ? "dev", system }:
 
 pkgs.mkShell {
-  name = "opal-dev";
+  name = "sigil-dev";
 
   buildInputs = with pkgs; [
     # Go toolchain (locked version)
@@ -39,7 +39,7 @@ pkgs.mkShell {
     
     # Generate SSH key if it doesn't exist
     if [ ! -f "$SSH_TEST_DIR/id_ed25519" ]; then
-      ssh-keygen -t ed25519 -f "$SSH_TEST_DIR/id_ed25519" -N "" -C "opal-test" >/dev/null 2>&1
+      ssh-keygen -t ed25519 -f "$SSH_TEST_DIR/id_ed25519" -N "" -C "sigil-test" >/dev/null 2>&1
       cat "$SSH_TEST_DIR/id_ed25519.pub" >> ~/.ssh/authorized_keys 2>/dev/null || true
       echo "✓ Generated SSH test key"
     fi
@@ -51,12 +51,12 @@ pkgs.mkShell {
     
     # Check if SSH to localhost works
     if ssh -o BatchMode=yes -o ConnectTimeout=1 -o StrictHostKeyChecking=no localhost whoami >/dev/null 2>&1; then
-      export OPAL_SSH_TESTS_ENABLED=1
+      export SIGIL_SSH_TESTS_ENABLED=1
     fi
     
     # Only show welcome message in interactive shells
     if [ -t 0 ]; then
-      echo "🔧 Opal Development Environment"
+      echo "🔧 Sigil Development Environment"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
       echo "Available tools:"
@@ -66,7 +66,7 @@ pkgs.mkShell {
       echo "  nixpkgs-fmt   - Nix formatter"
       echo ""
       
-      if [ -n "$OPAL_SSH_TESTS_ENABLED" ]; then
+      if [ -n "$SIGIL_SSH_TESTS_ENABLED" ]; then
         echo "✓ SSH testing enabled (localhost SSH working)"
       else
         echo "⚠ SSH testing disabled (localhost SSH not available)"
@@ -80,7 +80,7 @@ pkgs.mkShell {
       echo "  golangci-lint run              - Run linter"
       echo "  go test -v ./...               - Run all tests (SSH if enabled)"
       echo "  go test -v -short ./...        - Run tests (skip SSH)"
-      echo "  cd cli && go build -o opal .   - Build CLI binary"
+      echo "  cd cli && go build -o sigil .   - Build CLI binary"
       echo ""
     fi
   '';

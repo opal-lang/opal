@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 // TestEnvDecoratorDescriptor verifies the decorator metadata

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/sdk/secret"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/sdk/secret"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 // Config configures planner behavior.

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/planner"
-	"github.com/opal-lang/opal/runtime/vault"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/planner"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
 type plannerBenchmarkScenario struct {

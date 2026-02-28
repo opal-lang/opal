@@ -1,13 +1,13 @@
-// Package main implements the Opal CLI.
+// Package main implements the Sigil CLI.
 //
 // The CLI supports four execution modes:
-//  1. Script mode: Execute .opl files directly
-//  2. Command mode: Execute specific functions from .opl files
+//  1. Script mode: Execute .sgl files directly
+//  2. Command mode: Execute specific functions from .sgl files
 //  3. Dry-run mode: Generate and display execution plan without executing
 //  4. Contract mode: Verify plan contract before execution
 //
 // Secret scrubbing: All output is automatically scrubbed to replace secret values
-// with DisplayID placeholders (opal:<hash>). The scrubber intercepts stdout/stderr
+// with DisplayID placeholders (sigil:<hash>). The scrubber intercepts stdout/stderr
 // before any output reaches the terminal.
 package main
 
@@ -22,16 +22,16 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/sdk/secret"
-	_ "github.com/opal-lang/opal/runtime/decorators" // Register built-in decorators
-	"github.com/opal-lang/opal/runtime/executor"
-	"github.com/opal-lang/opal/runtime/lexer"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/planner"
-	"github.com/opal-lang/opal/runtime/streamscrub"
-	"github.com/opal-lang/opal/runtime/vault"
+	_ "github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/sdk/secret"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register built-in decorators
+	"github.com/builtwithtofu/sigil/runtime/executor"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/planner"
+	"github.com/builtwithtofu/sigil/runtime/streamscrub"
+	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -51,7 +51,7 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:   "opal [command]",
+		Use:   "sigil [command]",
 		Short: "Plan-first execution platform for deployments and operations",
 		Long: `Opal converts operational workflows into verifiable execution contracts.
 
@@ -65,8 +65,8 @@ DisplayID placeholders for security.`,
 		Args:          cobra.MaximumNArgs(1), // 0 args if --plan, 1 arg otherwise
 		SilenceErrors: true,                  // We handle error printing ourselves
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Create Opal-specific placeholder generator
-			opalGen, err := streamscrub.NewOpalPlaceholderGenerator()
+			// Create Sigil-specific placeholder generator
+			sigilGen, err := streamscrub.NewSigilPlaceholderGenerator()
 			if err != nil {
 				return fmt.Errorf("failed to create placeholder generator: %w", err)
 			}
@@ -94,7 +94,7 @@ DisplayID placeholders for security.`,
 
 				// Create scrubber with vault's secret provider
 				scrubber := streamscrub.New(&outputBuf,
-					streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+					streamscrub.WithPlaceholderFunc(sigilGen.PlaceholderFunc()),
 					streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
 				// Redirect stdout/stderr through scrubber
@@ -123,7 +123,7 @@ DisplayID placeholders for security.`,
 
 			// Create scrubber with vault's secret provider
 			scrubber := streamscrub.New(&outputBuf,
-				streamscrub.WithPlaceholderFunc(opalGen.PlaceholderFunc()),
+				streamscrub.WithPlaceholderFunc(sigilGen.PlaceholderFunc()),
 				streamscrub.WithSecretProvider(vlt.SecretProvider()))
 
 			// Redirect stdout/stderr through scrubber
@@ -152,7 +152,7 @@ DisplayID placeholders for security.`,
 	}
 
 	// Add flags
-	rootCmd.PersistentFlags().StringVarP(&file, "file", "f", "commands.opl", "Path to command definitions file")
+	rootCmd.PersistentFlags().StringVarP(&file, "file", "f", "commands.sgl", "Path to command definitions file")
 	rootCmd.PersistentFlags().StringVar(&planFile, "plan", "", "Execute from pre-generated plan file (Mode 4)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
 	rootCmd.PersistentFlags().BoolVar(&resolve, "resolve", false, "Resolve all values in plan (use with --dry-run)")
@@ -397,7 +397,7 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 // getInputReader handles the 3 modes of input:
 // 1. Explicit stdin with -f -
 // 2. Piped input (auto-detected when using default file)
-// 3. File input (specific file or default commands.opl)
+// 3. File input (specific file or default commands.sgl)
 func getInputReader(file string) (io.Reader, func() error, error) {
 	// Mode 1: Explicit stdin
 	if file == "-" {
@@ -405,7 +405,7 @@ func getInputReader(file string) (io.Reader, func() error, error) {
 	}
 
 	// Mode 2: Check for piped input when using default file
-	if file == "commands.opl" {
+	if file == "commands.sgl" {
 		if hasPipedInput() {
 			return os.Stdin, func() error { return nil }, nil
 		}

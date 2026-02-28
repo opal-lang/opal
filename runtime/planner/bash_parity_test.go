@@ -3,9 +3,9 @@ package planner_test
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/planner"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/planner"
 )
 
 // TestBashParity verifies that Opal's execution tree structure matches bash behavior

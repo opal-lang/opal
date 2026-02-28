@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// TestOpalPlaceholderFormat verifies the opal:s:hash format
-func TestOpalPlaceholderFormat(t *testing.T) {
+// TestSigilPlaceholderFormat verifies the sigil:s:hash format
+func TestSigilPlaceholderFormat(t *testing.T) {
 	key := make([]byte, 32)
-	gen, err := NewOpalPlaceholderGeneratorWithKey(key)
+	gen, err := NewSigilPlaceholderGeneratorWithKey(key)
 	if err != nil {
 		t.Fatalf("failed to create generator: %v", err)
 	}
@@ -17,19 +17,19 @@ func TestOpalPlaceholderFormat(t *testing.T) {
 	secret := []byte("MY_SECRET_TOKEN")
 	placeholder := gen.Generate(secret)
 
-	// Should have format: opal:s:hash
-	if !strings.HasPrefix(placeholder, "opal:s:") {
-		t.Errorf("placeholder should start with 'opal:s:', got: %q", placeholder)
+	// Should have format: sigil:s:hash
+	if !strings.HasPrefix(placeholder, "sigil:s:") {
+		t.Errorf("placeholder should start with 'sigil:s:', got: %q", placeholder)
 	}
 
 	// Should be fixed length
 	parts := strings.Split(placeholder, ":")
 	if len(parts) != 3 {
-		t.Errorf("placeholder should have 3 parts (opal:s:hash), got %d: %q", len(parts), placeholder)
+		t.Errorf("placeholder should have 3 parts (sigil:s:hash), got %d: %q", len(parts), placeholder)
 	}
 
-	if parts[0] != "opal" {
-		t.Errorf("first part should be 'opal', got: %q", parts[0])
+	if parts[0] != "sigil" {
+		t.Errorf("first part should be 'sigil', got: %q", parts[0])
 	}
 	if parts[1] != "s" {
 		t.Errorf("second part should be 's', got: %q", parts[1])
@@ -39,10 +39,10 @@ func TestOpalPlaceholderFormat(t *testing.T) {
 	}
 }
 
-// TestOpalPlaceholderDeterminism verifies same secret → same placeholder
-func TestOpalPlaceholderDeterminism(t *testing.T) {
+// TestSigilPlaceholderDeterminism verifies same secret → same placeholder
+func TestSigilPlaceholderDeterminism(t *testing.T) {
 	key := make([]byte, 32)
-	gen, _ := NewOpalPlaceholderGeneratorWithKey(key)
+	gen, _ := NewSigilPlaceholderGeneratorWithKey(key)
 
 	secret := []byte("TEST_SECRET")
 	ph1 := gen.Generate(secret)
@@ -54,16 +54,16 @@ func TestOpalPlaceholderDeterminism(t *testing.T) {
 	}
 }
 
-// TestOpalPlaceholderDifferentKeys verifies different keys → different placeholders
-func TestOpalPlaceholderDifferentKeys(t *testing.T) {
+// TestSigilPlaceholderDifferentKeys verifies different keys → different placeholders
+func TestSigilPlaceholderDifferentKeys(t *testing.T) {
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
 	for i := range key2 {
 		key2[i] = byte(i + 1)
 	}
 
-	gen1, _ := NewOpalPlaceholderGeneratorWithKey(key1)
-	gen2, _ := NewOpalPlaceholderGeneratorWithKey(key2)
+	gen1, _ := NewSigilPlaceholderGeneratorWithKey(key1)
+	gen2, _ := NewSigilPlaceholderGeneratorWithKey(key2)
 
 	secret := []byte("SAME_SECRET")
 	ph1 := gen1.Generate(secret)
@@ -73,16 +73,16 @@ func TestOpalPlaceholderDifferentKeys(t *testing.T) {
 		t.Errorf("same placeholder for different keys: %q", ph1)
 	}
 
-	// Both should still have opal:s: prefix
-	if !strings.HasPrefix(ph1, "opal:s:") || !strings.HasPrefix(ph2, "opal:s:") {
-		t.Errorf("placeholders should have opal:s: prefix: %q, %q", ph1, ph2)
+	// Both should still have sigil:s: prefix
+	if !strings.HasPrefix(ph1, "sigil:s:") || !strings.HasPrefix(ph2, "sigil:s:") {
+		t.Errorf("placeholders should have sigil:s: prefix: %q, %q", ph1, ph2)
 	}
 }
 
-// TestOpalPlaceholderIntegration tests with scrubber
-func TestOpalPlaceholderIntegration(t *testing.T) {
+// TestSigilPlaceholderIntegration tests with scrubber
+func TestSigilPlaceholderIntegration(t *testing.T) {
 	var buf bytes.Buffer
-	gen, _ := NewOpalPlaceholderGenerator()
+	gen, _ := NewSigilPlaceholderGenerator()
 
 	secret := []byte("API_KEY_12345")
 	placeholder := gen.Generate(secret)
@@ -106,8 +106,8 @@ func TestOpalPlaceholderIntegration(t *testing.T) {
 		t.Errorf("secret leaked: %q", got)
 	}
 
-	// Should contain opal:s: placeholder
-	if !strings.Contains(got, "opal:s:") {
-		t.Errorf("opal:s: placeholder not found: %q", got)
+	// Should contain sigil:s: placeholder
+	if !strings.Contains(got, "sigil:s:") {
+		t.Errorf("sigil:s: placeholder not found: %q", got)
 	}
 }

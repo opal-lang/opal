@@ -6,10 +6,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/sdk"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
 func (e *executor) executePlanStep(execCtx sdk.ExecutionContext, step planfmt.Step) int {

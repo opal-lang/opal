@@ -3,13 +3,13 @@ package planner_test
 import (
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/runtime/parser"
+	"github.com/builtwithtofu/sigil/runtime/planner"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/runtime/parser"
-	"github.com/opal-lang/opal/runtime/planner"
 
 	// Import decorators to register @var in the global registry
-	_ "github.com/opal-lang/opal/runtime/decorators"
+	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 )
 
 // getCommandFromStep extracts a CommandNode from a step, handling LogicNode wrappers.

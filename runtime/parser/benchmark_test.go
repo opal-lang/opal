@@ -3,7 +3,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
 // Benchmark suite for parser performance analysis.

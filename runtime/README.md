@@ -1,10 +1,10 @@
 # Runtime Module
 
-The `runtime` module provides the execution environment and runtime services for opal commands and decorators.
+The `runtime` module provides the execution environment and runtime services for sigil commands and decorators.
 
 ## Purpose
 
-This module contains the runtime infrastructure that powers opal execution:
+This module contains the runtime infrastructure that powers sigil execution:
 
 - **Execution Context**: Runtime environment for command execution
 - **Decorator Registry**: Registration and lookup system for all decorators
@@ -45,8 +45,8 @@ The runtime provides a unified decorator system where:
 ## Usage
 
 ```go
-import "github.com/opal-lang/opal/runtime/execution"
-import "github.com/opal-lang/opal/runtime/decorators"
+import "github.com/builtwithtofu/sigil/runtime/execution"
+import "github.com/builtwithtofu/sigil/runtime/decorators"
 
 // Register a new decorator
 decorators.RegisterFunction(&MyDecorator{})

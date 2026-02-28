@@ -3,8 +3,8 @@ package parser
 import (
 	"fmt"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
 // ExecutionMode represents the context in which Opal code is executed

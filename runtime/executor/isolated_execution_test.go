@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
+	runtimedecorators "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
-	"github.com/opal-lang/opal/core/decorator"
-	runtimedecorators "github.com/opal-lang/opal/runtime/decorators"
 )
 
 func TestIsolatedNetworkDenyBlocksExternalConnections(t *testing.T) {

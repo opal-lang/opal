@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opal-lang/opal/runtime/lexer"
+	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
 func TestErrorFormatterCompact(t *testing.T) {
 	source := []byte("fun greet() {}\nfun deploy(env) {}\nfun greet(name {\n")
 
 	err := ParseError{
-		Filename:   "commands.opl",
+		Filename:   "commands.sgl",
 		Position:   lexer.Position{Line: 3, Column: 15, Offset: 50},
 		Message:    "missing closing parenthesis",
 		Context:    "parameter list",
@@ -22,7 +22,7 @@ func TestErrorFormatterCompact(t *testing.T) {
 
 	formatter := ErrorFormatter{
 		Source:   source,
-		Filename: "commands.opl",
+		Filename: "commands.sgl",
 		Compact:  true,
 		Color:    false,
 	}
@@ -30,13 +30,13 @@ func TestErrorFormatterCompact(t *testing.T) {
 	output := formatter.Format(err)
 
 	// Expected format:
-	// commands.opl:3:15: missing closing parenthesis in parameter list
+	// commands.sgl:3:15: missing closing parenthesis in parameter list
 	//  3 | fun greet(name {
 	//    |               ^ expected ')'
 	//    Add ')' after the last parameter
 
 	expectedLines := []string{
-		"commands.opl:3:15: missing closing parenthesis in parameter list",
+		"commands.sgl:3:15: missing closing parenthesis in parameter list",
 		" 3 | fun greet(name {",
 		"   |               ^ expected ')'",
 		"   Add ')' after the last parameter",
@@ -63,7 +63,7 @@ func TestErrorFormatterDetailed(t *testing.T) {
 	source := []byte("fun greet() {}\nfun deploy(env) {}\nfun greet(name {\n")
 
 	err := ParseError{
-		Filename:   "commands.opl",
+		Filename:   "commands.sgl",
 		Position:   lexer.Position{Line: 3, Column: 15, Offset: 50},
 		Message:    "missing closing parenthesis",
 		Context:    "parameter list",
@@ -76,7 +76,7 @@ func TestErrorFormatterDetailed(t *testing.T) {
 
 	formatter := ErrorFormatter{
 		Source:   source,
-		Filename: "commands.opl",
+		Filename: "commands.sgl",
 		Compact:  false,
 		Color:    false,
 	}
@@ -85,7 +85,7 @@ func TestErrorFormatterDetailed(t *testing.T) {
 
 	// Expected format:
 	// Error: missing closing parenthesis
-	//   --> commands.opl:3:15
+	//   --> commands.sgl:3:15
 	//    |
 	//  3 | fun greet(name {
 	//    |               ^ expected ')'
@@ -96,7 +96,7 @@ func TestErrorFormatterDetailed(t *testing.T) {
 
 	expectedLines := []string{
 		"Error: missing closing parenthesis",
-		"  --> commands.opl:3:15",
+		"  --> commands.sgl:3:15",
 		"   |",
 		" 3 | fun greet(name {",
 		"   |               ^ expected ')'",

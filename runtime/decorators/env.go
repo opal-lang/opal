@@ -3,9 +3,9 @@ package decorators
 import (
 	"fmt"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/invariant"
-	"github.com/opal-lang/opal/core/types"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/invariant"
+	"github.com/builtwithtofu/sigil/core/types"
 )
 
 // EnvDecorator implements the @env value decorator for accessing environment variables.

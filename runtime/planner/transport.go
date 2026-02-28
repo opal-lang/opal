@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
 func deriveTransportID(planKey []byte, decoratorName string, args map[string]any, parentID string) (string, error) {

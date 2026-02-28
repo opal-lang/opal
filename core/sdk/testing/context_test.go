@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opal-lang/opal/core/sdk"
-	sdktesting "github.com/opal-lang/opal/core/sdk/testing"
+	"github.com/builtwithtofu/sigil/core/sdk"
+	sdktesting "github.com/builtwithtofu/sigil/core/sdk/testing"
 )
 
 // TestNewTestContext verifies realistic defaults

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opal-lang/opal/core/decorator"
+	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -1,5 +1,5 @@
 {
-  description = "Opal - The Operations Planning Language";
+  description = "Sigil - The Operations Planning Language";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -16,19 +16,19 @@
           # Get git revision for generated CLIs (fallback for dirty trees)
           gitRev = self.rev or "dev-${toString self.lastModified}";
 
-          # Main opal package
-          opalPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
+          # Main sigil package
+          sigilPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
 
           # Library functions with automatic system detection
-          opalLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
+          sigilLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
 
 
         in
         {
           packages = {
-            # Core opal package
-            default = opalPackage;
-            opal = opalPackage;
+            # Core sigil package
+            default = sigilPackage;
+            sigil = sigilPackage;
           };
 
           devShells = {
@@ -37,12 +37,12 @@
           };
 
           # Library functions for other flakes (simplified interface)
-          lib = opalLib;
+          lib = sigilLib;
 
           apps = {
             default = {
               type = "app";
-              program = "${self.packages.${system}.default}/bin/opal";
+              program = "${self.packages.${system}.default}/bin/sigil";
             };
           };
 
@@ -68,11 +68,11 @@
 
       # Overlay for use in other flakes
       overlays.default = final: prev: {
-        # Core opal package
-        opal = self.packages.${prev.system}.default;
+        # Core sigil package
+        sigil = self.packages.${prev.system}.default;
 
         # Library interface
-        opalLib = self.lib.${prev.system};
+        sigilLib = self.lib.${prev.system};
 
         # Core function for overlay users
         mkDevCLI = self.lib.${prev.system}.mkDevCLI;

@@ -3,8 +3,8 @@ package parser
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/decorator"
-	"github.com/opal-lang/opal/core/types"
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/types"
 )
 
 // mockTransportDecorator is a test decorator that simulates a transport-switching decorator.

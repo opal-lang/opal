@@ -3,8 +3,8 @@ package formatter_test
 import (
 	"testing"
 
-	"github.com/opal-lang/opal/core/planfmt"
-	"github.com/opal-lang/opal/core/planfmt/formatter"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/planfmt/formatter"
 )
 
 // TestDiff verifies diff comparison logic
