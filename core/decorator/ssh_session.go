@@ -481,6 +481,10 @@ func (s *SSHSessionWithEnv) Close() error {
 	return nil
 }
 
+func (s *SSHSessionWithEnv) UnwrapSession() Session {
+	return s.base
+}
+
 // SSHTransport implements Transport for SSH connections.
 type SSHTransport struct{}
 

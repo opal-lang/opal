@@ -110,7 +110,20 @@ var (
 	_        decorator.Session               = (*isolatedSession)(nil)
 	_        decorator.NetworkDialer         = (*isolatedSession)(nil)
 	_        decorator.NetworkDialerProvider = (*isolatedSession)(nil)
-	lookupIP                                 = net.LookupIP
+	lookupIP                                 = func(ctx context.Context, host string) ([]net.IP, error) {
+		var resolver net.Resolver
+		addrs, err := resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+
+		ips := make([]net.IP, len(addrs))
+		for i, addr := range addrs {
+			ips[i] = addr.IP
+		}
+
+		return ips, nil
+	}
 )
 
 func (s *isolatedSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
@@ -138,7 +151,7 @@ func (s *isolatedSession) WithWorkdir(dir string) decorator.Session {
 }
 
 func (s *isolatedSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	validatedAddr, err := validateNetworkPolicy(s.networkPolicy, network, addr)
+	validatedAddr, err := validateNetworkPolicy(ctx, s.networkPolicy, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +168,7 @@ func (s *isolatedSession) NetworkDialer() decorator.NetworkDialer {
 	return s
 }
 
-func validateNetworkPolicy(policy decorator.NetworkPolicy, network, addr string) (string, error) {
+func validateNetworkPolicy(ctx context.Context, policy decorator.NetworkPolicy, network, addr string) (string, error) {
 	switch policy {
 	case decorator.NetworkPolicyAllow:
 		return addr, nil
@@ -176,7 +189,7 @@ func validateNetworkPolicy(policy decorator.NetworkPolicy, network, addr string)
 			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
 		}
 
-		ips, err := lookupIP(host)
+		ips, err := lookupIP(ctx, host)
 		if err != nil {
 			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
 		}

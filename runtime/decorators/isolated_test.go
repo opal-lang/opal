@@ -134,7 +134,7 @@ func canSkipIsolatedError(err error) bool {
 
 func TestIsolatedSessionDialContextLoopbackPolicyBlocksExternalAddress(t *testing.T) {
 	originalLookup := lookupIP
-	lookupIP = func(string) ([]net.IP, error) {
+	lookupIP = func(context.Context, string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("93.184.216.34")}, nil
 	}
 	t.Cleanup(func() {
@@ -184,7 +184,7 @@ func TestIsolatedSessionDialContextDenyPolicyReturnsError(t *testing.T) {
 
 func TestIsolatedSessionDialContextLoopbackPolicyAllowsLoopbackIP(t *testing.T) {
 	originalLookup := lookupIP
-	lookupIP = func(string) ([]net.IP, error) {
+	lookupIP = func(context.Context, string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("127.0.0.1")}, nil
 	}
 	t.Cleanup(func() {
@@ -214,7 +214,7 @@ func TestIsolatedSessionDialContextLoopbackPolicyAllowsLoopbackIP(t *testing.T) 
 
 func TestIsolatedSessionDialContextLoopbackPolicyRejectsRebindingCandidates(t *testing.T) {
 	originalLookup := lookupIP
-	lookupIP = func(string) ([]net.IP, error) {
+	lookupIP = func(context.Context, string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("8.8.8.8")}, nil
 	}
 	t.Cleanup(func() {
