@@ -138,65 +138,61 @@ func (s *isolatedSession) WithWorkdir(dir string) decorator.Session {
 }
 
 func (s *isolatedSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if err := validateNetworkPolicy(s.networkPolicy, network, addr); err != nil {
+	validatedAddr, err := validateNetworkPolicy(s.networkPolicy, network, addr)
+	if err != nil {
 		return nil, err
 	}
 
-	provider, ok := s.parent.(decorator.NetworkDialerProvider)
-	if !ok {
-		return nil, errors.New("inner session does not support networking")
+	dialer, err := decorator.GetNetworkDialer(s.parent)
+	if err != nil {
+		return nil, fmt.Errorf("inner session does not support networking: %w", err)
 	}
 
-	dialer := provider.NetworkDialer()
-	if dialer == nil {
-		return nil, errors.New("inner session does not support networking")
-	}
-
-	return dialer.DialContext(ctx, network, addr)
+	return dialer.DialContext(ctx, network, validatedAddr)
 }
 
 func (s *isolatedSession) NetworkDialer() decorator.NetworkDialer {
 	return s
 }
 
-func validateNetworkPolicy(policy decorator.NetworkPolicy, network, addr string) error {
+func validateNetworkPolicy(policy decorator.NetworkPolicy, network, addr string) (string, error) {
 	switch policy {
 	case decorator.NetworkPolicyAllow:
-		return nil
+		return addr, nil
 	case decorator.NetworkPolicyDeny:
-		return errors.New("network access denied by isolation policy")
+		return "", errors.New("network access denied by isolation policy")
 	case decorator.NetworkPolicyLoopbackOnly:
 		if network == "unix" || network == "unixgram" || network == "unixpacket" {
-			return nil
+			return addr, nil
 		}
 
-		host, _, err := net.SplitHostPort(addr)
+		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
-			return fmt.Errorf("invalid network address %q: %w", addr, err)
+			return "", fmt.Errorf("invalid network address %q: %w", addr, err)
 		}
 
 		host = strings.TrimSpace(strings.Trim(host, "[]"))
 		if host == "" {
-			return fmt.Errorf("network access denied by isolation policy: %s", addr)
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
 		}
 
 		ips, err := lookupIP(host)
 		if err != nil {
-			return fmt.Errorf("network access denied by isolation policy: %s", addr)
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
 		}
 		if len(ips) == 0 {
-			return fmt.Errorf("network access denied by isolation policy: %s", addr)
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
 		}
 
 		for _, ip := range ips {
 			if !ip.IsLoopback() {
-				return fmt.Errorf("network access denied by isolation policy: %s resolves to non-loopback IP %s", addr, ip.String())
+				return "", fmt.Errorf("network access denied by isolation policy: %s resolves to non-loopback IP %s", addr, ip.String())
 			}
 		}
 
-		return nil
+		return net.JoinHostPort(ips[0].String(), port), nil
 	default:
-		return errors.New("network access denied by isolation policy")
+		return "", errors.New("network access denied by isolation policy")
 	}
 }
 

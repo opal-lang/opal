@@ -70,7 +70,7 @@ type sessionUnwrapper interface {
 	UnwrapSession() Session
 }
 
-func getNetworkDialer(session Session) (NetworkDialer, error) {
+func GetNetworkDialer(session Session) (NetworkDialer, error) {
 	for session != nil {
 		if provider, ok := session.(NetworkDialerProvider); ok {
 			return provider.NetworkDialer(), nil
@@ -89,6 +89,10 @@ func getNetworkDialer(session Session) (NetworkDialer, error) {
 	}
 
 	return nil, errors.New("session does not provide network dialer")
+}
+
+func getNetworkDialer(session Session) (NetworkDialer, error) {
+	return GetNetworkDialer(session)
 }
 
 // RunOpts configures command execution.
