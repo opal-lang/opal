@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
@@ -355,6 +357,366 @@ func sessionPoolProbeOpenCountValue() int {
 	sessionPoolProbeOpenMu.Lock()
 	defer sessionPoolProbeOpenMu.Unlock()
 	return sessionPoolProbeOpenCount
+}
+
+type multiHopTransportDecorator struct{}
+
+type noDialerTransportDecorator struct{}
+
+type multiHopRootSession struct{}
+
+type multiHopSession struct {
+	id           string
+	parent       decorator.Session
+	parentDialer decorator.NetworkDialer
+}
+
+type noDialerSession struct {
+	id string
+}
+
+var (
+	registerMultiHopTransportOnce sync.Once
+	registerNoDialerTransportOnce sync.Once
+
+	multiHopDialMu    sync.Mutex
+	multiHopDialCalls []string
+)
+
+func (d *multiHopTransportDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.transport.multihop").
+		Summary("Opens nested sessions via parent NetworkDialer").
+		Roles(decorator.RoleBoundary).
+		Build()
+}
+
+func (d *multiHopTransportDecorator) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork
+}
+
+func (d *multiHopTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	addr, _ := params["addr"].(string)
+	if strings.TrimSpace(addr) == "" {
+		return nil, fmt.Errorf("multi-hop transport requires non-empty addr")
+	}
+
+	id, _ := params["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("multi-hop transport requires non-empty id")
+	}
+
+	parentDialer, ok := parent.(decorator.NetworkDialer)
+	if !ok {
+		return nil, fmt.Errorf("parent session %T does not implement NetworkDialer", parent)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := parentDialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial through parent NetworkDialer to %q: %w", addr, err)
+	}
+	_ = conn.Close()
+
+	return &multiHopSession{id: id, parent: parent, parentDialer: parentDialer}, nil
+}
+
+func (d *multiHopTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
+func (d *multiHopTransportDecorator) MaterializeSession() bool {
+	return true
+}
+
+func (d *multiHopTransportDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
+func (d *noDialerTransportDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.transport.nodialer").
+		Summary("Opens a session that has no NetworkDialer").
+		Roles(decorator.RoleBoundary).
+		Build()
+}
+
+func (d *noDialerTransportDecorator) Capabilities() decorator.TransportCaps {
+	return 0
+}
+
+func (d *noDialerTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	id, _ := params["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("no-dialer transport requires non-empty id")
+	}
+	return &noDialerSession{id: id}, nil
+}
+
+func (d *noDialerTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
+func (d *noDialerTransportDecorator) MaterializeSession() bool {
+	return true
+}
+
+func (d *noDialerTransportDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
+func (s *multiHopRootSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	return decorator.Result{ExitCode: 0}, nil
+}
+
+func (s *multiHopRootSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return nil
+}
+
+func (s *multiHopRootSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *multiHopRootSession) Env() map[string]string {
+	return map[string]string{}
+}
+
+func (s *multiHopRootSession) WithEnv(delta map[string]string) decorator.Session {
+	return s
+}
+
+func (s *multiHopRootSession) WithWorkdir(dir string) decorator.Session {
+	return s
+}
+
+func (s *multiHopRootSession) Cwd() string {
+	return ""
+}
+
+func (s *multiHopRootSession) Platform() string {
+	return ""
+}
+
+func (s *multiHopRootSession) ID() string {
+	return "local"
+}
+
+func (s *multiHopRootSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeLocal
+}
+
+func (s *multiHopRootSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	recordMultiHopDial("local", addr)
+	clientConn, serverConn := net.Pipe()
+	_ = serverConn.Close()
+	return clientConn, nil
+}
+
+func (s *multiHopRootSession) Close() error {
+	return nil
+}
+
+func (s *multiHopSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	return s.parent.Run(ctx, argv, opts)
+}
+
+func (s *multiHopSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.parent.Put(ctx, data, path, mode)
+}
+
+func (s *multiHopSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.parent.Get(ctx, path)
+}
+
+func (s *multiHopSession) Env() map[string]string {
+	return s.parent.Env()
+}
+
+func (s *multiHopSession) WithEnv(delta map[string]string) decorator.Session {
+	return &multiHopSession{id: s.id, parent: s.parent.WithEnv(delta), parentDialer: s.parentDialer}
+}
+
+func (s *multiHopSession) WithWorkdir(dir string) decorator.Session {
+	return &multiHopSession{id: s.id, parent: s.parent.WithWorkdir(dir), parentDialer: s.parentDialer}
+}
+
+func (s *multiHopSession) Cwd() string {
+	return s.parent.Cwd()
+}
+
+func (s *multiHopSession) Platform() string {
+	return s.parent.Platform()
+}
+
+func (s *multiHopSession) ID() string {
+	return s.id
+}
+
+func (s *multiHopSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeSSH
+}
+
+func (s *multiHopSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	recordMultiHopDial(s.id, addr)
+	return s.parentDialer.DialContext(ctx, network, addr)
+}
+
+func (s *multiHopSession) Close() error {
+	return nil
+}
+
+func (s *noDialerSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	return decorator.Result{ExitCode: 0}, nil
+}
+
+func (s *noDialerSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return nil
+}
+
+func (s *noDialerSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *noDialerSession) Env() map[string]string {
+	return map[string]string{}
+}
+
+func (s *noDialerSession) WithEnv(delta map[string]string) decorator.Session {
+	return s
+}
+
+func (s *noDialerSession) WithWorkdir(dir string) decorator.Session {
+	return s
+}
+
+func (s *noDialerSession) Cwd() string {
+	return ""
+}
+
+func (s *noDialerSession) Platform() string {
+	return ""
+}
+
+func (s *noDialerSession) ID() string {
+	return s.id
+}
+
+func (s *noDialerSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeSSH
+}
+
+func (s *noDialerSession) Close() error {
+	return nil
+}
+
+func registerMultiHopTransportDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerMultiHopTransportOnce.Do(func() {
+		registerErr = decorator.Register("test.transport.multihop", &multiHopTransportDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.transport.multihop: %v", registerErr)
+	}
+}
+
+func registerNoDialerTransportDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerNoDialerTransportOnce.Do(func() {
+		registerErr = decorator.Register("test.transport.nodialer", &noDialerTransportDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.transport.nodialer: %v", registerErr)
+	}
+}
+
+func multiHopRootSessionFactory(transportID string) (decorator.Session, error) {
+	_ = transportID
+	return &multiHopRootSession{}, nil
+}
+
+func resetMultiHopDialCalls() {
+	multiHopDialMu.Lock()
+	defer multiHopDialMu.Unlock()
+	multiHopDialCalls = nil
+}
+
+func recordMultiHopDial(sourceID, addr string) {
+	multiHopDialMu.Lock()
+	defer multiHopDialMu.Unlock()
+	multiHopDialCalls = append(multiHopDialCalls, sourceID+"->"+addr)
+}
+
+func multiHopDialCallsValue() []string {
+	multiHopDialMu.Lock()
+	defer multiHopDialMu.Unlock()
+	return append([]string(nil), multiHopDialCalls...)
+}
+
+func TestNestedTransportUsesParentNetworkDialer(t *testing.T) {
+	registerSessionIDCheckDecorator(t)
+	registerMultiHopTransportDecorator(t)
+	registerNoDialerTransportDecorator(t)
+
+	t.Run("happy path delegates nested dial through parent", func(t *testing.T) {
+		resetMultiHopDialCalls()
+
+		plan := &planfmt.Plan{Target: "nested-parent-dialer", Transports: []planfmt.Transport{
+			{ID: "local", Decorator: "local", ParentID: ""},
+			{ID: "transport:bastion", Decorator: "@test.transport.multihop", ParentID: "local", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "bastion.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:bastion"}}}},
+			{ID: "transport:internal", Decorator: "@test.transport.multihop", ParentID: "session:bastion", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:internal"}}}},
+		}, Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+				planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:bastion"}}, "transport:bastion"),
+				planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:internal"}}, "transport:internal"),
+			}},
+		}}}
+
+		result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: multiHopRootSessionFactory}, testVault())
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		}
+
+		wantDials := []string{
+			"local->bastion.internal:22",
+			"session:bastion->internal.internal:22",
+			"local->internal.internal:22",
+		}
+		if diff := cmp.Diff(wantDials, multiHopDialCallsValue()); diff != "" {
+			t.Fatalf("dial delegation mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("error when parent session has no NetworkDialer", func(t *testing.T) {
+		runtime := newSessionRuntime(multiHopRootSessionFactory)
+		defer runtime.Close()
+
+		runtime.registerPlanTransports([]planfmt.Transport{
+			{ID: "local", Decorator: "local", ParentID: ""},
+			{ID: "transport:no-dialer", Decorator: "@test.transport.nodialer", ParentID: "local", Args: []planfmt.Arg{{Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:no-dialer"}}}},
+			{ID: "transport:child", Decorator: "@test.transport.multihop", ParentID: "session:no-dialer", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:child"}}}},
+		})
+
+		_, err := runtime.SessionFor("transport:no-dialer")
+		if err != nil {
+			t.Fatalf("session for transport:no-dialer: %v", err)
+		}
+
+		_, err = runtime.SessionFor("transport:child")
+		if err == nil {
+			t.Fatal("expected session creation error")
+		}
+
+		wantErr := "failed to create session for transport \"transport:child\": open transport \"@test.transport.multihop\": parent session *executor.noDialerSession does not implement NetworkDialer"
+		if diff := cmp.Diff(wantErr, err.Error()); diff != "" {
+			t.Fatalf("error mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestExecuteRoutesSessionByTransportID(t *testing.T) {
