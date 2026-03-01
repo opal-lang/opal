@@ -307,12 +307,12 @@ func TestLocalSessionDialContextTimeoutIsActionable(t *testing.T) {
 	}
 }
 
-func TestGetSealedDialerReturnsRuntimeSessionDialer(t *testing.T) {
+func TestGetNetworkDialerReturnsRuntimeSessionDialer(t *testing.T) {
 	session := NewLocalSession()
 
-	dialer, err := getSealedDialer(session)
+	dialer, err := getNetworkDialer(session)
 	if err != nil {
-		t.Fatalf("getSealedDialer failed: %v", err)
+		t.Fatalf("getNetworkDialer failed: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -383,12 +383,12 @@ func (s *wrappedLocalSession) UnwrapSession() Session {
 	return s.inner
 }
 
-func TestGetSealedDialerUnwrapsWrappedSession(t *testing.T) {
+func TestGetNetworkDialerUnwrapsWrappedSession(t *testing.T) {
 	wrapped := &wrappedLocalSession{inner: NewLocalSession()}
 
-	dialer, err := getSealedDialer(wrapped)
+	dialer, err := getNetworkDialer(wrapped)
 	if err != nil {
-		t.Fatalf("getSealedDialer failed: %v", err)
+		t.Fatalf("getNetworkDialer failed: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

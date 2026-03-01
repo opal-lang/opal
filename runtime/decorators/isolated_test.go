@@ -336,6 +336,10 @@ func (s *recordingDialerSession) DialContext(_ context.Context, network, addr st
 	return s.dialConn, nil
 }
 
+func (s *recordingDialerSession) NetworkDialer() decorator.NetworkDialer {
+	return s
+}
+
 type stubConn struct{}
 
 func (c *stubConn) Read([]byte) (int, error)         { return 0, nil }

@@ -62,18 +62,18 @@ type NetworkDialer interface {
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-type sealedNetworkDialer interface {
-	sealNetworkDialer() NetworkDialer
+type NetworkDialerProvider interface {
+	NetworkDialer() NetworkDialer
 }
 
 type sessionUnwrapper interface {
 	UnwrapSession() Session
 }
 
-func getSealedDialer(session Session) (NetworkDialer, error) {
+func getNetworkDialer(session Session) (NetworkDialer, error) {
 	for session != nil {
-		if sealer, ok := session.(sealedNetworkDialer); ok {
-			return sealer.sealNetworkDialer(), nil
+		if provider, ok := session.(NetworkDialerProvider); ok {
+			return provider.NetworkDialer(), nil
 		}
 
 		unwrapper, ok := session.(sessionUnwrapper)
@@ -88,7 +88,7 @@ func getSealedDialer(session Session) (NetworkDialer, error) {
 		session = next
 	}
 
-	return nil, errors.New("session does not provide a sealed network dialer")
+	return nil, errors.New("session does not provide network dialer")
 }
 
 // RunOpts configures command execution.

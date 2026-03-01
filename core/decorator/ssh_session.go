@@ -379,7 +379,7 @@ func (s *SSHSession) DialContext(ctx context.Context, network, addr string) (net
 	return conn, nil
 }
 
-func (s *SSHSession) sealNetworkDialer() NetworkDialer {
+func (s *SSHSession) NetworkDialer() NetworkDialer {
 	return s
 }
 
@@ -501,7 +501,7 @@ func (t *SSHTransport) Capabilities() TransportCaps {
 }
 
 func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, error) {
-	dialer, err := getSealedDialer(parent)
+	dialer, err := getNetworkDialer(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +578,7 @@ func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
 		})
 	}
 
-	dialer, err := getSealedDialer(ctx.Session)
+	dialer, err := getNetworkDialer(ctx.Session)
 	if err != nil {
 		return Result{ExitCode: ExitFailure}, err
 	}

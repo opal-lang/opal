@@ -248,7 +248,7 @@ func (s *LocalSession) DialContext(ctx context.Context, network, addr string) (n
 	return conn, nil
 }
 
-func (s *LocalSession) sealNetworkDialer() NetworkDialer {
+func (s *LocalSession) NetworkDialer() NetworkDialer {
 	return s
 }
 

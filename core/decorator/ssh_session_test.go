@@ -746,7 +746,7 @@ func TestSSHTransportOpenFailsWithoutParentNetworkDialer(t *testing.T) {
 		t.Fatal("Open error: got nil, want non-nil")
 	}
 
-	if diff := cmp.Diff("session does not provide a sealed network dialer", err.Error()); diff != "" {
+	if diff := cmp.Diff("session does not provide network dialer", err.Error()); diff != "" {
 		t.Fatalf("Open error mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -768,12 +768,12 @@ func TestSSHTransportNodeExecuteFailsWithoutParentNetworkDialer(t *testing.T) {
 		t.Fatalf("Execute exit code mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff("session does not provide a sealed network dialer", err.Error()); diff != "" {
+	if diff := cmp.Diff("session does not provide network dialer", err.Error()); diff != "" {
 		t.Fatalf("Execute error mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestSSHTransportOpenRejectsUnsealedNetworkDialer(t *testing.T) {
+func TestSSHTransportOpenRejectsNonProviderDialer(t *testing.T) {
 	transport := &SSHTransport{}
 
 	session, err := transport.Open(&sshTransportParentUnsealedDialer{}, map[string]any{"host": "example.internal", "port": 2222})
@@ -784,7 +784,7 @@ func TestSSHTransportOpenRejectsUnsealedNetworkDialer(t *testing.T) {
 		t.Fatal("Open error: got nil, want non-nil")
 	}
 
-	if diff := cmp.Diff("session does not provide a sealed network dialer", err.Error()); diff != "" {
+	if diff := cmp.Diff("session does not provide network dialer", err.Error()); diff != "" {
 		t.Fatalf("Open error mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -912,7 +912,7 @@ func (s *sshTransportParentWithDialer) DialContext(ctx context.Context, network,
 	return clientConn, nil
 }
 
-func (s *sshTransportParentWithDialer) sealNetworkDialer() NetworkDialer {
+func (s *sshTransportParentWithDialer) NetworkDialer() NetworkDialer {
 	return s
 }
 

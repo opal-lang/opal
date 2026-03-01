@@ -107,9 +107,10 @@ type isolatedSession struct {
 }
 
 var (
-	_        decorator.Session       = (*isolatedSession)(nil)
-	_        decorator.NetworkDialer = (*isolatedSession)(nil)
-	lookupIP                         = net.LookupIP
+	_        decorator.Session               = (*isolatedSession)(nil)
+	_        decorator.NetworkDialer         = (*isolatedSession)(nil)
+	_        decorator.NetworkDialerProvider = (*isolatedSession)(nil)
+	lookupIP                                 = net.LookupIP
 )
 
 func (s *isolatedSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
@@ -141,12 +142,21 @@ func (s *isolatedSession) DialContext(ctx context.Context, network, addr string)
 		return nil, err
 	}
 
-	dialer, ok := s.parent.(decorator.NetworkDialer)
+	provider, ok := s.parent.(decorator.NetworkDialerProvider)
 	if !ok {
 		return nil, errors.New("inner session does not support networking")
 	}
 
+	dialer := provider.NetworkDialer()
+	if dialer == nil {
+		return nil, errors.New("inner session does not support networking")
+	}
+
 	return dialer.DialContext(ctx, network, addr)
+}
+
+func (s *isolatedSession) NetworkDialer() decorator.NetworkDialer {
+	return s
 }
 
 func validateNetworkPolicy(policy decorator.NetworkPolicy, network, addr string) error {
