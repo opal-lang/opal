@@ -2,8 +2,11 @@ package decorators
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"strings"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/runtime/isolation"
@@ -82,7 +85,7 @@ func (d *IsolatedTransportDecorator) Open(parent decorator.Session, params map[s
 		return nil, fmt.Errorf("failed to create isolated environment: %w", err)
 	}
 
-	return &isolatedSession{parent: parent, isolator: isolator}, nil
+	return &isolatedSession{parent: parent, isolator: isolator, networkPolicy: networkPolicy}, nil
 }
 
 func (d *IsolatedTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
@@ -98,11 +101,30 @@ func (d *IsolatedTransportDecorator) IsolationContext() decorator.IsolationConte
 }
 
 type isolatedSession struct {
-	parent   decorator.Session
-	isolator decorator.IsolationContext
+	parent        decorator.Session
+	isolator      decorator.IsolationContext
+	networkPolicy decorator.NetworkPolicy
 }
 
-var _ decorator.Session = (*isolatedSession)(nil)
+var (
+	_        decorator.Session               = (*isolatedSession)(nil)
+	_        decorator.NetworkDialer         = (*isolatedSession)(nil)
+	_        decorator.NetworkDialerProvider = (*isolatedSession)(nil)
+	lookupIP                                 = func(ctx context.Context, host string) ([]net.IP, error) {
+		var resolver net.Resolver
+		addrs, err := resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+
+		ips := make([]net.IP, len(addrs))
+		for i, addr := range addrs {
+			ips[i] = addr.IP
+		}
+
+		return ips, nil
+	}
+)
 
 func (s *isolatedSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
 	return s.parent.Run(ctx, argv, opts)
@@ -121,11 +143,70 @@ func (s *isolatedSession) Env() map[string]string {
 }
 
 func (s *isolatedSession) WithEnv(delta map[string]string) decorator.Session {
-	return &isolatedSession{parent: s.parent.WithEnv(delta), isolator: s.isolator}
+	return &isolatedSession{parent: s.parent.WithEnv(delta), isolator: s.isolator, networkPolicy: s.networkPolicy}
 }
 
 func (s *isolatedSession) WithWorkdir(dir string) decorator.Session {
-	return &isolatedSession{parent: s.parent.WithWorkdir(dir), isolator: s.isolator}
+	return &isolatedSession{parent: s.parent.WithWorkdir(dir), isolator: s.isolator, networkPolicy: s.networkPolicy}
+}
+
+func (s *isolatedSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	validatedAddr, err := validateNetworkPolicy(ctx, s.networkPolicy, network, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	dialer, err := decorator.GetNetworkDialer(s.parent)
+	if err != nil {
+		return nil, fmt.Errorf("inner session does not support networking: %w", err)
+	}
+
+	return dialer.DialContext(ctx, network, validatedAddr)
+}
+
+func (s *isolatedSession) NetworkDialer() decorator.NetworkDialer {
+	return s
+}
+
+func validateNetworkPolicy(ctx context.Context, policy decorator.NetworkPolicy, network, addr string) (string, error) {
+	switch policy {
+	case decorator.NetworkPolicyAllow:
+		return addr, nil
+	case decorator.NetworkPolicyDeny:
+		return "", errors.New("network access denied by isolation policy")
+	case decorator.NetworkPolicyLoopbackOnly:
+		if network == "unix" || network == "unixgram" || network == "unixpacket" {
+			return addr, nil
+		}
+
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return "", fmt.Errorf("invalid network address %q: %w", addr, err)
+		}
+
+		host = strings.TrimSpace(strings.Trim(host, "[]"))
+		if host == "" {
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
+		}
+
+		ips, err := lookupIP(ctx, host)
+		if err != nil {
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
+		}
+		if len(ips) == 0 {
+			return "", fmt.Errorf("network access denied by isolation policy: %s", addr)
+		}
+
+		for _, ip := range ips {
+			if !ip.IsLoopback() {
+				return "", fmt.Errorf("network access denied by isolation policy: %s resolves to non-loopback IP %s", addr, ip.String())
+			}
+		}
+
+		return net.JoinHostPort(ips[0].String(), port), nil
+	default:
+		return "", errors.New("network access denied by isolation policy")
+	}
 }
 
 func (s *isolatedSession) Cwd() string {

@@ -544,6 +544,52 @@ type countingValueDecorator struct {
 	batchSizes *[]int
 }
 
+type resolverPoolCloseTransport struct {
+	path       string
+	openCount  *int
+	closeCount *int
+}
+
+type resolverPoolCloseSession struct {
+	*mockSession
+	closeCount *int
+}
+
+func (s *resolverPoolCloseSession) Close() error {
+	*s.closeCount = *s.closeCount + 1
+	return nil
+}
+
+func (d *resolverPoolCloseTransport) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor(d.path).
+		Summary("Resolver transport pool close test transport").
+		Roles(decorator.RoleBoundary).
+		Idempotent().
+		Block(decorator.BlockRequired).
+		Build()
+}
+
+func (d *resolverPoolCloseTransport) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork
+}
+
+func (d *resolverPoolCloseTransport) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	*d.openCount = *d.openCount + 1
+	return &resolverPoolCloseSession{mockSession: &mockSession{}, closeCount: d.closeCount}, nil
+}
+
+func (d *resolverPoolCloseTransport) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
+func (d *resolverPoolCloseTransport) MaterializeSession() bool {
+	return true
+}
+
+func (d *resolverPoolCloseTransport) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
 func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor(d.path).
 		Summary("Capture resolver value-call metadata for tests").
@@ -659,6 +705,50 @@ func (m *mockSession) TransportScope() decorator.TransportScope {
 
 func (m *mockSession) Close() error {
 	return nil
+}
+
+func TestResolve_ClosesTransportPoolSessions(t *testing.T) {
+	const path = "test.transport.poolclose"
+	openCount := 0
+	closeCount := 0
+
+	if err := decorator.Register(path, &resolverPoolCloseTransport{path: path, openCount: &openCount, closeCount: &closeCount}); err != nil {
+		t.Fatalf("Register transport failed: %v", err)
+	}
+
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{
+			{
+				Kind: StmtCommand,
+				Command: &CommandStmtIR{
+					Decorator: "@" + path,
+					Block: []*StatementIR{
+						{
+							Kind: StmtCommand,
+							Command: &CommandStmtIR{
+								Decorator: "@shell",
+								Command:   &CommandExpr{Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo hi"}}},
+							},
+						},
+					},
+				},
+			},
+		},
+		Scopes: NewScopeStack(),
+	}
+
+	v := vault.NewWithPlanKey([]byte("pool-close-test"))
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff(1, openCount); diff != "" {
+		t.Fatalf("Open count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, closeCount); diff != "" {
+		t.Fatalf("Close count mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {

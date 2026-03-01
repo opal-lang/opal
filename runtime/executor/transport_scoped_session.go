@@ -55,3 +55,7 @@ func (s *transportScopedSession) TransportScope() decorator.TransportScope {
 func (s *transportScopedSession) Close() error {
 	return s.session.Close()
 }
+
+func (s *transportScopedSession) UnwrapSession() decorator.Session {
+	return s.session
+}

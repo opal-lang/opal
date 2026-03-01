@@ -2,8 +2,10 @@ package decorator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
+	"net"
 )
 
 // Session represents an execution context (local, SSH, Docker, K8s, etc.).
@@ -51,6 +53,46 @@ type Session interface {
 
 	// Close cleans up the session
 	Close() error
+}
+
+// NetworkDialer is an optional interface for sessions that provide
+// network connectivity. Child transports use this to dial through
+// their parent's network context.
+type NetworkDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+type NetworkDialerProvider interface {
+	NetworkDialer() NetworkDialer
+}
+
+type sessionUnwrapper interface {
+	UnwrapSession() Session
+}
+
+func GetNetworkDialer(session Session) (NetworkDialer, error) {
+	for session != nil {
+		if provider, ok := session.(NetworkDialerProvider); ok {
+			return provider.NetworkDialer(), nil
+		}
+
+		unwrapper, ok := session.(sessionUnwrapper)
+		if !ok {
+			break
+		}
+
+		next := unwrapper.UnwrapSession()
+		if next == nil || next == session {
+			break
+		}
+		session = next
+	}
+
+	return nil, errors.New("session does not provide network dialer")
+}
+
+func getNetworkDialer(session Session) (NetworkDialer, error) {
+	return GetNetworkDialer(session)
 }
 
 // RunOpts configures command execution.

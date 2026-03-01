@@ -463,6 +463,159 @@ All transports follow the same interface pattern, enabling consistent behavior a
 - I/O flows through same scrubbing pipeline
 - Context cancellation propagates correctly
 
+### Transport Categories
+
+Transports fall into three categories based on how they affect execution context:
+
+**Connectivity Transports** change execution location and provide network dialing:
+- `@ssh.connect` - Execute on remote server via SSH
+- `@docker.exec` - Execute in Docker container
+- `@k8s.exec` - Execute in Kubernetes pod
+
+These transports implement `NetworkDialer` to enable parent-relative network connections. Nested transports dial through the parent's network context, not directly from the local machine.
+
+**Isolation Transports** constrain execution at the current location:
+- `@isolated` - Linux namespace isolation (network, filesystem, privileges)
+- `@sandbox` - Subprocess sandboxing with resource limits
+
+These transports do not change location. They apply security constraints (network policies, filesystem restrictions) to the current execution context. Isolation transports may implement `NetworkDialer` to enforce policies on nested network operations.
+
+**Local Transport** is the baseline execution context:
+- Direct process execution on the host
+- Full network and filesystem access
+- Environment from `os.Environ()`
+
+All execution starts in local transport. Connectivity and isolation transports layer on top.
+
+### Nesting Rules
+
+Transport nesting follows security-preserving rules:
+
+| Parent | Child | Allowed | Reason |
+|--------|-------|---------|--------|
+| Connectivity | Connectivity | Yes | Child dials through parent's `NetworkDialer` |
+| Connectivity | Isolation | Yes | Inherited connection with local constraints applied |
+| Isolation | Connectivity | **No** | Cannot grant network access from isolated context |
+| Isolation | Isolation | Yes | Policies compose (intersection of constraints) |
+
+**Example: SSH with isolation**
+```sigil
+@ssh.connect(host="bastion") {
+    # Commands run on bastion host
+    
+    @isolated(network="deny") {
+        # Still on bastion, but network blocked
+        # Cannot nest @ssh.connect here - isolation cannot grant network
+    }
+}
+```
+
+**Example: Isolation layering**
+```sigil
+@isolated(network="loopback") {
+    # Loopback-only networking
+    
+    @isolated(filesystem="readonly") {
+        # Loopback + read-only (policies compose)
+        # Network still loopback-only, filesystem now read-only
+    }
+}
+```
+
+**Blocked example**
+```sigil
+@isolated(network="deny") {
+    @ssh.connect(host="server") {
+        # ERROR: Cannot establish SSH from network-isolated context
+    }
+}
+```
+
+### NetworkDialer Interface
+
+Connectivity transports implement `NetworkDialer` to enable parent-relative network connections:
+
+```go
+type NetworkDialer interface {
+    // DialContext establishes a network connection through this transport.
+    // Nested transports use this to dial via parent context, not directly.
+    DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+```
+
+**Implementation requirements:**
+- `LocalSession` implements `NetworkDialer` via direct `net.Dialer`
+- `SSHSession` implements `NetworkDialer` via SSH port forwarding
+- `isolatedSession` implements `NetworkDialer` with policy enforcement:
+  - `NetworkPolicyDeny`: Returns error on any dial attempt
+  - `NetworkPolicyLoopbackOnly`: Allows only 127.0.0.0/8 destinations
+  - `NetworkPolicyAllow`: Delegates to parent dialer
+
+**Key invariant**: Nested connectivity transports MUST dial through parent's `NetworkDialer`. Direct fallback dialing from isolated or remote contexts violates the security model.
+
+### NetworkDialerProvider Pattern
+
+Session wrappers (decorators that modify session behavior) implement `NetworkDialerProvider` to expose the underlying dialer to nested transports:
+
+```go
+// NetworkDialerProvider exposes the underlying NetworkDialer.
+// Session wrappers implement this to allow nested transports to dial
+// through the parent's network context.
+type NetworkDialerProvider interface {
+    NetworkDialer() NetworkDialer
+}
+
+// Internal: session wrappers implement UnwrapSession for layer traversal.
+type sessionUnwrapper interface {
+    UnwrapSession() Session
+}
+
+// getNetworkDialer walks through session wrappers to find a NetworkDialer.
+func getNetworkDialer(session Session) (NetworkDialer, error) {
+    for session != nil {
+        // Check if this layer provides a dialer
+        if provider, ok := session.(NetworkDialerProvider); ok {
+            return provider.NetworkDialer(), nil
+        }
+        // Unwrap to next layer
+        if unwrapper, ok := session.(sessionUnwrapper); ok {
+            session = unwrapper.UnwrapSession()
+        } else {
+            break
+        }
+    }
+    return nil, errors.New("session does not provide network dialer")
+}
+```
+
+**Implementation example** (session wrapper with isolation policy):
+
+```go
+// isolatedSession wraps a parent session with network policy enforcement.
+type isolatedSession struct {
+    parent   Session
+    policy   NetworkPolicy
+    dialer   NetworkDialer // Policy-enforced dialer
+}
+
+// NetworkDialer returns the policy-enforced dialer for nested transports.
+func (s *isolatedSession) NetworkDialer() NetworkDialer {
+    return s.dialer
+}
+
+// UnwrapSession returns the parent session for layer traversal.
+func (s *isolatedSession) UnwrapSession() Session {
+    return s.parent
+}
+```
+
+**Why this pattern:**
+- **Layer traversal**: Nested transports need the parent's dialer, not a wrapped session
+- **Plugin extensibility**: Custom session wrappers expose dialers without special casing
+- **Security enforcement**: Isolation layers can intercept and enforce policies on nested dials
+
+
+
 ### How Decorators Use Transport
 
 **Pattern**: Decorators wrap ExecutionContext and intercept command execution to redirect through custom transport.
@@ -1575,6 +1728,63 @@ if runtime.GOOS != "windows" && cmd.Process != nil {
 - Prevents zombie processes
 - Critical for pipelines (kills all commands in pipeline)
 - Example: `yes | head -n1` - both processes killed on cancel
+
+### Session Pool and Lifecycle
+
+The runtime manages transport sessions through a pool that spans both plan and execute phases.
+
+#### Plan-Time Connections
+
+**Idempotent transports** open sessions during planning for value decorator resolution:
+- `@ssh.connect` - Opens SSH connection at plan-time
+- `@docker.exec` - Attaches to container at plan-time
+
+These transports can safely connect during planning because they connect to **existing** resources without side effects. This enables `@env` to read from the remote environment during plan-time.
+
+**Non-idempotent transports** cannot open sessions during planning:
+- `@aws.instance.deploy` - Instance may not exist yet
+- `@aws.rds.deploy` - Resource is being created
+
+In these blocks, `@env` is forbidden because the transport cannot be opened at plan-time.
+
+#### Session Pool Architecture
+
+The session pool is keyed by `SessionPoolKey`:
+
+```go
+type SessionPoolKey struct {
+    TransportID   string  // Derived from decorator path + args
+    ParentSession Session // Parent identity for isolation
+    AuthFingerprint string // Distinguishes different auth contexts
+}
+```
+
+**Key invariants:**
+- Sibling transports under the same parent reuse one connection
+- Different parents never cross-reuse sessions
+- Auth fingerprint prevents cross-auth session reuse
+- Wrapper sessions (`SSHSessionWithEnv`) do not close pooled base sessions
+
+#### Session Cleanup
+
+Cleanup follows **postorder traversal**: children are cleaned up before parents.
+
+```
+@ssh.connect(host="bastion") {
+    @ssh.connect(host="internal") {
+        # Commands here
+    }
+    # Cleanup: internal connection closed first
+}
+# Cleanup: bastion connection closed second
+```
+
+**Cleanup rules:**
+1. Pool closes base sessions exactly once
+2. Wrappers (`WithEnv`, `WithWorkdir`) never close pooled bases
+3. Cleanup happens on success, failure, and cancellation
+4. Planner's `popSession()` only unwinds stack state, not session close
+
 
 ## Vault: Secret Tracking and Variable Management
 

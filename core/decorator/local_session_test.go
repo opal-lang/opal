@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -251,6 +253,158 @@ func TestLocalSessionClose(t *testing.T) {
 	if err != nil {
 		t.Errorf("Second Close failed: %v", err)
 	}
+}
+
+func TestLocalSessionDialContextLocalhost(t *testing.T) {
+	session := NewLocalSession()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := session.DialContext(ctx, "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestLocalSessionDialContextRequiresDeadline(t *testing.T) {
+	session := NewLocalSession()
+
+	conn, err := session.DialContext(context.Background(), "tcp", "127.0.0.1:1")
+	if conn != nil {
+		t.Fatalf("DialContext connection: got non-nil, want nil")
+	}
+	if err == nil {
+		t.Fatal("DialContext error: got nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "requires context deadline") {
+		t.Fatalf("DialContext error: got %q, want actionable deadline guidance", err.Error())
+	}
+}
+
+func TestLocalSessionDialContextTimeoutIsActionable(t *testing.T) {
+	session := NewLocalSession()
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Millisecond))
+	defer cancel()
+
+	conn, err := session.DialContext(ctx, "tcp", "127.0.0.1:1")
+	if conn != nil {
+		t.Fatalf("DialContext connection: got non-nil, want nil")
+	}
+	if err == nil {
+		t.Fatal("DialContext error: got nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("DialContext error: got %q, want timeout context", err.Error())
+	}
+}
+
+func TestGetNetworkDialerReturnsRuntimeSessionDialer(t *testing.T) {
+	session := NewLocalSession()
+
+	dialer, err := getNetworkDialer(session)
+	if err != nil {
+		t.Fatalf("getNetworkDialer failed: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+}
+
+type wrappedLocalSession struct {
+	inner Session
+}
+
+func (s *wrappedLocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Result, error) {
+	return s.inner.Run(ctx, argv, opts)
+}
+
+func (s *wrappedLocalSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.inner.Put(ctx, data, path, mode)
+}
+
+func (s *wrappedLocalSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.inner.Get(ctx, path)
+}
+
+func (s *wrappedLocalSession) Env() map[string]string {
+	return s.inner.Env()
+}
+
+func (s *wrappedLocalSession) WithEnv(delta map[string]string) Session {
+	return &wrappedLocalSession{inner: s.inner.WithEnv(delta)}
+}
+
+func (s *wrappedLocalSession) WithWorkdir(dir string) Session {
+	return &wrappedLocalSession{inner: s.inner.WithWorkdir(dir)}
+}
+
+func (s *wrappedLocalSession) Cwd() string {
+	return s.inner.Cwd()
+}
+
+func (s *wrappedLocalSession) ID() string {
+	return s.inner.ID()
+}
+
+func (s *wrappedLocalSession) TransportScope() TransportScope {
+	return s.inner.TransportScope()
+}
+
+func (s *wrappedLocalSession) Platform() string {
+	return s.inner.Platform()
+}
+
+func (s *wrappedLocalSession) Close() error {
+	return s.inner.Close()
+}
+
+func (s *wrappedLocalSession) UnwrapSession() Session {
+	return s.inner
+}
+
+func TestGetNetworkDialerUnwrapsWrappedSession(t *testing.T) {
+	wrapped := &wrappedLocalSession{inner: NewLocalSession()}
+
+	dialer, err := getNetworkDialer(wrapped)
+	if err != nil {
+		t.Fatalf("getNetworkDialer failed: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
 }
 
 // TestLocalSessionRelativePaths verifies relative path handling
