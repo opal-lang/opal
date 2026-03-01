@@ -553,6 +553,68 @@ type NetworkDialer interface {
 
 **Key invariant**: Nested connectivity transports MUST dial through parent's `NetworkDialer`. Direct fallback dialing from isolated or remote contexts violates the security model.
 
+### NetworkDialerProvider Pattern
+
+Session wrappers (decorators that modify session behavior) implement `NetworkDialerProvider` to expose the underlying dialer to nested transports:
+
+```go
+// NetworkDialerProvider exposes the underlying NetworkDialer.
+// Session wrappers implement this to allow nested transports to dial
+// through the parent's network context.
+type NetworkDialerProvider interface {
+    NetworkDialer() NetworkDialer
+}
+
+// Internal: session wrappers implement UnwrapSession for layer traversal.
+type sessionUnwrapper interface {
+    UnwrapSession() Session
+}
+
+// getNetworkDialer walks through session wrappers to find a NetworkDialer.
+func getNetworkDialer(session Session) (NetworkDialer, error) {
+    for session != nil {
+        // Check if this layer provides a dialer
+        if provider, ok := session.(NetworkDialerProvider); ok {
+            return provider.NetworkDialer(), nil
+        }
+        // Unwrap to next layer
+        if unwrapper, ok := session.(sessionUnwrapper); ok {
+            session = unwrapper.UnwrapSession()
+        } else {
+            break
+        }
+    }
+    return nil, errors.New("session does not provide network dialer")
+}
+```
+
+**Implementation example** (session wrapper with isolation policy):
+
+```go
+// isolatedSession wraps a parent session with network policy enforcement.
+type isolatedSession struct {
+    parent   Session
+    policy   NetworkPolicy
+    dialer   NetworkDialer // Policy-enforced dialer
+}
+
+// NetworkDialer returns the policy-enforced dialer for nested transports.
+func (s *isolatedSession) NetworkDialer() NetworkDialer {
+    return s.dialer
+}
+
+// UnwrapSession returns the parent session for layer traversal.
+func (s *isolatedSession) UnwrapSession() Session {
+    return s.parent
+}
+```
+
+**Why this pattern:**
+- **Layer traversal**: Nested transports need the parent's dialer, not a wrapped session
+- **Plugin extensibility**: Custom session wrappers expose dialers without special casing
+- **Security enforcement**: Isolation layers can intercept and enforce policies on nested dials
+
+
 
 ### How Decorators Use Transport
 
