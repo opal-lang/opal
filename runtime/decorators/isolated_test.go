@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/runtime/isolation"
@@ -128,3 +131,218 @@ func canSkipIsolatedError(err error) bool {
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "read-only file system")
 }
+
+func TestIsolatedSessionDialContextLoopbackPolicyBlocksExternalAddress(t *testing.T) {
+	originalLookup := lookupIP
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	t.Cleanup(func() {
+		lookupIP = originalLookup
+	})
+
+	parent := &recordingDialerSession{}
+	session := &isolatedSession{
+		parent:        parent,
+		networkPolicy: decorator.NetworkPolicyLoopbackOnly,
+	}
+
+	_, err := session.DialContext(context.Background(), "tcp", "example.com:443")
+	if err == nil {
+		t.Fatal("expected external network dial to be blocked")
+	}
+
+	if diff := cmp.Diff("network access denied by isolation policy: example.com:443 resolves to non-loopback IP 93.184.216.34", err.Error()); diff != "" {
+		t.Fatalf("dial error mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(0, parent.dialCalls); diff != "" {
+		t.Fatalf("dial call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIsolatedSessionDialContextDenyPolicyReturnsError(t *testing.T) {
+	parent := &recordingDialerSession{}
+	session := &isolatedSession{
+		parent:        parent,
+		networkPolicy: decorator.NetworkPolicyDeny,
+	}
+
+	_, err := session.DialContext(context.Background(), "tcp", "127.0.0.1:8080")
+	if err == nil {
+		t.Fatal("expected deny policy to reject network dial")
+	}
+
+	if diff := cmp.Diff("network access denied by isolation policy", err.Error()); diff != "" {
+		t.Fatalf("dial error mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(0, parent.dialCalls); diff != "" {
+		t.Fatalf("dial call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIsolatedSessionDialContextLoopbackPolicyAllowsLoopbackIP(t *testing.T) {
+	originalLookup := lookupIP
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() {
+		lookupIP = originalLookup
+	})
+
+	conn := &stubConn{}
+	parent := &recordingDialerSession{dialConn: conn}
+	session := &isolatedSession{
+		parent:        parent,
+		networkPolicy: decorator.NetworkPolicyLoopbackOnly,
+	}
+
+	gotConn, err := session.DialContext(context.Background(), "tcp", "127.0.0.1:8080")
+	if err != nil {
+		t.Fatalf("dial through isolated session: %v", err)
+	}
+
+	if diff := cmp.Diff(conn, gotConn); diff != "" {
+		t.Fatalf("dialed connection mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, parent.dialCalls); diff != "" {
+		t.Fatalf("dial call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIsolatedSessionDialContextLoopbackPolicyRejectsRebindingCandidates(t *testing.T) {
+	originalLookup := lookupIP
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("8.8.8.8")}, nil
+	}
+	t.Cleanup(func() {
+		lookupIP = originalLookup
+	})
+
+	parent := &recordingDialerSession{}
+	session := &isolatedSession{
+		parent:        parent,
+		networkPolicy: decorator.NetworkPolicyLoopbackOnly,
+	}
+
+	_, err := session.DialContext(context.Background(), "tcp", "localhost:443")
+	if err == nil {
+		t.Fatal("expected mixed loopback/external resolution to be blocked")
+	}
+
+	if diff := cmp.Diff("network access denied by isolation policy: localhost:443 resolves to non-loopback IP 8.8.8.8", err.Error()); diff != "" {
+		t.Fatalf("dial error mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(0, parent.dialCalls); diff != "" {
+		t.Fatalf("dial call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIsolatedSessionDialContextAllowPolicyDelegatesToParentDialer(t *testing.T) {
+	conn := &stubConn{}
+	parent := &recordingDialerSession{dialConn: conn}
+	session := &isolatedSession{
+		parent:        parent,
+		networkPolicy: decorator.NetworkPolicyAllow,
+	}
+
+	gotConn, err := session.DialContext(context.Background(), "tcp", "127.0.0.1:8080")
+	if err != nil {
+		t.Fatalf("dial through isolated session: %v", err)
+	}
+
+	if diff := cmp.Diff(conn, gotConn); diff != "" {
+		t.Fatalf("dialed connection mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(1, parent.dialCalls); diff != "" {
+		t.Fatalf("dial call count mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("tcp", parent.lastNetwork); diff != "" {
+		t.Fatalf("dial network mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff("127.0.0.1:8080", parent.lastAddr); diff != "" {
+		t.Fatalf("dial address mismatch (-want +got):\n%s", diff)
+	}
+}
+
+type recordingDialerSession struct {
+	dialCalls   int
+	lastNetwork string
+	lastAddr    string
+	dialConn    net.Conn
+	dialErr     error
+}
+
+func (s *recordingDialerSession) Run(context.Context, []string, decorator.RunOpts) (decorator.Result, error) {
+	return decorator.Result{}, nil
+}
+
+func (s *recordingDialerSession) Put(context.Context, []byte, string, fs.FileMode) error {
+	return nil
+}
+
+func (s *recordingDialerSession) Get(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *recordingDialerSession) Env() map[string]string {
+	return map[string]string{}
+}
+
+func (s *recordingDialerSession) WithEnv(map[string]string) decorator.Session {
+	return s
+}
+
+func (s *recordingDialerSession) WithWorkdir(string) decorator.Session {
+	return s
+}
+
+func (s *recordingDialerSession) Cwd() string {
+	return ""
+}
+
+func (s *recordingDialerSession) ID() string {
+	return "recording"
+}
+
+func (s *recordingDialerSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeLocal
+}
+
+func (s *recordingDialerSession) Platform() string {
+	return "linux"
+}
+
+func (s *recordingDialerSession) Close() error {
+	return nil
+}
+
+func (s *recordingDialerSession) DialContext(_ context.Context, network, addr string) (net.Conn, error) {
+	s.dialCalls++
+	s.lastNetwork = network
+	s.lastAddr = addr
+	if s.dialErr != nil {
+		return nil, s.dialErr
+	}
+	if s.dialConn == nil {
+		return &stubConn{}, nil
+	}
+	return s.dialConn, nil
+}
+
+type stubConn struct{}
+
+func (c *stubConn) Read([]byte) (int, error)         { return 0, nil }
+func (c *stubConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (c *stubConn) Close() error                     { return nil }
+func (c *stubConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *stubConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *stubConn) SetDeadline(time.Time) error      { return nil }
+func (c *stubConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *stubConn) SetWriteDeadline(time.Time) error { return nil }

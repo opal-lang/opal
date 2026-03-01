@@ -2,8 +2,10 @@ package decorator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
+	"net"
 )
 
 // Session represents an execution context (local, SSH, Docker, K8s, etc.).
@@ -51,6 +53,25 @@ type Session interface {
 
 	// Close cleans up the session
 	Close() error
+}
+
+// NetworkDialer is an optional interface for sessions that provide
+// network connectivity. Child transports use this to dial through
+// their parent's network context.
+type NetworkDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+type sealedNetworkDialer interface {
+	sealNetworkDialer() NetworkDialer
+}
+
+func getSealedDialer(session Session) (NetworkDialer, error) {
+	if sealer, ok := session.(sealedNetworkDialer); ok {
+		return sealer.sealNetworkDialer(), nil
+	}
+
+	return nil, errors.New("session does not provide a sealed network dialer")
 }
 
 // RunOpts configures command execution.

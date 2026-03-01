@@ -515,6 +515,58 @@ Use one of:
 - shell variables inside transport shell commands
 - hoisting at root and passing via explicit parameters or env mapping
 
+### 10.3 Transport categories
+
+Transports fall into three categories:
+
+**Connectivity transports** change execution location:
+- `@ssh.connect` - Execute on remote server
+- `@docker.exec` - Execute in container
+- `@k8s.exec` - Execute in Kubernetes pod
+
+These transports implement network dialing through the parent context. Nested transports dial via their parent, not directly from the local machine.
+
+**Isolation transports** constrain execution at the current location:
+- `@isolated` - Linux namespace isolation
+- `@sandbox` - Subprocess sandboxing
+
+These transports do not change location. They apply security constraints to the current context.
+
+**Local transport** is the baseline:
+- Direct execution on the host
+- Full network and filesystem access
+- All execution starts in local transport
+
+### 10.4 Transport nesting rules
+
+Transport nesting follows security-preserving rules:
+
+| Parent | Child | Allowed | Reason |
+|--------|-------|---------|--------|
+| Connectivity | Connectivity | Yes | Child dials through parent context |
+| Connectivity | Isolation | Yes | Inherited connection with local constraints |
+| Isolation | Connectivity | No | Cannot grant network from isolated context |
+| Isolation | Isolation | Yes | Policies compose (intersection) |
+
+**Valid nesting example:**
+```sigil
+@ssh.connect(host="bastion") {
+    @isolated(network="deny") {
+        # SSH out allowed through bastion, but no direct internet
+    }
+}
+```
+
+**Blocked nesting example:**
+```sigil
+@isolated(network="deny") {
+    @ssh.connect(host="server") {
+        # ERROR: Cannot establish SSH from network-isolated context
+    }
+}
+```
+
+
 ## 11. Planning Modes and Execution Modes
 
 Sigil supports four operational modes.

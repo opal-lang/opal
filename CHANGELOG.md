@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-03-01
+- Documented transport categories (Connectivity, Isolation, Local) and their semantics in ARCHITECTURE.md and SPECIFICATION.md
+- Documented transport nesting rules (Connectivity+Connectivity, Connectivity+Isolation allowed; Isolation+Connectivity blocked)
+- Documented session pool lifecycle (plan-time connections, pool key semantics, postorder cleanup)
+- Added NetworkDialer interface documentation for parent-relative network connections
+
 ### 2026-02-27
 - **Breaking**: Renamed project from "Opal" to "Sigil" and moved to builtwithtofu org
 - Changed module path from `github.com/opal-lang/opal` to `github.com/builtwithtofu/sigil`
