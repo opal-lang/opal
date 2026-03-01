@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -22,6 +25,13 @@ type sessionBoundaryDecorator struct{}
 type transportSessionCheckDecorator struct{}
 
 type testSSHTransportDecorator struct{}
+
+type sessionPoolProbeDecorator struct{}
+
+var (
+	sessionPoolProbeOpenMu    sync.Mutex
+	sessionPoolProbeOpenCount int
+)
 
 func (d *sessionIDCheckDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor("test.sessionid.check").
@@ -55,7 +65,18 @@ func (d *testSSHTransportDecorator) Descriptor() decorator.Descriptor {
 		Build()
 }
 
+func (d *sessionPoolProbeDecorator) Descriptor() decorator.Descriptor {
+	return decorator.NewDescriptor("test.transport.poolprobe").
+		Summary("Counts transport session opens for pooling tests").
+		Roles(decorator.RoleBoundary).
+		Build()
+}
+
 func (d *testSSHTransportDecorator) Capabilities() decorator.TransportCaps {
+	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
+}
+
+func (d *sessionPoolProbeDecorator) Capabilities() decorator.TransportCaps {
 	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
 }
 
@@ -75,7 +96,18 @@ func (d *testSSHTransportDecorator) Open(parent decorator.Session, params map[st
 	return &testSSHSession{parent: parent}, nil
 }
 
+func (d *sessionPoolProbeDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
+	sessionPoolProbeOpenMu.Lock()
+	sessionPoolProbeOpenCount++
+	sessionPoolProbeOpenMu.Unlock()
+	return &testSSHSession{parent: parent}, nil
+}
+
 func (d *testSSHTransportDecorator) MaterializeSession() bool {
+	return true
+}
+
+func (d *sessionPoolProbeDecorator) MaterializeSession() bool {
 	return true
 }
 
@@ -83,7 +115,15 @@ func (d *testSSHTransportDecorator) IsolationContext() decorator.IsolationContex
 	return nil
 }
 
+func (d *sessionPoolProbeDecorator) IsolationContext() decorator.IsolationContext {
+	return nil
+}
+
 func (d *testSSHTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
+func (d *sessionPoolProbeDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
 	return next
 }
 
@@ -100,6 +140,14 @@ type transportSessionCheckNode struct{}
 
 type testSSHSession struct {
 	parent decorator.Session
+}
+
+type closeOrderSession struct {
+	id        string
+	orderMu   *sync.Mutex
+	order     *[]string
+	closeErr  error
+	closeCall int
 }
 
 func (n *sessionIDCheckNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
@@ -186,11 +234,60 @@ func (s *testSSHSession) Close() error {
 	return nil
 }
 
+func (s *closeOrderSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	return decorator.Result{ExitCode: 0}, nil
+}
+
+func (s *closeOrderSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return nil
+}
+
+func (s *closeOrderSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *closeOrderSession) Env() map[string]string {
+	return nil
+}
+
+func (s *closeOrderSession) WithEnv(delta map[string]string) decorator.Session {
+	return s
+}
+
+func (s *closeOrderSession) WithWorkdir(dir string) decorator.Session {
+	return s
+}
+
+func (s *closeOrderSession) Cwd() string {
+	return ""
+}
+
+func (s *closeOrderSession) Platform() string {
+	return ""
+}
+
+func (s *closeOrderSession) ID() string {
+	return s.id
+}
+
+func (s *closeOrderSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeLocal
+}
+
+func (s *closeOrderSession) Close() error {
+	s.orderMu.Lock()
+	defer s.orderMu.Unlock()
+	*s.order = append(*s.order, s.id)
+	s.closeCall++
+	return s.closeErr
+}
+
 var (
 	registerSessionIDCheckDecoratorOnce  sync.Once
 	registerSessionBoundaryDecoratorOnce sync.Once
 	registerTransportSessionCheckOnce    sync.Once
 	registerTestSSHTransportOnce         sync.Once
+	registerSessionPoolProbeOnce         sync.Once
 )
 
 func registerSessionIDCheckDecorator(t *testing.T) {
@@ -235,6 +332,29 @@ func registerTestSSHTransportDecorator(t *testing.T) {
 	if registerErr != nil {
 		t.Fatalf("register test.transport.sshprobe: %v", registerErr)
 	}
+}
+
+func registerSessionPoolProbeDecorator(t *testing.T) {
+	t.Helper()
+	var registerErr error
+	registerSessionPoolProbeOnce.Do(func() {
+		registerErr = decorator.Register("test.transport.poolprobe", &sessionPoolProbeDecorator{})
+	})
+	if registerErr != nil {
+		t.Fatalf("register test.transport.poolprobe: %v", registerErr)
+	}
+}
+
+func resetSessionPoolProbeOpenCount() {
+	sessionPoolProbeOpenMu.Lock()
+	defer sessionPoolProbeOpenMu.Unlock()
+	sessionPoolProbeOpenCount = 0
+}
+
+func sessionPoolProbeOpenCountValue() int {
+	sessionPoolProbeOpenMu.Lock()
+	defer sessionPoolProbeOpenMu.Unlock()
+	return sessionPoolProbeOpenCount
 }
 
 func TestExecuteRoutesSessionByTransportID(t *testing.T) {
@@ -314,6 +434,50 @@ func TestExecutePlan_TransportIDUsesTransportSession(t *testing.T) {
 	}
 	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecutePlan_ReusesPooledTransportSessionPerTarget(t *testing.T) {
+	registerTransportSessionCheckDecorator(t)
+	registerSessionPoolProbeDecorator(t)
+	resetSessionPoolProbeOpenCount()
+
+	const (
+		localTransportID = "local"
+		childA1          = "transport:ssh:A1"
+		childA2          = "transport:ssh:A2"
+	)
+
+	transportArgs := []planfmt.Arg{
+		{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}},
+		{Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}},
+	}
+
+	plan := &planfmt.Plan{
+		Target: "transport-pool-integration",
+		Transports: []planfmt.Transport{
+			{ID: localTransportID, Decorator: "local", ParentID: ""},
+			{ID: childA1, Decorator: "@test.transport.poolprobe", ParentID: localTransportID, Args: transportArgs},
+			{ID: childA2, Decorator: "@test.transport.poolprobe", ParentID: localTransportID, Args: transportArgs},
+		},
+		Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
+				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 2, Tree: &planfmt.CommandNode{Decorator: "@test.transport.session.check", TransportID: childA1}}}},
+				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 3, Tree: &planfmt.CommandNode{Decorator: "@test.transport.session.check", TransportID: childA2}}}},
+			}},
+		}},
+	}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, sessionPoolProbeOpenCountValue()); diff != "" {
+		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -477,5 +641,243 @@ func TestSessionRuntimeReturnsErrorForUnknownTransportID(t *testing.T) {
 
 	if diff := cmp.Diff(true, strings.Contains(err.Error(), "unknown transport \"transport:missing\": transport not registered")); diff != "" {
 		t.Fatalf("error mismatch (-want +got):\n%s\nerr: %q", diff, err.Error())
+	}
+}
+
+func TestSessionRuntimePoolsByParentAndParams(t *testing.T) {
+	registerSessionPoolProbeDecorator(t)
+	resetSessionPoolProbeOpenCount()
+
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
+	defer runtime.Close()
+	runtime.registerPlanTransports([]planfmt.Transport{
+		{ID: "parent:A", Decorator: "local", ParentID: ""},
+		{ID: "parent:B", Decorator: "local", ParentID: ""},
+		{ID: "child:A1", Decorator: "@test.transport.poolprobe", ParentID: "parent:A", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}}},
+		{ID: "child:A2", Decorator: "@test.transport.poolprobe", ParentID: "parent:A", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}}},
+		{ID: "child:B1", Decorator: "@test.transport.poolprobe", ParentID: "parent:B", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}}},
+	})
+
+	first, err := runtime.SessionFor("child:A1")
+	if err != nil {
+		t.Fatalf("session for child:A1: %v", err)
+	}
+	second, err := runtime.SessionFor("child:A2")
+	if err != nil {
+		t.Fatalf("session for child:A2: %v", err)
+	}
+	third, err := runtime.SessionFor("child:B1")
+	if err != nil {
+		t.Fatalf("session for child:B1: %v", err)
+	}
+
+	firstScoped, ok := first.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:A1 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+	secondScoped, ok := second.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:A2 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+	thirdScoped, ok := third.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:B1 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(true, firstScoped.session == secondScoped.session); diff != "" {
+		t.Fatalf("same parent+params should reuse base session (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, firstScoped.session == thirdScoped.session); diff != "" {
+		t.Fatalf("different parent should not reuse base session (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(2, sessionPoolProbeOpenCountValue()); diff != "" {
+		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionPoolKeyIncludesAuthFingerprint(t *testing.T) {
+	parent := &transportScopedSession{id: "parent:A", session: decorator.NewLocalSession()}
+
+	baseParams := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "alice",
+		"key":             "/home/alice/.ssh/id_ed25519",
+		"strict_host_key": true,
+	}
+
+	baseKey := SessionPoolKey(parent, baseParams)
+	if diff := cmp.Diff(true, strings.HasPrefix(baseKey, "parent:A:")); diff != "" {
+		t.Fatalf("pool key parent prefix mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, strings.Contains(baseKey, "/home/alice/.ssh/id_ed25519")); diff != "" {
+		t.Fatalf("pool key should not expose key path (-want +got):\n%s\nkey: %q", diff, baseKey)
+	}
+
+	passwordParams := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "alice",
+		"password":        "super-secret-password",
+		"strict_host_key": true,
+	}
+	passwordKey := SessionPoolKey(parent, passwordParams)
+	if diff := cmp.Diff(false, strings.Contains(passwordKey, "super-secret-password")); diff != "" {
+		t.Fatalf("pool key should not expose password (-want +got):\n%s\nkey: %q", diff, passwordKey)
+	}
+
+	userChanged := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "bob",
+		"key":             "/home/alice/.ssh/id_ed25519",
+		"strict_host_key": true,
+	}
+	if diff := cmp.Diff(false, baseKey == SessionPoolKey(parent, userChanged)); diff != "" {
+		t.Fatalf("different auth user should change key (-want +got):\n%s", diff)
+	}
+
+	hostPolicyChanged := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "alice",
+		"key":             "/home/alice/.ssh/id_ed25519",
+		"strict_host_key": false,
+	}
+	if diff := cmp.Diff(false, baseKey == SessionPoolKey(parent, hostPolicyChanged)); diff != "" {
+		t.Fatalf("different host key policy should change key (-want +got):\n%s", diff)
+	}
+
+	methodChanged := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "alice",
+		"password":        "another-secret",
+		"strict_host_key": true,
+	}
+	if diff := cmp.Diff(false, baseKey == SessionPoolKey(parent, methodChanged)); diff != "" {
+		t.Fatalf("different auth method should change key (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimePoolsByParentAndAuthFingerprint(t *testing.T) {
+	registerSessionPoolProbeDecorator(t)
+	resetSessionPoolProbeOpenCount()
+
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
+	defer runtime.Close()
+	runtime.registerPlanTransports([]planfmt.Transport{
+		{ID: "parent:A", Decorator: "local", ParentID: ""},
+		{ID: "child:key:A1", Decorator: "@test.transport.poolprobe", ParentID: "parent:A", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}, {Key: "user", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "alice"}}, {Key: "key", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "/home/alice/.ssh/id_ed25519"}}, {Key: "strict_host_key", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}}}},
+		{ID: "child:key:A2", Decorator: "@test.transport.poolprobe", ParentID: "parent:A", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}, {Key: "user", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "alice"}}, {Key: "key", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "/home/alice/.ssh/id_ed25519"}}, {Key: "strict_host_key", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}}}},
+		{ID: "child:password:B1", Decorator: "@test.transport.poolprobe", ParentID: "parent:A", Args: []planfmt.Arg{{Key: "host", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "example.internal"}}, {Key: "port", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 22}}, {Key: "user", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "alice"}}, {Key: "password", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "super-secret-password"}}, {Key: "strict_host_key", Val: planfmt.Value{Kind: planfmt.ValueBool, Bool: true}}}},
+	})
+
+	first, err := runtime.SessionFor("child:key:A1")
+	if err != nil {
+		t.Fatalf("session for child:key:A1: %v", err)
+	}
+	second, err := runtime.SessionFor("child:key:A2")
+	if err != nil {
+		t.Fatalf("session for child:key:A2: %v", err)
+	}
+	third, err := runtime.SessionFor("child:password:B1")
+	if err != nil {
+		t.Fatalf("session for child:password:B1: %v", err)
+	}
+
+	firstScoped, ok := first.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:key:A1 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+	secondScoped, ok := second.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:key:A2 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+	thirdScoped, ok := third.(*transportScopedSession)
+	if diff := cmp.Diff(true, ok); diff != "" {
+		t.Fatalf("child:password:B1 wrapper type mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(true, firstScoped.session == secondScoped.session); diff != "" {
+		t.Fatalf("same parent+auth should reuse base session (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, firstScoped.session == thirdScoped.session); diff != "" {
+		t.Fatalf("different auth should use different base session (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(2, sessionPoolProbeOpenCountValue()); diff != "" {
+		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimeCloseUsesPostorderTraversal(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	runtime.registerPlanTransports([]planfmt.Transport{
+		{ID: "local", Decorator: "local", ParentID: ""},
+		{ID: "transport:parent", Decorator: "local", ParentID: "local"},
+		{ID: "transport:child", Decorator: "@test.transport.poolprobe", ParentID: "transport:parent"},
+	})
+
+	order := []string{}
+	orderMu := &sync.Mutex{}
+
+	parentSession := &closeOrderSession{id: "transport:parent", orderMu: orderMu, order: &order}
+	childBaseSession := &closeOrderSession{id: "transport:child(base)", orderMu: orderMu, order: &order}
+
+	runtime.direct["transport:parent"] = parentSession
+	runtime.sessions["transport:parent"] = parentSession
+	runtime.pooled["pool:child"] = childBaseSession
+	runtime.sessions["transport:child"] = &transportScopedSession{id: "transport:child", session: childBaseSession}
+
+	runtime.Close()
+
+	wantOrder := []string{"transport:child(base)", "transport:parent"}
+	if diff := cmp.Diff(wantOrder, order); diff != "" {
+		t.Fatalf("close order mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, parentSession.closeCall); diff != "" {
+		t.Fatalf("parent close call count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, childBaseSession.closeCall); diff != "" {
+		t.Fatalf("child close call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimeCloseContinuesAfterCloseError(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	runtime.registerPlanTransports([]planfmt.Transport{
+		{ID: "local", Decorator: "local", ParentID: ""},
+		{ID: "transport:parent", Decorator: "local", ParentID: "local"},
+		{ID: "transport:child", Decorator: "@test.transport.poolprobe", ParentID: "transport:parent"},
+	})
+
+	order := []string{}
+	orderMu := &sync.Mutex{}
+
+	parentSession := &closeOrderSession{id: "transport:parent", orderMu: orderMu, order: &order}
+	childBaseSession := &closeOrderSession{id: "transport:child(base)", orderMu: orderMu, order: &order, closeErr: errors.New("child close failed")}
+
+	runtime.direct["transport:parent"] = parentSession
+	runtime.sessions["transport:parent"] = parentSession
+	runtime.pooled["pool:child"] = childBaseSession
+	runtime.sessions["transport:child"] = &transportScopedSession{id: "transport:child", session: childBaseSession}
+
+	var logBuf bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+	})
+
+	runtime.Close()
+
+	if diff := cmp.Diff(1, parentSession.closeCall); diff != "" {
+		t.Fatalf("parent close call count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, childBaseSession.closeCall); diff != "" {
+		t.Fatalf("child close call count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(true, strings.Contains(logBuf.String(), "session runtime: close transport \"transport:child\": child close failed")); diff != "" {
+		t.Fatalf("close error log mismatch (-want +got):\n%s\nlog: %q", diff, logBuf.String())
 	}
 }

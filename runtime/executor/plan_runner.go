@@ -254,7 +254,7 @@ func (e *executor) executePlanDecorator(
 		node = next
 	}
 
-	transportID := executionTransportID(execCtx)
+	transportID := transportIDForPlanDecoratorExecution(execCtx, cmd, execDec)
 	baseSession, sessionErr := e.sessions.SessionFor(transportID)
 	if sessionErr != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
@@ -442,6 +442,25 @@ func sourceTransportIDForPlan(node planfmt.ExecutionNode) string {
 	default:
 		return ""
 	}
+}
+
+func transportIDForPlanDecoratorExecution(execCtx sdk.ExecutionContext, cmd *planfmt.CommandNode, execDec decorator.Exec) string {
+	transportID := executionTransportID(execCtx)
+	if cmd == nil || len(cmd.Block) == 0 {
+		return transportID
+	}
+
+	transportDec, ok := execDec.(decorator.Transport)
+	if !ok || !transportDec.MaterializeSession() {
+		return transportID
+	}
+
+	blockTransportID := sourceTransportIDForPlan(cmd.Block[0].Tree)
+	if normalizedTransportID(blockTransportID) == "" {
+		return transportID
+	}
+
+	return normalizedTransportID(blockTransportID)
 }
 
 type planBlockNode struct {
