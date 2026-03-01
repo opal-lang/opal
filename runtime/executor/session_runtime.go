@@ -19,10 +19,11 @@ type AuthFingerprint struct {
 	User          string
 	Method        string
 	HostKeyPolicy string
+	PasswordHash  string
 }
 
 func (af AuthFingerprint) Hash() string {
-	sum := sha256.Sum256([]byte(af.User + ":" + af.Method + ":" + af.HostKeyPolicy))
+	sum := sha256.Sum256([]byte(af.User + ":" + af.Method + ":" + af.HostKeyPolicy + ":" + af.PasswordHash))
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -222,6 +223,14 @@ func sessionAuthFingerprint(params map[string]any) AuthFingerprint {
 	if hasNonEmptyParam(params, "password") {
 		method = "password"
 	}
+
+	passwordHash := ""
+	if rawPassword, ok := params["password"].(string); ok {
+		if trimmedPassword := strings.TrimSpace(rawPassword); trimmedPassword != "" {
+			passwordHash = hashString(trimmedPassword)
+		}
+	}
+
 	if rawKey, ok := params["key"]; ok {
 		method = authMethodFromKey(rawKey)
 	}
@@ -240,6 +249,7 @@ func sessionAuthFingerprint(params map[string]any) AuthFingerprint {
 		User:          user,
 		Method:        method,
 		HostKeyPolicy: hostKeyPolicy,
+		PasswordHash:  passwordHash,
 	}
 }
 

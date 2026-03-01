@@ -1088,6 +1088,21 @@ func TestSessionPoolKeyIncludesAuthFingerprint(t *testing.T) {
 		t.Fatalf("pool key should not expose password (-want +got):\n%s\nkey: %q", diff, passwordKey)
 	}
 
+	differentPasswordParams := map[string]any{
+		"host":            "example.internal",
+		"port":            22,
+		"user":            "alice",
+		"password":        "different-secret-password",
+		"strict_host_key": true,
+	}
+	differentPasswordKey := SessionPoolKey(parent, differentPasswordParams)
+	if diff := cmp.Diff(false, passwordKey == differentPasswordKey); diff != "" {
+		t.Fatalf("different passwords should change key (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(false, strings.Contains(differentPasswordKey, "different-secret-password")); diff != "" {
+		t.Fatalf("pool key should not expose password (-want +got):\n%s\nkey: %q", diff, differentPasswordKey)
+	}
+
 	userChanged := map[string]any{
 		"host":            "example.internal",
 		"port":            22,

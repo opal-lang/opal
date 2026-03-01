@@ -456,7 +456,7 @@ func transportIDForPlanDecoratorExecution(execCtx sdk.ExecutionContext, cmd *pla
 	}
 
 	blockTransportID := sourceTransportIDForPlan(cmd.Block[0].Tree)
-	if normalizedTransportID(blockTransportID) == "" {
+	if blockTransportID == "" {
 		return transportID
 	}
 
