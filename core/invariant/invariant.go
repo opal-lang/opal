@@ -68,10 +68,6 @@ func Invariant(condition bool, format string, args ...interface{}) {
 	}
 }
 
-func Check(condition bool, format string, args ...interface{}) {
-	Invariant(condition, format, args...)
-}
-
 // NotNil panics if value is nil.
 // This is a precondition check for pointer/interface arguments.
 //

@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,34 +220,6 @@ func (s *LocalSession) TransportScope() TransportScope {
 // Platform returns the local runtime OS.
 func (s *LocalSession) Platform() string {
 	return runtime.GOOS
-}
-
-func (s *LocalSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("local dial requires context with deadline (recommended timeout <= %s)", defaultNetworkDialTimeout)
-	}
-
-	if _, ok := ctx.Deadline(); !ok {
-		return nil, fmt.Errorf("local dial requires context deadline to prevent hangs (recommended timeout <= %s)", defaultNetworkDialTimeout)
-	}
-
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, network, addr)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("local dial timed out for %s %s: %w", network, addr, err)
-		}
-		if errors.Is(err, context.Canceled) {
-			return nil, fmt.Errorf("local dial canceled for %s %s: %w", network, addr, err)
-		}
-		return nil, err
-	}
-
-	return conn, nil
-}
-
-func (s *LocalSession) sealNetworkDialer() NetworkDialer {
-	return s
 }
 
 // Close is a no-op for LocalSession (no resources to clean up).

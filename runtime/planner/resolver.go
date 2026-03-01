@@ -121,7 +121,6 @@ type Resolver struct {
 	vault          *vault.Vault
 	session        decorator.Session
 	sessionStack   []decorator.Session
-	transportPool  map[string]decorator.Session
 	config         ResolveConfig
 	telemetry      *PlanTelemetry
 	telemetryLevel TelemetryLevel
@@ -206,7 +205,6 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 		graph:            graph,
 		vault:            v,
 		session:          session,
-		transportPool:    make(map[string]decorator.Session),
 		config:           config,
 		telemetry:        config.Telemetry,
 		telemetryLevel:   config.TelemetryLevel,
@@ -781,13 +779,9 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 		}()
 
 		if desc.Capabilities.Idempotent {
-			session, ok := r.transportPool[transportID]
-			if !ok {
-				session, err = transportDec.Open(r.session, params)
-				if err != nil {
-					return fmt.Errorf("failed to open transport %q: %w", cmd.Decorator, err)
-				}
-				r.transportPool[transportID] = session
+			session, err := transportDec.Open(r.session, params)
+			if err != nil {
+				return fmt.Errorf("failed to open transport %q: %w", cmd.Decorator, err)
 			}
 			if delta := extractEnvDelta(params); len(delta) > 0 {
 				session = session.WithEnv(delta)
@@ -1193,6 +1187,9 @@ func (r *Resolver) pushSession(session decorator.Session) {
 func (r *Resolver) popSession() {
 	if len(r.sessionStack) == 0 {
 		return
+	}
+	if r.session != nil {
+		_ = r.session.Close()
 	}
 	prev := r.sessionStack[len(r.sessionStack)-1]
 	r.sessionStack = r.sessionStack[:len(r.sessionStack)-1]

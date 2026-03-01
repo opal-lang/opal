@@ -199,22 +199,6 @@ func planCanonicalWithObservability(events []parser.Event, tokens []lexer.Token,
 	}
 
 	// Validate the plan
-	if err := validateTransportTable(plan.Transports); err != nil {
-		return nil, &PlanError{
-			Message:     fmt.Sprintf("plan validation failed: %v", err),
-			Context:     "validating plan",
-			TotalEvents: len(events),
-		}
-	}
-
-	if err := detectCycle(plan.Transports); err != nil {
-		return nil, &PlanError{
-			Message:     fmt.Sprintf("plan validation failed: %v", err),
-			Context:     "validating plan",
-			TotalEvents: len(events),
-		}
-	}
-
 	if err := plan.Validate(); err != nil {
 		return nil, &PlanError{
 			Message:     fmt.Sprintf("plan validation failed: %v", err),
