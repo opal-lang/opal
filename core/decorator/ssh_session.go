@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -23,11 +25,47 @@ type SSHSession struct {
 	platform string
 }
 
+const (
+	defaultNetworkDialTimeout  = 30 * time.Second
+	defaultSSHHandshakeTimeout = 10 * time.Second
+	maxSSHDialPoolSize         = 100
+)
+
+var sshDialPool = make(chan struct{}, maxSSHDialPoolSize)
+
+var sshClientDialContext = func(client *ssh.Client, ctx context.Context, network, addr string) (net.Conn, error) {
+	return client.DialContext(ctx, network, addr)
+}
+
+var sshNewClientConn = func(conn net.Conn, addr string, config *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	return ssh.NewClientConn(conn, addr, config)
+}
+
 // NewSSHSession creates a new SSH session from connection parameters.
 func NewSSHSession(params map[string]any) (*SSHSession, error) {
+	client, host, err := dialSSHClient(context.Background(), (&net.Dialer{}).DialContext, params)
+	if err != nil {
+		return nil, err
+	}
+
+	platform := detectRemotePlatform(client)
+
+	return &SSHSession{
+		client:   client,
+		host:     host,
+		platform: platform,
+	}, nil
+}
+
+func dialSSHClient(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), params map[string]any) (*ssh.Client, string, error) {
+	if err := acquireSSHDialSlot(ctx); err != nil {
+		return nil, "", err
+	}
+	defer releaseSSHDialSlot()
+
 	host, ok := params["host"].(string)
 	if !ok {
-		return nil, fmt.Errorf("host parameter required")
+		return nil, "", fmt.Errorf("host parameter required")
 	}
 
 	user, ok := params["user"].(string)
@@ -45,7 +83,7 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 
 	// Validate host
 	if host == "" || strings.TrimSpace(host) == "" {
-		return nil, TransportError{
+		return nil, "", TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   "SSH host cannot be empty",
 			Retryable: false,
@@ -54,7 +92,7 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 
 	// Validate port range (1-65535)
 	if port < 1 || port > 65535 {
-		return nil, TransportError{
+		return nil, "", TransportError{
 			Code:      TransportErrorCodeValidationFailed,
 			Message:   fmt.Sprintf("SSH port must be between 1 and 65535, got %d", port),
 			Retryable: false,
@@ -64,7 +102,7 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 	// Validate key file if provided as string path
 	if keyStr, ok := params["key"].(string); ok && keyStr != "" {
 		if _, err := os.Stat(keyStr); err != nil {
-			return nil, TransportError{
+			return nil, "", TransportError{
 				Code:      TransportErrorCodeValidationFailed,
 				Message:   fmt.Sprintf("SSH key file not accessible: %v", err),
 				Retryable: false,
@@ -103,11 +141,13 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		HostKeyCallback: hostKeyCallback,
 	}
 
+	handshakeTimeout := getSSHHandshakeTimeout(params)
+
 	// Connect
 	addr := fmt.Sprintf("%s:%d", host, port)
-	client, err := ssh.Dial("tcp", addr, config)
+	conn, err := dialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, TransportError{
+		return nil, "", TransportError{
 			Code:      TransportErrorCodeConnect,
 			Message:   "ssh dial failed",
 			Retryable: true,
@@ -115,13 +155,20 @@ func NewSSHSession(params map[string]any) (*SSHSession, error) {
 		}
 	}
 
-	platform := detectRemotePlatform(client)
+	sshConn, chans, reqs, err := sshNewClientConnWithTimeout(ctx, conn, addr, config, handshakeTimeout)
+	if err != nil {
+		_ = conn.Close()
+		return nil, "", TransportError{
+			Code:      TransportErrorCodeConnect,
+			Message:   "ssh dial failed",
+			Retryable: true,
+			Cause:     err,
+		}
+	}
 
-	return &SSHSession{
-		client:   client,
-		host:     host,
-		platform: platform,
-	}, nil
+	client := ssh.NewClient(sshConn, chans, reqs)
+
+	return client, host, nil
 }
 
 // Run executes a command on the remote host.
@@ -302,6 +349,37 @@ func (s *SSHSession) IsolationContext() IsolationContext {
 	return nil
 }
 
+func (s *SSHSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if s.client == nil {
+		return nil, errors.New("ssh session not connected")
+	}
+
+	if ctx == nil {
+		return nil, fmt.Errorf("ssh dial requires context with deadline (recommended timeout <= %s)", defaultNetworkDialTimeout)
+	}
+
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, fmt.Errorf("ssh dial requires context deadline to prevent hangs (recommended timeout <= %s)", defaultNetworkDialTimeout)
+	}
+
+	conn, err := sshClientDialContext(s.client, ctx, network, addr)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("ssh dial timed out for %s %s: %w", network, addr, err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("ssh dial canceled for %s %s: %w", network, addr, err)
+		}
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (s *SSHSession) sealNetworkDialer() NetworkDialer {
+	return s
+}
+
 // Close closes the SSH connection.
 func (s *SSHSession) Close() error {
 	return s.client.Close()
@@ -397,21 +475,21 @@ func (s *SSHSessionWithEnv) Platform() string {
 }
 
 func (s *SSHSessionWithEnv) Close() error {
-	return s.base.Close()
+	return nil
 }
 
 // SSHTransport implements Transport for SSH connections.
 type SSHTransport struct{}
 
 func init() {
-	if err := Register("ssh", &SSHTransport{}); err != nil {
-		panic(fmt.Sprintf("failed to register @ssh decorator: %v", err))
+	if err := Register("ssh.connect", &SSHTransport{}); err != nil {
+		panic(fmt.Sprintf("failed to register @ssh.connect decorator: %v", err))
 	}
 }
 
 func (t *SSHTransport) Descriptor() Descriptor {
 	return Descriptor{
-		Path: "ssh",
+		Path: "ssh.connect",
 	}
 }
 
@@ -420,7 +498,20 @@ func (t *SSHTransport) Capabilities() TransportCaps {
 }
 
 func (t *SSHTransport) Open(parent Session, params map[string]any) (Session, error) {
-	return NewSSHSession(params)
+	dialer, err := getSealedDialer(parent)
+	if err != nil {
+		return nil, err
+	}
+
+	dialCtx, cancel := withDefaultDialDeadline(context.Background())
+	defer cancel()
+
+	sshSession, err := dialSSHSession(dialCtx, dialer, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return sshSession, nil
 }
 
 func (t *SSHTransport) Wrap(next ExecNode, params map[string]any) ExecNode {
@@ -444,7 +535,59 @@ type sshTransportNode struct {
 }
 
 func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
-	sshSession, err := NewSSHSession(n.params)
+	if ctx.Session != nil && ctx.Session.TransportScope() == TransportScopeSSH && !strings.HasPrefix(ctx.Session.ID(), "ssh:") {
+		session := Session(ctx.Session)
+		if env := sshEnvDelta(n.params); len(env) > 0 {
+			session = session.WithEnv(env)
+		}
+		if workdir, ok := n.params["workdir"].(string); ok && workdir != "" {
+			session = session.WithWorkdir(workdir)
+		}
+
+		if n.next != nil {
+			return n.next.Execute(ctx.WithSession(session))
+		}
+
+		command, ok := n.params["command"].(string)
+		if !ok || strings.TrimSpace(command) == "" {
+			return Result{ExitCode: ExitSuccess}, nil
+		}
+
+		shellName := "bash"
+		if v, ok := n.params["shell"].(string); ok && v != "" {
+			shellName = v
+		}
+
+		argv, err := sshShellCommandArgs(shellName, command)
+		if err != nil {
+			return Result{ExitCode: ExitFailure}, err
+		}
+
+		execCtx := ctx.Context
+		if execCtx == nil {
+			execCtx = context.Background()
+		}
+
+		return session.Run(execCtx, argv, RunOpts{
+			Stdin:  ctx.Stdin,
+			Stdout: ctx.Stdout,
+			Stderr: ctx.Stderr,
+		})
+	}
+
+	dialer, err := getSealedDialer(ctx.Session)
+	if err != nil {
+		return Result{ExitCode: ExitFailure}, err
+	}
+
+	execCtx := ctx.Context
+	if execCtx == nil {
+		execCtx = context.Background()
+	}
+	execCtx, cancel := withDefaultDialDeadline(execCtx)
+	defer cancel()
+
+	sshSession, err := dialSSHSession(execCtx, dialer, n.params)
 	if err != nil {
 		return Result{ExitCode: ExitFailure}, err
 	}
@@ -477,16 +620,26 @@ func (n *sshTransportNode) Execute(ctx ExecContext) (Result, error) {
 		return Result{ExitCode: ExitFailure}, err
 	}
 
-	execCtx := ctx.Context
-	if execCtx == nil {
-		execCtx = context.Background()
-	}
-
 	return session.Run(execCtx, argv, RunOpts{
 		Stdin:  ctx.Stdin,
 		Stdout: ctx.Stdout,
 		Stderr: ctx.Stderr,
 	})
+}
+
+func dialSSHSession(ctx context.Context, dialer NetworkDialer, params map[string]any) (*SSHSession, error) {
+	client, host, err := dialSSHClient(ctx, dialer.DialContext, params)
+	if err != nil {
+		return nil, err
+	}
+
+	platform := detectRemotePlatform(client)
+
+	return &SSHSession{
+		client:   client,
+		host:     host,
+		platform: platform,
+	}, nil
 }
 
 // Helper functions
@@ -669,7 +822,7 @@ func sshAgentAuth() ssh.AuthMethod {
 		return nil
 	}
 
-	conn, err := net.Dial("unix", socket)
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", socket)
 	if err != nil {
 		return nil
 	}
@@ -795,6 +948,108 @@ func sshShellCommandArgs(shellName, command string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported shell %q: expected one of bash, pwsh, cmd", shellName)
 	}
+}
+
+func getSSHHandshakeTimeout(params map[string]any) time.Duration {
+	if params == nil {
+		return defaultSSHHandshakeTimeout
+	}
+
+	if value, ok := params["handshake_timeout"]; ok {
+		switch typed := value.(type) {
+		case time.Duration:
+			if typed > 0 {
+				return typed
+			}
+		case string:
+			parsed, err := time.ParseDuration(typed)
+			if err == nil && parsed > 0 {
+				return parsed
+			}
+		case int:
+			if typed > 0 {
+				return time.Duration(typed) * time.Second
+			}
+		case int64:
+			if typed > 0 {
+				return time.Duration(typed) * time.Second
+			}
+		case float64:
+			if typed > 0 {
+				return time.Duration(typed * float64(time.Second))
+			}
+		}
+	}
+
+	return defaultSSHHandshakeTimeout
+}
+
+func sshNewClientConnWithTimeout(ctx context.Context, conn net.Conn, addr string, config *ssh.ClientConfig, handshakeTimeout time.Duration) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	handshakeCtx := ctx
+	var cancel context.CancelFunc
+	if handshakeTimeout > 0 {
+		handshakeCtx, cancel = context.WithTimeout(ctx, handshakeTimeout)
+		defer cancel()
+	}
+
+	type result struct {
+		sshConn ssh.Conn
+		chans   <-chan ssh.NewChannel
+		reqs    <-chan *ssh.Request
+		err     error
+	}
+
+	done := make(chan result, 1)
+	go func() {
+		sshConn, chans, reqs, err := sshNewClientConn(conn, addr, config)
+		done <- result{sshConn: sshConn, chans: chans, reqs: reqs, err: err}
+	}()
+
+	select {
+	case <-handshakeCtx.Done():
+		_ = conn.Close()
+		if errors.Is(handshakeCtx.Err(), context.DeadlineExceeded) {
+			return nil, nil, nil, fmt.Errorf("ssh handshake timed out after %s for %s: %w", handshakeTimeout, addr, handshakeCtx.Err())
+		}
+		return nil, nil, nil, fmt.Errorf("ssh handshake canceled for %s: %w", addr, handshakeCtx.Err())
+	case out := <-done:
+		return out.sshConn, out.chans, out.reqs, out.err
+	}
+}
+
+func acquireSSHDialSlot(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("ssh dial pool requires context")
+	}
+
+	select {
+	case sshDialPool <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("ssh dial pool exhausted and timed out waiting for slot (max=%d): %w", maxSSHDialPoolSize, ctx.Err())
+		}
+		return fmt.Errorf("ssh dial pool wait canceled: %w", ctx.Err())
+	}
+}
+
+func releaseSSHDialSlot() {
+	select {
+	case <-sshDialPool:
+	default:
+	}
+}
+
+func withDefaultDialDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+
+	return context.WithTimeout(ctx, defaultNetworkDialTimeout)
 }
 
 func shellEscape(argv []string) string {

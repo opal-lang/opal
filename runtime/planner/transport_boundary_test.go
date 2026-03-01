@@ -267,7 +267,7 @@ var VERSION = "1.0.0"
 // TestTransportBoundary_DirectEnvInTransportBlockWorks verifies that @env
 // used directly inside a transport block resolves from that transport's context.
 //
-// @ssh("server") { echo @env.HOME }  ← resolves HOME on the remote server
+// @ssh.connect("server") { echo @env.HOME }  ← resolves HOME on the remote server
 
 func TestTransportBoundary_DirectEnvInTransportBlockWorks(t *testing.T) {
 	source := `
