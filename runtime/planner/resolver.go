@@ -218,8 +218,18 @@ func Resolve(graph *ExecutionGraph, v *vault.Vault, session decorator.Session, c
 	}
 
 	v.EnterTransport(localTransportID(v.GetPlanKey()))
+	defer r.closeTransportPool()
 
 	return r.resolve()
+}
+
+func (r *Resolver) closeTransportPool() {
+	for id, session := range r.transportPool {
+		if session != nil {
+			_ = session.Close()
+		}
+		delete(r.transportPool, id)
+	}
 }
 
 func (r *Resolver) checkContext() error {

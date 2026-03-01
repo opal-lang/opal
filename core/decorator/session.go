@@ -66,9 +66,26 @@ type sealedNetworkDialer interface {
 	sealNetworkDialer() NetworkDialer
 }
 
+type sessionUnwrapper interface {
+	UnwrapSession() Session
+}
+
 func getSealedDialer(session Session) (NetworkDialer, error) {
-	if sealer, ok := session.(sealedNetworkDialer); ok {
-		return sealer.sealNetworkDialer(), nil
+	for session != nil {
+		if sealer, ok := session.(sealedNetworkDialer); ok {
+			return sealer.sealNetworkDialer(), nil
+		}
+
+		unwrapper, ok := session.(sessionUnwrapper)
+		if !ok {
+			break
+		}
+
+		next := unwrapper.UnwrapSession()
+		if next == nil || next == session {
+			break
+		}
+		session = next
 	}
 
 	return nil, errors.New("session does not provide a sealed network dialer")

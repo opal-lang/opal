@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -310,6 +311,82 @@ func TestGetSealedDialerReturnsRuntimeSessionDialer(t *testing.T) {
 	session := NewLocalSession()
 
 	dialer, err := getSealedDialer(session)
+	if err != nil {
+		t.Fatalf("getSealedDialer failed: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+}
+
+type wrappedLocalSession struct {
+	inner Session
+}
+
+func (s *wrappedLocalSession) Run(ctx context.Context, argv []string, opts RunOpts) (Result, error) {
+	return s.inner.Run(ctx, argv, opts)
+}
+
+func (s *wrappedLocalSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.inner.Put(ctx, data, path, mode)
+}
+
+func (s *wrappedLocalSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.inner.Get(ctx, path)
+}
+
+func (s *wrappedLocalSession) Env() map[string]string {
+	return s.inner.Env()
+}
+
+func (s *wrappedLocalSession) WithEnv(delta map[string]string) Session {
+	return &wrappedLocalSession{inner: s.inner.WithEnv(delta)}
+}
+
+func (s *wrappedLocalSession) WithWorkdir(dir string) Session {
+	return &wrappedLocalSession{inner: s.inner.WithWorkdir(dir)}
+}
+
+func (s *wrappedLocalSession) Cwd() string {
+	return s.inner.Cwd()
+}
+
+func (s *wrappedLocalSession) ID() string {
+	return s.inner.ID()
+}
+
+func (s *wrappedLocalSession) TransportScope() TransportScope {
+	return s.inner.TransportScope()
+}
+
+func (s *wrappedLocalSession) Platform() string {
+	return s.inner.Platform()
+}
+
+func (s *wrappedLocalSession) Close() error {
+	return s.inner.Close()
+}
+
+func (s *wrappedLocalSession) UnwrapSession() Session {
+	return s.inner
+}
+
+func TestGetSealedDialerUnwrapsWrappedSession(t *testing.T) {
+	wrapped := &wrappedLocalSession{inner: NewLocalSession()}
+
+	dialer, err := getSealedDialer(wrapped)
 	if err != nil {
 		t.Fatalf("getSealedDialer failed: %v", err)
 	}

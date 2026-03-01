@@ -482,14 +482,14 @@ func (s *SSHSessionWithEnv) Close() error {
 type SSHTransport struct{}
 
 func init() {
-	if err := Register("ssh", &SSHTransport{}); err != nil {
-		panic(fmt.Sprintf("failed to register @ssh decorator: %v", err))
+	if err := Register("ssh.connect", &SSHTransport{}); err != nil {
+		panic(fmt.Sprintf("failed to register @ssh.connect decorator: %v", err))
 	}
 }
 
 func (t *SSHTransport) Descriptor() Descriptor {
 	return Descriptor{
-		Path: "ssh",
+		Path: "ssh.connect",
 	}
 }
 
