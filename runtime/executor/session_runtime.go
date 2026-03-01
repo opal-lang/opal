@@ -271,7 +271,10 @@ func authMethodFromKey(rawKey any) string {
 	case string:
 		trimmed := strings.TrimSpace(key)
 		if trimmed == "" {
-			return "agent"
+			// Whitespace-only key is invalid; use distinct fingerprint to prevent
+			// pool collision with real agent auth. This ensures the validation
+			// error from dialSSHClient surfaces instead of silently reusing pooled session.
+			return "key:blank"
 		}
 		return "keyfile:" + hashString(trimmed)
 	default:
