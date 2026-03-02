@@ -14,7 +14,7 @@ import (
 	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
-var displayIDPattern = regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
+var displayIDPattern = regexp.MustCompile(`sigil:[A-Za-z0-9_-]{22}`)
 
 func (e *executor) getStderr() io.Writer {
 	if e.stderr == nil {
@@ -96,7 +96,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	if displayIDPattern.MatchString(command) {
 		panic(fmt.Sprintf("INVARIANT VIOLATION: Command contains unresolved DisplayID: %s\n"+
 			"DisplayIDs must be resolved to actual values before execution.\n"+
-			"Format: opal:<base64url-hash> (22 chars)\n"+
+			"Format: sigil:<base64url-hash> (22 chars)\n"+
 			"This indicates the executor is not resolving secrets from the plan.", command))
 	}
 

@@ -791,11 +791,11 @@ func TestRenderExpr_Literal_Int(t *testing.T) {
 
 func TestRenderExpr_VarRef(t *testing.T) {
 	expr := &ExprIR{Kind: ExprVarRef, VarName: "NAME"}
-	displayIDs := map[string]string{"NAME": "opal:abc123"}
+	displayIDs := map[string]string{"NAME": "sigil:abc123"}
 
 	result := RenderExpr(expr, displayIDs)
-	if result != "opal:abc123" {
-		t.Errorf("RenderExpr() = %q, want %q", result, "opal:abc123")
+	if result != "sigil:abc123" {
+		t.Errorf("RenderExpr() = %q, want %q", result, "sigil:abc123")
 	}
 }
 
@@ -818,11 +818,11 @@ func TestRenderExpr_DecoratorRef(t *testing.T) {
 			Selector: []string{"HOME"},
 		},
 	}
-	displayIDs := map[string]string{"env.HOME": "opal:def456"}
+	displayIDs := map[string]string{"env.HOME": "sigil:def456"}
 
 	result := RenderExpr(expr, displayIDs)
-	if result != "opal:def456" {
-		t.Errorf("RenderExpr() = %q, want %q", result, "opal:def456")
+	if result != "sigil:def456" {
+		t.Errorf("RenderExpr() = %q, want %q", result, "sigil:def456")
 	}
 }
 
@@ -834,11 +834,11 @@ func TestRenderExpr_DecoratorRef_Nested(t *testing.T) {
 			Selector: []string{"secret", "api_key"},
 		},
 	}
-	displayIDs := map[string]string{"aws.secret.api_key": "opal:xyz789"}
+	displayIDs := map[string]string{"aws.secret.api_key": "sigil:xyz789"}
 
 	result := RenderExpr(expr, displayIDs)
-	if result != "opal:xyz789" {
-		t.Errorf("RenderExpr() = %q, want %q", result, "opal:xyz789")
+	if result != "sigil:xyz789" {
+		t.Errorf("RenderExpr() = %q, want %q", result, "sigil:xyz789")
 	}
 }
 
@@ -886,10 +886,10 @@ func TestRenderCommand_WithVarRef(t *testing.T) {
 			{Kind: ExprLiteral, Value: "\""},
 		},
 	}
-	displayIDs := map[string]string{"NAME": "opal:abc123"}
+	displayIDs := map[string]string{"NAME": "sigil:abc123"}
 
 	result := RenderCommand(cmd, displayIDs)
-	expected := "echo \"Hello opal:abc123\""
+	expected := "echo \"Hello sigil:abc123\""
 	if result != expected {
 		t.Errorf("RenderCommand() = %q, want %q", result, expected)
 	}
@@ -910,10 +910,10 @@ func TestRenderCommand_WithDecoratorRef(t *testing.T) {
 			{Kind: ExprLiteral, Value: "\""},
 		},
 	}
-	displayIDs := map[string]string{"env.HOME": "opal:def456"}
+	displayIDs := map[string]string{"env.HOME": "sigil:def456"}
 
 	result := RenderCommand(cmd, displayIDs)
-	expected := "echo \"Home is opal:def456\""
+	expected := "echo \"Home is sigil:def456\""
 	if result != expected {
 		t.Errorf("RenderCommand() = %q, want %q", result, expected)
 	}
@@ -930,12 +930,12 @@ func TestRenderCommand_MultipleRefs(t *testing.T) {
 		},
 	}
 	displayIDs := map[string]string{
-		"COUNT": "opal:count1",
-		"NAME":  "opal:name2",
+		"COUNT": "sigil:count1",
+		"NAME":  "sigil:name2",
 	}
 
 	result := RenderCommand(cmd, displayIDs)
-	expected := "kubectl scale --replicas=opal:count1 deployment/opal:name2"
+	expected := "kubectl scale --replicas=sigil:count1 deployment/sigil:name2"
 	if result != expected {
 		t.Errorf("RenderCommand() = %q, want %q", result, expected)
 	}

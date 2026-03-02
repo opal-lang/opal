@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### 2026-03-02
+- **Breaking**: Changed DisplayID placeholder prefix from `opal:` to `sigil:` across planning, execution, and contract formatting
+- Expanded CLI E2E coverage by enabling previously deferred timeout, for-loop, and decorator-composition scenarios
+- Fixed for-loop collection resolution for expression-backed array values and preserved per-iteration loop bindings during emission
+
 ### 2026-03-01
 - Documented transport categories (Connectivity, Isolation, Local) and their semantics in ARCHITECTURE.md and SPECIFICATION.md
 - Documented transport nesting rules (Connectivity+Connectivity, Connectivity+Isolation allowed; Isolation+Connectivity blocked)

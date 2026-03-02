@@ -220,13 +220,13 @@ func TestFormatDiff(t *testing.T) {
 			actual: &planfmt.Plan{
 				Target: "deploy",
 				Steps: []planfmt.Step{
-					{ID: 1, Tree: &planfmt.LogicNode{Kind: "call", Condition: "deploy(prod, token=opal:abc123)"}},
+					{ID: 1, Tree: &planfmt.LogicNode{Kind: "call", Condition: "deploy(prod, token=sigil:abc123)"}},
 				},
 			},
 			want: `Modified steps:
   step 1:
     - deploy(prod)
-    + deploy(prod, token=opal:abc123)
+    + deploy(prod, token=sigil:abc123)
 
 `,
 		},

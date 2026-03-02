@@ -196,7 +196,7 @@ func (h *Handle) Equal(other *Handle) bool {
 }
 
 // ID returns the opaque identifier for display (user-visible)
-// Format: opal:s:3J98t56A (Base58 encoded, context-aware)
+// Format: sigil:s:3J98t56A (Base58 encoded, context-aware)
 // In ModePlan: deterministic (same context+value → same ID)
 // In ModeRun: random-looking (different run → different ID)
 func (h *Handle) ID() string {
@@ -204,7 +204,7 @@ func (h *Handle) ID() string {
 }
 
 // IDWithEmoji returns the opaque identifier with emoji for display
-// Format: 🔒 opal:secret:3J98t56A
+// Format: 🔒 sigil:secret:3J98t56A
 // Used in terminal output and logs
 func (h *Handle) IDWithEmoji() string {
 	return fmt.Sprintf("🔒 %s", h.ID())

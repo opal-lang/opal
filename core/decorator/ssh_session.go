@@ -37,9 +37,7 @@ var sshClientDialContext = func(client *ssh.Client, ctx context.Context, network
 	return client.DialContext(ctx, network, addr)
 }
 
-var sshNewClientConn = func(conn net.Conn, addr string, config *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
-	return ssh.NewClientConn(conn, addr, config)
-}
+var sshNewClientConn = ssh.NewClientConn
 
 // NewSSHSession creates a new SSH session from connection parameters.
 func NewSSHSession(params map[string]any) (*SSHSession, error) {

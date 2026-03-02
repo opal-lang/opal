@@ -72,6 +72,6 @@ type ResolvedValue struct {
 	// TODO: Replace with actual *secret.Handle type for v1.0 (see MILESTONE_V1.md lines 206-219)
 	Handle any
 
-	// DisplayID is the deterministic secret ID (e.g., "opal:s:3J98t56A")
+	// DisplayID is the deterministic secret ID (e.g., "sigil:s:3J98t56A")
 	DisplayID string
 }

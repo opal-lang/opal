@@ -160,7 +160,7 @@ echo "Deployment complete"`
 func generateScriptWithSteps(count int) string {
 	var b strings.Builder
 	for i := 0; i < count; i++ {
-		b.WriteString(fmt.Sprintf("echo \"Step %d\"\n", i))
+		fmt.Fprintf(&b, "echo \"Step %d\"\n", i)
 	}
 	return b.String()
 }

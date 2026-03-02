@@ -50,7 +50,7 @@ import (
 //	vault.ResolveAllTouched()
 //
 //	// Pass 3: Access during execution
-//	value, _ := vault.ResolveDisplayIDWithTransport("opal:abc123", "local")
+//	value, _ := vault.ResolveDisplayIDWithTransport("sigil:abc123", "local")
 //
 //	// Pass 4: Finalize
 //	vault.pruneUntouched()
@@ -110,7 +110,7 @@ type Vault struct {
 type Expression struct {
 	Raw                string // Original source: "@var.X", "@env.HOME", etc.
 	Value              any    // Resolved value (preserves original type: string, int, bool, map, slice)
-	DisplayID          string // Placeholder ID for plan (e.g., "opal:3J98t56A")
+	DisplayID          string // Placeholder ID for plan (e.g., "sigil:3J98t56A")
 	Resolved           bool   // True if expression has been resolved (even if Value is nil)
 	TransportSensitive bool   // True if value cannot cross transport boundaries
 	DeclaredTransport  string // Transport context where expression was declared (for boundary checks)
@@ -752,7 +752,7 @@ func (v *Vault) buildSecretUses() []SecretUse {
 // SecretUse represents an authorized secret usage at a specific site.
 // This is what gets added to the Plan for executor enforcement.
 type SecretUse struct {
-	DisplayID string // "opal:3J98t56A"
+	DisplayID string // "sigil:3J98t56A"
 	SiteID    string // HMAC-based unforgeable ID
 	Site      string // "root/step-1/@shell[0]/params/command" (diagnostic)
 }
@@ -854,7 +854,7 @@ func (v *Vault) ResolveAllTouched() {
 
 		// Generate DisplayID from value using HMAC for unlinkability
 		hash := v.computeDisplayID(expr.Value)
-		expr.DisplayID = fmt.Sprintf("opal:%s", hash)
+		expr.DisplayID = fmt.Sprintf("sigil:%s", hash)
 
 		// Build reverse index for execution (DisplayID → exprID lookup)
 		v.displayIDIndex[expr.DisplayID] = exprID
@@ -913,7 +913,7 @@ func (v *Vault) GetPlanKey() []byte {
 // handles plan integrity via hash).
 //
 // Parameters:
-//   - displayID: The DisplayID to resolve (e.g., "opal:abc123...")
+//   - displayID: The DisplayID to resolve (e.g., "sigil:abc123...")
 //   - currentTransportID: Current transport context ID (e.g., "transport:abc123" or "local")
 //
 // Returns error if:

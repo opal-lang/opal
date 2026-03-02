@@ -50,9 +50,9 @@ func TestSecretProvider_VariableDeclaration(t *testing.T) {
 		t.Logf("Output: %s", scrubbed)
 	}
 
-	// The output SHOULD contain a DisplayID (opal:...)
-	if !bytes.Contains([]byte(scrubbed), []byte("opal:")) {
-		t.Errorf("Scrubbed output should contain DisplayID marker (opal:...)")
+	// The output SHOULD contain a DisplayID (sigil:...)
+	if !bytes.Contains([]byte(scrubbed), []byte("sigil:")) {
+		t.Errorf("Scrubbed output should contain DisplayID marker (sigil:...)")
 		t.Logf("Output: %s", scrubbed)
 	}
 
@@ -110,7 +110,7 @@ func TestSecretProvider_MultipleVariables(t *testing.T) {
 	}
 
 	// Should contain DisplayID markers
-	if !bytes.Contains([]byte(scrubbed), []byte("opal:")) {
+	if !bytes.Contains([]byte(scrubbed), []byte("sigil:")) {
 		t.Error("Scrubbed output should contain DisplayID markers")
 	}
 

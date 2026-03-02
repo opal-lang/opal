@@ -83,7 +83,7 @@ func TestDisplayPlan_WithSecrets(t *testing.T) {
 			},
 		},
 		SecretUses: []planfmt.SecretUse{
-			{DisplayID: "opal:s:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "sigil:s:abc123", SiteID: "site1", Site: "root/step-1/params/command"},
 		},
 	}
 

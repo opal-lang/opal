@@ -67,13 +67,13 @@ func (n *shellNode) Execute(ctx decorator.ExecContext) (decorator.Result, error)
 
 	// INVARIANT: Command must not contain unresolved DisplayIDs
 	// DisplayIDs should be resolved to actual values before execution
-	// Format: opal:<base64url> where base64url is 22 chars [A-Za-z0-9_-]
-	// Use regex to avoid false positives (e.g., "Documentation for opal: see docs/")
-	displayIDPattern := regexp.MustCompile(`opal:[A-Za-z0-9_-]{22}`)
+	// Format: sigil:<base64url> where base64url is 22 chars [A-Za-z0-9_-]
+	// Use regex to avoid false positives (e.g., "Documentation for sigil: see docs/")
+	displayIDPattern := regexp.MustCompile(`sigil:[A-Za-z0-9_-]{22}`)
 	if displayIDPattern.MatchString(command) {
 		panic(fmt.Sprintf("INVARIANT VIOLATION: Command contains unresolved DisplayID: %s\n"+
 			"DisplayIDs must be resolved to actual values before execution.\n"+
-			"Format: opal:<base64url-hash> (22 chars)\n"+
+			"Format: sigil:<base64url-hash> (22 chars)\n"+
 			"This indicates the executor is not resolving secrets from the plan.", command))
 	}
 

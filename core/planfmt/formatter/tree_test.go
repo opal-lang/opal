@@ -141,7 +141,7 @@ func TestFormatTree_WithCallTrace(t *testing.T) {
 				ID: 1,
 				Tree: &planfmt.LogicNode{
 					Kind:      "call",
-					Condition: "deploy(prod, token=opal:abc123)",
+					Condition: "deploy(prod, token=sigil:abc123)",
 					Block: []planfmt.Step{
 						{
 							ID: 2,
@@ -160,10 +160,10 @@ func TestFormatTree_WithCallTrace(t *testing.T) {
 	FormatTree(&buf, plan, false)
 
 	output := buf.String()
-	if !strings.Contains(output, "deploy(prod, token=opal:abc123)") {
+	if !strings.Contains(output, "deploy(prod, token=sigil:abc123)") {
 		t.Fatalf("Expected call trace label, got:\n%s", output)
 	}
-	if strings.Contains(output, "call deploy(prod, token=opal:abc123)") {
+	if strings.Contains(output, "call deploy(prod, token=sigil:abc123)") {
 		t.Fatalf("Expected signature-only call trace label, got:\n%s", output)
 	}
 	if !strings.Contains(output, "@shell echo ok") {

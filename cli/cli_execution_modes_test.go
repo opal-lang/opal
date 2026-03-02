@@ -262,6 +262,20 @@ func TestGetInputReaderEdgeCases(t *testing.T) {
 	})
 }
 
+func TestFormatExitCodeError(t *testing.T) {
+	t.Run("TimeoutOrCanceled", func(t *testing.T) {
+		err := formatExitCodeError(-1)
+		require.Error(t, err)
+		assert.Equal(t, "command failed with exit code -1 (timeout/canceled)", err.Error())
+	})
+
+	t.Run("GenericExitCode", func(t *testing.T) {
+		err := formatExitCodeError(2)
+		require.Error(t, err)
+		assert.Equal(t, "command failed with exit code 2", err.Error())
+	})
+}
+
 // TestStdinDetection tests the logic for detecting piped input
 func TestStdinDetection(t *testing.T) {
 	t.Run("StdinStatError", func(t *testing.T) {

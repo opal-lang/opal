@@ -101,7 +101,7 @@ type FunctionCallStmtIR struct {
 // CallTraceStmtIR wraps expanded statements with function-call provenance.
 // This is display-only metadata and does not affect execution semantics.
 type CallTraceStmtIR struct {
-	Label string         // e.g. deploy(token=opal:abc123) in rendered output
+	Label string         // e.g. deploy(token=sigil:abc123) in rendered output
 	Block []*StatementIR // Fully resolved expanded statements
 }
 

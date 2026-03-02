@@ -1046,7 +1046,7 @@ func (r *Resolver) formatTraceValue(value any) string {
 		if v == "" {
 			return ""
 		}
-		if strings.HasPrefix(v, "opal:") {
+		if strings.HasPrefix(v, "sigil:") {
 			return v
 		}
 		return r.symbolForValue(v)
@@ -2299,22 +2299,10 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Handle different expression types
 	switch decl.Value.Kind {
 	case ExprLiteral:
-		literalValue := decl.Value.Value
-		if _, ok := literalValue.([]*ExprIR); ok {
-			evaluated, err := EvaluateExpr(decl.Value, r.getValue)
-			if err != nil {
-				r.errors = append(r.errors, err)
-				return
-			}
-			literalValue = evaluated
-		}
-		if _, ok := literalValue.(map[string]*ExprIR); ok {
-			evaluated, err := EvaluateExpr(decl.Value, r.getValue)
-			if err != nil {
-				r.errors = append(r.errors, err)
-				return
-			}
-			literalValue = evaluated
+		literalValue, err := evaluateCompositeLiteral(decl.Value, r.getValue)
+		if err != nil {
+			r.errors = append(r.errors, err)
+			return
 		}
 
 		// For literals, store the evaluated value immediately in Vault
@@ -2347,6 +2335,23 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 		}
 		r.vault.StoreUnresolvedValue(exprID, value)
 		r.vault.MarkTouched(exprID)
+	}
+}
+
+func evaluateCompositeLiteral(expr *ExprIR, getValue ValueLookup) (any, error) {
+	if expr == nil {
+		return nil, nil
+	}
+
+	if expr.Kind != ExprLiteral {
+		return expr.Value, nil
+	}
+
+	switch expr.Value.(type) {
+	case []*ExprIR, map[string]*ExprIR:
+		return EvaluateExpr(expr, getValue)
+	default:
+		return expr.Value, nil
 	}
 }
 
@@ -3028,7 +3033,7 @@ func (r *Resolver) buildError() error {
 	var sb strings.Builder
 	sb.WriteString("multiple resolution errors:\n")
 	for i, err := range r.errors {
-		sb.WriteString(fmt.Sprintf("  %d. %v\n", i+1, err))
+		fmt.Fprintf(&sb, "  %d. %v\n", i+1, err)
 	}
 	return fmt.Errorf("%s", sb.String())
 }

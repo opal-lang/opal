@@ -169,8 +169,8 @@ func TestTransportBoundary_EnvInCommandIsTransportSensitive(t *testing.T) {
 	if use.DisplayID == "" {
 		t.Error("SecretUse.DisplayID should not be empty")
 	}
-	if !strings.HasPrefix(use.DisplayID, "opal:") {
-		t.Errorf("SecretUse.DisplayID should have opal: prefix, got: %s", use.DisplayID)
+	if !strings.HasPrefix(use.DisplayID, "sigil:") {
+		t.Errorf("SecretUse.DisplayID should have sigil: prefix, got: %s", use.DisplayID)
 	}
 }
 

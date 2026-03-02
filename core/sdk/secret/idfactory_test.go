@@ -30,7 +30,7 @@ func TestResolvedPlanDeterminism(t *testing.T) {
 	id2 := factory2.Make(ctx, value)
 
 	assert.Equal(t, id1, id2, "Same plan context and value should produce identical DisplayIDs")
-	assert.Contains(t, id1, "opal:s:", "DisplayID should have correct format")
+	assert.Contains(t, id1, "sigil:s:", "DisplayID should have correct format")
 }
 
 // Test 2: Plan boundary unlinkability - same value in different plans → different IDs
@@ -171,8 +171,8 @@ func TestNoLengthLeak(t *testing.T) {
 	assert.NotEqual(t, idShort, idLong, "Different values should produce different DisplayIDs")
 
 	// Both should have correct format
-	assert.Contains(t, idShort, "opal:s:", "Short value DisplayID should have correct format")
-	assert.Contains(t, idLong, "opal:s:", "Long value DisplayID should have correct format")
+	assert.Contains(t, idShort, "sigil:s:", "Short value DisplayID should have correct format")
+	assert.Contains(t, idLong, "sigil:s:", "Long value DisplayID should have correct format")
 }
 
 // Test 6: Format validation
@@ -189,10 +189,10 @@ func TestDisplayIDFormat(t *testing.T) {
 		kind string
 		want string
 	}{
-		{"secret", "s", "opal:s:"},
-		{"value", "v", "opal:"},
-		{"step", "st", "opal:st:"},
-		{"plan", "pl", "opal:pl:"},
+		{"secret", "s", "sigil:s:"},
+		{"value", "v", "sigil:"},
+		{"step", "st", "sigil:st:"},
+		{"plan", "pl", "sigil:pl:"},
 	}
 
 	for _, tt := range tests {

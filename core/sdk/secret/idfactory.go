@@ -64,7 +64,7 @@ func NewIDFactory(mode DisplayIDMode, key []byte) IDFactory {
 // PRF: BLAKE2s-128(key, planhash || context || BLAKE2b-256(value))
 // - Key: plan_key (ModePlan) or run_key (ModeRun)
 // - Input: planhash || step_path || decorator || key_name || kind || hash(value)
-// - Output: base58(digest) → "opal:s:3J98t56A" (22 chars typical)
+// - Output: base58(digest) → "sigil:s:3J98t56A" (22 chars typical)
 //
 // Using hash(value) prevents length leaks while keeping the ID deterministic
 // for the same value within the same context.
@@ -100,6 +100,6 @@ func (f *keyedIDFactory) Make(ctx IDContext, value []byte) string {
 	// Encode first 8 bytes to base58 (64 bits is sufficient for collision resistance)
 	encoded := EncodeBase58(hash[:8])
 
-	// Format: opal:kind:encoded
-	return fmt.Sprintf("opal:%s:%s", ctx.Kind, encoded)
+	// Format: sigil:kind:encoded
+	return fmt.Sprintf("sigil:%s:%s", ctx.Kind, encoded)
 }

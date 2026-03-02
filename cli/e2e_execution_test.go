@@ -23,7 +23,7 @@ func buildE2EBinary(t *testing.T) string {
 	cmd := exec.Command("go", "build", "-o", opalBin, ".")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to build opal: %v\nOutput: %s", err, output)
+		t.Fatalf("Failed to build sigil: %v\nOutput: %s", err, output)
 	}
 
 	return opalBin
@@ -89,6 +89,34 @@ func runE2EExpectError(t *testing.T, opalBin string, args ...string) (stderr str
 
 	t.Fatalf("opal failed unexpectedly: %v", err)
 	return ""
+}
+
+func extractDisplayID(t *testing.T, line string) string {
+	t.Helper()
+
+	start := strings.Index(line, "sigil:")
+	if start == -1 {
+		t.Fatalf("expected sigil display ID in line: %q", line)
+	}
+
+	rest := line[start:]
+	if space := strings.Index(rest, " "); space >= 0 {
+		return rest[:space]
+	}
+
+	return rest
+}
+
+func assertUniqueDisplayIDs(t *testing.T, lines []string) {
+	t.Helper()
+
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		displayID := extractDisplayID(t, line)
+		seen[displayID] = struct{}{}
+	}
+
+	assert.Len(t, seen, len(lines), "expected one unique display ID per loop iteration")
 }
 
 func TestE2EPlaceholder(t *testing.T) {
@@ -396,6 +424,7 @@ fun slow {
 	start := time.Now()
 	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "slow")
 	assert.Contains(t, stderr, "command failed with exit code -1")
+	assert.Contains(t, stderr, "timeout/canceled")
 	assert.Less(t, time.Since(start), time.Second)
 }
 
@@ -456,8 +485,9 @@ fun loop {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	assert.Len(t, lines, 3)
 	for _, line := range lines {
-		assert.True(t, strings.HasPrefix(line, "item opal:"), "line should use resolved display ID: %q", line)
+		assert.True(t, strings.HasPrefix(line, "item sigil:"), "line should use resolved display ID: %q", line)
 	}
+	assertUniqueDisplayIDs(t, lines)
 }
 
 func TestE2EMeta_ForVariable(t *testing.T) {
@@ -473,8 +503,9 @@ fun loop {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	assert.Len(t, lines, 3)
 	for _, line := range lines {
-		assert.True(t, strings.HasPrefix(line, "opal:"), "line should use resolved display ID: %q", line)
+		assert.True(t, strings.HasPrefix(line, "sigil:"), "line should use resolved display ID: %q", line)
 	}
+	assertUniqueDisplayIDs(t, lines)
 }
 
 func TestE2EMeta_RetryTimeout(t *testing.T) {

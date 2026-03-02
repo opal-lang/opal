@@ -432,6 +432,6 @@ echo "@var.COUNT"
 // ========== Helper Functions ==========
 
 func containsDisplayID(s string) bool {
-	// DisplayID format: opal:<base64>
-	return strings.Contains(s, "opal:")
+	// DisplayID format: sigil:<base64>
+	return strings.Contains(s, "sigil:")
 }

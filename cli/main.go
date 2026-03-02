@@ -53,7 +53,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "sigil [command]",
 		Short: "Plan-first execution platform for deployments and operations",
-		Long: `Opal converts operational workflows into verifiable execution contracts.
+		Long: `Sigil converts operational workflows into verifiable execution contracts.
 
 Scripts are planned before execution, generating a deterministic contract that can be:
   - Verified before execution (contract mode)
@@ -107,7 +107,7 @@ DisplayID placeholders for security.`,
 					return err
 				}
 				if exitCode != 0 {
-					return fmt.Errorf("command failed with exit code %d", exitCode)
+					return formatExitCodeError(exitCode)
 				}
 				return nil
 			}
@@ -145,7 +145,7 @@ DisplayID placeholders for security.`,
 			}
 			if exitCode != 0 {
 				// Store exit code for later (can't os.Exit here - skips defers)
-				return fmt.Errorf("command failed with exit code %d", exitCode)
+				return formatExitCodeError(exitCode)
 			}
 			return nil
 		},
@@ -176,6 +176,14 @@ DisplayID placeholders for security.`,
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+func formatExitCodeError(exitCode int) error {
+	if exitCode == -1 {
+		return fmt.Errorf("command failed with exit code -1 (timeout/canceled)")
+	}
+
+	return fmt.Errorf("command failed with exit code %d", exitCode)
 }
 
 // newCancellableContext creates a context that cancels on SIGINT/SIGTERM
@@ -219,8 +227,8 @@ func runCommand(cmd *cobra.Command, commandName, file string, dryRun, resolve, d
 		err := &CLIError{
 			Type:    "usage",
 			Message: fmt.Sprintf("Cannot execute function %q in shebang script", commandName),
-			Details: "Script files with shebang (#!/usr/bin/env opal) are executable scripts, not command libraries.\nThey run in script mode only.",
-			Hint:    fmt.Sprintf("Remove the shebang line to use this file as a command library\nOr run in script mode: opal -f %s", file),
+			Details: "Script files with shebang (#!/usr/bin/env sigil) are executable scripts, not command libraries.\nThey run in script mode only.",
+			Hint:    fmt.Sprintf("Remove the shebang line to use this file as a command library\nOr run in script mode: sigil -f %s", file),
 		}
 		return 1, err
 	}
@@ -524,7 +532,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 					"The contract file may be corrupted or manually edited.\n"+
 					"Plan salt is required for contract verification to ensure DisplayIDs remain consistent.\n\n"+
 					"To fix:\n"+
-					"  1. Regenerate the contract: opal plan --mode=contract <file>\n"+
+					"  1. Regenerate the contract: sigil plan --mode=contract <file>\n"+
 					"  2. Or restore from backup if available\n"+
 					"  3. Or use --mode=plan to execute without contract verification",
 				planFile,
@@ -535,7 +543,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 				"Expected 32 bytes, but found %d bytes.\n"+
 				"The contract file may be corrupted or manually edited.\n\n"+
 				"To fix:\n"+
-				"  1. Regenerate the contract: opal plan --mode=contract <file>\n"+
+				"  1. Regenerate the contract: sigil plan --mode=contract <file>\n"+
 				"  2. Or restore from backup if available\n"+
 				"  3. Or use --mode=plan to execute without contract verification",
 			planFile, len(contractPlan.PlanSalt),
@@ -581,7 +589,7 @@ func runFromPlan(planFile, sourceFile string, debug, noColor bool, vlt *vault.Va
 			"contract verification failed: source file has changed since contract was created\n\n"+
 				"The differences are shown above. To fix:\n"+
 				"  1. Review the changes to ensure they are intentional\n"+
-				"  2. Regenerate the contract: opal plan --mode=contract %s\n"+
+				"  2. Regenerate the contract: sigil plan --mode=contract %s\n"+
 				"  3. Or use --mode=plan to execute without verification",
 			planFile,
 		)
@@ -650,7 +658,7 @@ func displayPipelineTiming(timing struct {
 	fmt.Fprintf(os.Stderr, "  Total:   %v\n", totalTime)
 }
 
-// stripShebang removes shebang line if present (#!/usr/bin/env opal)
+// stripShebang removes shebang line if present (#!/usr/bin/env sigil)
 // TODO: Support shebang properly in parser by adding # as comment character
 func stripShebang(source []byte) []byte {
 	// Check if source starts with shebang

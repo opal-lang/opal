@@ -118,7 +118,7 @@ func TestHandleWithPlaceholder(t *testing.T) {
 	p2 := h2.Placeholder()
 
 	assert.NotEmpty(t, p1)
-	assert.Contains(t, p1, "opal:s:")
+	assert.Contains(t, p1, "sigil:s:")
 	// Different handles for same value should have different placeholders (oracle protection)
 	assert.NotEqual(t, p1, p2, "Same value should produce different placeholders")
 }
@@ -199,18 +199,18 @@ func TestHandleFormat(t *testing.T) {
 
 	// %v should return placeholder, not the actual value
 	v := fmt.Sprintf("%v", h)
-	assert.Contains(t, v, "opal:s:")
+	assert.Contains(t, v, "sigil:s:")
 	assert.NotContains(t, v, "my-actual-secret-value")
 
 	// %s should return placeholder, not the actual value
 	s := fmt.Sprintf("%s", h)
-	assert.Contains(t, s, "opal:s:")
+	assert.Contains(t, s, "sigil:s:")
 	assert.NotContains(t, s, "my-actual-secret-value")
 
 	// %#v should return GoString, not the actual value
 	gv := fmt.Sprintf("%#v", h)
 	assert.Contains(t, gv, "secret.Handle{")
-	assert.Contains(t, gv, "opal:s:")
+	assert.Contains(t, gv, "sigil:s:")
 	assert.NotContains(t, gv, "my-actual-secret-value")
 }
 
@@ -255,7 +255,7 @@ func TestHandleID(t *testing.T) {
 	assert.NotEqual(t, id1, id2, "Same value should produce different IDs")
 
 	// IDs should be opaque (not reveal value)
-	assert.Contains(t, id1, "opal:s:")
+	assert.Contains(t, id1, "sigil:s:")
 	assert.NotContains(t, id1, "my-secret")
 }
 
@@ -300,6 +300,6 @@ func TestHandleQuotedFormat(t *testing.T) {
 
 	// %q should return quoted placeholder, not the actual value
 	quoted := fmt.Sprintf("%q", h)
-	assert.Contains(t, quoted, "opal:s:")
+	assert.Contains(t, quoted, "sigil:s:")
 	assert.NotContains(t, quoted, "my-secret-value")
 }

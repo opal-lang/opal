@@ -76,8 +76,8 @@ echo "The secret is: @var.SECRET"`
 	}
 
 	// Verify output contains DisplayID marker (scrubbed value)
-	if !strings.Contains(output, "opal:") {
-		t.Error("Output should contain DisplayID marker (opal:...)")
+	if !strings.Contains(output, "sigil:") {
+		t.Error("Output should contain DisplayID marker (sigil:...)")
 		t.Logf("Output: %s", output)
 	}
 
@@ -152,7 +152,7 @@ echo "API: @var.API_KEY, Token: @var.TOKEN, Pass: @var.PASSWORD"`
 	}
 
 	// Verify output contains DisplayID markers (scrubbed values)
-	if !strings.Contains(output, "opal:") {
+	if !strings.Contains(output, "sigil:") {
 		t.Error("Output should contain DisplayID markers")
 	}
 
