@@ -553,7 +553,7 @@ func (r *Resolver) evaluateBlockerCollection(blocker *BlockerIR, checkTransport 
 	return collection, nil
 }
 
-func (r *Resolver) bindLoopVar(loopVar string, item any) {
+func (r *Resolver) bindLoopVar(loopVar string, item any) string {
 	loopVarRaw := fmt.Sprintf("literal:%v", item)
 	loopVarExprID := r.vault.DeclareVariable(loopVar, loopVarRaw)
 
@@ -562,6 +562,8 @@ func (r *Resolver) bindLoopVar(loopVar string, item any) {
 	if r.scopes != nil {
 		r.scopes.Define(loopVar, loopVarExprID)
 	}
+
+	return loopVarExprID
 }
 
 func (r *Resolver) resolveBlockerWithResolvedInputs(stmt *StatementIR) (*StatementIR, error) {
@@ -639,13 +641,14 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		}
 
 		var resolvedBody []*StatementIR
+		loopVarExprID := ""
 		err := func() error {
 			if r.scopes != nil {
 				r.scopes.Push()
 				defer r.scopes.Pop()
 			}
 
-			r.bindLoopVar(blocker.LoopVar, item)
+			loopVarExprID = r.bindLoopVar(blocker.LoopVar, item)
 
 			// Deep-copy the body for this iteration
 			bodyCopy := DeepCopyStatements(blocker.ThenBranch)
@@ -664,8 +667,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		}
 
 		blocker.Iterations[i] = LoopIteration{
-			Value: item,
-			Body:  resolvedBody,
+			Value:         item,
+			Body:          resolvedBody,
+			LoopVarExprID: loopVarExprID,
 		}
 	}
 
@@ -2295,8 +2299,26 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Handle different expression types
 	switch decl.Value.Kind {
 	case ExprLiteral:
-		// For literals, store the value immediately in Vault
-		r.vault.StoreUnresolvedValue(exprID, decl.Value.Value)
+		literalValue := decl.Value.Value
+		if _, ok := literalValue.([]*ExprIR); ok {
+			evaluated, err := EvaluateExpr(decl.Value, r.getValue)
+			if err != nil {
+				r.errors = append(r.errors, err)
+				return
+			}
+			literalValue = evaluated
+		}
+		if _, ok := literalValue.(map[string]*ExprIR); ok {
+			evaluated, err := EvaluateExpr(decl.Value, r.getValue)
+			if err != nil {
+				r.errors = append(r.errors, err)
+				return
+			}
+			literalValue = evaluated
+		}
+
+		// For literals, store the evaluated value immediately in Vault
+		r.vault.StoreUnresolvedValue(exprID, literalValue)
 		r.vault.MarkTouched(exprID)
 
 	case ExprVarRef:
@@ -2851,6 +2873,16 @@ func (r *Resolver) evaluateCollection(expr *ExprIR) ([]any, error) {
 		result := make([]any, len(v))
 		for i, n := range v {
 			result[i] = n
+		}
+		return result, nil
+	case []*ExprIR:
+		result := make([]any, len(v))
+		for i, item := range v {
+			evaluated, evalErr := EvaluateExpr(item, r.getValue)
+			if evalErr != nil {
+				return nil, fmt.Errorf("for-loop collection item %d: %w", i, evalErr)
+			}
+			result[i] = evaluated
 		}
 		return result, nil
 	default:

@@ -159,8 +159,9 @@ type BlockerIR struct {
 // Each iteration has its own deep-copied body to allow independent resolution
 // of nested blockers (e.g., if statements inside the loop).
 type LoopIteration struct {
-	Value any            // Loop variable value for this iteration
-	Body  []*StatementIR // Deep-copied statements for this iteration
+	Value         any            // Loop variable value for this iteration
+	Body          []*StatementIR // Deep-copied statements for this iteration
+	LoopVarExprID string         // Scope binding for loop variable during emission
 }
 
 // WhenArmIR represents a single arm in a when statement.
@@ -363,8 +364,9 @@ func deepCopyBlocker(blocker *BlockerIR) *BlockerIR {
 		result.Iterations = make([]LoopIteration, len(blocker.Iterations))
 		for i, iter := range blocker.Iterations {
 			result.Iterations[i] = LoopIteration{
-				Value: iter.Value,
-				Body:  DeepCopyStatements(iter.Body),
+				Value:         iter.Value,
+				Body:          DeepCopyStatements(iter.Body),
+				LoopVarExprID: iter.LoopVarExprID,
 			}
 		}
 	}

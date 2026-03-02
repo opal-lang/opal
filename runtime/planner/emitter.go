@@ -1007,8 +1007,20 @@ func (e *Emitter) emitForBlocker(blocker *BlockerIR) ([]planfmt.Step, error) {
 	var steps []planfmt.Step
 
 	for i, iter := range blocker.Iterations {
-		// Emit this iteration's body as nested steps
-		nestedSteps, err := e.emitStatements(iter.Body)
+		var nestedSteps []planfmt.Step
+		err := func() error {
+			if e.scopes != nil {
+				e.scopes.Push()
+				defer e.scopes.Pop()
+				if blocker.LoopVar != "" && iter.LoopVarExprID != "" {
+					e.scopes.Define(blocker.LoopVar, iter.LoopVarExprID)
+				}
+			}
+
+			var emitErr error
+			nestedSteps, emitErr = e.emitStatements(iter.Body)
+			return emitErr
+		}()
 		if err != nil {
 			return nil, err
 		}
