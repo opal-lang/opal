@@ -12,6 +12,7 @@ AI_CONTEXT.local.md
 AI_CONTEXT.md
 .agent/
 .sisyphus/
+.ari/
 
 # Work session tracking files (user-specific, not committed)
 # Active work files: WORK.<description>.md (ignored - user-specific)

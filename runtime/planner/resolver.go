@@ -553,7 +553,7 @@ func (r *Resolver) evaluateBlockerCollection(blocker *BlockerIR, checkTransport 
 	return collection, nil
 }
 
-func (r *Resolver) bindLoopVar(loopVar string, item any) {
+func (r *Resolver) bindLoopVar(loopVar string, item any) string {
 	loopVarRaw := fmt.Sprintf("literal:%v", item)
 	loopVarExprID := r.vault.DeclareVariable(loopVar, loopVarRaw)
 
@@ -562,6 +562,8 @@ func (r *Resolver) bindLoopVar(loopVar string, item any) {
 	if r.scopes != nil {
 		r.scopes.Define(loopVar, loopVarExprID)
 	}
+
+	return loopVarExprID
 }
 
 func (r *Resolver) resolveBlockerWithResolvedInputs(stmt *StatementIR) (*StatementIR, error) {
@@ -639,13 +641,14 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		}
 
 		var resolvedBody []*StatementIR
+		loopVarExprID := ""
 		err := func() error {
 			if r.scopes != nil {
 				r.scopes.Push()
 				defer r.scopes.Pop()
 			}
 
-			r.bindLoopVar(blocker.LoopVar, item)
+			loopVarExprID = r.bindLoopVar(blocker.LoopVar, item)
 
 			// Deep-copy the body for this iteration
 			bodyCopy := DeepCopyStatements(blocker.ThenBranch)
@@ -664,8 +667,9 @@ func (r *Resolver) resolveForBlocker(stmt *StatementIR) (*StatementIR, error) {
 		}
 
 		blocker.Iterations[i] = LoopIteration{
-			Value: item,
-			Body:  resolvedBody,
+			Value:         item,
+			Body:          resolvedBody,
+			LoopVarExprID: loopVarExprID,
 		}
 	}
 
@@ -1042,7 +1046,7 @@ func (r *Resolver) formatTraceValue(value any) string {
 		if v == "" {
 			return ""
 		}
-		if strings.HasPrefix(v, "opal:") {
+		if strings.HasPrefix(v, "sigil:") {
 			return v
 		}
 		return r.symbolForValue(v)
@@ -2295,7 +2299,8 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Handle different expression types
 	switch decl.Value.Kind {
 	case ExprLiteral:
-		// For literals, store the value immediately in Vault
+		// For literals, store the value immediately in Vault.
+		// Composite literals keep expression members until evaluation time.
 		r.vault.StoreUnresolvedValue(exprID, decl.Value.Value)
 		r.vault.MarkTouched(exprID)
 
@@ -2628,6 +2633,20 @@ func (r *Resolver) isExprTransportSensitive(expr *ExprIR) bool {
 
 	switch expr.Kind {
 	case ExprLiteral:
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			for _, item := range arr {
+				if r.isExprTransportSensitive(item) {
+					return true
+				}
+			}
+		}
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			for _, item := range obj {
+				if r.isExprTransportSensitive(item) {
+					return true
+				}
+			}
+		}
 		return false
 
 	case ExprEnumMemberRef:
@@ -2853,6 +2872,16 @@ func (r *Resolver) evaluateCollection(expr *ExprIR) ([]any, error) {
 			result[i] = n
 		}
 		return result, nil
+	case []*ExprIR:
+		result := make([]any, len(v))
+		for i, item := range v {
+			evaluated, evalErr := EvaluateExpr(item, r.getValue)
+			if evalErr != nil {
+				return nil, fmt.Errorf("for-loop collection item %d: %w", i, evalErr)
+			}
+			result[i] = evaluated
+		}
+		return result, nil
 	default:
 		return nil, fmt.Errorf("for-loop collection must be a list, got %T", value)
 	}
@@ -2996,7 +3025,7 @@ func (r *Resolver) buildError() error {
 	var sb strings.Builder
 	sb.WriteString("multiple resolution errors:\n")
 	for i, err := range r.errors {
-		sb.WriteString(fmt.Sprintf("  %d. %v\n", i+1, err))
+		fmt.Fprintf(&sb, "  %d. %v\n", i+1, err)
 	}
 	return fmt.Errorf("%s", sb.String())
 }

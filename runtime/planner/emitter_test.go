@@ -459,7 +459,7 @@ func TestEmit_PlanSalt(t *testing.T) {
 // replaced with DisplayID placeholders in the emitted command.
 //
 // Input IR: var NAME = "world"; echo "Hello @var.NAME"
-// Expected: Command string contains DisplayID placeholder (opal:...)
+// Expected: Command string contains DisplayID placeholder (sigil:...)
 func TestEmit_VarRef_DisplayIDSubstitution(t *testing.T) {
 	// Setup vault with a resolved variable
 	v := vault.NewWithPlanKey([]byte("test-key"))
@@ -532,8 +532,8 @@ func TestEmit_VarRef_DisplayIDSubstitution(t *testing.T) {
 	}
 
 	// Verify DisplayID has correct format
-	if len(displayID) < 5 || displayID[:5] != "opal:" {
-		t.Errorf("DisplayID should have 'opal:' prefix, got: %q", displayID)
+	if len(displayID) < 6 || displayID[:6] != "sigil:" {
+		t.Errorf("DisplayID should have 'sigil:' prefix, got: %q", displayID)
 	}
 }
 

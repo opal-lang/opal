@@ -448,7 +448,7 @@ func TestBuildSecretUses_EmptyStringSecret_IsIncluded(t *testing.T) {
 	exprID := v.DeclareVariable("EMPTY_VAR", "@env.EMPTY")
 	v.expressions[exprID].Value = ""
 	v.expressions[exprID].Resolved = true
-	v.expressions[exprID].DisplayID = "opal:EMPTY"
+	v.expressions[exprID].DisplayID = "sigil:EMPTY"
 
 	// AND: Has reference and is touched
 	v.push("step-1")
@@ -463,8 +463,8 @@ func TestBuildSecretUses_EmptyStringSecret_IsIncluded(t *testing.T) {
 	if len(uses) != 1 {
 		t.Fatalf("Expected 1 SecretUse for empty string secret, got %d", len(uses))
 	}
-	if uses[0].DisplayID != "opal:EMPTY" {
-		t.Errorf("SecretUse.DisplayID = %q, want %q", uses[0].DisplayID, "opal:EMPTY")
+	if uses[0].DisplayID != "sigil:EMPTY" {
+		t.Errorf("SecretUse.DisplayID = %q, want %q", uses[0].DisplayID, "sigil:EMPTY")
 	}
 }
 
@@ -475,7 +475,7 @@ func TestBuildSecretUses_UnresolvedExpression_IsExcluded(t *testing.T) {
 	exprID := v.DeclareVariable("UNRESOLVED", "@env.FOO")
 	v.expressions[exprID].Value = "some-value"
 	v.expressions[exprID].Resolved = false // Explicitly not resolved
-	v.expressions[exprID].DisplayID = "opal:UNRES"
+	v.expressions[exprID].DisplayID = "sigil:UNRES"
 
 	// AND: Has reference and is touched
 	v.push("step-1")
@@ -569,7 +569,7 @@ func TestResolveDisplayIDWithTransport_UnknownDisplayID_Fails(t *testing.T) {
 	v := NewWithPlanKey([]byte("test-key-32-bytes-long!!!!!!"))
 
 	// WHEN: Resolve unknown DisplayID
-	_, err := v.ResolveDisplayIDWithTransport("opal:unknown1234567890ab", "local")
+	_, err := v.ResolveDisplayIDWithTransport("sigil:unknown1234567890ab", "local")
 
 	// THEN: Should fail with not found error
 	if err == nil {
@@ -590,12 +590,12 @@ func TestResolveDisplayIDWithTransport_UnresolvedExpression_Fails(t *testing.T) 
 
 	// Manually set DisplayID to simulate partial state
 	v.mu.Lock()
-	v.expressions[exprID].DisplayID = "opal:test1234567890abcd"
-	v.displayIDIndex["opal:test1234567890abcd"] = exprID
+	v.expressions[exprID].DisplayID = "sigil:test1234567890abcd"
+	v.displayIDIndex["sigil:test1234567890abcd"] = exprID
 	v.mu.Unlock()
 
 	// WHEN: Try to resolve
-	_, err := v.ResolveDisplayIDWithTransport("opal:test1234567890abcd", "local")
+	_, err := v.ResolveDisplayIDWithTransport("sigil:test1234567890abcd", "local")
 
 	// THEN: Should fail because not resolved
 	if err == nil {

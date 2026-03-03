@@ -106,10 +106,10 @@ echo "@var.COUNT"
 	cmd2 := getCommandArg(plan.Steps[1].Tree, "command")
 
 	// Both should contain DisplayIDs
-	if !strings.Contains(cmd1, "opal:") {
+	if !strings.Contains(cmd1, "sigil:") {
 		t.Errorf("First command should contain DisplayID, got: %s", cmd1)
 	}
-	if !strings.Contains(cmd2, "opal:") {
+	if !strings.Contains(cmd2, "sigil:") {
 		t.Errorf("Second command should contain DisplayID, got: %s", cmd2)
 	}
 

@@ -168,7 +168,7 @@ var API_KEY = "parent-key"
 
 	// ASSERT: Echo inside @retry should use parent's API_KEY
 	command := getCommandString(plan.Steps[0])
-	if !strings.Contains(command, "opal:") {
+	if !strings.Contains(command, "sigil:") {
 		t.Errorf("Command should contain DisplayID, got: %s", command)
 	}
 
@@ -440,7 +440,7 @@ echo "@var.COUNT"
 
 	// ASSERT: Second step is echo using COUNT=5 (parent scope)
 	command := getCommandString(plan.Steps[1])
-	if !strings.Contains(command, "opal:") {
+	if !strings.Contains(command, "sigil:") {
 		t.Errorf("Command should contain DisplayID, got: %s", command)
 	}
 
@@ -616,7 +616,7 @@ var COUNT = "5"
 	// ASSERT: Echo at depth 5 can access COUNT from root
 	// getCommandString will recursively navigate into blocks
 	command := getCommandString(plan.Steps[0])
-	if !strings.Contains(command, "opal:") {
+	if !strings.Contains(command, "sigil:") {
 		t.Errorf("Command should contain DisplayID, got: %s", command)
 	}
 
@@ -652,14 +652,14 @@ func getCommandString(step planfmt.Step) string {
 
 // extractDisplayID extracts the first DisplayID from a command string
 func extractDisplayID(command string) string {
-	// DisplayID format: opal:XXXXXXXXXXXXXXXXXXXX (22 chars base64url)
-	start := strings.Index(command, "opal:")
+	// DisplayID format: sigil:XXXXXXXXXXXXXXXXXXXX (22 chars base64url)
+	start := strings.Index(command, "sigil:")
 	if start == -1 {
 		return ""
 	}
 
-	// Extract the DisplayID (opal: + 22 chars)
-	end := start + 5 + 22 // "opal:" (5) + base64url (22)
+	// Extract the DisplayID (sigil: + 22 chars)
+	end := start + 6 + 22 // "sigil:" (6) + base64url (22)
 	if end > len(command) {
 		end = len(command)
 	}
@@ -673,13 +673,13 @@ func extractAllDisplayIDs(command string) []string {
 	remaining := command
 
 	for {
-		start := strings.Index(remaining, "opal:")
+		start := strings.Index(remaining, "sigil:")
 		if start == -1 {
 			break
 		}
 
 		// Extract the DisplayID
-		end := start + 5 + 22 // "opal:" (5) + base64url (22)
+		end := start + 6 + 22 // "sigil:" (6) + base64url (22)
 		if end > len(remaining) {
 			end = len(remaining)
 		}

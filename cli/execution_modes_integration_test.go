@@ -343,7 +343,7 @@ fun deploy(token String = "super-secret-token") {
 		logic, ok := plan.Steps[0].Tree.(*planfmt.LogicNode)
 		require.True(t, ok, "expected logic node for call trace")
 		assert.Equal(t, "call", logic.Kind)
-		assert.Regexp(t, `^helper\(token=opal:[A-Za-z0-9_-]+\)$`, logic.Condition)
+		assert.Regexp(t, `^helper\(token=sigil:[A-Za-z0-9_-]+\)$`, logic.Condition)
 		assert.NotContains(t, logic.Condition, "super-secret-token")
 	})
 
@@ -400,7 +400,7 @@ func buildOpalBinary(t *testing.T) string {
 	cmd := exec.Command("go", "build", "-o", opalBin, ".")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to build opal: %v\nOutput: %s", err, output)
+		t.Fatalf("Failed to build sigil: %v\nOutput: %s", err, output)
 	}
 
 	return opalBin
@@ -541,7 +541,7 @@ fun deploy(token String = "super-secret-token") {
 		lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 		require.Len(t, lines, 3)
 		assert.Equal(t, "deploy:", lines[0])
-		assert.Regexp(t, `^└─ helper\(token=opal:[A-Za-z0-9_-]+\)$`, lines[1])
+		assert.Regexp(t, `^└─ helper\(token=sigil:[A-Za-z0-9_-]+\)$`, lines[1])
 		assert.Equal(t, `   └─ @shell echo "done"`, lines[2])
 		assert.NotContains(t, output, "super-secret-token", "Dry-run output must scrub raw secrets")
 		assert.NotContains(t, output, "call helper", "Display should render signature only, no 'call' prefix")

@@ -112,10 +112,10 @@ func TestFormatStep(t *testing.T) {
 				ID: 1,
 				Tree: &planfmt.LogicNode{
 					Kind:      "call",
-					Condition: "deploy(prod, token=opal:abc123)",
+					Condition: "deploy(prod, token=sigil:abc123)",
 				},
 			},
-			expected: `deploy(prod, token=opal:abc123)`,
+			expected: `deploy(prod, token=sigil:abc123)`,
 		},
 		{
 			name: "retry decorator",

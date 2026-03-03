@@ -679,8 +679,8 @@ func TestShellDecorator_NewArch_StreamingPipe(t *testing.T) {
 }
 
 // TestShellDecorator_DisplayIDInvariant_FalsePositiveAvoidance tests that
-// legitimate commands containing "opal:" don't trigger the invariant.
-// The invariant should only catch actual DisplayIDs (opal:<base64url-22chars>).
+// legitimate commands containing "sigil:" don't trigger the invariant.
+// The invariant should only catch actual DisplayIDs (sigil:<base64url-22chars>).
 func TestShellDecorator_DisplayIDInvariant_FalsePositiveAvoidance(t *testing.T) {
 	shell := &ShellDecorator{}
 	session := decorator.NewLocalSession()
@@ -688,11 +688,11 @@ func TestShellDecorator_DisplayIDInvariant_FalsePositiveAvoidance(t *testing.T) 
 
 	// Test cases that should NOT trigger the invariant
 	legitimateCommands := []string{
-		`echo "Documentation for opal: see docs/"`,
-		`echo "URL: https://opal:8080/api/health"`,
-		`echo "opal: a deployment tool"`,
-		`echo "Visit opal:// for more info"`,
-		`echo "opal:short"`, // Too short to be a DisplayID
+		`echo "Documentation for sigil: see docs/"`,
+		`echo "URL: https://sigil:8080/api/health"`,
+		`echo "sigil: a deployment tool"`,
+		`echo "Visit sigil:// for more info"`,
+		`echo "sigil:short"`, // Too short to be a DisplayID
 	}
 
 	for _, cmd := range legitimateCommands {
@@ -729,7 +729,7 @@ func TestShellDecorator_DisplayIDInvariant_ActualDisplayID(t *testing.T) {
 
 	// This is what an actual DisplayID looks like (22 base64url chars)
 	params := map[string]any{
-		"command": `echo "Key: opal:l39o2YWR_YNQ-94ScK_I4w"`,
+		"command": `echo "Key: sigil:l39o2YWR_YNQ-94ScK_I4w"`,
 	}
 	node := shell.Wrap(nil, params)
 

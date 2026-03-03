@@ -294,7 +294,7 @@ func TestCallTraceEncodingDeterministic(t *testing.T) {
 				ID: 1,
 				Tree: &planfmt.LogicNode{
 					Kind:      "call",
-					Condition: "deploy(prod, token=opal:abc123)",
+					Condition: "deploy(prod, token=sigil:abc123)",
 					Block: []planfmt.Step{
 						{
 							ID: 2,
@@ -319,7 +319,7 @@ func TestCallTraceEncodingDeterministic(t *testing.T) {
 				ID: 1,
 				Tree: &planfmt.LogicNode{
 					Kind:      "call",
-					Condition: "deploy(prod, token=opal:abc123)",
+					Condition: "deploy(prod, token=sigil:abc123)",
 					Block: []planfmt.Step{
 						{
 							ID: 2,
@@ -374,9 +374,9 @@ func TestSecretUsesOrderDeterministic(t *testing.T) {
 			},
 		},
 		SecretUses: []planfmt.SecretUse{
-			{DisplayID: "opal:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
-			{DisplayID: "opal:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
-			{DisplayID: "opal:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
+			{DisplayID: "sigil:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "sigil:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
+			{DisplayID: "sigil:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
 		},
 		PlanSalt: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
 	}
@@ -396,9 +396,9 @@ func TestSecretUsesOrderDeterministic(t *testing.T) {
 			},
 		},
 		SecretUses: []planfmt.SecretUse{
-			{DisplayID: "opal:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
-			{DisplayID: "opal:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
-			{DisplayID: "opal:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
+			{DisplayID: "sigil:ccc333", SiteID: "site3", Site: "root/step-3/params/command"},
+			{DisplayID: "sigil:aaa111", SiteID: "site1", Site: "root/step-1/params/command"},
+			{DisplayID: "sigil:bbb222", SiteID: "site2", Site: "root/step-2/params/command"},
 		},
 		PlanSalt: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
 	}

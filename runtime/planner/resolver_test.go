@@ -1429,7 +1429,7 @@ leak(token="super-secret-token")`)
 	if !containsStr(err.Error(), "function call cycle detected") {
 		t.Fatalf("error = %q, want function call cycle detected", err.Error())
 	}
-	if !containsStr(err.Error(), "token=opal:") {
+	if !containsStr(err.Error(), "token=sigil:") {
 		t.Fatalf("error = %q, want redacted token placeholder", err.Error())
 	}
 	if containsStr(err.Error(), "super-secret-token") {
@@ -1485,7 +1485,7 @@ grow(token="super-secret-token", n=0)`)
 	if !containsStr(err.Error(), "function call depth exceeded") {
 		t.Fatalf("error = %q, want function call depth exceeded", err.Error())
 	}
-	if !containsStr(err.Error(), "token=opal:") {
+	if !containsStr(err.Error(), "token=sigil:") {
 		t.Fatalf("error = %q, want redacted token placeholder", err.Error())
 	}
 	if containsStr(err.Error(), "super-secret-token") {
@@ -2565,8 +2565,8 @@ helper("prod")`)
 	if stmt.CallTrace == nil {
 		t.Fatal("call trace is nil")
 	}
-	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(opal:") {
-		t.Fatalf("call trace label = %q, want helper(opal:...)", stmt.CallTrace.Label)
+	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(sigil:") {
+		t.Fatalf("call trace label = %q, want helper(sigil:...)", stmt.CallTrace.Label)
 	}
 	if len(stmt.CallTrace.Block) != 1 {
 		t.Fatalf("len(call trace block) = %d, want 1", len(stmt.CallTrace.Block))
@@ -2638,8 +2638,8 @@ fun deploy(env String) {
 	if stmt.CallTrace == nil {
 		t.Fatal("call trace is nil")
 	}
-	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(opal:") {
-		t.Fatalf("call trace label = %q, want helper(opal:...)", stmt.CallTrace.Label)
+	if !strings.HasPrefix(stmt.CallTrace.Label, "helper(sigil:") {
+		t.Fatalf("call trace label = %q, want helper(sigil:...)", stmt.CallTrace.Label)
 	}
 	if len(stmt.CallTrace.Block) != 1 {
 		t.Fatalf("len(call trace block) = %d, want 1", len(stmt.CallTrace.Block))
@@ -2677,8 +2677,8 @@ deploy(token = "super-secret-token")`)
 	if trace == nil {
 		t.Fatalf("expected call trace statement")
 	}
-	if !containsStr(trace.Label, "token=opal:") {
-		t.Fatalf("trace label = %q, want token=opal:<hash>", trace.Label)
+	if !containsStr(trace.Label, "token=sigil:") {
+		t.Fatalf("trace label = %q, want token=sigil:<hash>", trace.Label)
 	}
 	if containsStr(trace.Label, "super-secret-token") {
 		t.Fatalf("trace label leaked raw secret: %q", trace.Label)
@@ -2722,8 +2722,8 @@ deploy(cfg = {token: "super-secret-token", nested: {key: "very-secret"}})`
 	}
 	label2 := result2.Statements[0].CallTrace.Label
 
-	if !containsStr(label1, "cfg=opal:") {
-		t.Fatalf("trace label = %q, want cfg=opal:<hash>", label1)
+	if !containsStr(label1, "cfg=sigil:") {
+		t.Fatalf("trace label = %q, want cfg=sigil:<hash>", label1)
 	}
 	if containsStr(label1, "super-secret-token") || containsStr(label1, "very-secret") {
 		t.Fatalf("trace label leaked structured secret contents: %q", label1)
@@ -3574,6 +3574,53 @@ func TestResolve_ForLoopBlockerMustResolveCollection(t *testing.T) {
 	// ITEMS should be touched (used in for-loop collection)
 	if !v.IsTouched(itemsExprID) {
 		t.Errorf("ITEMS should be touched (used as for-loop collection)")
+	}
+}
+
+func TestResolve_EvaluateCollectionExprArrayValues(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	scopes := NewScopeStack()
+
+	exprID := v.DeclareVariable("ITEMS", "literal:items")
+	v.StoreUnresolvedValue(exprID, []*ExprIR{
+		{Kind: ExprLiteral, Value: "apple"},
+		{Kind: ExprLiteral, Value: "banana"},
+	})
+	scopes.Define("ITEMS", exprID)
+
+	r := &Resolver{vault: v, scopes: scopes}
+
+	collection, err := r.evaluateCollection(&ExprIR{Kind: ExprVarRef, VarName: "ITEMS"})
+	if err != nil {
+		t.Fatalf("evaluateCollection failed: %v", err)
+	}
+
+	want := []any{"apple", "banana"}
+	if diff := cmp.Diff(want, collection); diff != "" {
+		t.Fatalf("collection mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_EvaluateCollectionExprArrayItemError(t *testing.T) {
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	scopes := NewScopeStack()
+
+	exprID := v.DeclareVariable("ITEMS", "literal:items")
+	v.StoreUnresolvedValue(exprID, []*ExprIR{
+		{Kind: ExprLiteral, Value: "ok"},
+		{Kind: ExprVarRef, VarName: "MISSING"},
+	})
+	scopes.Define("ITEMS", exprID)
+
+	r := &Resolver{vault: v, scopes: scopes}
+
+	_, err := r.evaluateCollection(&ExprIR{Kind: ExprVarRef, VarName: "ITEMS"})
+	if err == nil {
+		t.Fatalf("expected error for unresolved collection item")
+	}
+
+	if diff := cmp.Diff("for-loop collection item 1: undefined variable: MISSING", err.Error()); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s", diff)
 	}
 }
 

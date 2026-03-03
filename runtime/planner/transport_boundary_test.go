@@ -169,8 +169,8 @@ func TestTransportBoundary_EnvInCommandIsTransportSensitive(t *testing.T) {
 	if use.DisplayID == "" {
 		t.Error("SecretUse.DisplayID should not be empty")
 	}
-	if !strings.HasPrefix(use.DisplayID, "opal:") {
-		t.Errorf("SecretUse.DisplayID should have opal: prefix, got: %s", use.DisplayID)
+	if !strings.HasPrefix(use.DisplayID, "sigil:") {
+		t.Errorf("SecretUse.DisplayID should have sigil: prefix, got: %s", use.DisplayID)
 	}
 }
 
@@ -261,6 +261,33 @@ var VERSION = "1.0.0"
 	// Verify SecretUses contains the variable
 	if len(plan.SecretUses) == 0 {
 		t.Error("Expected SecretUses for @var.VERSION")
+	}
+}
+
+// TestTransportBoundary_VarFromCompositeLiteralInheritsSensitivity verifies that
+// variables assigned from composite literals containing transport-sensitive
+// expressions are treated as transport-sensitive.
+func TestTransportBoundary_VarFromCompositeLiteralInheritsSensitivity(t *testing.T) {
+	source := `
+var SECRET = @env.HOME
+var LOCAL_ENV = [@var.SECRET]
+@test.transport {
+    echo "Env: @var.LOCAL_ENV"
+}
+`
+	tree := parser.Parse([]byte(source))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
+
+	if err == nil {
+		t.Fatal("Expected transport boundary error: var LOCAL_ENV = [@var.SECRET] should be transport-sensitive across boundary")
+	}
+
+	if !strings.Contains(err.Error(), "transport") {
+		t.Errorf("Expected transport boundary error, got: %v", err)
 	}
 }
 

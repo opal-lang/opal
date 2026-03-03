@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -22,7 +23,7 @@ func buildE2EBinary(t *testing.T) string {
 	cmd := exec.Command("go", "build", "-o", opalBin, ".")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to build opal: %v\nOutput: %s", err, output)
+		t.Fatalf("Failed to build sigil: %v\nOutput: %s", err, output)
 	}
 
 	return opalBin
@@ -88,6 +89,34 @@ func runE2EExpectError(t *testing.T, opalBin string, args ...string) (stderr str
 
 	t.Fatalf("opal failed unexpectedly: %v", err)
 	return ""
+}
+
+func extractDisplayID(t *testing.T, line string) string {
+	t.Helper()
+
+	start := strings.Index(line, "sigil:")
+	if start == -1 {
+		t.Fatalf("expected sigil display ID in line: %q", line)
+	}
+
+	rest := line[start:]
+	if space := strings.Index(rest, " "); space >= 0 {
+		return rest[:space]
+	}
+
+	return rest
+}
+
+func assertUniqueDisplayIDs(t *testing.T, lines []string) {
+	t.Helper()
+
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		displayID := extractDisplayID(t, line)
+		seen[displayID] = struct{}{}
+	}
+
+	assert.Len(t, seen, len(lines), "expected one unique display ID per loop iteration")
 }
 
 func TestE2EPlaceholder(t *testing.T) {
@@ -384,17 +413,19 @@ fun flaky {
 }
 
 func TestE2EDecorator_Timeout(t *testing.T) {
-	t.Skip("decorator block syntax not finalized")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun slow {
-    @timeout(duration="1s") {
-        sleep 10
+    @timeout(duration=200ms) {
+        sleep 1
     }
 }
 `)
+	start := time.Now()
 	stderr := runE2EExpectError(t, opalBin, "-f", testFile, "slow")
-	assert.Contains(t, stderr, "timeout")
+	assert.Contains(t, stderr, "command failed with exit code -1")
+	assert.Contains(t, stderr, "timeout/canceled")
+	assert.Less(t, time.Since(start), time.Second)
 }
 
 func TestE2EDecorator_Parallel(t *testing.T) {
@@ -415,19 +446,20 @@ fun concurrent {
 }
 
 func TestE2EWorkflow_BuildTestDeploy(t *testing.T) {
-	t.Skip("function call syntax in expression context not implemented")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun build = echo "Building..."
 fun test = echo "Testing..."
 fun deploy = echo "Deploying..."
 
-fun release = build() && test() && deploy()
+fun release {
+	build()
+	test()
+	deploy()
+}
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "release")
-	assert.Contains(t, output, "Building...")
-	assert.Contains(t, output, "Testing...")
-	assert.Contains(t, output, "Deploying...")
+	assert.Equal(t, "Building...\nTesting...\nDeploying...\n", output)
 }
 
 func TestE2EWorkflow_WithVariables(t *testing.T) {
@@ -442,7 +474,6 @@ fun deploy = echo "Deploying @var.appName"
 }
 
 func TestE2EMeta_ForRange(t *testing.T) {
-	t.Skip("for loop feature not implemented")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun loop {
@@ -450,13 +481,16 @@ fun loop {
 }
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "loop")
-	assert.Contains(t, output, "item 1")
-	assert.Contains(t, output, "item 2")
-	assert.Contains(t, output, "item 3")
+	assert.NotContains(t, output, "<unresolved:")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	assert.Len(t, lines, 3)
+	for _, line := range lines {
+		assert.True(t, strings.HasPrefix(line, "item sigil:"), "line should use resolved display ID: %q", line)
+	}
+	assertUniqueDisplayIDs(t, lines)
 }
 
 func TestE2EMeta_ForVariable(t *testing.T) {
-	t.Skip("for loop feature not implemented")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 var items = ["apple", "banana", "cherry"]
@@ -465,32 +499,39 @@ fun loop {
 }
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "loop")
-	assert.Contains(t, output, "apple")
-	assert.Contains(t, output, "banana")
-	assert.Contains(t, output, "cherry")
+	assert.NotContains(t, output, "<unresolved:")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	assert.Len(t, lines, 3)
+	for _, line := range lines {
+		assert.True(t, strings.HasPrefix(line, "sigil:"), "line should use resolved display ID: %q", line)
+	}
+	assertUniqueDisplayIDs(t, lines)
 }
 
 func TestE2EMeta_RetryTimeout(t *testing.T) {
-	t.Skip("decorator composition syntax not finalized")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
-@timeout("5s")
-@retry(2)
-fun flaky = test -f /nonexistent || echo "success"
+fun flaky {
+	@timeout(duration=2s) {
+		@retry(backoff="constant", delay=10ms, times=2) {
+			echo "success"
+		}
+	}
+}
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "flaky")
-	assert.Contains(t, output, "success")
+	assert.Equal(t, "success\n", output)
 }
 
 func TestE2EMeta_ParallelWithRetry(t *testing.T) {
-	t.Skip("decorator composition syntax not finalized")
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
-@parallel
-fun multi = (
-	@retry(2) { echo "A" }
-	@retry(2) { echo "B" }
-)
+fun multi {
+	@parallel {
+		@retry(delay=10ms, times=2) { echo "A" }
+		@retry(delay=10ms, times=2) { echo "B" }
+	}
+}
 `)
 	output := runE2E(t, opalBin, "-f", testFile, "multi")
 	assert.Contains(t, output, "A")
