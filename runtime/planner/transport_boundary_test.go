@@ -264,6 +264,33 @@ var VERSION = "1.0.0"
 	}
 }
 
+// TestTransportBoundary_VarFromCompositeLiteralInheritsSensitivity verifies that
+// variables assigned from composite literals containing transport-sensitive
+// expressions are treated as transport-sensitive.
+func TestTransportBoundary_VarFromCompositeLiteralInheritsSensitivity(t *testing.T) {
+	source := `
+var SECRET = @env.HOME
+var LOCAL_ENV = [@var.SECRET]
+@test.transport {
+    echo "Env: @var.LOCAL_ENV"
+}
+`
+	tree := parser.Parse([]byte(source))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+
+	_, err := Plan(tree.Events, tree.Tokens, Config{})
+
+	if err == nil {
+		t.Fatal("Expected transport boundary error: var LOCAL_ENV = [@var.SECRET] should be transport-sensitive across boundary")
+	}
+
+	if !strings.Contains(err.Error(), "transport") {
+		t.Errorf("Expected transport boundary error, got: %v", err)
+	}
+}
+
 // TestTransportBoundary_DirectEnvInTransportBlockWorks verifies that @env
 // used directly inside a transport block resolves from that transport's context.
 //

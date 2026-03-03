@@ -2299,14 +2299,9 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 	// Handle different expression types
 	switch decl.Value.Kind {
 	case ExprLiteral:
-		literalValue, err := evaluateCompositeLiteral(decl.Value, r.getValue)
-		if err != nil {
-			r.errors = append(r.errors, err)
-			return
-		}
-
-		// For literals, store the evaluated value immediately in Vault
-		r.vault.StoreUnresolvedValue(exprID, literalValue)
+		// For literals, store the value immediately in Vault.
+		// Composite literals keep expression members until evaluation time.
+		r.vault.StoreUnresolvedValue(exprID, decl.Value.Value)
 		r.vault.MarkTouched(exprID)
 
 	case ExprVarRef:
@@ -2335,23 +2330,6 @@ func (r *Resolver) collectVarDecl(decl *VarDeclIR) {
 		}
 		r.vault.StoreUnresolvedValue(exprID, value)
 		r.vault.MarkTouched(exprID)
-	}
-}
-
-func evaluateCompositeLiteral(expr *ExprIR, getValue ValueLookup) (any, error) {
-	if expr == nil {
-		return nil, nil
-	}
-
-	if expr.Kind != ExprLiteral {
-		return expr.Value, nil
-	}
-
-	switch expr.Value.(type) {
-	case []*ExprIR, map[string]*ExprIR:
-		return EvaluateExpr(expr, getValue)
-	default:
-		return expr.Value, nil
 	}
 }
 
@@ -2655,6 +2633,20 @@ func (r *Resolver) isExprTransportSensitive(expr *ExprIR) bool {
 
 	switch expr.Kind {
 	case ExprLiteral:
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			for _, item := range arr {
+				if r.isExprTransportSensitive(item) {
+					return true
+				}
+			}
+		}
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			for _, item := range obj {
+				if r.isExprTransportSensitive(item) {
+					return true
+				}
+			}
+		}
 		return false
 
 	case ExprEnumMemberRef:
