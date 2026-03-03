@@ -1004,9 +1004,11 @@ func sshNewClientConnWithTimeout(ctx context.Context, conn net.Conn, addr string
 		err     error
 	}
 
+	newClientConn := sshNewClientConn
+
 	done := make(chan result, 1)
 	go func() {
-		sshConn, chans, reqs, err := sshNewClientConn(conn, addr, config)
+		sshConn, chans, reqs, err := newClientConn(conn, addr, config)
 		done <- result{sshConn: sshConn, chans: chans, reqs: reqs, err: err}
 	}()
 
