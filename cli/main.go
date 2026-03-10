@@ -152,6 +152,8 @@ DisplayID placeholders for security.`,
 	}
 
 	// Add flags
+	rootCmd.AddCommand(newVersionCmd())
+
 	rootCmd.PersistentFlags().StringVarP(&file, "file", "f", "commands.sgl", "Path to command definitions file")
 	rootCmd.PersistentFlags().StringVar(&planFile, "plan", "", "Execute from pre-generated plan file (Mode 4)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show execution plan without running commands")
