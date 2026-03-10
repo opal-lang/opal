@@ -134,7 +134,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           echo "Building sigil for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          VERSION=$(tr -d '\n' < VERSION)
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
@@ -150,8 +150,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           Write-Host "Building sigil for $env:GOOS/$env:GOARCH..."
-          $version = (git describe --tags --always --dirty) 2>$null
-          if (-not $version) { $version = "dev" }
+          $version = (Get-Content VERSION -Raw).Trim()
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $ldflags = "-s -w -X main.Version=$version -X main.BuildTime=$buildTime"
           go build -ldflags $ldflags -o "${{ matrix.binary_name }}" ./cli
@@ -364,7 +363,8 @@ jobs:
           nix develop -c bash -c '
             echo "Testing CLI build and interpreter mode..."
             cd cli
-            go build -o sigil .
+            VERSION=$(tr -d '\''\n'\'' < ../VERSION)
+            go build -ldflags="-X main.Version=${VERSION}" -o sigil .
             ./sigil --help
             echo '\''fun test = echo "CI test successful"'\'' > test.sgl
             ./sigil --dry-run -f test.sgl test
@@ -508,10 +508,17 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.work.sum
 
-      - name: Get version from tag
+      - name: Read and validate version
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=$(tr -d '\n' < VERSION)
+          TAG_VERSION=${GITHUB_REF#refs/tags/}
+
+          if [ "v${VERSION}" != "$TAG_VERSION" ]; then
+            echo "Tag/version mismatch: expected v${VERSION}, got ${TAG_VERSION}"
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
