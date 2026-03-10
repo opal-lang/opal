@@ -27,6 +27,7 @@ pkgs.mkShell {
     # Project-specific
     openssh  # For SSH session testing
     zsh
+    self.packages.${system}.default
   ];
 
   shellHook = ''
