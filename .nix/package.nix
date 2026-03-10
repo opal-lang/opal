@@ -1,5 +1,5 @@
 # Package definition for Sigil CLI (built from cli module with Go workspace support)
-{ pkgs, lib, version ? "dev" }:
+{ pkgs, lib, version }:
 
 pkgs.buildGoModule rec {
   pname = "sigil";

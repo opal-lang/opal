@@ -12,12 +12,13 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           lib = nixpkgs.lib;
+          version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
 
           # Get git revision for generated CLIs (fallback for dirty trees)
           gitRev = self.rev or "dev-${toString self.lastModified}";
 
           # Main sigil package
-          sigilPackage = import ./.nix/package.nix { inherit pkgs lib; version = "0.2.0"; };
+          sigilPackage = import ./.nix/package.nix { inherit pkgs lib version; };
 
           # Library functions with automatic system detection
           sigilLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
