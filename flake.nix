@@ -12,7 +12,7 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           lib = nixpkgs.lib;
-          version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
+          version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
 
           # Get git revision for generated CLIs (fallback for dirty trees)
           gitRev = self.rev or "dev-${toString self.lastModified}";

@@ -205,7 +205,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Content -Path smoke-cmd.sgl -Value 'fun hello = echo %ComSpec%'
-          $env:SIGIL_SHELL = "cmd"
+          $env:OPAL_SHELL = "cmd"
           $output = & ".\${{ matrix.binary_name }}" -f smoke-cmd.sgl hello
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($output -notmatch "cmd.exe") {
@@ -218,7 +218,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Content -Path smoke-pwsh.sgl -Value "fun hello = Write-Output `$PSVersionTable.PSVersion.Major"
-          $env:SIGIL_SHELL = "pwsh"
+          $env:OPAL_SHELL = "pwsh"
           $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.sgl hello
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($output -notmatch "[0-9]") {
@@ -233,7 +233,7 @@ jobs:
         run: |
           if (Get-Command bash -ErrorAction SilentlyContinue) {
             Set-Content -Path smoke-bash.sgl -Value 'fun hello = echo $BASH_VERSION'
-            $env:SIGIL_SHELL = "bash"
+            $env:OPAL_SHELL = "bash"
             $output = & ".\${{ matrix.binary_name }}" -f smoke-bash.sgl hello
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if ($output -notmatch "[0-9]") {
