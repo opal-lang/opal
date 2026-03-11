@@ -107,15 +107,15 @@ jobs:
           - os: blacksmith-2vcpu-ubuntu-2404
             goos: linux
             goarch: amd64
-            binary_name: opal-linux-amd64
+            binary_name: sigil-linux-amd64
           - os: macos-latest
             goos: darwin
             goarch: amd64
-            binary_name: opal-darwin-amd64
+            binary_name: sigil-darwin-amd64
           - os: blacksmith-2vcpu-windows-2025
             goos: windows
             goarch: amd64
-            binary_name: opal-windows-amd64.exe
+            binary_name: sigil-windows-amd64.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,8 +133,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          echo "Building opal for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          echo "Building sigil for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          VERSION=$(tr -d '\n' < VERSION)
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           go build -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
@@ -149,9 +149,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          Write-Host "Building opal for $env:GOOS/$env:GOARCH..."
-          $version = (git describe --tags --always --dirty) 2>$null
-          if (-not $version) { $version = "dev" }
+          Write-Host "Building sigil for $env:GOOS/$env:GOARCH..."
+          $version = (Get-Content VERSION -Raw).Trim()
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $ldflags = "-s -w -X main.Version=$version -X main.BuildTime=$buildTime"
           go build -ldflags $ldflags -o "${{ matrix.binary_name }}" ./cli
@@ -179,8 +178,8 @@ jobs:
           echo "Testing built binary..."
           ./${{ matrix.binary_name }} --help
 
-          echo 'fun test = echo "Binary test successful"' > test.opl
-          ./${{ matrix.binary_name }} --dry-run -f test.opl test
+          echo 'fun test = echo "Binary test successful"' > test.sgl
+          ./${{ matrix.binary_name }} --dry-run -f test.sgl test
 
       - name: Test binary (Windows)
         if: matrix.goos == 'windows'
@@ -188,8 +187,8 @@ jobs:
         run: |
           Write-Host "Testing built binary..."
           & ".\${{ matrix.binary_name }}" --help
-          Set-Content -Path test.opl -Value 'fun test = echo "Binary test successful"'
-          & ".\${{ matrix.binary_name }}" --dry-run -f test.opl test
+          Set-Content -Path test.sgl -Value 'fun test = echo "Binary test successful"'
+          & ".\${{ matrix.binary_name }}" --dry-run -f test.sgl test
 
       - name: Verify PowerShell 7+ (Windows required)
         if: matrix.goos == 'windows'
@@ -205,9 +204,9 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          Set-Content -Path smoke-cmd.opl -Value 'fun hello = echo %ComSpec%'
+          Set-Content -Path smoke-cmd.sgl -Value 'fun hello = echo %ComSpec%'
           $env:OPAL_SHELL = "cmd"
-          $output = & ".\${{ matrix.binary_name }}" -f smoke-cmd.opl hello
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-cmd.sgl hello
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($output -notmatch "cmd.exe") {
             Write-Error "Expected cmd shell output, got: $output"
@@ -218,9 +217,9 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         run: |
-          Set-Content -Path smoke-pwsh.opl -Value "fun hello = Write-Output `$PSVersionTable.PSVersion.Major"
+          Set-Content -Path smoke-pwsh.sgl -Value "fun hello = Write-Output `$PSVersionTable.PSVersion.Major"
           $env:OPAL_SHELL = "pwsh"
-          $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.opl hello
+          $output = & ".\${{ matrix.binary_name }}" -f smoke-pwsh.sgl hello
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($output -notmatch "[0-9]") {
             Write-Error "Expected pwsh shell output, got: $output"
@@ -233,9 +232,9 @@ jobs:
         shell: pwsh
         run: |
           if (Get-Command bash -ErrorAction SilentlyContinue) {
-            Set-Content -Path smoke-bash.opl -Value 'fun hello = echo $BASH_VERSION'
+            Set-Content -Path smoke-bash.sgl -Value 'fun hello = echo $BASH_VERSION'
             $env:OPAL_SHELL = "bash"
-            $output = & ".\${{ matrix.binary_name }}" -f smoke-bash.opl hello
+            $output = & ".\${{ matrix.binary_name }}" -f smoke-bash.sgl hello
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if ($output -notmatch "[0-9]") {
               Write-Error "Expected bash shell output, got: $output"
@@ -364,10 +363,11 @@ jobs:
           nix develop -c bash -c '
             echo "Testing CLI build and interpreter mode..."
             cd cli
-            go build -o opal .
-            ./opal --help
-            echo '\''fun test = echo "CI test successful"'\'' > test.opl
-            ./opal --dry-run -f test.opl test
+            VERSION=$(tr -d '\''\n'\'' < ../VERSION)
+            go build -ldflags="-X main.Version=${VERSION}" -o sigil .
+            ./sigil --help
+            echo '\''fun test = echo "CI test successful"'\'' > test.sgl
+            ./sigil --dry-run -f test.sgl test
           '
 
   # =============================================================================
@@ -477,7 +477,7 @@ jobs:
           echo "Preparing latest development builds..."
           mkdir -p latest/
 
-          find artifacts/ -name 'opal-*' -type f -exec cp {} latest/ \;
+          find artifacts/ -name 'sigil-*' -type f -exec cp {} latest/ \;
 
           echo "Built from commit: ${{ github.sha }}" > latest/build-info.txt
           echo "Built at: $(date -u)" >> latest/build-info.txt
@@ -508,10 +508,17 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.work.sum
 
-      - name: Get version from tag
+      - name: Read and validate version
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=$(tr -d '\n' < VERSION)
+          TAG_VERSION=${GITHUB_REF#refs/tags/}
+
+          if [ "v${VERSION}" != "$TAG_VERSION" ]; then
+            echo "Tag/version mismatch: expected v${VERSION}, got ${TAG_VERSION}"
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
@@ -536,9 +543,9 @@ jobs:
             echo "Building for $GOOS/$GOARCH..."
 
             if [ "$GOOS" = "windows" ]; then
-              BINARY_NAME="opal-$GOOS-$GOARCH.exe"
+               BINARY_NAME="sigil-$GOOS-$GOARCH.exe"
             else
-              BINARY_NAME="opal-$GOOS-$GOARCH"
+               BINARY_NAME="sigil-$GOOS-$GOARCH"
             fi
 
             CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
@@ -552,7 +559,7 @@ jobs:
           echo "Creating checksums..."
           cd release/
 
-          for file in opal-*; do
+          for file in sigil-*; do
             if [ -f "$file" ]; then
               sha256sum "$file" >> checksums.txt
             fi
@@ -564,27 +571,27 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
-            release/opal-*
+            release/sigil-*
             release/checksums.txt
           generate_release_notes: true
           body: |
-            ## 🚀 Devcmd ${{ steps.version.outputs.version }}
+            ## 🚀 Sigil ${{ steps.version.outputs.version }}
 
             **Declarative CLI Tool - Interpreter Mode**
 
             ### ✅ Available Features
-            - **Interpreter Mode**: Run commands directly with `opal run <command>`
+            - **Interpreter Mode**: Run commands directly with `sigil run <command>`
             - **Shell Operators**: Support for `&&`, `||`, `|`, `>>`
             - **Variable Substitution**: `@var(NAME)` syntax
             - **Plan Generation**: `--dry-run` mode
             - **Standardized Flags**: `--quiet`, `--verbose`, `--ci`, etc.
 
             ### 📦 Downloads
-            - **Linux (x64)**: `opal-linux-amd64`
-            - **Linux (ARM64)**: `opal-linux-arm64`
-            - **macOS (Intel)**: `opal-darwin-amd64`
-            - **macOS (Apple Silicon)**: `opal-darwin-arm64`
-            - **Windows (x64)**: `opal-windows-amd64.exe`
+            - **Linux (x64)**: `sigil-linux-amd64`
+            - **Linux (ARM64)**: `sigil-linux-arm64`
+            - **macOS (Intel)**: `sigil-darwin-amd64`
+            - **macOS (Apple Silicon)**: `sigil-darwin-arm64`
+            - **Windows (x64)**: `sigil-windows-amd64.exe`
 
             ### 🚧 Coming Soon
             - Standalone CLI generation (Generator Mode)

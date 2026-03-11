@@ -1,114 +1,46 @@
-# Opal Development Commands - Clean Slate with Metaprogramming
+var MODULES = ["core", "runtime", "cli"]
 
-var PROJECT = "opal"
-var VERSION = "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
-var MODULES = ["cli", "runtime"]
-
-# =============================================================================
-# 📦 MODULE TEMPLATE FUNCTIONS
-# =============================================================================
-
-fun test_module(module) = @workdir(@var.module) {
-    @log("🧪 Testing @var.module module...")
-    go test -v ./...
+fun test_module(module String) {
+    @workdir(@var.module) {
+        go test ./...
+    }
 }
 
-fun lint_module(module) = @workdir(@var.module) {
-    @log("🔍 Linting @var.module module...")
-    command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=3m || go vet ./...
+fun lint_module(module String) {
+    @workdir(@var.module) {
+        golangci-lint run --timeout=5m
+    }
 }
-
-fun format_module(module) = @workdir(@var.module) {
-    @log("📝 Formatting @var.module module...")
-    command -v gofumpt >/dev/null 2>&1 && gofumpt -w . || go fmt ./...
-}
-
-# =============================================================================
-# 🔄 GLOBAL COMMANDS
-# =============================================================================
 
 fun test {
-    @log("🧪 Testing all modules...")
     for module in @var.MODULES {
-        @cmd.test_module(module=@var.module)
+        test_module(module=@var.module)
     }
-    @log("✅ All tests passed!")
-}
-
-fun format {
-    @log("📝 Formatting all code...")
-    @parallel {
-        for module in @var.MODULES {
-            @cmd.format_module(module=@var.module)
-        }
-    }
-    @log("✅ All code formatted!")
 }
 
 fun lint {
-    @log("🔍 Running linters...")
-    @parallel {
-        for module in @var.MODULES {
-            @cmd.lint_module(module=@var.module)
-        }
+    for module in @var.MODULES {
+        lint_module(module=@var.module)
     }
-    @log("✅ Linting complete!")
 }
 
-fun clean {
-    @log("🧹 Cleaning artifacts...")
-    @parallel {
-        for module in @var.MODULES {
-            @workdir(@var.module) { go clean -cache -testcache }
-        }
-    }
-    rm -f @var.PROJECT coverage.out coverage.html
-    @log("✅ Cleanup complete")
+fun fmt {
+    gofumpt -extra -w .
 }
 
 fun build {
-    @log("🔨 Building @var.PROJECT CLI...")
-    @cmd.test
-    @workdir("cli") { go build -ldflags="-s -w -X main.Version=@var.VERSION" -o ../opal . }
-    @log("✅ Built: ./opal")
+    @workdir("cli") {
+        go build -ldflags="-s -w -X main.Version=$(tr -d '\n' < ../VERSION)" -o ../sigil .
+    }
 }
 
-fun ci {
-    @log("🔄 Clean slate CI workflow...")
-    @cmd.format
-    @cmd.lint 
-    @cmd.test
-    @log("✅ CI complete!")
+fun clean {
+    rm -f ./sigil
+    rm -rf ./result
 }
 
-fun info = @log("📊 @var.PROJECT Clean Slate Status
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Project: @var.PROJECT (Plan-Verify-Execute Engine)
-Version: @var.VERSION
-
-Current Modules: @var.MODULES
-  cli/        - Command-line interface
-  runtime/    - Lexer v2 (high-performance tokenization)
-  docs/       - Architecture and specification
-
-Ready for fresh AST and parser implementation!")
-
-fun help = @log("🔧 Opal Development Commands (Clean Slate)
-
-🚀 Main Commands:
-  build     - Build CLI binary
-  ci        - Full CI workflow (format, lint, test)
-  test      - Run all tests
-  clean     - Clean artifacts
-
-📝 Code Quality:
-  format    - Format all code
-  lint      - Run linters
-
-📊 Utilities:
-  info      - Show project status
-  help      - Show this help
-
-💡 Module-specific commands are auto-generated:
-  cli_test, cli_lint, cli_format
-  runtime_test, runtime_lint, runtime_format")
+fun info {
+    echo "PROJECT=sigil"
+    echo "VERSION=$(tr -d '\n' < VERSION)"
+    echo "MODULES=core runtime cli"
+}

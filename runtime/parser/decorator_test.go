@@ -480,6 +480,55 @@ func TestDecoratorParameters(t *testing.T) {
 	}
 }
 
+func TestDecoratorParameterDecoratorExpression(t *testing.T) {
+	input := `fun build(module String) {
+		@workdir(@var.module) {
+			echo "ok"
+		}
+	}`
+
+	tree := Parse([]byte(input))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("unexpected errors: %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff([]lexer.TokenType{
+		lexer.FUN,
+		lexer.IDENTIFIER,
+		lexer.LPAREN,
+		lexer.IDENTIFIER,
+		lexer.IDENTIFIER,
+		lexer.RPAREN,
+		lexer.LBRACE,
+		lexer.AT,
+		lexer.IDENTIFIER,
+		lexer.LPAREN,
+		lexer.AT,
+		lexer.VAR,
+		lexer.DOT,
+		lexer.IDENTIFIER,
+		lexer.RPAREN,
+		lexer.LBRACE,
+		lexer.IDENTIFIER,
+		lexer.STRING,
+		lexer.RBRACE,
+		lexer.RBRACE,
+	}, eventTokenTypes(tree)); diff != "" {
+		t.Fatalf("token type sequence mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func eventTokenTypes(tree *ParseTree) []lexer.TokenType {
+	types := make([]lexer.TokenType, 0, len(tree.Events))
+	for _, event := range tree.Events {
+		if event.Kind != EventToken {
+			continue
+		}
+		types = append(types, tree.Tokens[event.Data].Type)
+	}
+	return types
+}
+
 // TestDecoratorParameterTypeValidation tests type checking for decorator parameters
 func TestDecoratorParameterTypeValidation(t *testing.T) {
 	tests := []struct {

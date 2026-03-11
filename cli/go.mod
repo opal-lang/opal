@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/builtwithtofu/sigil/core v0.0.0-20251105223424-05107dc292f1
 	github.com/builtwithtofu/sigil/runtime v0.0.0-00010101000000-000000000000
+	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 )

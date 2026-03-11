@@ -1,29 +1,25 @@
 # Package definition for Sigil CLI (built from cli module with Go workspace support)
-{ pkgs, lib, version ? "dev" }:
+{ pkgs, lib, version, src ? ./.., vendorHashValue ? "sha256-qEvCXjTeYWf1Brh/j5WHse3QMC1iLJ1lDeiS7PrpOSU=" }:
 
 pkgs.buildGoModule rec {
   pname = "sigil";
   inherit version;
 
-  src = ./..; # repo root that contains go.work
+  inherit src; # repo root that contains go.work
   modRoot = "cli"; # path to CLI module's go.mod
   subPackages = [ "." ]; # build the main package
 
   # Critical: Disable workspace mode for all build phases
   GOWORK = "off";
 
-  # Override vendor phase to ensure clean vendoring without workspace/replace paths
+  # Build module graph with workspace mode disabled while preserving local replace directives.
+  # The pinned flake source contains `core/` and `runtime/`, so the relative module links stay valid.
   overrideModAttrs = old: {
     GOWORK = "off";
-    # Clean up go.mod to remove replace directives that would create store path references
-    postPatch = ''
-      # Remove replace directives that point to local paths
-      sed -i '/^replace.*=> \.\./d' go.mod
-    '';
   };
 
   # Vendor hash for CLI module dependencies
-  vendorHash = "sha256-LyTou8FZs0Y8TPyVpFKh2PKpKgptgyf0DY9k6tswWCA=";
+  vendorHash = vendorHashValue;
 
   # Build with version info
   ldflags = [

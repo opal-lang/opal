@@ -1,6 +1,70 @@
 # Development environment for Sigil project - interpreter mode only
-{ pkgs, self ? null, gitRev ? "dev", system }:
+{ pkgs, self ? null, gitRev ? "dev", system, bootstrapVersion }:
 
+let
+  sigil = pkgs.writeShellScriptBin "sigil" ''
+    if [ "$#" -ge 1 ] && [ "$1" = "version" ]; then
+      if [ "$#" -ge 2 ] && [ "$2" = "--json" ]; then
+        printf '{"version":"${bootstrapVersion}"}\n'
+      else
+        printf 'sigil ${bootstrapVersion}\n'
+      fi
+      exit 0
+    fi
+
+    if [ "$#" -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+      cat <<'EOF'
+Bootstrap Sigil wrapper for this branch.
+
+Use:
+  sigil version
+  sigil version --json
+  sigil-dev <command>
+
+Until this work is merged, `sigil-dev` is the dogfooding target and `sigil`
+is the stable recovery entrypoint inside `nix develop`.
+EOF
+      exit 0
+    fi
+
+    printf 'sigil bootstrap wrapper: use sigil-dev for command execution on this branch\n' >&2
+    exit 1
+  '';
+
+  sigilDev = pkgs.writeShellScriptBin "sigil-dev" ''
+    repo_root=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null || pwd)
+    use_repo_root=1
+    prev=""
+    for arg in "$@"; do
+      case "$prev" in
+        -f|--file|--plan)
+          use_repo_root=0
+          ;;
+      esac
+
+      case "$arg" in
+        --file=*|--plan=*|-f=*)
+          use_repo_root=0
+          prev=""
+          continue
+          ;;
+        -f|--file|--plan)
+          prev="$arg"
+          continue
+          ;;
+      esac
+
+      prev=""
+    done
+
+    if [ "$use_repo_root" -eq 1 ]; then
+      cd "$repo_root"
+      exec ${pkgs.go_1_25}/bin/go run -ldflags "-X main.Version=${bootstrapVersion}" "$repo_root/cli" -f "$repo_root/commands.sgl" "$@"
+    fi
+
+    exec ${pkgs.go_1_25}/bin/go run -ldflags "-X main.Version=${bootstrapVersion}" "$repo_root/cli" "$@"
+  '';
+in
 pkgs.mkShell {
   name = "sigil-dev";
 
@@ -27,6 +91,8 @@ pkgs.mkShell {
     # Project-specific
     openssh  # For SSH session testing
     zsh
+    sigil
+    sigilDev
   ];
 
   shellHook = ''
@@ -59,10 +125,12 @@ pkgs.mkShell {
       echo "🔧 Sigil Development Environment"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "Available tools:"
-      echo "  go         - Go compiler and tools"
-      echo "  gofumpt    - Go formatter"
-      echo "  golangci-lint - Go linter"
+       echo "Available tools:"
+       echo "  sigil      - Bootstrap wrapper (stable recovery path)"
+       echo "  sigil-dev  - Current branch Sigil runner"
+       echo "  go         - Go compiler and tools"
+       echo "  gofumpt    - Go formatter"
+       echo "  golangci-lint - Go linter"
       echo "  nixpkgs-fmt   - Nix formatter"
       echo ""
       
@@ -74,9 +142,11 @@ pkgs.mkShell {
       fi
       echo ""
       
-      echo "Development commands (run manually):"
-      echo "  go fmt ./...                    - Format Go code"
-      echo "  gofumpt -w .                   - Format with gofumpt"
+       echo "Development commands (run manually):"
+       echo "  sigil version                   - Show bootstrap version"
+       echo "  sigil-dev info                  - Run commands.sgl with current source"
+       echo "  go fmt ./...                    - Format Go code"
+       echo "  gofumpt -w .                   - Format with gofumpt"
       echo "  golangci-lint run              - Run linter"
       echo "  go test -v ./...               - Run all tests (SSH if enabled)"
       echo "  go test -v -short ./...        - Run tests (skip SSH)"
