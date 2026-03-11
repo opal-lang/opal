@@ -58,7 +58,6 @@ func (n *workdirNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 }
 
 func init() {
-	if err := decorator.Register("workdir", &WorkdirDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @workdir decorator: %v", err))
-	}
+	err := decorator.Register("workdir", &WorkdirDecorator{})
+	invariant.Check(err == nil, "failed to register @workdir decorator: %v", err)
 }

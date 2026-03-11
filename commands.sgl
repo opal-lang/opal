@@ -1,12 +1,15 @@
-var PROJECT = "sigil"
 var MODULES = ["core", "runtime", "cli"]
 
-fun test_module(module String) = @workdir(@var.module) {
-    go test ./...
+fun test_module(module String) {
+    @workdir(@var.module) {
+        go test ./...
+    }
 }
 
-fun lint_module(module String) = @workdir(@var.module) {
-    golangci-lint run --timeout=5m
+fun lint_module(module String) {
+    @workdir(@var.module) {
+        golangci-lint run --timeout=5m
+    }
 }
 
 fun test {
@@ -25,8 +28,10 @@ fun fmt {
     gofumpt -extra -w .
 }
 
-fun build = @workdir("cli") {
-    VERSION=$(tr -d '\n' < ../VERSION); go build -ldflags="-s -w -X main.Version=$VERSION" -o ../sigil .
+fun build {
+    @workdir("cli") {
+        go build -ldflags="-s -w -X main.Version=$(tr -d '\n' < ../VERSION)" -o ../sigil .
+    }
 }
 
 fun clean {
@@ -35,7 +40,7 @@ fun clean {
 }
 
 fun info {
-    echo "PROJECT=@var.PROJECT"
+    echo "PROJECT=sigil"
     echo "VERSION=$(tr -d '\n' < VERSION)"
     echo "MODULES=core runtime cli"
 }

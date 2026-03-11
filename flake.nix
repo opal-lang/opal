@@ -4,35 +4,21 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    bootstrap-sigil = {
-      url = "git+file:///home/adavies/Projects/sigil?rev=1395a3bad7c8a011c06087d9d0b757dba978d934";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, bootstrap-sigil }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
           lib = nixpkgs.lib;
           version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
-          bootstrapVersion = builtins.replaceStrings ["\n"] [""] (builtins.readFile (bootstrap-sigil + "/VERSION"));
 
           # Get git revision for generated CLIs (fallback for dirty trees)
           gitRev = self.rev or "dev-${toString self.lastModified}";
 
           # Main sigil package
           sigilPackage = import ./.nix/package.nix { inherit pkgs lib version; };
-
-          # Stable bootstrap package for recovery workflows inside nix develop
-          bootstrapSigilPackage = import ./.nix/package.nix {
-            inherit pkgs lib;
-            version = bootstrapVersion;
-            src = bootstrap-sigil;
-            vendorHashValue = "sha256-T/egqlhcIaSO6Lmhx3i9S/LxA0m1wtSs8QcYppyInP4=";
-          };
 
           # Library functions with automatic system detection
           sigilLib = import ./.nix/lib.nix { inherit pkgs self lib gitRev system; };
@@ -50,8 +36,7 @@
             # Main development shell with stable bootstrap sigil and branch build wrapper
             default = import ./.nix/development.nix {
               inherit pkgs self gitRev system;
-              bootstrapSigil = bootstrapSigilPackage;
-              branchSigil = sigilPackage;
+              bootstrapVersion = version;
             };
           };
 

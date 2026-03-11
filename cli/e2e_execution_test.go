@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
@@ -471,6 +472,27 @@ fun deploy = echo "Deploying @var.appName"
 	output := runE2E(t, opalBin, "-f", testFile, "deploy")
 	t.Logf("Actual output: %q", output)
 	assert.Contains(t, output, "Deploying ")
+}
+
+func TestE2EDecorator_WorkdirVariableArgument(t *testing.T) {
+	opalBin := buildE2EBinary(t)
+	moduleDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(moduleDir, "marker.txt"), []byte("ok\n"), 0o644))
+
+	testFile := createE2ETestFile(t, fmt.Sprintf(`
+var module = %q
+
+fun show {
+	@workdir(@var.module) {
+		cat marker.txt
+	}
+}
+`, moduleDir))
+
+	output := runE2E(t, opalBin, "-f", testFile, "show")
+	if diff := cmp.Diff("ok\n", output); diff != "" {
+		t.Fatalf("output mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestE2EMeta_ForRange(t *testing.T) {
