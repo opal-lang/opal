@@ -33,8 +33,36 @@ EOF
 
   sigilDev = pkgs.writeShellScriptBin "sigil-dev" ''
     repo_root=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null || pwd)
-    cd "$repo_root"
-    exec ${pkgs.go_1_25}/bin/go run -ldflags "-X main.Version=${bootstrapVersion}" ./cli "$@"
+    use_repo_root=1
+    prev=""
+    for arg in "$@"; do
+      case "$prev" in
+        -f|--file|--plan)
+          use_repo_root=0
+          ;;
+      esac
+
+      case "$arg" in
+        --file=*|--plan=*|-f=*)
+          use_repo_root=0
+          prev=""
+          continue
+          ;;
+        -f|--file|--plan)
+          prev="$arg"
+          continue
+          ;;
+      esac
+
+      prev=""
+    done
+
+    if [ "$use_repo_root" -eq 1 ]; then
+      cd "$repo_root"
+      exec ${pkgs.go_1_25}/bin/go run -ldflags "-X main.Version=${bootstrapVersion}" "$repo_root/cli" -f "$repo_root/commands.sgl" "$@"
+    fi
+
+    exec ${pkgs.go_1_25}/bin/go run -ldflags "-X main.Version=${bootstrapVersion}" "$repo_root/cli" "$@"
   '';
 in
 pkgs.mkShell {
