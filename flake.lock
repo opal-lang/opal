@@ -1,5 +1,29 @@
 {
   "nodes": {
+    "bootstrap-sigil": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1773189032,
+        "narHash": "sha256-S174KKb7QEpZjm2JKKZpG8lXIS5na1AVnJkW4snZ2/Y=",
+        "ref": "master",
+        "rev": "1395a3bad7c8a011c06087d9d0b757dba978d934",
+        "revCount": 154,
+        "type": "git",
+        "url": "file:///home/adavies/Projects/sigil"
+      },
+      "original": {
+        "rev": "1395a3bad7c8a011c06087d9d0b757dba978d934",
+        "type": "git",
+        "url": "file:///home/adavies/Projects/sigil"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -36,6 +60,7 @@
     },
     "root": {
       "inputs": {
+        "bootstrap-sigil": "bootstrap-sigil",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

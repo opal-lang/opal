@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/builtwithtofu/sigil/core v0.0.0-20251105223424-05107dc292f1
 	github.com/builtwithtofu/sigil/runtime v0.0.0-00010101000000-000000000000
+	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 )
@@ -12,7 +13,6 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1 // indirect

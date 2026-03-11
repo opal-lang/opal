@@ -2773,7 +2773,7 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 		p.skipNewlines()
 		valueToken := p.current()
 
-		// Check if this is a simple literal or a complex expression (object/array)
+		// Check if this is a simple literal or an expression-valued argument.
 		if p.at(lexer.LBRACE) || p.at(lexer.LSQUARE) {
 			// Complex expression (object or array literal)
 			// Track event position before parsing
@@ -2784,6 +2784,9 @@ func (p *parser) decoratorParamsWithValidation(decoratorName string, schema type
 			if paramExists {
 				p.validateComplexLiteral(paramName, paramSchema, eventStartPos)
 			}
+		} else if p.at(lexer.AT) {
+			// Decorator expressions such as @workdir(@var.module) are valid parameter values.
+			p.expression()
 		} else if p.at(lexer.STRING) || p.at(lexer.INTEGER) || p.at(lexer.FLOAT) ||
 			p.at(lexer.BOOLEAN) || p.at(lexer.DURATION) || p.at(lexer.IDENTIFIER) {
 

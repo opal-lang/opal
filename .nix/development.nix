@@ -1,6 +1,11 @@
 # Development environment for Sigil project - interpreter mode only
-{ pkgs, self ? null, gitRev ? "dev", system }:
+{ pkgs, self ? null, gitRev ? "dev", system, bootstrapSigil, branchSigil }:
 
+let
+  sigilDev = pkgs.writeShellScriptBin "sigil-dev" ''
+    exec ${branchSigil}/bin/sigil "$@"
+  '';
+in
 pkgs.mkShell {
   name = "sigil-dev";
 
@@ -27,7 +32,8 @@ pkgs.mkShell {
     # Project-specific
     openssh  # For SSH session testing
     zsh
-    self.packages.${system}.default
+    bootstrapSigil
+    sigilDev
   ];
 
   shellHook = ''
@@ -60,10 +66,12 @@ pkgs.mkShell {
       echo "🔧 Sigil Development Environment"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "Available tools:"
-      echo "  go         - Go compiler and tools"
-      echo "  gofumpt    - Go formatter"
-      echo "  golangci-lint - Go linter"
+       echo "Available tools:"
+       echo "  sigil      - Bootstrap Sigil (stable recovery path)"
+       echo "  sigil-dev  - Current branch Sigil build"
+       echo "  go         - Go compiler and tools"
+       echo "  gofumpt    - Go formatter"
+       echo "  golangci-lint - Go linter"
       echo "  nixpkgs-fmt   - Nix formatter"
       echo ""
       
@@ -75,9 +83,11 @@ pkgs.mkShell {
       fi
       echo ""
       
-      echo "Development commands (run manually):"
-      echo "  go fmt ./...                    - Format Go code"
-      echo "  gofumpt -w .                   - Format with gofumpt"
+       echo "Development commands (run manually):"
+       echo "  sigil info                      - Run bootstrap commands.sgl task"
+       echo "  sigil-dev version              - Run branch build explicitly"
+       echo "  go fmt ./...                    - Format Go code"
+       echo "  gofumpt -w .                   - Format with gofumpt"
       echo "  golangci-lint run              - Run linter"
       echo "  go test -v ./...               - Run all tests (SSH if enabled)"
       echo "  go test -v -short ./...        - Run tests (skip SSH)"

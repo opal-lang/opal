@@ -480,6 +480,21 @@ func TestDecoratorParameters(t *testing.T) {
 	}
 }
 
+func TestDecoratorParameterDecoratorExpression(t *testing.T) {
+	input := `fun build(module String) = @workdir(@var.module) {
+		echo "ok"
+	}`
+
+	tree := Parse([]byte(input))
+	if len(tree.Errors) > 0 {
+		t.Fatalf("unexpected errors: %v", tree.Errors)
+	}
+
+	if diff := cmp.Diff(2, countOpenNodes(tree.Events, NodeDecorator)); diff != "" {
+		t.Fatalf("decorator count mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestDecoratorParameterTypeValidation tests type checking for decorator parameters
 func TestDecoratorParameterTypeValidation(t *testing.T) {
 	tests := []struct {
