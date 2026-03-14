@@ -1317,7 +1317,7 @@ func (b *irBuilder) buildInterpolatedString() ([]*ExprIR, error) {
 
 		selector := []string{}
 		if part.PropertyStart >= 0 {
-			selector = strings.Split(string(content[part.PropertyStart:part.PropertyEnd]), ".")
+			selector = append(selector, string(content[part.PropertyStart:part.PropertyEnd]))
 		}
 
 		parts = append(parts, &ExprIR{

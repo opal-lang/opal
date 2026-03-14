@@ -622,6 +622,34 @@ func TestBuildIR_CommandWithBracedNamespacedDecoratorInterpolation(t *testing.T)
 	}
 }
 
+func TestBuildIR_CommandWithBracedDottedPrimarySelector(t *testing.T) {
+	graph := buildIR(t, `echo "Path @{env.HOME.tar.gz}"`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[0].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	if len(parts) != 6 {
+		t.Fatalf("len(Parts) = %d, want 6", len(parts))
+	}
+
+	if diff := cmp.Diff(ExprDecoratorRef, parts[4].Kind); diff != "" {
+		t.Fatalf("decorator ref kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("env", parts[4].Decorator.Name); diff != "" {
+		t.Fatalf("decorator name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"HOME.tar.gz"}, parts[4].Decorator.Selector); diff != "" {
+		t.Fatalf("decorator selector mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // ========== Scope Tests ==========
 
 func TestBuildIR_ScopeTracking(t *testing.T) {
