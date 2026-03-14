@@ -7,11 +7,11 @@ import (
 	"github.com/builtwithtofu/sigil/core/invariant"
 )
 
-// WorkdirDecorator implements the @workdir execution decorator.
+// WorkdirDecorator implements the @fs.workdir execution decorator.
 type WorkdirDecorator struct{}
 
 func (d *WorkdirDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("workdir").
+	return decorator.NewDescriptor("fs.workdir").
 		Summary("Execute block in a different working directory").
 		Roles(decorator.RoleWrapper).
 		ParamString("path", "Working directory for nested block").
@@ -50,7 +50,7 @@ func (n *workdirNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 		return decorator.Result{ExitCode: decorator.ExitFailure}, err
 	}
 	if cfg.Path == "" {
-		return decorator.Result{ExitCode: decorator.ExitFailure}, fmt.Errorf("@workdir path must not be empty")
+		return decorator.Result{ExitCode: decorator.ExitFailure}, fmt.Errorf("@fs.workdir path must not be empty")
 	}
 
 	child := ctx.WithSession(ctx.Session.WithWorkdir(cfg.Path))
@@ -58,6 +58,6 @@ func (n *workdirNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 }
 
 func init() {
-	err := decorator.Register("workdir", &WorkdirDecorator{})
-	invariant.Check(err == nil, "failed to register @workdir decorator: %v", err)
+	err := decorator.Register("fs.workdir", &WorkdirDecorator{})
+	invariant.Check(err == nil, "failed to register @fs.workdir decorator: %v", err)
 }

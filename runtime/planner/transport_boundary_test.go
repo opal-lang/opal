@@ -45,7 +45,7 @@ func TestTransportBoundary_IsTransportDecorator(t *testing.T) {
 		{"test.transport", true},
 		{"@shell", false},
 		{"shell", false},
-		{"@retry", false},
+		{"@exec.retry", false},
 		{"@var", false},
 		{"@env", false},
 		{"@nonexistent", false},
@@ -79,9 +79,9 @@ func TestTransportBoundary_DecoratorRecognition(t *testing.T) {
 		t.Error("@shell should NOT be recognized as a transport decorator")
 	}
 
-	// Verify @retry is NOT a transport decorator
-	if isTransportDecoratorName("@retry") {
-		t.Error("@retry should NOT be recognized as a transport decorator")
+	// Verify @exec.retry is NOT a transport decorator
+	if isTransportDecoratorName("@exec.retry") {
+		t.Error("@exec.retry should NOT be recognized as a transport decorator")
 	}
 }
 

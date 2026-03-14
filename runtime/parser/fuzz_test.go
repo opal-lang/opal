@@ -311,15 +311,15 @@ func FuzzParserNoPanic(f *testing.F) {
 	f.Add(bytes.Repeat([]byte("{"), 1000))  // Deep nesting
 
 	// Decorator syntax
-	f.Add([]byte("@timeout(5m) { }"))
-	f.Add([]byte("@retry(3, 2s) { }"))
-	f.Add([]byte("@retry(delay=2s, 3)"))
-	f.Add([]byte("@timeout(5m) { @retry(3) { } }"))
+	f.Add([]byte("@exec.timeout(5m) { }"))
+	f.Add([]byte("@exec.retry(3, 2s) { }"))
+	f.Add([]byte("@exec.retry(delay=2s, 3)"))
+	f.Add([]byte("@exec.timeout(5m) { @exec.retry(3) { } }"))
 
 	// Malformed decorators
-	f.Add([]byte("@retry("))
-	f.Add([]byte("@retry(3,"))
-	f.Add([]byte("@retry(3, times=5)"))
+	f.Add([]byte("@exec.retry("))
+	f.Add([]byte("@exec.retry(3,"))
+	f.Add([]byte("@exec.retry(3, times=5)"))
 	f.Add([]byte("@var."))
 
 	f.Fuzz(func(t *testing.T, input []byte) {
@@ -572,7 +572,7 @@ func TestFuzzCorpusMinimization(t *testing.T) {
 		[]byte(""),
 		[]byte("fun greet() {}"),
 		[]byte("invalid syntax"),
-		[]byte("@retry(3) { }"),
+		[]byte("@exec.retry(3) { }"),
 	}
 
 	for _, input := range inputs {

@@ -277,6 +277,70 @@ func TestDecoratorInShellCommand(t *testing.T) {
 	}
 }
 
+func TestBraceDecoratorInShellCommand(t *testing.T) {
+	input := `echo "Hello @{var.name}_suffix"`
+
+	tree := Parse([]byte(input))
+
+	if len(tree.Errors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", tree.Errors)
+	}
+
+	decoratorCount := 0
+	interpolatedStringCount := 0
+	for _, evt := range tree.Events {
+		if evt.Kind == EventOpen {
+			switch NodeKind(evt.Data) {
+			case NodeDecorator:
+				decoratorCount++
+			case NodeInterpolatedString:
+				interpolatedStringCount++
+			}
+		}
+	}
+
+	if diff := cmp.Diff(1, decoratorCount); diff != "" {
+		t.Fatalf("decorator count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, interpolatedStringCount); diff != "" {
+		t.Fatalf("interpolated string count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestMalformedBraceDecoratorInShellCommand(t *testing.T) {
+	input := `echo "Hello @{var.name"`
+
+	tree := Parse([]byte(input))
+
+	if len(tree.Errors) != 1 {
+		t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)
+	}
+
+	got := struct {
+		Message    string
+		Context    string
+		Suggestion string
+	}{
+		Message:    tree.Errors[0].Message,
+		Context:    tree.Errors[0].Context,
+		Suggestion: tree.Errors[0].Suggestion,
+	}
+
+	want := struct {
+		Message    string
+		Context    string
+		Suggestion string
+	}{
+		Message:    "malformed braced interpolation",
+		Context:    "string interpolation",
+		Suggestion: "Close the interpolation with '}' and use syntax like @{var.name}",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("malformed interpolation error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestLiteralAtSymbol tests that @ without registered decorator stays literal
 func TestLiteralAtSymbol(t *testing.T) {
 	input := `echo "Email: user@example.com"`
@@ -482,7 +546,7 @@ func TestDecoratorParameters(t *testing.T) {
 
 func TestDecoratorParameterDecoratorExpression(t *testing.T) {
 	input := `fun build(module String) {
-		@workdir(@var.module) {
+		@fs.workdir(@var.module) {
 			echo "ok"
 		}
 	}`
@@ -501,6 +565,8 @@ func TestDecoratorParameterDecoratorExpression(t *testing.T) {
 		lexer.RPAREN,
 		lexer.LBRACE,
 		lexer.AT,
+		lexer.IDENTIFIER,
+		lexer.DOT,
 		lexer.IDENTIFIER,
 		lexer.LPAREN,
 		lexer.AT,
@@ -557,22 +623,22 @@ func TestDecoratorParameterTypeValidation(t *testing.T) {
 		},
 		{
 			name:      "duration param with duration value",
-			input:     `@retry(times=3, delay=2s)`,
+			input:     `@exec.retry(times=3, delay=2s)`,
 			wantError: false,
 		},
 		{
 			name:      "duration param with complex duration",
-			input:     `@retry(times=3, delay=1h30m)`,
+			input:     `@exec.retry(times=3, delay=1h30m)`,
 			wantError: false,
 		},
 		{
 			name:      "integer param with integer value",
-			input:     `@retry(times=5)`,
+			input:     `@exec.retry(times=5)`,
 			wantError: false,
 		},
 		{
 			name:      "boolean param with boolean value",
-			input:     `@retry(times=3, delay=1s)`,
+			input:     `@exec.retry(times=3, delay=1s)`,
 			wantError: false,
 		},
 
@@ -775,7 +841,7 @@ func TestDecoratorWithBlock(t *testing.T) {
 	}{
 		{
 			name:      "decorator with empty block",
-			input:     `@retry(times=3) { }`,
+			input:     `@exec.retry(times=3) { }`,
 			wantError: false,
 			wantEvents: []string{
 				"Open(NodeDecorator)",
@@ -794,7 +860,7 @@ func TestDecoratorWithBlock(t *testing.T) {
 		},
 		{
 			name:      "decorator with block containing statements",
-			input:     `@retry(times=3) { echo "test" }`,
+			input:     `@exec.retry(times=3) { echo "test" }`,
 			wantError: false,
 			// Should have decorator, params, and block with shell command
 		},
@@ -830,19 +896,19 @@ func TestDecoratorBlockRequired(t *testing.T) {
 	}{
 		{
 			name:      "parallel with block - valid",
-			input:     `@parallel { echo "test" }`,
+			input:     `@exec.parallel { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:           "parallel without block - error",
-			input:          `@parallel`,
+			input:          `@exec.parallel`,
 			wantError:      true,
-			wantMessage:    "@parallel requires a block",
-			wantSuggestion: "Add a block: @parallel(...) { ... }",
+			wantMessage:    "@exec.parallel requires a block",
+			wantSuggestion: "Add a block: @exec.parallel(...) { ... }",
 		},
 		{
 			name:      "parallel with empty block - valid",
-			input:     `@parallel { }`,
+			input:     `@exec.parallel { }`,
 			wantError: false,
 		},
 	}
@@ -895,19 +961,19 @@ func TestDecoratorBlockOptional(t *testing.T) {
 	}{
 		{
 			name:      "retry with block",
-			input:     `@retry(times=3) { kubectl apply -f deployment.yaml }`,
+			input:     `@exec.retry(times=3) { kubectl apply -f deployment.yaml }`,
 			wantError: false,
 			wantBlock: true,
 		},
 		{
 			name:      "retry without block",
-			input:     `@retry(times=3)`,
+			input:     `@exec.retry(times=3)`,
 			wantError: false,
 			wantBlock: false,
 		},
 		{
 			name:      "retry with empty block",
-			input:     `@retry(times=3) { }`,
+			input:     `@exec.retry(times=3) { }`,
 			wantError: false,
 			wantBlock: true,
 		},
@@ -999,7 +1065,7 @@ func TestDecoratorBlockForbidden(t *testing.T) {
 
 // TestDecoratorBlockWithStatements tests blocks containing actual statements
 func TestDecoratorBlockWithStatements(t *testing.T) {
-	input := `@retry(times=3) {
+	input := `@exec.retry(times=3) {
 		kubectl apply -f deployment.yaml
 		kubectl rollout status deployment/app
 	}`
@@ -1048,25 +1114,27 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 	}{
 		{
 			name:  "retry with empty block",
-			input: `@retry(times=3) { }`,
+			input: `@exec.retry(times=3) { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
 				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
-				{Kind: EventToken, Data: 1}, // retry
+				{Kind: EventToken, Data: 1}, // exec
+				{Kind: EventToken, Data: 2}, // .
+				{Kind: EventToken, Data: 3}, // retry
 				{Kind: EventOpen, Data: uint32(NodeParamList)},
-				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventToken, Data: 4}, // (
 				{Kind: EventOpen, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 3}, // times
-				{Kind: EventToken, Data: 4}, // =
-				{Kind: EventToken, Data: 5}, // 3
+				{Kind: EventToken, Data: 5}, // times
+				{Kind: EventToken, Data: 6}, // =
+				{Kind: EventToken, Data: 7}, // 3
 				{Kind: EventClose, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 6}, // )
+				{Kind: EventToken, Data: 8}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventOpen, Data: uint32(NodeBlock)},
-				{Kind: EventToken, Data: 7}, // {
-				{Kind: EventToken, Data: 8}, // }
+				{Kind: EventToken, Data: 9},  // {
+				{Kind: EventToken, Data: 10}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
 				{Kind: EventStepExit, Data: 0},
@@ -1075,16 +1143,18 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 		},
 		{
 			name:  "parallel with empty block",
-			input: `@parallel { }`,
+			input: `@exec.parallel { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
 				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
-				{Kind: EventToken, Data: 1}, // parallel
+				{Kind: EventToken, Data: 1}, // exec
+				{Kind: EventToken, Data: 2}, // .
+				{Kind: EventToken, Data: 3}, // parallel
 				{Kind: EventOpen, Data: uint32(NodeBlock)},
-				{Kind: EventToken, Data: 2}, // {
-				{Kind: EventToken, Data: 3}, // }
+				{Kind: EventToken, Data: 4}, // {
+				{Kind: EventToken, Data: 5}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
 				{Kind: EventStepExit, Data: 0},
@@ -1093,21 +1163,23 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 		},
 		{
 			name:  "retry without block (optional)",
-			input: `@retry(times=3)`,
+			input: `@exec.retry(times=3)`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
 				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
-				{Kind: EventToken, Data: 1}, // retry
+				{Kind: EventToken, Data: 1}, // exec
+				{Kind: EventToken, Data: 2}, // .
+				{Kind: EventToken, Data: 3}, // retry
 				{Kind: EventOpen, Data: uint32(NodeParamList)},
-				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventToken, Data: 4}, // (
 				{Kind: EventOpen, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 3}, // times
-				{Kind: EventToken, Data: 4}, // =
-				{Kind: EventToken, Data: 5}, // 3
+				{Kind: EventToken, Data: 5}, // times
+				{Kind: EventToken, Data: 6}, // =
+				{Kind: EventToken, Data: 7}, // 3
 				{Kind: EventClose, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 6}, // )
+				{Kind: EventToken, Data: 8}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
 				{Kind: EventStepExit, Data: 0},
@@ -1116,25 +1188,27 @@ func TestDecoratorBlockExactEvents(t *testing.T) {
 		},
 		{
 			name:  "parallel with optional param and block",
-			input: `@parallel(maxConcurrency=5) { }`,
+			input: `@exec.parallel(maxConcurrency=5) { }`,
 			events: []Event{
 				{Kind: EventOpen, Data: uint32(NodeSource)},
 				{Kind: EventStepEnter, Data: 0},
 				{Kind: EventOpen, Data: uint32(NodeDecorator)},
 				{Kind: EventToken, Data: 0}, // @
-				{Kind: EventToken, Data: 1}, // parallel
+				{Kind: EventToken, Data: 1}, // exec
+				{Kind: EventToken, Data: 2}, // .
+				{Kind: EventToken, Data: 3}, // parallel
 				{Kind: EventOpen, Data: uint32(NodeParamList)},
-				{Kind: EventToken, Data: 2}, // (
+				{Kind: EventToken, Data: 4}, // (
 				{Kind: EventOpen, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 3}, // maxConcurrency
-				{Kind: EventToken, Data: 4}, // =
-				{Kind: EventToken, Data: 5}, // 5
+				{Kind: EventToken, Data: 5}, // maxConcurrency
+				{Kind: EventToken, Data: 6}, // =
+				{Kind: EventToken, Data: 7}, // 5
 				{Kind: EventClose, Data: uint32(NodeParam)},
-				{Kind: EventToken, Data: 6}, // )
+				{Kind: EventToken, Data: 8}, // )
 				{Kind: EventClose, Data: uint32(NodeParamList)},
 				{Kind: EventOpen, Data: uint32(NodeBlock)},
-				{Kind: EventToken, Data: 7}, // {
-				{Kind: EventToken, Data: 8}, // }
+				{Kind: EventToken, Data: 9},  // {
+				{Kind: EventToken, Data: 10}, // }
 				{Kind: EventClose, Data: uint32(NodeBlock)},
 				{Kind: EventClose, Data: uint32(NodeDecorator)},
 				{Kind: EventStepExit, Data: 0},
@@ -1168,7 +1242,7 @@ func TestDecoratorAsStatement(t *testing.T) {
 		{
 			name: "decorator in function block",
 			input: `fun deploy {
-				@retry(times=3) {
+				@exec.retry(times=3) {
 					echo "test"
 				}
 			}`,
@@ -1177,8 +1251,8 @@ func TestDecoratorAsStatement(t *testing.T) {
 		{
 			name: "multiple decorators in block",
 			input: `fun deploy {
-				@retry(times=3) { echo "a" }
-				@parallel { echo "b" }
+				@exec.retry(times=3) { echo "a" }
+				@exec.parallel { echo "b" }
 			}`,
 			wantError: false,
 		},
@@ -1186,7 +1260,7 @@ func TestDecoratorAsStatement(t *testing.T) {
 			name: "decorator mixed with shell commands",
 			input: `fun deploy {
 				echo "starting"
-				@retry(times=3) { kubectl apply }
+				@exec.retry(times=3) { kubectl apply }
 				echo "done"
 			}`,
 			wantError: false,
@@ -1194,8 +1268,8 @@ func TestDecoratorAsStatement(t *testing.T) {
 		{
 			name: "nested decorator blocks",
 			input: `fun deploy {
-				@retry(times=3) {
-					@parallel {
+				@exec.retry(times=3) {
+					@exec.parallel {
 						echo "nested"
 					}
 				}
@@ -1243,47 +1317,47 @@ func TestDecoratorNesting(t *testing.T) {
 	}{
 		{
 			name: "decorator inside decorator block",
-			input: `@timeout(5m) {
-				@retry(times=3) {
+			input: `@exec.timeout(5m) {
+				@exec.retry(times=3) {
 					echo "test"
 				}
 			}`,
 			wantError:          false,
-			wantDecoratorCount: 2, // @timeout and @retry
+			wantDecoratorCount: 2, // @exec.timeout and @exec.retry
 			wantBlockCount:     2, // timeout's block and retry's block
 		},
 		{
 			name: "multiple decorators in parallel block",
-			input: `@parallel {
-				@retry(times=2) { echo "a" }
-				@retry(times=2) { echo "b" }
+			input: `@exec.parallel {
+				@exec.retry(times=2) { echo "a" }
+				@exec.retry(times=2) { echo "b" }
 			}`,
 			wantError:          false,
-			wantDecoratorCount: 3, // @parallel and 2x @retry
+			wantDecoratorCount: 3, // @exec.parallel and 2x @exec.retry
 			wantBlockCount:     3, // parallel's block and 2x retry blocks
 		},
 		{
 			name: "three levels of nesting",
-			input: `@timeout(10m) {
-				@retry(times=3) {
-					@parallel {
+			input: `@exec.timeout(10m) {
+				@exec.retry(times=3) {
+					@exec.parallel {
 						echo "nested"
 					}
 				}
 			}`,
 			wantError:          false,
-			wantDecoratorCount: 3, // @timeout, @retry, @parallel
+			wantDecoratorCount: 3, // @exec.timeout, @exec.retry, @exec.parallel
 			wantBlockCount:     3, // all three have blocks
 		},
 		{
 			name: "decorator with shell commands in block",
-			input: `@retry(times=3) {
+			input: `@exec.retry(times=3) {
 				echo "before"
 				kubectl apply -f deployment.yaml
 				echo "after"
 			}`,
 			wantError:          false,
-			wantDecoratorCount: 1, // just @retry
+			wantDecoratorCount: 1, // just @exec.retry
 			wantBlockCount:     1, // retry's block
 		},
 	}
@@ -1336,22 +1410,22 @@ func TestDecoratorPositionalParameters(t *testing.T) {
 	}{
 		{
 			name:      "single positional parameter",
-			input:     `@timeout(5m) { }`,
+			input:     `@exec.timeout(5m) { }`,
 			wantError: false,
 		},
 		{
 			name:      "multiple positional parameters",
-			input:     `@retry(3, 2s)`,
+			input:     `@exec.retry(3, 2s)`,
 			wantError: false,
 		},
 		{
 			name:      "mixed positional and named",
-			input:     `@retry(3, delay=2s)`,
+			input:     `@exec.retry(3, delay=2s)`,
 			wantError: false,
 		},
 		{
 			name:      "all named (current working syntax)",
-			input:     `@retry(times=3, delay=2s)`,
+			input:     `@exec.retry(times=3, delay=2s)`,
 			wantError: false,
 		},
 	}
@@ -1390,70 +1464,70 @@ func TestPositionalParameters(t *testing.T) {
 		// === Basic Positional ===
 		{
 			name:      "single positional - timeout",
-			input:     `@timeout(5m) { echo "test" }`,
+			input:     `@exec.timeout(5m) { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "two positional - retry",
-			input:     `@retry(3, 2s) { echo "test" }`,
+			input:     `@exec.retry(3, 2s) { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "three positional - retry with backoff",
-			input:     `@retry(3, 2s, "linear") { echo "test" }`,
+			input:     `@exec.retry(3, 2s, "linear") { echo "test" }`,
 			wantError: false,
 		},
 
 		// === Mixed: Positional then Named ===
 		{
 			name:      "mixed - first positional, second named",
-			input:     `@retry(3, delay=2s) { echo "test" }`,
+			input:     `@exec.retry(3, delay=2s) { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "mixed - first positional, third named",
-			input:     `@retry(3, backoff="linear") { echo "test" }`,
+			input:     `@exec.retry(3, backoff="linear") { echo "test" }`,
 			wantError: false,
 		},
 
 		// === Mixed: Named then Positional (Kotlin-style gaps) ===
 		{
 			name:      "mixed - second named, first and third positional",
-			input:     `@retry(3, delay=2s, "exponential") { echo "test" }`,
+			input:     `@exec.retry(3, delay=2s, "exponential") { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "mixed - second named, then positional fills first slot",
-			input:     `@retry(delay=2s, 3) { echo "test" }`,
+			input:     `@exec.retry(delay=2s, 3) { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "mixed - second and third named, first positional",
-			input:     `@retry(delay=2s, backoff="linear", 3) { echo "test" }`,
+			input:     `@exec.retry(delay=2s, backoff="linear", 3) { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "mixed - positional first equivalent to named anywhere",
-			input:     `@retry(2s, times=3) { echo "test" }`,
+			input:     `@exec.retry(2s, times=3) { echo "test" }`,
 			wantError: false,
 		},
 
 		// === Edge Cases ===
 		{
 			name:        "too many positional arguments",
-			input:       `@retry(3, 2s, "linear", "extra") { echo "test" }`,
+			input:       `@exec.retry(3, 2s, "linear", "extra") { echo "test" }`,
 			wantError:   true,
 			wantMessage: "too many positional arguments",
 		},
 		{
 			name:        "positional skips named reservation",
-			input:       `@retry(3, times=5) { echo "test" }`,
+			input:       `@exec.retry(3, times=5) { echo "test" }`,
 			wantError:   true,
 			wantMessage: "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
 		},
 		{
 			name:           "named then positional fills next slot",
-			input:          `@retry(times=3, 5) { echo "test" }`,
+			input:          `@exec.retry(times=3, 5) { echo "test" }`,
 			wantError:      true,
 			wantMessage:    "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
 			wantContext:    "decorator parameter",
@@ -1467,7 +1541,7 @@ func TestPositionalParameters(t *testing.T) {
 		// === Type Validation ===
 		{
 			name:           "wrong type - string where int expected",
-			input:          `@retry("not-a-number", 2s) { echo "test" }`,
+			input:          `@exec.retry("not-a-number", 2s) { echo "test" }`,
 			wantError:      true,
 			wantMessage:    "parameter 'times' expects integer between 1 and 100, got string",
 			wantContext:    "decorator parameter",
@@ -1479,7 +1553,7 @@ func TestPositionalParameters(t *testing.T) {
 		},
 		{
 			name:           "wrong type - int where duration expected",
-			input:          `@retry(3, 123) { echo "test" }`,
+			input:          `@exec.retry(3, 123) { echo "test" }`,
 			wantError:      true,
 			wantMessage:    "parameter 'delay' expects duration (e.g., \"5m\", \"1h\"), got integer",
 			wantContext:    "decorator parameter",
@@ -1566,17 +1640,17 @@ func TestPositionalParametersNesting(t *testing.T) {
 	}{
 		{
 			name: "2-level nesting with positional",
-			input: `@timeout(5m) {
-				@retry(3, 2s) {
+			input: `@exec.timeout(5m) {
+				@exec.retry(3, 2s) {
 					echo "nested"
 				}
 			}`,
 		},
 		{
 			name: "3-level nesting with mixed params",
-			input: `@timeout(5m) {
-				@retry(3, delay=1s) {
-					@parallel {
+			input: `@exec.timeout(5m) {
+				@exec.retry(3, delay=1s) {
+					@exec.parallel {
 						echo "deep"
 					}
 				}
@@ -1584,9 +1658,9 @@ func TestPositionalParametersNesting(t *testing.T) {
 		},
 		{
 			name: "positional in parallel block",
-			input: `@parallel {
-				@retry(3) { echo "a" }
-				@retry(5, 2s) { echo "b" }
+			input: `@exec.parallel {
+				@exec.retry(3) { echo "a" }
+				@exec.retry(5, 2s) { echo "b" }
 			}`,
 		},
 	}
@@ -1763,5 +1837,162 @@ func TestMultiSegmentDecoratorPaths(t *testing.T) {
 				t.Error("Expected parse to fail, but it succeeded")
 			}
 		})
+	}
+}
+
+func TestDecoratorCanonicalExecutionNamespaces(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "exec retry",
+			input: `@exec.retry(times=3) {
+		echo "ok"
+	}`,
+		},
+		{
+			name: "exec timeout",
+			input: `@exec.timeout(duration=5s) {
+		sleep 1
+	}`,
+		},
+		{
+			name: "exec parallel",
+			input: `@exec.parallel {
+		echo "a"
+		echo "b"
+	}`,
+		},
+		{
+			name: "fs workdir",
+			input: `@fs.workdir(path=".") {
+		echo "ok"
+	}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+			if len(tree.Errors) > 0 {
+				t.Fatalf("unexpected parse errors: %v", tree.Errors)
+			}
+		})
+	}
+}
+
+func TestDecoratorRemovedRootExecutionNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		message    string
+		suggestion string
+	}{
+		{
+			name: "retry moved under exec",
+			input: `@retry(times=3) {
+		echo "ok"
+	}`,
+			message:    "@retry has moved to @exec.retry",
+			suggestion: "Use @exec.retry(...) { ... }",
+		},
+		{
+			name: "timeout moved under exec",
+			input: `@timeout(duration=5s) {
+		sleep 1
+	}`,
+			message:    "@timeout has moved to @exec.timeout",
+			suggestion: "Use @exec.timeout(...) { ... }",
+		},
+		{
+			name: "parallel moved under exec",
+			input: `@parallel {
+		echo "a"
+	}`,
+			message:    "@parallel has moved to @exec.parallel",
+			suggestion: "Use @exec.parallel { ... }",
+		},
+		{
+			name: "workdir moved under fs",
+			input: `@workdir(path=".") {
+		echo "ok"
+	}`,
+			message:    "@workdir has moved to @fs.workdir",
+			suggestion: "Use @fs.workdir(...) { ... }",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := Parse([]byte(tt.input))
+			if len(tree.Errors) != 1 {
+				t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)
+			}
+
+			got := struct {
+				Message    string
+				Context    string
+				Suggestion string
+			}{
+				Message:    tree.Errors[0].Message,
+				Context:    tree.Errors[0].Context,
+				Suggestion: tree.Errors[0].Suggestion,
+			}
+
+			want := struct {
+				Message    string
+				Context    string
+				Suggestion string
+			}{
+				Message:    tt.message,
+				Context:    "decorator",
+				Suggestion: tt.suggestion,
+			}
+
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("removed decorator error mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestDecoratorRemovedRootRecoveryLeavesIfBlockIntact(t *testing.T) {
+	input := `fun test { if @retry(times=3) { echo "yes" } }`
+
+	tree := Parse([]byte(input))
+	if len(tree.Errors) != 1 {
+		t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)
+	}
+
+	if diff := cmp.Diff("@retry has moved to @exec.retry", tree.Errors[0].Message); diff != "" {
+		t.Fatalf("error message mismatch (-want +got):\n%s", diff)
+	}
+
+	ifCount := 0
+	blockCount := 0
+	shellCount := 0
+	for _, evt := range tree.Events {
+		if evt.Kind != EventOpen {
+			continue
+		}
+		switch NodeKind(evt.Data) {
+		case NodeIf:
+			ifCount++
+		case NodeBlock:
+			blockCount++
+		case NodeShellCommand:
+			shellCount++
+		}
+	}
+
+	if diff := cmp.Diff(1, ifCount); diff != "" {
+		t.Fatalf("if count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(2, blockCount); diff != "" {
+		t.Fatalf("block count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(1, shellCount); diff != "" {
+		t.Fatalf("shell command count mismatch (-want +got):\n%s", diff)
 	}
 }

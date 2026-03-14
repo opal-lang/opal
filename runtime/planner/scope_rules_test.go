@@ -323,7 +323,7 @@ echo "@var.INNER"
 func TestExecutionBlockIsolation_RestoresParentValue(t *testing.T) {
 	source := `
 var COUNT = "1"
-@retry {
+@exec.retry {
     var COUNT = "2"
 }
 echo "@var.COUNT"

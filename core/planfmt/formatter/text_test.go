@@ -122,13 +122,13 @@ func TestFormatStep(t *testing.T) {
 			step: planfmt.Step{
 				ID: 1,
 				Tree: &planfmt.CommandNode{
-					Decorator: "@retry",
+					Decorator: "@exec.retry",
 					Args: []planfmt.Arg{
-						{Key: "attempts", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 3}},
+						{Key: "times", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 3}},
 					},
 				},
 			},
-			expected: `@retry(attempts=3)`,
+			expected: `@exec.retry(times=3)`,
 		},
 	}
 

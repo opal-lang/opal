@@ -19,7 +19,7 @@ This module contains the CLI application that users interact with:
 
 ### Built-in Decorators (`cli/internal/builtins/`)
 - `var.go`, `env.go`, `cmd.go`: Function decorators
-- `timeout.go`, `parallel.go`, `retry.go`, `workdir.go`: Block decorators  
+- `timeout.go`, `parallel.go`, `retry.go`, `workdir.go`: Runtime implementations for canonical `@exec.*` and `@fs.*` decorators  
 - `when.go`, `try.go`: Pattern decorators
 - `confirm.go`: Interactive decorators
 - All decorators include comprehensive test suites

@@ -128,7 +128,7 @@ func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 
 func TestBuildValueCall_CanonicalizesNamedAndPositionalKeys(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
-		Name: "retry",
+		Name: "exec.retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
 			{Kind: ExprLiteral, Value: "3s"},
@@ -155,7 +155,7 @@ func TestBuildValueCall_CanonicalizesNamedAndPositionalKeys(t *testing.T) {
 
 func TestBuildValueCall_UsesPositionalWhenArgNameMissing(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
-		Name: "retry",
+		Name: "exec.retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
 		},

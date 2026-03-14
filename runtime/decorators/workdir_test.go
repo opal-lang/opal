@@ -72,9 +72,9 @@ func (s *testWorkdirSession) Close() error {
 }
 
 func TestWorkdirInfo(t *testing.T) {
-	entry, ok := decorator.Global().Lookup("workdir")
+	entry, ok := decorator.Global().Lookup("fs.workdir")
 	if !ok {
-		t.Fatal("built-in decorator 'workdir' should be registered")
+		t.Fatal("built-in decorator 'fs.workdir' should be registered")
 	}
 
 	if diff := cmp.Diff([]decorator.Role{decorator.RoleWrapper}, entry.Roles); diff != "" {
@@ -82,7 +82,7 @@ func TestWorkdirInfo(t *testing.T) {
 	}
 
 	desc := entry.Impl.Descriptor()
-	if diff := cmp.Diff("workdir", desc.Path); diff != "" {
+	if diff := cmp.Diff("fs.workdir", desc.Path); diff != "" {
 		t.Fatalf("path mismatch (-want +got):\n%s", diff)
 	}
 	if diff := cmp.Diff(decorator.BlockRequired, desc.Capabilities.Block); diff != "" {

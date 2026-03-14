@@ -92,7 +92,7 @@ This boundary is a deliberate departure from plain shell scripts: Sigil wraps an
 
 **Work execution** happens through decorators at runtime:
 - `npm run build` → `@shell("npm run build")`
-- `@retry(3) { ... }` → execution decorator with block
+- `@exec.retry(3) { ... }` → execution decorator with block
 - `@var.NAME` → value decorator for interpolation
 
 ## Everything is a Decorator (For Work Execution)
@@ -108,8 +108,8 @@ This means metaprogramming constructs like `for`, `if`, `when` are **not** decor
 
 **Execution decorators** run commands (executed at **execution time**):
 - `@shell("npm run build")` executes shell commands (runtime execution)
-- `@retry(3) { ... }` adds retry logic around blocks
-- `@parallel { ... }` runs commands concurrently
+- `@exec.retry(3) { ... }` adds retry logic around blocks
+- `@exec.parallel { ... }` runs commands concurrently
 
 Even plain shell commands become `@shell` decorators internally:
 ```sigil
@@ -311,7 +311,7 @@ Decorators execute commands via `Session.Run()`, which handles I/O routing and s
 When decorators are nested, each wraps the next:
 
 ```sigil
-@retry(times=3) {
+@exec.retry(times=3) {
     @aws.instance.ssh(host="prod") {
         cat /var/log/app.log
     }
@@ -475,7 +475,7 @@ Transports fall into three categories based on how they affect execution context
 These transports implement `NetworkDialer` to enable parent-relative network connections. Nested transports dial through the parent's network context, not directly from the local machine.
 
 **Isolation Transports** constrain execution at the current location:
-- `@isolated` - Linux namespace isolation (network, filesystem, privileges)
+- `@isolated.*` - Linux namespace isolation namespaces (network, filesystem, privileges)
 - `@sandbox` - Subprocess sandboxing with resource limits
 
 These transports do not change location. They apply security constraints (network policies, filesystem restrictions) to the current execution context. Isolation transports may implement `NetworkDialer` to enforce policies on nested network operations.
@@ -888,7 +888,7 @@ var local_user = @env.USER  # "alice" from local session
 ```sigil
 var version = @env.APP_VERSION  # "3.0" from local session
 
-@parallel {
+@exec.parallel {
     @ssh.connect(host="web-1", env={"VERSION": @var.version}) {
         # @env.VERSION reads "3.0" from SSH session
         var v = @env.VERSION
@@ -1339,9 +1339,9 @@ When this executes:
 
 **Newline semantics** (Sigil-controlled):
 - Sequential execution by default
-- Fail-fast: Stop on first error (unless wrapped in `@retry` or `try/catch`)
+- Fail-fast: Stop on first error (unless wrapped in `@exec.retry` or `try/catch`)
 - Independent logging and telemetry per step
-- Parallelization possible with `@parallel`
+- Parallelization possible with `@exec.parallel`
 
 ### Decorators: Work Execution
 
@@ -1349,7 +1349,7 @@ When this executes:
 
 ```sigil
 // Explicit decorator
-@retry(3) {
+@exec.retry(3) {
     curl https://api.example.com/deploy
 }
 
@@ -1455,7 +1455,7 @@ Sigil controls whether step 2 runs based on step 1's exit code (newline = fail-f
 **Sigil controls all operators** to ensure consistent behavior across platforms:
 - Same `&&`, `||`, `;` semantics on Windows, Linux, macOS
 - No dependency on shell-specific behavior
-- Operators work with all decorators (`@retry`, `@timeout`, etc.)
+- Operators work with all decorators (`@exec.retry`, `@exec.timeout`, etc.)
 
 By implementing bash-compatible operator semantics in Go, Sigil provides the familiarity of bash with the reliability of cross-platform execution.
 
@@ -1601,7 +1601,7 @@ Without `os.Pipe()`, `yes` would run forever because it never receives SIGPIPE w
 
 **Example:**
 ```sigil
-@retry(attempts=3) {
+@exec.retry(times=3) {
     npm run build && npm test
 }
 ```
@@ -1614,7 +1614,7 @@ Without `os.Pipe()`, `yes` would run forever because it never receives SIGPIPE w
 
 **Another example:**
 ```sigil
-@timeout(5m) {
+@exec.timeout(5m) {
     kubectl logs api | grep ERROR > errors.txt
 }
 ```
@@ -1820,7 +1820,7 @@ echo "@var.COUNT"  # Prints 2
 ```sigil
 var COUNT = 5
 
-@retry {
+@exec.retry {
     var COUNT = 3    # Shadows outer (isolated scope)
 }
 echo "@var.COUNT"    # Prints 5 (outer scope restored)
@@ -1888,7 +1888,7 @@ var NAME2 = "Aled"
 
 ```sigil
 var API_KEY = "sk-secret"
-@retry(apiKey=@var.API_KEY) {
+@exec.retry(apiKey=@var.API_KEY) {
     echo "test"
 }
 ```
@@ -2173,8 +2173,8 @@ type SiteRef struct {
 ### Path Tracking Example
 
 ```sigil
-@retry {
-    @timeout {
+@exec.retry {
+    @exec.timeout {
         echo "test"
     }
 }
@@ -2182,7 +2182,7 @@ type SiteRef struct {
 
 **Path at echo command:**
 ```
-root/@retry[0]/@timeout[0]/@shell[0]/params/command
+root/@exec.retry[0]/@exec.timeout[0]/@shell[0]/params/command
 ```
 
 **Multiple instances tracked:**
@@ -2313,7 +2313,7 @@ Plan-time Layer (Metaprogramming):
 
 Runtime Layer (Work Execution):
 ├─ @shell decorators execute commands
-├─ @retry/@parallel decorators modify execution
+├─ @exec.retry/@exec.parallel decorators modify execution
 ├─ @var/@env decorators provide values
 ├─ try/catch path selection based on actual exceptions
 └─ Unified decorator interfaces handle all work
@@ -2464,7 +2464,7 @@ type Plan struct {
 
 type ExecutionStep struct {
     // All steps are decorators (shell commands are @shell decorators)
-    Decorator string                // "@shell", "@retry", "@parallel", etc.
+    Decorator string                // "@shell", "@exec.retry", "@exec.parallel", etc.
     Args      map[string]interface{} // Decorator arguments
     Block     []ExecutionStep        // Nested steps for decorators with blocks
 }
@@ -2975,7 +2975,7 @@ const (
         "properties": {
           "decorator": {
             "type": "string",
-            "description": "Decorator name (e.g., '@shell', '@retry', '@parallel')"
+            "description": "Decorator name (e.g., '@shell', '@exec.retry', '@exec.parallel')"
           },
           "args": {
             "type": "object",
@@ -3057,7 +3057,7 @@ const (
       "args": { "command": "kubectl scale --replicas=3 deployment/app" }
     },
     {
-      "decorator": "@retry",
+      "decorator": "@exec.retry",
       "args": { "times": 3, "delay": "2s" },
       "block": [
         {
@@ -3263,13 +3263,13 @@ Sigil guarantees that all operations halt with deterministic results.
 - Parameters must be plan-time resolvable (value decorators, variables, literals)
 - No dynamic dispatch - all calls resolved during planning
 
-**Finite parallelism**: `@parallel` blocks have a known number of tasks after loop expansion.
+**Finite parallelism**: `@exec.parallel` blocks have a known number of tasks after loop expansion.
 
 ### Runtime Safety
 
 **User-controlled timeouts**: No automatic timeouts - users control when they want limits.
 - Commands run until completion or manual termination (Ctrl+C)
-- `@timeout(1h) { ... }` - explicit timeout when desired
+- `@exec.timeout(1h) { ... }` - explicit timeout when desired
 - `--timeout 30m` flag - global safety net when needed
 - Long-running processes (`dev servers`, `monitoring`) run naturally
 
@@ -3340,7 +3340,7 @@ Secrets are accessible **only at their use-site**. No propagation to parent/chil
 var API_KEY = "sk-..."
 var MAX_RETRIES = "5"
 
-@retry(times=@var.MAX_RETRIES) {  # ✅ @retry can unwrap (authorized site)
+@exec.retry(times=@var.MAX_RETRIES) {  # ✅ @exec.retry can unwrap (authorized site)
     @http.post(
         url="https://api.com",
         headers={Authorization: @var.API_KEY}  # ✅ @http.post can unwrap (authorized site)
@@ -3377,7 +3377,7 @@ var RETRY_COUNT = "3"
     headers={Authorization: "Bearer @var.API_KEY"}  # Planner records: API_KEY used here
 )
 
-@retry(times=@var.RETRY_COUNT) {  # Planner records: RETRY_COUNT used here
+@exec.retry(times=@var.RETRY_COUNT) {  # Planner records: RETRY_COUNT used here
     echo "test"
 }
 ```
@@ -3429,12 +3429,12 @@ SecretUse{
 
 **User errors are still user errors:**
 
-If someone writes `@retry(times=@var.API_KEY)`, that's a bug in their code. The planner will:
+If someone writes `@exec.retry(times=@var.API_KEY)`, that's a bug in their code. The planner will:
 1. Record that `times` parameter uses `API_KEY` secret
 2. Store DisplayID in plan: `times: "sigil:ABC123"`
-3. At execution, @retry tries to parse as integer, fails with clear error showing DisplayID
+3. At execution, @exec.retry tries to parse as integer, fails with clear error showing DisplayID
 
-The security model prevents @retry from unwrapping the secret, but it can't prevent users from passing secrets to wrong parameters.
+The security model prevents @exec.retry from unwrapping the secret, but it can't prevent users from passing secrets to wrong parameters.
 
 #### Secret Transport: FD/Stdin Only (Never Env/Argv)
 
@@ -4562,7 +4562,7 @@ kubectl apply -f k8s/api/      # Step: deploy.service[0]
 kubectl apply -f k8s/worker/   # Step: deploy.service[1]
 ```
 
-This means execution decorators like `@parallel` receive predictable, static command lists rather than dynamic loops. Much easier to reason about.
+This means execution decorators like `@exec.parallel` receive predictable, static command lists rather than dynamic loops. Much easier to reason about.
 
 **No chaining for control flow**: Constructs like `when`, `for`, `try/catch` are complete statements, not expressions. You can't write `when ENV { ... } && echo "done"` because it creates precedence confusion. Keep control flow self-contained.
 
@@ -4671,7 +4671,7 @@ deploy: {
     // Operations on the deployed infrastructure  
     @aws.ec2.instances(tags={name:"web-prod"}, transport="ssm") {
         sudo systemctl start myapp
-        @retry(attempts=3) { curl -f http://localhost:8080/health }
+        @exec.retry(times=3) { curl -f http://localhost:8080/health }
     }
     
     // Traditional ops commands
@@ -4714,13 +4714,13 @@ maintenance: {
         sudo systemctl stop nginx
         
         // Update application  
-        @retry(attempts=3, delay=10s) {
+        @exec.retry(times=3, delay=10s) {
             sudo yum update -y myapp
             sudo systemctl start myapp
         }
         
         // Health check
-        @timeout(30s) {
+        @exec.timeout(30s) {
             curl -fsS http://127.0.0.1:8080/healthz
         }
         

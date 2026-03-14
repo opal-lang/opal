@@ -1,13 +1,13 @@
 var MODULES = ["core", "runtime", "cli"]
 
 fun test_module(module String) {
-    @workdir(@var.module) {
+    @fs.workdir(@var.module) {
         go test ./...
     }
 }
 
 fun lint_module(module String) {
-    @workdir(@var.module) {
+    @fs.workdir(@var.module) {
         golangci-lint run --timeout=5m
     }
 }
@@ -29,7 +29,7 @@ fun fmt {
 }
 
 fun build {
-    @workdir("cli") {
+    @fs.workdir("cli") {
         go build -ldflags="-s -w -X main.Version=$(tr -d '\n' < ../VERSION)" -o ../sigil .
     }
 }

@@ -96,7 +96,7 @@ func TestExecuteNestedShellBypassesDecoratorExecPath(t *testing.T) {
 	plan := &planfmt.Plan{Target: "authority-nested-shell", Steps: []planfmt.Step{{
 		ID: 1,
 		Tree: &planfmt.CommandNode{
-			Decorator: "@retry",
+			Decorator: "@exec.retry",
 			Args: []planfmt.Arg{{
 				Key: "times",
 				Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 1},

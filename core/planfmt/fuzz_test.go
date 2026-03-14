@@ -95,7 +95,7 @@ func addSeedCorpus(f *testing.F) {
 					{
 						ID: 1,
 						Tree: &planfmt.CommandNode{
-							Decorator: "@parallel",
+							Decorator: "@exec.parallel",
 							Block: []planfmt.Step{
 								{
 									ID:   2,

@@ -1317,7 +1317,7 @@ func (b *irBuilder) buildInterpolatedString() ([]*ExprIR, error) {
 
 		selector := []string{}
 		if part.PropertyStart >= 0 {
-			selector = append(selector, string(content[part.PropertyStart:part.PropertyEnd]))
+			selector = strings.Split(string(content[part.PropertyStart:part.PropertyEnd]), ".")
 		}
 
 		parts = append(parts, &ExprIR{
@@ -1546,11 +1546,7 @@ func (b *irBuilder) buildDecoratorExpr() *ExprIR {
 		}
 	}
 
-	name := parts[0]
-	var selector []string
-	if len(parts) > 1 {
-		selector = parts[1:]
-	}
+	name, selector := splitDecoratorRefParts(parts)
 	argNames = canonicalizeDecoratorArgNames(name, argNames, len(selector) > 0)
 
 	// @var.X becomes a VarRef
@@ -1617,6 +1613,32 @@ func canonicalizeDecoratorArgNames(path string, rawNames []string, hasPrimary bo
 	}
 
 	return canonicalizeNamesWithSchema(rawNames, schema, hasPrimary)
+}
+
+func splitDecoratorRefParts(parts []string) (string, []string) {
+	if len(parts) == 0 {
+		return "", nil
+	}
+
+	longest := parts[0]
+	longestLen := 1
+	current := parts[0]
+	if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+		longest = current
+	}
+
+	for i := 1; i < len(parts); i++ {
+		current = current + "." + parts[i]
+		if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+			longest = current
+			longestLen = i + 1
+		}
+	}
+
+	if longestLen >= len(parts) {
+		return longest, nil
+	}
+	return longest, parts[longestLen:]
 }
 
 func decoratorSchema(path string) (types.DecoratorSchema, bool) {

@@ -103,7 +103,7 @@ func TestAccess_UnauthorizedSite_SameTransport_FailsWithAuthorityError(t *testin
 	v.pop()
 
 	// WHEN: Try to access at different site (different decorator)
-	v.push("@timeout")
+	v.push("@exec.timeout")
 	value, err := v.access(exprID, "duration")
 
 	// THEN: Should fail with authorization error
@@ -138,7 +138,7 @@ func TestAccess_UnauthorizedSite_DifferentTransport_Fails(t *testing.T) {
 	// WHEN: Enter different transport AND different site
 	v.EnterTransport("ssh:remote")
 	v.push("step-1")
-	v.push("@timeout")
+	v.push("@exec.timeout")
 
 	value, err := v.access(exprID, "duration")
 
@@ -176,12 +176,12 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 	v.pop() // Pop @shell
 	v.pop() // Pop step-1
 
-	// Site 2: root/step-2/@retry[0]/params/apiKey
+	// Site 2: root/step-2/@exec.retry[0]/params/apiKey
 	v.push("step-2")
-	v.push("@retry")
+	v.push("@exec.retry")
 	site2 := v.buildSitePath("apiKey")
 	v.recordReference(exprID, "apiKey")
-	v.pop() // Pop @retry
+	v.pop() // Pop @exec.retry
 	v.pop() // Pop step-2
 
 	// Verify sites are different
@@ -212,7 +212,7 @@ func TestAccess_MultipleSites_EachSiteIndependent(t *testing.T) {
 	v.pathStack = []PathSegment{{Name: "root", Index: -1}}
 	v.decoratorCounts = make(map[string]int)
 	v.push("step-2")
-	v.push("@retry")
+	v.push("@exec.retry")
 	value2, err2 := v.access(exprID, "apiKey")
 
 	// THEN: Should succeed at site 2

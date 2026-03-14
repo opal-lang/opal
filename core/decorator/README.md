@@ -64,7 +64,7 @@ entry, ok := decorator.Global().Lookup("aws.s3.object")
 ## Interfaces
 
 - **Value**: Produces values (@var, @env, @aws.secret)
-- **Exec**: Wraps execution (@retry, @timeout)
+- **Exec**: Wraps execution (`@exec.retry`, `@exec.timeout`)
 - **Transport**: Creates transport boundaries (@ssh.connect, @docker.exec)
 - **Endpoint**: Provides I/O capabilities (@file.read, @s3.put)
 - **Session**: Execution context (env, cwd, transport)

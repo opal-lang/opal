@@ -11,12 +11,20 @@ type StringPart struct {
 	PropertyEnd   int  // End of property name
 }
 
-// TokenizeString splits string content into literal and decorator parts
-// content should be WITHOUT quotes (the string between the quote characters)
-// quoteType is '"', '\”, or '`'
-// Returns slice of StringParts with byte offsets into content (zero allocation for content)
+type parsedStringDecorator struct {
+	start         int
+	end           int
+	propertyStart int
+	propertyEnd   int
+	nextPos       int
+	isValue       bool
+}
+
+// TokenizeString splits string content into literal and decorator parts.
+// content should be WITHOUT quotes (the string between the quote characters).
+// quoteType is '"', '\”, or '`'.
+// Returns slice of StringParts with byte offsets into content (zero allocation for content).
 func TokenizeString(content []byte, quoteType byte) []StringPart {
-	// Single quotes have no interpolation
 	if quoteType == '\'' {
 		if len(content) == 0 {
 			return nil
@@ -24,7 +32,6 @@ func TokenizeString(content []byte, quoteType byte) []StringPart {
 		return []StringPart{{Start: 0, End: len(content), IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}}
 	}
 
-	// Fast path: no @ symbols means no interpolation
 	hasAt := false
 	for i := 0; i < len(content); i++ {
 		if content[i] == '@' {
@@ -39,74 +46,28 @@ func TokenizeString(content []byte, quoteType byte) []StringPart {
 		return []StringPart{{Start: 0, End: len(content), IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}}
 	}
 
-	// First pass: count parts to pre-allocate exact size
 	partCount := countStringParts(content)
-
-	// Second pass: fill parts with byte offsets
 	parts := make([]StringPart, 0, partCount)
 	pos := 0
-	literalStart := 0 // Track start of current literal section
+	literalStart := 0
 
 	for pos < len(content) {
-		// Find next @ symbol
 		atPos := findNextAt(content, pos)
-
-		// No more @ symbols, rest is literal
 		if atPos == -1 {
 			break
 		}
 
-		// Try to parse decorator after @
-		decoratorStart := atPos + 1
-		if decoratorStart >= len(content) {
-			// @ at end of string, treat as literal (will be added after loop)
-			break
-		}
-
-		// Read decorator name (identifier)
-		decoratorEnd := readIdentifier(content, decoratorStart)
-
-		if decoratorEnd == decoratorStart {
-			// No identifier after @, treat @ as literal (continue literal section)
-			pos = decoratorStart
+		parsed, ok := parseStringDecorator(content, atPos)
+		if !ok {
+			pos = atPos + 1
 			continue
 		}
 
-		// Check if it's a registered value decorator (need to convert to string for registry lookup)
-		decoratorName := string(content[decoratorStart:decoratorEnd])
-
-		// Use new decorator registry to check if this is a value decorator
-		isValueDecorator := false
-		if entry, ok := decorator.Global().Lookup(decoratorName); ok {
-			// Check if decorator has RoleProvider (value decorator)
-			for _, role := range entry.Roles {
-				if role == decorator.RoleProvider {
-					isValueDecorator = true
-					break
-				}
-			}
-		}
-
-		if !isValueDecorator {
-			// Not a value decorator (either unregistered or execution decorator)
-			// Treat as literal including any .property that follows
-			// Skip over .property if present (even though it's not a decorator)
-			if decoratorEnd < len(content) && content[decoratorEnd] == '.' {
-				propStart := decoratorEnd + 1
-				propEnd := readIdentifier(content, propStart)
-				if propEnd > propStart {
-					pos = propEnd
-				} else {
-					pos = decoratorEnd
-				}
-			} else {
-				pos = decoratorEnd
-			}
-			// Continue literal section (don't add part yet)
+		if !parsed.isValue {
+			pos = parsed.nextPos
 			continue
 		}
 
-		// It's a registered value decorator - finalize any preceding literal
 		if atPos > literalStart {
 			parts = append(parts, StringPart{
 				Start:         literalStart,
@@ -117,37 +78,18 @@ func TokenizeString(content []byte, quoteType byte) []StringPart {
 			})
 		}
 
-		// Check for property access: @var.name
-		propStart := -1
-		propEnd := -1
-		if decoratorEnd < len(content) && content[decoratorEnd] == '.' {
-			// Read property name after dot
-			propStart = decoratorEnd + 1
-			propEnd = readIdentifier(content, propStart)
-			if propEnd > propStart {
-				pos = propEnd
-			} else {
-				pos = decoratorEnd
-				propStart = -1
-				propEnd = -1
-			}
-		} else {
-			pos = decoratorEnd
-		}
-
 		parts = append(parts, StringPart{
-			Start:         decoratorStart,
-			End:           decoratorEnd,
+			Start:         parsed.start,
+			End:           parsed.end,
 			IsLiteral:     false,
-			PropertyStart: propStart,
-			PropertyEnd:   propEnd,
+			PropertyStart: parsed.propertyStart,
+			PropertyEnd:   parsed.propertyEnd,
 		})
 
-		// Next literal section starts after this decorator
+		pos = parsed.nextPos
 		literalStart = pos
 	}
 
-	// Add any remaining literal content
 	if literalStart < len(content) {
 		parts = append(parts, StringPart{
 			Start:         literalStart,
@@ -170,42 +112,24 @@ func countStringParts(content []byte) int {
 		atPos := findNextAt(content, pos)
 		if atPos == -1 {
 			if pos < len(content) {
-				count++ // Final literal part
+				count++
 			}
 			break
 		}
 
 		if atPos > pos {
-			count++ // Literal before @
+			count++
 		}
 
-		decoratorStart := atPos + 1
-		if decoratorStart >= len(content) {
-			count++ // @ at end
-			break
-		}
-
-		decoratorEnd := readIdentifier(content, decoratorStart)
-		if decoratorEnd == decoratorStart {
-			count++ // @ with no identifier
-			pos = decoratorStart
+		parsed, ok := parseStringDecorator(content, atPos)
+		if !ok {
+			count++
+			pos = atPos + 1
 			continue
 		}
 
-		// Check for property access (consume it whether registered or not)
-		if decoratorEnd < len(content) && content[decoratorEnd] == '.' {
-			propStart := decoratorEnd + 1
-			propEnd := readIdentifier(content, propStart)
-			if propEnd > propStart {
-				pos = propEnd
-			} else {
-				pos = decoratorEnd
-			}
-		} else {
-			pos = decoratorEnd
-		}
-
-		count++ // Decorator or literal part (both count as 1)
+		count++
+		pos = parsed.nextPos
 	}
 
 	return count
@@ -236,4 +160,106 @@ func isIdentifierChar(ch byte) bool {
 		(ch >= 'A' && ch <= 'Z') ||
 		(ch >= '0' && ch <= '9') ||
 		ch == '_'
+}
+
+func hasMalformedBracedInterpolation(content []byte) bool {
+	for pos := 0; pos < len(content)-1; pos++ {
+		if content[pos] != '@' || content[pos+1] != '{' {
+			continue
+		}
+		if _, ok := parseStringDecorator(content, pos); !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func parseStringDecorator(content []byte, atPos int) (parsedStringDecorator, bool) {
+	decoratorStart := atPos + 1
+	if decoratorStart >= len(content) {
+		return parsedStringDecorator{}, false
+	}
+
+	braced := false
+	if content[decoratorStart] == '{' {
+		braced = true
+		decoratorStart++
+		if decoratorStart >= len(content) {
+			return parsedStringDecorator{}, false
+		}
+	}
+
+	segmentStarts := []int{}
+	segmentEnds := []int{}
+	segmentStart := decoratorStart
+	segmentEnd := readIdentifier(content, segmentStart)
+	if segmentEnd == segmentStart {
+		return parsedStringDecorator{}, false
+	}
+	segmentStarts = append(segmentStarts, segmentStart)
+	segmentEnds = append(segmentEnds, segmentEnd)
+	nextPos := segmentEnd
+
+	for nextPos < len(content) && content[nextPos] == '.' {
+		segmentStart = nextPos + 1
+		segmentEnd = readIdentifier(content, segmentStart)
+		if segmentEnd == segmentStart {
+			break
+		}
+		segmentStarts = append(segmentStarts, segmentStart)
+		segmentEnds = append(segmentEnds, segmentEnd)
+		nextPos = segmentEnd
+	}
+
+	pathEnd := segmentEnds[0]
+	longestValueSegments := 0
+	for i := range segmentEnds {
+		candidateEnd := segmentEnds[i]
+		if isValueDecorator(content[decoratorStart:candidateEnd]) {
+			pathEnd = candidateEnd
+			longestValueSegments = i + 1
+		}
+	}
+
+	propertyStart := -1
+	propertyEnd := -1
+	if longestValueSegments > 0 && longestValueSegments < len(segmentStarts) {
+		propertyStart = segmentStarts[longestValueSegments]
+		propertyEnd = segmentEnds[longestValueSegments]
+		if braced {
+			propertyEnd = segmentEnds[len(segmentEnds)-1]
+		}
+		nextPos = propertyEnd
+	}
+
+	if braced {
+		if nextPos >= len(content) || content[nextPos] != '}' {
+			return parsedStringDecorator{}, false
+		}
+		nextPos++
+	}
+
+	return parsedStringDecorator{
+		start:         decoratorStart,
+		end:           pathEnd,
+		propertyStart: propertyStart,
+		propertyEnd:   propertyEnd,
+		nextPos:       nextPos,
+		isValue:       longestValueSegments > 0,
+	}, true
+}
+
+func isValueDecorator(name []byte) bool {
+	entry, ok := decorator.Global().Lookup(string(name))
+	if !ok {
+		return false
+	}
+
+	for _, role := range entry.Roles {
+		if role == decorator.RoleProvider {
+			return true
+		}
+	}
+
+	return false
 }

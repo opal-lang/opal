@@ -184,7 +184,7 @@ tests/golden/
 │   ├── expected-quick.plan # Quick plan with deferred placeholders
 │   └── expected-resolved.plan # Resolved plan (execution contract)
 ├── decorator-retry/
-│   ├── input.cli           # @retry(attempts=3) { kubectl apply -f k8s/ }
+│   ├── input.cli           # @exec.retry(times=3) { kubectl apply -f k8s/ }
 │   ├── vars.env            # Environment for value decorators
 │   ├── expected-quick.plan
 │   └── expected-resolved.plan
@@ -427,19 +427,19 @@ func TestDecoratorCompletionModel(t *testing.T) {
     }{
         {
             name: "retry-completes-before-and",
-            input: "@retry(attempts=3) { exit 1 } && echo 'success'",
+            input: "@exec.retry(times=3) { exit 1 } && echo 'success'",
             retryExitCodes: []int{1, 1, 1}, // all fail
             expectedBehavior: "retry_completes_then_and_skipped",
         },
         {
             name: "timeout-completes-before-or", 
-            input: "@timeout(1s) { sleep 2 } || echo 'fallback'",
+            input: "@exec.timeout(1s) { sleep 2 } || echo 'fallback'",
             timeoutAfter: 1 * time.Second,
             expectedBehavior: "timeout_completes_then_or_executes",
         },
         {
             name: "parallel-completes-before-pipe",
-            input: "@parallel { echo 'a'; echo 'b' } | grep 'a'",
+            input: "@exec.parallel { echo 'a'; echo 'b' } | grep 'a'",
             expectedBehavior: "parallel_completes_then_pipe_processes_output",
         },
     }
@@ -741,7 +741,7 @@ func FuzzParser(f *testing.F) {
     // Seed with known inputs
     f.Add("deploy: echo hello")
     f.Add("var X = @env(\"TEST\")")
-    f.Add("@retry(3) { kubectl apply -f k8s/ }")
+    f.Add("@exec.retry(3) { kubectl apply -f k8s/ }")
     
     f.Fuzz(func(t *testing.T, input string) {
         defer func() {
@@ -966,7 +966,7 @@ jobs:
 - [ ] Build conformance test framework
 - [ ] Test all existing decorators for conformance
 - [ ] Add security invariant tests (placeholder format)
-- [ ] Implement basic mutation tests for @retry
+- [ ] Implement basic mutation tests for @exec.retry
 
 ### Month 2: Fuzzing & Reliability
 - [ ] Set up fuzzing for parser/lexer
@@ -986,7 +986,7 @@ All tests should verify error messages follow these standards:
 
 ```go
 func TestErrorMessageQuality(t *testing.T) {
-    malformedInput := "@retry(invalid)"
+    malformedInput := "@exec.retry(invalid)"
     
     _, err := parser.Parse(malformedInput)
     assert.Error(t, err)

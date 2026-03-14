@@ -196,7 +196,7 @@ func BenchmarkSemanticValidation(b *testing.B) {
 		input string
 	}{
 		{"simple_pipe", `echo "test" | grep "test"`},
-		{"decorator_pipe", `@timeout(5s) { echo "test" } | grep "pattern"`},
+		{"decorator_pipe", `@exec.timeout(5s) { echo "test" } | grep "pattern"`},
 		{"complex_pipe", `echo "line1" | grep "line" | wc -l && echo "done"`},
 	}
 
@@ -221,13 +221,13 @@ func BenchmarkSchemaValidation(b *testing.B) {
 		name  string
 		input string
 	}{
-		{"literal_int", `@retry(max_attempts=3) { echo "test" }`},
+		{"literal_int", `@exec.retry(times=3) { echo "test" }`},
 		{"literal_string", `@log(level="info") { echo "test" }`},
-		{"literal_duration", `@timeout(duration="5m") { echo "test" }`},
+		{"literal_duration", `@exec.timeout(duration="5m") { echo "test" }`},
 		{"literal_bool", `@config(enabled=true) { echo "test" }`},
-		{"variable", `@retry(max_attempts=@var.count) { echo "test" }`},
-		{"no_params", `@parallel { echo "test" }`},
-		{"multiple_params", `@retry(max_attempts=3, delay="1s") { echo "test" }`},
+		{"variable", `@exec.retry(times=@var.count) { echo "test" }`},
+		{"no_params", `@exec.parallel { echo "test" }`},
+		{"multiple_params", `@exec.retry(times=3, delay="1s") { echo "test" }`},
 	}
 
 	for _, tt := range tests {

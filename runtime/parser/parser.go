@@ -1888,6 +1888,17 @@ func (p *parser) assignmentStmt() {
 }
 
 func (p *parser) identifierStatement() {
+	if p.isSpacedKnownFunctionCallSyntax() {
+		functionName := string(p.current().Text)
+		p.errorWithDetails(
+			"function call syntax does not allow a space before '('",
+			"function call",
+			fmt.Sprintf("Remove the space before '(' to call %s: %s(...)", functionName, functionName),
+		)
+		p.shellCommand()
+		return
+	}
+
 	if p.isFunctionCallSyntax() {
 		functionName := string(p.current().Text)
 		if !p.isKnownFunction(functionName) {
@@ -1938,6 +1949,29 @@ func (p *parser) isFunctionCallSyntax() bool {
 
 	current := p.current()
 	return nextToken.Position.Offset == current.Position.Offset+len(current.Text)
+}
+
+func (p *parser) isSpacedKnownFunctionCallSyntax() bool {
+	if !p.at(lexer.IDENTIFIER) {
+		return false
+	}
+
+	nextPos := p.pos + 1
+	if nextPos >= len(p.tokens) {
+		return false
+	}
+
+	nextToken := p.tokens[nextPos]
+	if nextToken.Type != lexer.LPAREN {
+		return false
+	}
+
+	current := p.current()
+	if nextToken.Position.Offset == current.Position.Offset+len(current.Text) {
+		return false
+	}
+
+	return p.isKnownFunction(string(current.Text))
 }
 
 func (p *parser) isKnownFunction(name string) bool {
@@ -2342,6 +2376,16 @@ func (p *parser) decorator() {
 
 	// If no registered decorator found, reset position and treat @ as literal
 	if longestMatch == "" {
+		if replacement, ok := removedRootDecoratorReplacement(decoratorName); ok {
+			p.pos = atPos
+			p.errorWithDetails(
+				fmt.Sprintf("@%s has moved to @%s", decoratorName, replacement),
+				"decorator",
+				removedRootDecoratorSuggestion(decoratorName, replacement),
+			)
+			p.consumeRemovedRootDecorator(true)
+			return
+		}
 		p.pos = tempPos
 		return
 	}
@@ -2548,6 +2592,16 @@ func (p *parser) decoratorInExpressionContext() {
 	}
 
 	if longestMatch == "" {
+		if replacement, ok := removedRootDecoratorReplacement(decoratorName); ok {
+			p.pos = atPos
+			p.errorWithDetails(
+				fmt.Sprintf("@%s has moved to @%s", decoratorName, replacement),
+				"decorator",
+				removedRootDecoratorSuggestion(decoratorName, replacement),
+			)
+			p.consumeRemovedRootDecorator(false)
+			return
+		}
 		p.pos = tempPos
 		return
 	}
@@ -2621,6 +2675,68 @@ func (p *parser) decoratorInExpressionContext() {
 
 	if p.config.debug >= DebugPaths {
 		p.recordDebugEvent("exit_decorator_expr", "decorator in expression context complete")
+	}
+}
+
+func removedRootDecoratorReplacement(name string) (string, bool) {
+	switch name {
+	case "retry":
+		return "exec.retry", true
+	case "timeout":
+		return "exec.timeout", true
+	case "parallel":
+		return "exec.parallel", true
+	case "workdir":
+		return "fs.workdir", true
+	default:
+		return "", false
+	}
+}
+
+func removedRootDecoratorSuggestion(name, replacement string) string {
+	if name == "parallel" {
+		return fmt.Sprintf("Use @%s { ... }", replacement)
+	}
+	return fmt.Sprintf("Use @%s(...) { ... }", replacement)
+}
+
+func (p *parser) consumeRemovedRootDecorator(consumeBlock bool) {
+	if p.at(lexer.AT) {
+		p.advance()
+	}
+	if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
+		p.advance()
+	}
+
+	for p.at(lexer.DOT) {
+		p.advance()
+		if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
+			p.advance()
+		}
+	}
+
+	if p.at(lexer.LPAREN) {
+		depth := 0
+		for !p.at(lexer.EOF) {
+			if p.at(lexer.LPAREN) {
+				depth++
+			} else if p.at(lexer.RPAREN) {
+				depth--
+			}
+			p.advance()
+			if depth == 0 {
+				break
+			}
+		}
+	}
+
+	if !consumeBlock {
+		return
+	}
+
+	p.skipNewlines()
+	if p.at(lexer.LBRACE) {
+		p.block()
 	}
 }
 
@@ -3682,6 +3798,9 @@ func (p *parser) stringNeedsInterpolation() bool {
 		return false
 	}
 	content = content[1 : len(content)-1]
+	if hasMalformedBracedInterpolation(content) {
+		return true
+	}
 
 	// Tokenize and check if there are multiple parts or decorator parts
 	parts := TokenizeString(content, quoteType)
@@ -3727,6 +3846,18 @@ func (p *parser) stringLiteral() {
 		return
 	}
 	content = content[1 : len(content)-1] // Remove surrounding quotes
+
+	if hasMalformedBracedInterpolation(content) {
+		p.errorWithDetails(
+			"malformed braced interpolation",
+			"string interpolation",
+			"Close the interpolation with '}' and use syntax like @{var.name}",
+		)
+		kind := p.start(NodeLiteral)
+		p.token()
+		p.finish(kind)
+		return
+	}
 
 	// Tokenize the string content
 	parts := TokenizeString(content, quoteType)

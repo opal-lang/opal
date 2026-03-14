@@ -11,7 +11,7 @@ import (
 
 // Decorator Block Structure Tests
 //
-// These tests verify that decorator blocks (@retry, @timeout, @parallel, etc.)
+// These tests verify that decorator blocks (@exec.retry, @exec.timeout, @exec.parallel, etc.)
 // are correctly represented in the plan as CommandNode with:
 // 1. Decorator name set
 // 2. Arguments parsed
@@ -20,11 +20,11 @@ import (
 // This is CRITICAL for execution - without the decorator Step, the executor
 // will just run the inner commands without retry/timeout/parallel semantics.
 
-// TestDecoratorBlock_CreatesDecoratorStep verifies that @retry creates a proper
+// TestDecoratorBlock_CreatesDecoratorStep verifies that @exec.retry creates a proper
 // decorator Step in the plan (not just the inner commands).
 func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 	source := `
-@retry(times=3) {
+@exec.retry(times=3) {
     echo "test"
 }
 `
@@ -41,9 +41,9 @@ func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 
 	plan := result.Plan
 
-	// ASSERT: Should have 1 step (the @retry decorator)
+	// ASSERT: Should have 1 step (the @exec.retry decorator)
 	if len(plan.Steps) != 1 {
-		t.Fatalf("Expected 1 step (@retry), got %d", len(plan.Steps))
+		t.Fatalf("Expected 1 step (@exec.retry), got %d", len(plan.Steps))
 	}
 
 	step := plan.Steps[0]
@@ -59,9 +59,9 @@ func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 		t.Fatalf("Expected CommandNode, got %T", step.Tree)
 	}
 
-	// ASSERT: Decorator should be "@retry"
-	if cmd.Decorator != "@retry" {
-		t.Errorf("Expected decorator '@retry', got '%s'", cmd.Decorator)
+	// ASSERT: Decorator should be "@exec.retry"
+	if cmd.Decorator != "@exec.retry" {
+		t.Errorf("Expected decorator '@exec.retry', got '%s'", cmd.Decorator)
 	}
 
 	// ASSERT: Should have 'times' argument
@@ -97,7 +97,7 @@ func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 		t.Errorf("Expected block decorator '@shell', got '%s'", blockCmd.Decorator)
 	}
 
-	t.Logf("✓ @retry decorator step created correctly")
+	t.Logf("✓ @exec.retry decorator step created correctly")
 	t.Logf("✓ Arguments parsed: times=%d", timesArg.Val.Int)
 	t.Logf("✓ Block contains %d step(s)", len(cmd.Block))
 }
@@ -106,8 +106,8 @@ func TestDecoratorBlock_CreatesDecoratorStep(t *testing.T) {
 // are properly structured in the plan.
 func TestDecoratorBlock_NestedDecorators(t *testing.T) {
 	source := `
-@timeout(duration=30s) {
-    @retry(times=3) {
+@exec.timeout(duration=30s) {
+    @exec.retry(times=3) {
         echo "test"
     }
 }
@@ -125,37 +125,37 @@ func TestDecoratorBlock_NestedDecorators(t *testing.T) {
 
 	plan := result.Plan
 
-	// ASSERT: Should have 1 step (@timeout)
+	// ASSERT: Should have 1 step (@exec.timeout)
 	if len(plan.Steps) != 1 {
-		t.Fatalf("Expected 1 step (@timeout), got %d", len(plan.Steps))
+		t.Fatalf("Expected 1 step (@exec.timeout), got %d", len(plan.Steps))
 	}
 
-	// ASSERT: Outer decorator is @timeout
+	// ASSERT: Outer decorator is @exec.timeout
 	outerCmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
 	if !ok {
 		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
 	}
-	if outerCmd.Decorator != "@timeout" {
-		t.Errorf("Expected outer decorator '@timeout', got '%s'", outerCmd.Decorator)
+	if outerCmd.Decorator != "@exec.timeout" {
+		t.Errorf("Expected outer decorator '@exec.timeout', got '%s'", outerCmd.Decorator)
 	}
 
-	// ASSERT: @timeout block has 1 step (@retry)
+	// ASSERT: @exec.timeout block has 1 step (@exec.retry)
 	if len(outerCmd.Block) != 1 {
-		t.Fatalf("Expected 1 block step in @timeout, got %d", len(outerCmd.Block))
+		t.Fatalf("Expected 1 block step in @exec.timeout, got %d", len(outerCmd.Block))
 	}
 
-	// ASSERT: Inner decorator is @retry
+	// ASSERT: Inner decorator is @exec.retry
 	innerCmd, ok := outerCmd.Block[0].Tree.(*planfmt.CommandNode)
 	if !ok {
 		t.Fatalf("Expected inner CommandNode, got %T", outerCmd.Block[0].Tree)
 	}
-	if innerCmd.Decorator != "@retry" {
-		t.Errorf("Expected inner decorator '@retry', got '%s'", innerCmd.Decorator)
+	if innerCmd.Decorator != "@exec.retry" {
+		t.Errorf("Expected inner decorator '@exec.retry', got '%s'", innerCmd.Decorator)
 	}
 
-	// ASSERT: @retry block has 1 step (echo)
+	// ASSERT: @exec.retry block has 1 step (echo)
 	if len(innerCmd.Block) != 1 {
-		t.Fatalf("Expected 1 block step in @retry, got %d", len(innerCmd.Block))
+		t.Fatalf("Expected 1 block step in @exec.retry, got %d", len(innerCmd.Block))
 	}
 
 	echoCmd, ok := innerCmd.Block[0].Tree.(*planfmt.CommandNode)
@@ -167,13 +167,13 @@ func TestDecoratorBlock_NestedDecorators(t *testing.T) {
 	}
 
 	t.Logf("✓ Nested decorators structured correctly")
-	t.Logf("✓ @timeout → @retry → echo")
+	t.Logf("✓ @exec.timeout → @exec.retry → echo")
 }
 
 // TestDecoratorBlock_NoArguments verifies decorator blocks without arguments work.
 func TestDecoratorBlock_NoArguments(t *testing.T) {
 	source := `
-@parallel {
+@exec.parallel {
     echo "a"
     echo "b"
 }
@@ -191,9 +191,9 @@ func TestDecoratorBlock_NoArguments(t *testing.T) {
 
 	plan := result.Plan
 
-	// ASSERT: Should have 1 step (@parallel)
+	// ASSERT: Should have 1 step (@exec.parallel)
 	if len(plan.Steps) != 1 {
-		t.Fatalf("Expected 1 step (@parallel), got %d", len(plan.Steps))
+		t.Fatalf("Expected 1 step (@exec.parallel), got %d", len(plan.Steps))
 	}
 
 	cmd, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
@@ -201,14 +201,14 @@ func TestDecoratorBlock_NoArguments(t *testing.T) {
 		t.Fatalf("Expected CommandNode, got %T", plan.Steps[0].Tree)
 	}
 
-	// ASSERT: Decorator should be "@parallel"
-	if cmd.Decorator != "@parallel" {
-		t.Errorf("Expected decorator '@parallel', got '%s'", cmd.Decorator)
+	// ASSERT: Decorator should be "@exec.parallel"
+	if cmd.Decorator != "@exec.parallel" {
+		t.Errorf("Expected decorator '@exec.parallel', got '%s'", cmd.Decorator)
 	}
 
 	// ASSERT: Should have no arguments (or empty args)
 	if len(cmd.Args) != 0 {
-		t.Logf("Note: @parallel has %d args (expected 0, but may be OK)", len(cmd.Args))
+		t.Logf("Note: @exec.parallel has %d args (expected 0, but may be OK)", len(cmd.Args))
 	}
 
 	// ASSERT: Should have 2 block steps (echo "a", echo "b")
@@ -216,6 +216,6 @@ func TestDecoratorBlock_NoArguments(t *testing.T) {
 		t.Fatalf("Expected 2 block steps, got %d", len(cmd.Block))
 	}
 
-	t.Logf("✓ @parallel decorator created correctly")
+	t.Logf("✓ @exec.parallel decorator created correctly")
 	t.Logf("✓ Block contains %d steps", len(cmd.Block))
 }

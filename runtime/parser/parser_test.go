@@ -96,9 +96,9 @@ func TestDecoratorSink(t *testing.T) {
 		},
 		{
 			name:         "rejects non-sink decorator in redirect target",
-			input:        `echo "test" > @timeout(5s) { echo "inner" }`,
+			input:        `echo "test" > @exec.timeout(5s) { echo "inner" }`,
 			expectError:  true,
-			errorMessage: "@timeout does not support redirection",
+			errorMessage: "@exec.timeout does not support redirection",
 		},
 	}
 
@@ -607,10 +607,10 @@ func TestPipeOperatorValidation(t *testing.T) {
 	}{
 		{
 			name:  "pipe from decorator without stdout support",
-			input: `@timeout(5s) { echo "test" } | grep "pattern"`,
+			input: `@exec.timeout(5s) { echo "test" } | grep "pattern"`,
 			expectedError: &ParseError{
-				Position:   lexer.Position{Line: 1, Column: 30, Offset: 29},
-				Message:    "@timeout does not produce stdout",
+				Position:   lexer.Position{Line: 1, Column: 35, Offset: 34},
+				Message:    "@exec.timeout does not produce stdout",
 				Context:    "pipe operator",
 				Got:        lexer.PIPE,
 				Suggestion: "Only shell commands and decorators with stdout support can be piped from",
@@ -662,23 +662,23 @@ func TestRedirectOperatorValidation(t *testing.T) {
 	}{
 		{
 			name:  "redirect to decorator without block - syntax error first",
-			input: `echo "test" > @timeout(5s)`,
+			input: `echo "test" > @exec.timeout(5s)`,
 			expectedError: &ParseError{
-				Position:   lexer.Position{Line: 1, Column: 27, Offset: 26},
-				Message:    "@timeout requires a block",
+				Position:   lexer.Position{Line: 1, Column: 32, Offset: 31},
+				Message:    "@exec.timeout requires a block",
 				Context:    "decorator block",
 				Got:        lexer.EOF,
-				Suggestion: "Add a block: @timeout(...) { ... }",
+				Suggestion: "Add a block: @exec.timeout(...) { ... }",
 				Example:    "",
 				Note:       "",
 			},
 		},
 		{
 			name:  "redirect to decorator with block but no redirect support",
-			input: `echo "test" > @timeout(5s) { echo "inner" }`,
+			input: `echo "test" > @exec.timeout(5s) { echo "inner" }`,
 			expectedError: &ParseError{
 				Position:   lexer.Position{Line: 1, Column: 13, Offset: 12},
-				Message:    "@timeout does not support redirection",
+				Message:    "@exec.timeout does not support redirection",
 				Context:    "redirect operator",
 				Got:        lexer.GT,
 				Suggestion: "Only decorators with redirect support can be used as redirect targets",
@@ -813,11 +813,11 @@ func TestValueDecoratorRejectsBlock(t *testing.T) {
 // TestExecDecoratorAllowsBlock verifies execution decorators can take blocks
 func TestExecDecoratorAllowsBlock(t *testing.T) {
 	// @retry is an execution decorator - should work with blocks
-	input := `@retry(times=3) { echo "test" }`
+	input := `@exec.retry(times=3) { echo "test" }`
 	tree := ParseString(input)
 
 	if len(tree.Errors) != 0 {
-		t.Errorf("@retry should work with blocks, got errors: %v", tree.Errors)
+		t.Errorf("@exec.retry should work with blocks, got errors: %v", tree.Errors)
 	}
 }
 

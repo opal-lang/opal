@@ -142,18 +142,18 @@ func TestPipelineCancellationStopsAllCommands(t *testing.T) {
 }
 
 // TestNestedDecoratorCancellation verifies that cancellation propagates
-// through nested decorators (e.g., @retry { @timeout { @shell } }).
+// through nested decorators (e.g., @exec.retry { @exec.timeout { @shell } }).
 func TestNestedDecoratorCancellation(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// Nested decorators: @retry { @shell { sleep 10 } }
+	// Nested decorators: @exec.retry { @shell { sleep 10 } }
 	steps := []sdk.Step{{
 		ID: 1,
 		Tree: &sdk.CommandNode{
-			Name: "@retry",
+			Name: "@exec.retry",
 			Args: map[string]interface{}{
 				"times": int64(5),
 			},

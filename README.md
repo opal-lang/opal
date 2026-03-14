@@ -71,23 +71,23 @@ sigil deploy
 ## Basic Syntax
 
 ```sigil
-# Simple commands
+// Simple commands
 fun build = npm run build
 fun test = npm test
 
-# Typed metaprogramming contracts for reusable tasks
+// Typed metaprogramming contracts for reusable tasks
 fun deploy(env String, replicas Int = 3) {
     kubectl apply -f k8s/@var.env/
     kubectl scale deployment/app --replicas=@var.replicas
 }
 
-# Shell commands with operators
-fun rollout = {
+// Shell commands with operators
+fun rollout {
     kubectl apply -f k8s/ && kubectl rollout status deployment/app
 }
 
-# Multiple steps (newline-separated)
-fun migrate = {
+// Multiple steps (newline-separated)
+fun migrate {
     psql $DATABASE_URL -f migrations/001-users.sql
     psql $DATABASE_URL -f migrations/002-indexes.sql
 }
@@ -101,9 +101,9 @@ fun migrate = {
 - `@aws.secret.api_key` - External value lookups
 
 **Execution decorators** (enhance command execution):
-- `@retry(attempts=3) { ... }` - Retry failed operations
-- `@timeout(duration=5m) { ... }` - Timeout protection
-- `@parallel { ... }` - Concurrent execution
+- `@exec.retry(times=3) { ... }` - Retry failed operations
+- `@exec.timeout(duration=5m) { ... }` - Timeout protection
+- `@exec.parallel { ... }` - Concurrent execution
 
 ## Installation
 
@@ -133,7 +133,7 @@ nix run github:aledsdavies/sigil -- deploy --dry-run
 
 ### Web Application Deployment
 ```sigil
-fun deploy = {
+fun deploy {
     kubectl apply -f k8s/
     kubectl set image deployment/app app=$VERSION
     kubectl rollout status deployment/app
@@ -142,7 +142,7 @@ fun deploy = {
 
 ### Database Migration
 ```sigil
-fun migrate = {
+fun migrate {
     echo "Starting migration..."
     psql $DATABASE_URL -f migrations/001-users.sql
     psql $DATABASE_URL -f migrations/002-indexes.sql
@@ -179,7 +179,7 @@ cd runtime && go test ./...
 - Plan generation and contract verification
 
 **Planned**:
-- Complete execution decorators (`@retry`, `@timeout`, `@parallel`)
+- Complete execution decorators (`@exec.retry`, `@exec.timeout`, `@exec.parallel`)
 - Value decorators (`@env`, `@var`, `@aws.secret`)
 - Plugin system for custom decorators
 

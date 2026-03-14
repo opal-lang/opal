@@ -17,7 +17,7 @@ See `docs/GRAMMAR.md` for formal EBNF syntax.
 Sigil has two semantic layers.
 
 - **Metaprogramming layer**: `fun`, function calls, `var`, `if`, `for`, `when`
-- **Execution layer**: shell commands, pipes, redirects, and execution decorators such as `@retry`, `@timeout`, and `@parallel`
+- **Execution layer**: shell commands, pipes, redirects, and execution decorators such as `@exec.retry`, `@exec.timeout`, and `@exec.parallel`
 
 The metaprogramming layer builds a deterministic script structure. The execution layer performs the side effects.
 
@@ -201,7 +201,7 @@ Defining `fun` inside `if`, `for`, `when`, `try`, or decorator blocks fails pars
 fun greet(name String) = echo "hello @var.name"
 
 fun build(module String, target String = "dist") {
-    @workdir(@var.module) {
+    @fs.workdir(@var.module) {
         npm ci
         npm run build --output=@var.target
     }
@@ -287,7 +287,8 @@ build(module="cli")
 Parser disambiguation:
 
 - `name(...)` (no space before `(`) parses as a function call
-- `name (...)` parses as shell syntax
+- `name (...)` stays shell syntax for ordinary shell commands
+- if `name` is a known Sigil function, `name (...)` is rejected and the parser tells the author to remove the space before `(`
 
 ### 6.7 Expansion semantics
 
@@ -314,7 +315,7 @@ Decorators are namespaced operations invoked with `@`.
 
 ```sigil
 @env.PORT(default=3000)
-@retry(attempts=3, delay=2s) { kubectl rollout status deployment/app }
+@exec.retry(times=3, delay=2s) { kubectl rollout status deployment/app }
 ```
 
 Decorator name resolution uses a registry and prefers the longest registered path.
@@ -322,7 +323,7 @@ Decorator name resolution uses a registry and prefers the longest registered pat
 ## 7.1 Decorator categories
 
 - **Value decorators** return values for planning and substitution (`@var`, `@env`, secret/value providers)
-- **Execution decorators** wrap execution behavior (`@retry`, `@timeout`, `@parallel`, transport decorators)
+- **Execution decorators** wrap execution behavior (`@exec.retry`, `@exec.timeout`, `@exec.parallel`, transport decorators)
 
 ## 7.2 Decorator argument binding
 
@@ -356,11 +357,28 @@ Parser enforces that capability during syntax validation.
 
 Decorator references can appear in interpolated strings.
 
-When ASCII characters follow a decorator reference without spacing, use `()` to terminate the decorator name:
+Sigil supports two interpolation forms inside double-quoted and backtick strings:
+
+- simple inline form: `@var.name`, `@env.HOME`
+- explicit braced form: `@{var.name}`, `@{env.HOME}`
+
+`@{...}` is the full interpolation syntax. It explicitly bounds the interpolated reference and prevents following ASCII text from being parsed as part of the selector.
+
+Use the braced form when adjacent text should remain literal:
 
 ```sigil
-echo "@var.service()_backup"
+echo "@{var.service}_backup"
+echo "@{env.HOME}/bin"
 ```
+
+Unbraced interpolation remains valid for simple cases:
+
+```sigil
+echo "Deploying @var.service"
+echo `HOME=@env.HOME`
+```
+
+Unbraced references continue to consume the full identifier after the dot. For example, `@var.name_suffix` refers to `name_suffix`, not `name` plus `_suffix`.
 
 ## 7.5 `@shell` shell selection
 
@@ -473,9 +491,9 @@ Supported patterns include:
 - runtime executes `try` or `catch`
 - runtime executes `finally` after branch completion
 
-## 9.5 `@parallel`
+## 9.5 `@exec.parallel`
 
-`@parallel` runs branch blocks concurrently with isolation.
+`@exec.parallel` runs branch blocks concurrently with isolation.
 
 Branch guarantees:
 
@@ -721,14 +739,14 @@ kubectl scale deployment/@var.service --replicas=3
 Invalid:
 
 ```sigil
-@retry(attempts=3, attempts=5) { echo "x" }
+@exec.retry(times=3, times=5) { echo "x" }
 ```
 
 Valid:
 
 ```sigil
-@retry(3, delay=2s) { echo "x" }
-@retry(delay=2s, 3) { echo "x" }
+@exec.retry(3, delay=2s) { echo "x" }
+@exec.retry(delay=2s, 3) { echo "x" }
 ```
 
 ### 16.4 Missing decorator terminator inside string interpolation
@@ -742,7 +760,7 @@ echo "@var.name_suffix"
 Valid:
 
 ```sigil
-echo "@var.name()_suffix"
+echo "@{var.name}_suffix"
 ```
 
 ### 16.5 Non-deterministic value in resolved contract
@@ -765,7 +783,7 @@ var (
 )
 
 fun deploy_module(module String, replicas Int = 1) {
-    @retry(attempts=3, delay=5s) {
+    @exec.retry(times=3, delay=5s) {
         kubectl set image deployment/@var.module app=@var.version
         kubectl scale deployment/@var.module --replicas=@var.replicas
         kubectl rollout status deployment/@var.module --timeout=300s

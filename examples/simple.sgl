@@ -1,30 +1,34 @@
-# Simple example for testing plan generation
+// Simple example for testing plan generation
 
 fun hello = echo "Hello World!"
 
 fun test_chain = echo "first" && echo "second" || echo "fallback"
 
-fun test_decorators = @workdir("/tmp") {
-    echo "Testing in temp dir"
-    ls -la
+fun test_decorators {
+    @fs.workdir("/tmp") {
+        echo "Testing in temp dir"
+        ls -la
+    }
 }
 
-fun test_parallel = @parallel {
-    echo "Task A"
-    echo "Task B" 
-    echo "Task C"
+fun test_parallel {
+    @exec.parallel {
+        echo "Task A"
+        echo "Task B"
+        echo "Task C"
+    }
 }
 
 fun test_logs {
-    @log("Starting test sequence...")
+    echo "Starting test sequence..."
     echo "Running main command"
-    @log("Test complete!")
+    echo "Test complete!"
 }
 
-# Parameterized command example
-fun greet(name, greeting="Hello") = echo "@var.greeting, @var.name!"
+// Parameterized command example
+fun greet(name String, greeting String = "Hello") = echo "@var.greeting, @var.name!"
 
 fun demo {
-    @cmd.greet(name="World")
-    @cmd.greet(name="Opal", greeting="Welcome")
+    greet(name="World")
+    greet(name="Opal", greeting="Welcome")
 }

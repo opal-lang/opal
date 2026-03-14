@@ -783,7 +783,7 @@ func TestEmit_BlockScopeIsolation(t *testing.T) {
 				Kind:         StmtCommand,
 				CreatesScope: true,
 				Command: &CommandStmtIR{
-					Decorator: "@retry",
+					Decorator: "@exec.retry",
 					Args: []ArgIR{
 						{Name: "times", Value: &ExprIR{Kind: ExprLiteral, Value: 3}},
 					},

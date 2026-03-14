@@ -404,7 +404,7 @@ func TestE2EDecorator_Retry(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun flaky {
-    @retry(delay=100ms, times=3) {
+    @exec.retry(delay=100ms, times=3) {
         exit 1
     }
 }
@@ -417,7 +417,7 @@ func TestE2EDecorator_Timeout(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun slow {
-    @timeout(duration=200ms) {
+    @exec.timeout(duration=200ms) {
         sleep 1
     }
 }
@@ -433,7 +433,7 @@ func TestE2EDecorator_Parallel(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun concurrent {
-    @parallel {
+    @exec.parallel {
         echo "Task A"
         echo "Task B"
         echo "Task C"
@@ -483,7 +483,7 @@ func TestE2EDecorator_WorkdirVariableArgument(t *testing.T) {
 var module = %q
 
 fun show {
-	@workdir(@var.module) {
+	@fs.workdir(@var.module) {
 		cat marker.txt
 	}
 }
@@ -534,8 +534,8 @@ func TestE2EMeta_RetryTimeout(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun flaky {
-	@timeout(duration=2s) {
-		@retry(backoff="constant", delay=10ms, times=2) {
+	@exec.timeout(duration=2s) {
+		@exec.retry(backoff="constant", delay=10ms, times=2) {
 			echo "success"
 		}
 	}
@@ -549,9 +549,9 @@ func TestE2EMeta_ParallelWithRetry(t *testing.T) {
 	opalBin := buildE2EBinary(t)
 	testFile := createE2ETestFile(t, `
 fun multi {
-	@parallel {
-		@retry(delay=10ms, times=2) { echo "A" }
-		@retry(delay=10ms, times=2) { echo "B" }
+	@exec.parallel {
+		@exec.retry(delay=10ms, times=2) { echo "A" }
+		@exec.retry(delay=10ms, times=2) { echo "B" }
 	}
 }
 `)

@@ -15,6 +15,22 @@ func TestBuiltinDecoratorsRegistered(t *testing.T) {
 	if !decorator.Global().IsRegistered("env") {
 		t.Error("built-in decorator 'env' should be registered")
 	}
+
+	if !decorator.Global().IsRegistered("exec.retry") {
+		t.Error("built-in decorator 'exec.retry' should be registered")
+	}
+
+	if !decorator.Global().IsRegistered("exec.timeout") {
+		t.Error("built-in decorator 'exec.timeout' should be registered")
+	}
+
+	if !decorator.Global().IsRegistered("exec.parallel") {
+		t.Error("built-in decorator 'exec.parallel' should be registered")
+	}
+
+	if !decorator.Global().IsRegistered("fs.workdir") {
+		t.Error("built-in decorator 'fs.workdir' should be registered")
+	}
 }
 
 func TestUnknownDecoratorNotRegistered(t *testing.T) {

@@ -1,11 +1,12 @@
-@retry(2)
-fun retry_test = false
+@exec.retry(times=2) {
+    echo "retry"
+}
 
-@timeout("1s")
-fun timeout_test = sleep 10
+@exec.timeout(duration=1s) {
+    sleep 10
+}
 
-@parallel
-fun parallel_test = (
+@exec.parallel {
     echo "A"
     echo "B"
-)
+}

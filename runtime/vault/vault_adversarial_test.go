@@ -474,7 +474,7 @@ func TestAdversarial_SiteID_UniquePerSite(t *testing.T) {
 		"root/step-1/@shell[1]/params/command",
 		"root/step-1/@shell[0]/params/apiKey",
 		"root/step-2/@shell[0]/params/command",
-		"root/step-1/@retry[0]/params/command",
+		"root/step-1/@exec.retry[0]/params/command",
 	}
 
 	siteIDs := make(map[string]string)

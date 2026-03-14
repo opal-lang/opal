@@ -260,7 +260,7 @@ func BenchmarkWideTree(b *testing.B) {
 			{
 				ID: 1,
 				Tree: &planfmt.CommandNode{
-					Decorator: "@parallel",
+					Decorator: "@exec.parallel",
 					Block:     make([]planfmt.Step, 1000),
 				},
 			},
