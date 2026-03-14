@@ -76,16 +76,16 @@ func TestVault_PathTracking_MultipleInstances(t *testing.T) {
 func TestVault_PathTracking_NestedDecorators(t *testing.T) {
 	v := newVault()
 
-	// GIVEN: Nested decorators @retry -> @timeout -> @shell
-	v.push("@retry")
-	v.push("@timeout")
+	// GIVEN: Nested decorators @exec.retry -> @exec.timeout -> @shell
+	v.push("@exec.retry")
+	v.push("@exec.timeout")
 	v.push("@shell")
 
 	// WHEN: We build the site path
 	path := v.buildSitePath("command")
 
 	// THEN: Path should show full nesting
-	expected := "root/@retry[0]/@timeout[0]/@shell[0]/params/command"
+	expected := "root/@exec.retry[0]/@exec.timeout[0]/@shell[0]/params/command"
 	if path != expected {
 		t.Errorf("buildSitePath() = %q, want %q", path, expected)
 	}
@@ -109,7 +109,7 @@ func TestVault_PathTracking_MultipleDecoratorsAtSameLevel(t *testing.T) {
 	v.pop()
 
 	// A retry decorator
-	v.push("@retry")
+	v.push("@exec.retry")
 	path3 := v.buildSitePath("times")
 	v.pop()
 
@@ -117,7 +117,7 @@ func TestVault_PathTracking_MultipleDecoratorsAtSameLevel(t *testing.T) {
 	expected := []string{
 		"root/step-1/@shell[0]/params/command",
 		"root/step-1/@shell[1]/params/command",
-		"root/step-1/@retry[0]/params/times",
+		"root/step-1/@exec.retry[0]/params/times",
 	}
 
 	paths := []string{path1, path2, path3}
@@ -528,7 +528,7 @@ func TestVault_Access_RejectsUnauthorizedSite(t *testing.T) {
 
 	// WHEN: We try to access at different site (not authorized)
 	v.push("step-1")
-	v.push("@timeout")
+	v.push("@exec.timeout")
 	value, err := v.access(exprID, "duration")
 
 	// THEN: Should fail with authorization error
@@ -724,7 +724,7 @@ func TestVault_ScopeAwareVariables_ParentToChild(t *testing.T) {
 	exprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter a child scope
-	v.push("@retry")
+	v.push("@exec.retry")
 
 	// THEN: Child can lookup parent's variable
 	foundID, err := v.lookupVariable("COUNT")
@@ -744,7 +744,7 @@ func TestVault_ScopeAwareVariables_Shadowing(t *testing.T) {
 	rootExprID := v.DeclareVariable("COUNT", "5")
 
 	// WHEN: We enter child scope and shadow the variable
-	v.push("@retry")
+	v.push("@exec.retry")
 	childExprID := v.DeclareVariable("COUNT", "3")
 
 	// THEN: Child lookup should find child's value (shadows parent)
@@ -777,8 +777,8 @@ func TestVault_ScopeAwareVariables_NotFound(t *testing.T) {
 	v.DeclareVariable("EXISTS", "value")
 
 	// WHEN: We enter nested scopes and lookup non-existent variable
-	v.push("@retry")
-	v.push("@timeout")
+	v.push("@exec.retry")
+	v.push("@exec.timeout")
 
 	_, err := v.lookupVariable("DOES_NOT_EXIST")
 
@@ -798,10 +798,10 @@ func TestVault_ScopeAwareVariables_NestedScopes(t *testing.T) {
 	// GIVEN: Variables at different scope levels
 	aID := v.DeclareVariable("A", "1")
 
-	v.push("@retry")
+	v.push("@exec.retry")
 	bID := v.DeclareVariable("B", "2")
 
-	v.push("@timeout")
+	v.push("@exec.timeout")
 	cID := v.DeclareVariable("C", "3")
 
 	// WHEN: We lookup from deepest scope

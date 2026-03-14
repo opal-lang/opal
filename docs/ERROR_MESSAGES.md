@@ -8,6 +8,8 @@ summary: "Writing clear, actionable error messages for humans and machines"
 
 **Goal: Error messages should be so clear that users can fix the problem without reading documentation.**
 
+Examples in this document use canonical decorator namespaces for targeted execution decorators: `@exec.retry`, `@exec.timeout`, `@exec.parallel`, and `@fs.workdir`.
+
 **Audience**: Core developers, AI agents, and contributors writing error messages.
 
 ## Core Principles
@@ -44,7 +46,7 @@ summary: "Writing clear, actionable error messages for humans and machines"
 ### 3. Provide Actionable Suggestions
 
 **Show concrete, copy-pasteable fixes:**
-- ✅ `= try: @retry(times=3) { echo "test" }`
+- ✅ `= try: @exec.retry(times=3) { echo "test" }`
 - ❌ `= suggestion: use a valid integer value`
 
 **Use realistic values from schema constraints:**
@@ -54,9 +56,9 @@ summary: "Writing clear, actionable error messages for humans and machines"
 - For arrays: show 1-2 element example
 
 **Don't use placeholder values:**
-- ✅ `@retry(times=3)` (3 is valid and realistic)
-- ❌ `@retry(times=VALUE)` (placeholder, not actionable)
-- ❌ `@retry(times=42)` (random number, seems arbitrary)
+- ✅ `@exec.retry(times=3)` (3 is valid and realistic)
+- ❌ `@exec.retry(times=VALUE)` (placeholder, not actionable)
+- ❌ `@exec.retry(times=42)` (random number, seems arbitrary)
 
 ### 4. Add Context When Helpful
 
@@ -100,10 +102,10 @@ Error: <specific problem with types/constraints>
 Error: parameter 'times' expects integer between 1 and 100, got string "not_a_number"
   --> test.sgl:1:15
    |
- 1 | @retry(times="not_a_number") { echo "test" }
+ 1 | @exec.retry(times="not_a_number") { echo "test" }
    |               ^^^^^^^^^^^^^^ expected integer, found string
    |
-   = try: @retry(times=3) { echo "test" }
+   = try: @exec.retry(times=3) { echo "test" }
 ```
 
 #### Range Violation
@@ -111,10 +113,10 @@ Error: parameter 'times' expects integer between 1 and 100, got string "not_a_nu
 Error: parameter 'times' value 200 exceeds maximum of 100
   --> test.sgl:1:15
    |
- 1 | @retry(times=200) { echo "test" }
+ 1 | @exec.retry(times=200) { echo "test" }
    |               ^^^ must be between 1 and 100
    |
-   = try: @retry(times=10) { echo "test" }
+   = try: @exec.retry(times=10) { echo "test" }
 ```
 
 #### Invalid Enum Value
@@ -122,10 +124,10 @@ Error: parameter 'times' value 200 exceeds maximum of 100
 Error: parameter 'backoff' has invalid value "invalid"
   --> test.sgl:1:17
    |
- 1 | @retry(backoff="invalid") { echo "test" }
+ 1 | @exec.retry(backoff="invalid") { echo "test" }
    |                 ^^^^^^^^^ must be one of: linear, exponential, constant
    |
-   = try: @retry(backoff="exponential") { echo "test" }
+   = try: @exec.retry(backoff="exponential") { echo "test" }
 ```
 
 #### Missing Required Parameter
@@ -249,7 +251,7 @@ return fmt.Errorf(
 **Test complete error structure:**
 ```go
 func TestErrorMessage(t *testing.T) {
-    tree := Parse([]byte(`@retry(times=200) { echo "test" }`))
+    tree := Parse([]byte(`@exec.retry(times=200) { echo "test" }`))
     
     if len(tree.Errors) == 0 {
         t.Fatal("expected error")
@@ -262,7 +264,7 @@ func TestErrorMessage(t *testing.T) {
     assert.Contains(t, err.Message, "200")
     
     // Test suggestion is concrete and actionable
-    assert.Contains(t, err.Suggestion, "@retry(times=")
+    assert.Contains(t, err.Suggestion, "@exec.retry(times=")
     assert.NotContains(t, err.Suggestion, "VALUE") // No placeholders
     assert.NotContains(t, err.Suggestion, "42") // No arbitrary values
     
@@ -279,7 +281,7 @@ func TestErrorMessage(t *testing.T) {
 **Golden tests for formatted output:**
 ```go
 func TestErrorFormatting(t *testing.T) {
-    tree := Parse([]byte(`@retry(times=200) { echo "test" }`))
+    tree := Parse([]byte(`@exec.retry(times=200) { echo "test" }`))
     formatter := ErrorFormatter{Source: source}
     
     output := formatter.Format(tree.Errors[0])
@@ -317,23 +319,23 @@ Error: object field 'timeout' expects duration, got integer 300
 
 ### ✅ Concrete Suggestions
 ```
-= try: @retry(times=3) { echo "test" }
-= try: @retry(backoff="exponential") { echo "test" }
+= try: @exec.retry(times=3) { echo "test" }
+= try: @exec.retry(backoff="exponential") { echo "test" }
 = try: @config(settings={timeout: "5m"})
 ```
 
 ### ❌ Arbitrary Examples
 ```
-= try: @retry(times=42) { echo "test" }  // Why 42?
-= try: @retry(times=VALUE) { echo "test" }  // Placeholder
-= try: @retry(times=X) { echo "test" }  // Not actionable
+= try: @exec.retry(times=42) { echo "test" }  // Why 42?
+= try: @exec.retry(times=VALUE) { echo "test" }  // Placeholder
+= try: @exec.retry(times=X) { echo "test" }  // Not actionable
 ```
 
 ### ✅ Realistic Examples
 ```
-= try: @retry(times=3) { echo "test" }  // 3 is common for retries
-= try: @timeout(duration="5m") { ... }  // 5m is common timeout
-= try: @parallel(workers=4) { ... }  // 4 is common for CPU cores
+= try: @exec.retry(times=3) { echo "test" }  // 3 is common for retries
+= try: @exec.timeout(duration="5m") { ... }  // 5m is common timeout
+= try: @exec.parallel(maxConcurrency=4) { ... }  // 4 is common for CPU cores
 ```
 
 ## Error Code Reference
@@ -351,10 +353,10 @@ Error codes are stored in `ParseError.Code` for programmatic handling (LSP, tool
 Error: parameter 'times' expects integer between 1 and 100, got string
   --> test.sgl:3:15
    |
- 3 | @retry(times="not_a_number") {
+ 3 | @exec.retry(times="not_a_number") {
    |               ^^^^^^^^^^^^^^
    |
-   = try: @retry(times=50) { ... }
+   = try: @exec.retry(times=50) { ... }
 ```
 
 **Fields**:
@@ -374,10 +376,10 @@ Error: parameter 'times' expects integer between 1 and 100, got string
 Error: missing required parameter 'times'
   --> test.sgl:3:1
    |
- 3 | @retry {
+ 3 | @exec.retry {
    | ^^^^^^
    |
-   = try: @retry(times=3) { ... }
+   = try: @exec.retry(times=3) { ... }
 ```
 
 **Fields**:
@@ -397,7 +399,7 @@ Error: missing required parameter 'times'
 Error: parameter 'backoff' has invalid value "invalid"
   --> test.sgl:3:18
    |
- 3 | @retry(backoff="invalid") {
+ 3 | @exec.retry(backoff="invalid") {
    |                ^^^^^^^^^
    |
    = try: Use one of: "linear", "exponential", "constant"
@@ -443,7 +445,7 @@ Warning: parameter 'strategy' value "old_name" is deprecated
 Error: invalid value for parameter 'times'
   --> test.sgl:3:15
    |
- 3 | @retry(times=200) {
+ 3 | @exec.retry(times=200) {
    |               ^^^
    |
    = help: Value must be between 1 and 100
@@ -515,11 +517,11 @@ Error: invalid value for parameter 'endpoint'
 Error: invalid value for parameter 'times'
   --> test.sgl:3:15
    |
- 3 | @retry(times=3.5) {
+ 3 | @exec.retry(times=3.5) {
    |               ^^^
    |
    = help: Must be an integer (no decimal point)
-   = try: @retry(times=3)
+   = try: @exec.retry(times=3)
 ```
 
 **Fields**:

@@ -122,10 +122,10 @@ func TestDisplayPlan_NestedDecorator(t *testing.T) {
 			{
 				ID: 1,
 				Tree: &planfmt.CommandNode{
-					Decorator: "@retry",
+					Decorator: "@exec.retry",
 					Args: []planfmt.Arg{
 						{
-							Key: "max",
+							Key: "times",
 							Val: planfmt.Value{
 								Kind: planfmt.ValueInt,
 								Int:  3,
@@ -148,7 +148,7 @@ func TestDisplayPlan_NestedDecorator(t *testing.T) {
 
 	output := buf.String()
 	expected := `retry:
-└─ @retry max=3
+└─ @exec.retry times=3
    └─ @shell kubectl apply -f k8s/
 `
 

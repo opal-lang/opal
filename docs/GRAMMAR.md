@@ -11,7 +11,7 @@ Sigil is a script builder.
 Metaprogramming constructs shape an execution plan, and runtime constructs execute shell and decorator behavior.
 
 - Plan-time metaprogramming: `fun`, function calls, `var`, `if`, `for`, `when`
-- Runtime execution: shell commands and execution decorators (for example `@retry`, `@timeout`, `@parallel`)
+- Runtime execution: shell commands and execution decorators (for example `@exec.retry`, `@exec.timeout`, `@exec.parallel`)
 
 This document defines the language as authoritative grammar and syntax rules.
 
@@ -154,7 +154,8 @@ call_arg           = [identifier "="] expr ;
 
 Disambiguation rule:
 - `name(...)` (no space before `(`) parses as a function call statement.
-- `name (...)` parses as shell syntax.
+- `name (...)` stays shell syntax for ordinary shell commands.
+- When `name` is a known Sigil function, `name (...)` is rejected with a diagnostic that tells the author to remove the space before `(`.
 
 ### Control flow
 
@@ -250,11 +251,15 @@ object_field   = identifier ":" expr ;
 
 - Double-quoted and backtick strings allow decorator interpolation.
 - Single-quoted strings are literal and do not interpolate.
+- Inline interpolation can use unbraced decorator refs such as `@var.service` and `@env.HOME`.
+- `@{...}` is the explicit interpolation form and terminates the reference before following ASCII text.
+- Use braced interpolation when adjacent text would otherwise become part of the selector.
 
 Examples:
 
 ```sigil
 echo "Deploying @var.service"
+echo "Deploying @{var.service}_backup"
 echo '@var.service'
 echo `HOME=@env.HOME`
 ```

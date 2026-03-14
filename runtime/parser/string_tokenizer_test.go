@@ -131,6 +131,53 @@ func TestTokenizeString(t *testing.T) {
 				{Start: 0, End: 28, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // Entire string is literal
 			},
 		},
+		{
+			name:      "brace var interpolation with suffix",
+			content:   "Hello @{var.name}_suffix",
+			quoteType: '"',
+			expected: []StringPart{
+				{Start: 0, End: 6, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1},   // "Hello "
+				{Start: 8, End: 11, IsLiteral: false, PropertyStart: 12, PropertyEnd: 16}, // @{var.name}
+				{Start: 17, End: 24, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // "_suffix"
+			},
+		},
+		{
+			name:      "brace env interpolation with suffix",
+			content:   "Path @{env.HOME}/bin",
+			quoteType: '"',
+			expected: []StringPart{
+				{Start: 0, End: 5, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1},   // "Path "
+				{Start: 7, End: 10, IsLiteral: false, PropertyStart: 11, PropertyEnd: 15}, // @{env.HOME}
+				{Start: 16, End: 20, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // "/bin"
+			},
+		},
+		{
+			name:      "brace namespaced value decorator",
+			content:   "@{os.macOS}",
+			quoteType: '"',
+			expected: []StringPart{
+				{Start: 2, End: 10, IsLiteral: false, PropertyStart: -1, PropertyEnd: -1},
+			},
+		},
+		{
+			name:      "unbraced suffix remains property name",
+			content:   "Hello @var.name_suffix",
+			quoteType: '"',
+			expected: []StringPart{
+				{Start: 0, End: 6, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1},   // "Hello "
+				{Start: 7, End: 10, IsLiteral: false, PropertyStart: 11, PropertyEnd: 22}, // @var.name_suffix
+			},
+		},
+		{
+			name:      "unbraced var keeps dotted filename suffix literal",
+			content:   "Hello @var.NAME.tar.gz",
+			quoteType: '"',
+			expected: []StringPart{
+				{Start: 0, End: 6, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1},   // "Hello "
+				{Start: 7, End: 10, IsLiteral: false, PropertyStart: 11, PropertyEnd: 15}, // @var.NAME
+				{Start: 15, End: 22, IsLiteral: true, PropertyStart: -1, PropertyEnd: -1}, // ".tar.gz"
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -172,6 +219,27 @@ func TestTokenizeString(t *testing.T) {
 						t.Logf("  property: %q", propertyName)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestTokenizeString_HasMalformedBracedInterpolation(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "well formed var", content: "Hello @{var.name}", want: false},
+		{name: "missing closing brace", content: "Hello @{var.name", want: true},
+		{name: "path separator before brace", content: "Home @{env.HOME/path}", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasMalformedBracedInterpolation([]byte(tt.content))
+			if got != tt.want {
+				t.Fatalf("hasMalformedBracedInterpolation(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
 	}

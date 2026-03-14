@@ -131,10 +131,10 @@ These are the critical technical challenges that determine success or failure:
   - [ ] `@aws.auth(profile, region)` - AWS auth handles (can slip to v1.1)
 - [ ] **Execution decorators**: Work execution with observability **(RELEASE-BLOCKING)**
   - [ ] `@shell(command)` - Shell command execution **(RELEASE-BLOCKING)**
-  - [ ] `@retry(attempts, delay)` - Retry with backoff **(RELEASE-BLOCKING)**
-  - [ ] `@timeout(duration)` - Timeout protection **(RELEASE-BLOCKING)**
-  - [ ] `@parallel { ... }` - Concurrent execution (can slip to v1.1)
-  - [ ] `@workdir(path) { ... }` - Working directory scope (can slip to v1.1)
+  - [ ] `@exec.retry(times, delay)` - Retry with backoff **(RELEASE-BLOCKING)**
+  - [ ] `@exec.timeout(duration)` - Timeout protection **(RELEASE-BLOCKING)**
+  - [ ] `@exec.parallel { ... }` - Concurrent execution (can slip to v1.1)
+  - [ ] `@fs.workdir(path) { ... }` - Working directory scope (can slip to v1.1)
   - [ ] `@log(message, level)` - Structured logging **(RELEASE-BLOCKING)**
 - [ ] **Cloud decorators** (8-12 first-party, at least 6 for v1.0):
   - [ ] `@k8s.exec(pod, command)` - Kubernetes pod execution **(RELEASE-BLOCKING)**
@@ -228,7 +228,7 @@ These are the critical technical challenges that determine success or failure:
 - **Binary compilation**: Embed source + runtime for air-gapped deployment
 - **REPL**: Interactive mode with history, completion, plan preview
 - **Formatter**: Idempotent code formatting (preserve semantics, normalize style)
-- **Advanced decorators**: `@parallel`, `@workdir`, `@postgres.query`, `@aws.*`
+- **Advanced decorators**: `@exec.parallel`, `@fs.workdir`, `@postgres.query`, `@aws.*`
 - **LSP server**: Full language server protocol implementation
 - **Plugin API**: Third-party decorator registration
 

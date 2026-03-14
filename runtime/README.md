@@ -40,7 +40,7 @@ This module contains the runtime infrastructure that powers sigil execution:
 ### Decorator System
 The runtime provides a unified decorator system where:
 - **Value decorators** expand inline (e.g., `@var.name`, `@env.PORT`)
-- **Execution decorators** wrap command blocks (e.g., `@timeout{}`, `@retry{}`, `@parallel{}`)
+- **Execution decorators** wrap command blocks (e.g., `@exec.timeout {}`, `@exec.retry {}`, `@exec.parallel {}`)
 
 ## Usage
 

@@ -49,7 +49,7 @@ func TestPlanValidation(t *testing.T) {
 					{
 						ID: 1,
 						Tree: &planfmt.CommandNode{
-							Decorator: "@retry",
+							Decorator: "@exec.retry",
 							Block: []planfmt.Step{
 								{
 									ID:   2,

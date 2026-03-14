@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `@workdir` execution decorator for block-scoped working directory changes with parallel-safe session isolation
 - Fixed parser support for decorator-valued decorator arguments such as `@workdir(@var.module)`
 
+### 2026-03-13
+- **Breaking**: Moved root execution decorators to canonical namespaces (`@exec.retry`, `@exec.timeout`, `@exec.parallel`) and moved `@workdir` to `@fs.workdir`
+
 ### 2026-03-02
 - **Breaking**: Changed DisplayID placeholder prefix from `opal:` to `sigil:` across planning, execution, and contract formatting
 - Expanded CLI E2E coverage by enabling previously deferred timeout, for-loop, and decorator-composition scenarios

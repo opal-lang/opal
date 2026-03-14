@@ -126,9 +126,28 @@ func TestBuildValueCall_WithSelectorAndArgs(t *testing.T) {
 	}
 }
 
+func TestBuildValueCall_PreservesDottedPrimarySelector(t *testing.T) {
+	call, err := buildValueCall(&DecoratorRef{
+		Name:     "env",
+		Selector: []string{"HOME.tar.gz"},
+	}, func(name string) (any, bool) {
+		return nil, false
+	})
+	if err != nil {
+		t.Fatalf("buildValueCall failed: %v", err)
+	}
+
+	if call.Primary == nil {
+		t.Fatal("Primary should be set")
+	}
+	if diff := cmp.Diff("HOME.tar.gz", *call.Primary); diff != "" {
+		t.Errorf("Primary mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildValueCall_CanonicalizesNamedAndPositionalKeys(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
-		Name: "retry",
+		Name: "exec.retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
 			{Kind: ExprLiteral, Value: "3s"},
@@ -155,7 +174,7 @@ func TestBuildValueCall_CanonicalizesNamedAndPositionalKeys(t *testing.T) {
 
 func TestBuildValueCall_UsesPositionalWhenArgNameMissing(t *testing.T) {
 	call, err := buildValueCall(&DecoratorRef{
-		Name: "retry",
+		Name: "exec.retry",
 		Args: []*ExprIR{
 			{Kind: ExprLiteral, Value: int64(2)},
 		},

@@ -9,13 +9,13 @@ import (
 	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
-// RetryDecorator implements the @retry execution decorator.
+// RetryDecorator implements the @exec.retry execution decorator.
 // Retries failed operations with configurable backoff strategy.
 type RetryDecorator struct{}
 
 // Descriptor returns the decorator metadata.
 func (d *RetryDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("retry").
+	return decorator.NewDescriptor("exec.retry").
 		Summary("Retry failed operations with exponential backoff").
 		Roles(decorator.RoleWrapper).
 		ParamInt("times", "Number of retry attempts").
@@ -137,9 +137,9 @@ func waitContext(ctx context.Context, wait time.Duration) error {
 	}
 }
 
-// Register @retry decorator with the global registry
+// Register @exec.retry decorator with the global registry
 func init() {
-	if err := decorator.Register("retry", &RetryDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @retry decorator: %v", err))
+	if err := decorator.Register("exec.retry", &RetryDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @exec.retry decorator: %v", err))
 	}
 }

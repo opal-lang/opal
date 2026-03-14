@@ -7,9 +7,9 @@ import (
 
 // TestSchemaValidation_IntegerRange tests integer min/max validation
 func TestSchemaValidation_IntegerRange(t *testing.T) {
-	// @retry has times parameter with min=1, max=100
+	// @exec.retry has times parameter with min=1, max=100
 	// Test value above max
-	source := `@retry(times=200) { echo "test" }`
+	source := `@exec.retry(times=200) { echo "test" }`
 	tree := Parse([]byte(source))
 
 	if len(tree.Errors) == 0 {
@@ -27,7 +27,7 @@ func TestSchemaValidation_IntegerRange(t *testing.T) {
 
 // TestSchemaValidation_ValidInteger tests that valid integers pass
 func TestSchemaValidation_ValidInteger(t *testing.T) {
-	source := `@retry(times=3) { echo "test" }`
+	source := `@exec.retry(times=3) { echo "test" }`
 	tree := Parse([]byte(source))
 
 	if len(tree.Errors) > 0 {
@@ -37,8 +37,8 @@ func TestSchemaValidation_ValidInteger(t *testing.T) {
 
 // TestSchemaValidation_IntegerMax tests integer maximum validation
 func TestSchemaValidation_IntegerMax(t *testing.T) {
-	// @retry has times parameter with max=100
-	source := `@retry(times=150) { echo "test" }`
+	// @exec.retry has times parameter with max=100
+	source := `@exec.retry(times=150) { echo "test" }`
 	tree := Parse([]byte(source))
 
 	if len(tree.Errors) == 0 {
@@ -60,12 +60,12 @@ func TestSchemaValidation_EnumValues(t *testing.T) {
 	}{
 		{
 			name:      "valid_enum",
-			source:    `@retry(backoff="exponential") { echo "test" }`,
+			source:    `@exec.retry(backoff="exponential") { echo "test" }`,
 			wantError: false,
 		},
 		{
 			name:      "invalid_enum",
-			source:    `@retry(backoff="invalid") { echo "test" }`,
+			source:    `@exec.retry(backoff="invalid") { echo "test" }`,
 			wantError: true,
 		},
 	}
@@ -197,17 +197,17 @@ func TestSchemaValidation_ErrorCodes(t *testing.T) {
 	}{
 		{
 			name:          "type_mismatch",
-			source:        `@retry(times="not_a_number") { echo "test" }`,
+			source:        `@exec.retry(times="not_a_number") { echo "test" }`,
 			wantErrorCode: ErrorCodeSchemaTypeMismatch,
 		},
 		{
 			name:          "range_violation",
-			source:        `@retry(times=200) { echo "test" }`,
+			source:        `@exec.retry(times=200) { echo "test" }`,
 			wantErrorCode: ErrorCodeSchemaRangeViolation,
 		},
 		{
 			name:          "enum_invalid",
-			source:        `@retry(backoff="invalid") { echo "test" }`,
+			source:        `@exec.retry(backoff="invalid") { echo "test" }`,
 			wantErrorCode: ErrorCodeSchemaEnumInvalid,
 		},
 		// Note: required_missing test skipped - no good test decorator with required params

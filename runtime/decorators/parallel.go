@@ -9,13 +9,13 @@ import (
 	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
-// ParallelDecorator implements the @parallel execution decorator.
+// ParallelDecorator implements the @exec.parallel execution decorator.
 // Executes tasks in parallel with optional concurrency limit.
 type ParallelDecorator struct{}
 
 // Descriptor returns the decorator metadata.
 func (d *ParallelDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("parallel").
+	return decorator.NewDescriptor("exec.parallel").
 		Summary("Execute tasks in parallel").
 		Roles(decorator.RoleWrapper).
 		ParamInt("maxConcurrency", "Maximum concurrent tasks (0=unlimited)").
@@ -153,9 +153,9 @@ func (n *parallelNode) Execute(ctx decorator.ExecContext) (decorator.Result, err
 	return decorator.Result{ExitCode: 0}, nil
 }
 
-// Register @parallel decorator with the global registry
+// Register @exec.parallel decorator with the global registry
 func init() {
-	if err := decorator.Register("parallel", &ParallelDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @parallel decorator: %v", err))
+	if err := decorator.Register("exec.parallel", &ParallelDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @exec.parallel decorator: %v", err))
 	}
 }

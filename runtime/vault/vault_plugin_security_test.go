@@ -121,7 +121,7 @@ func TestPluginSecurity_PathStackManipulation_AffectsSite(t *testing.T) {
 	site1 := v.buildSitePathLocked("command")
 
 	// Nested decorator gets different site path
-	v.push("@retry")
+	v.push("@exec.retry")
 	v.recordReference(exprID, "command")
 	site2 := v.buildSitePathLocked("command")
 
@@ -149,13 +149,13 @@ func TestPluginSecurity_PathStackManipulation_AffectsSite(t *testing.T) {
 		t.Errorf("Access at site 1 = %q, want %q", value1, "secret-value")
 	}
 
-	// Reset to get same instance index for second @retry
+	// Reset to get same instance index for second @exec.retry
 	v.pop() // Pop @shell
 	v.pop() // Pop step-1
 	v.resetCounts()
 	v.push("step-1")
 	v.push("@shell")
-	v.push("@retry")
+	v.push("@exec.retry")
 	value2, err2 := v.access(exprID, "command")
 	if err2 != nil {
 		t.Errorf("Access at site 2 should succeed, got error: %v", err2)
@@ -187,13 +187,13 @@ func TestPluginSecurity_MultipleDecorators_IndependentAuthorization(t *testing.T
 		t.Errorf("@shell access() = %q, want %q", value, "secret-value")
 	}
 
-	// @timeout not authorized yet
+	// @exec.timeout not authorized yet
 	v.pop()
-	v.push("@timeout")
+	v.push("@exec.timeout")
 	value, err = v.access(exprID, "duration")
 
 	if err == nil {
-		t.Fatal("@timeout should NOT access @shell's secret (not authorized)")
+		t.Fatal("@exec.timeout should NOT access @shell's secret (not authorized)")
 	}
 	if value != nil {
 		t.Errorf("access() should return nil on error, got %q", value)
@@ -202,14 +202,14 @@ func TestPluginSecurity_MultipleDecorators_IndependentAuthorization(t *testing.T
 		t.Errorf("Error should mention 'no authority', got: %v", err)
 	}
 
-	// After authorization, @timeout can access
+	// After authorization, @exec.timeout can access
 	v.recordReference(exprID, "duration")
 	value, err = v.access(exprID, "duration")
 	if err != nil {
-		t.Errorf("@timeout should access after authorization, got error: %v", err)
+		t.Errorf("@exec.timeout should access after authorization, got error: %v", err)
 	}
 	if value != "secret-value" {
-		t.Errorf("@timeout access() = %q, want %q", value, "secret-value")
+		t.Errorf("@exec.timeout access() = %q, want %q", value, "secret-value")
 	}
 }
 

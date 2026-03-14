@@ -8,13 +8,13 @@ import (
 	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
-// TimeoutDecorator implements the @timeout execution decorator.
+// TimeoutDecorator implements the @exec.timeout execution decorator.
 // Executes block with a timeout constraint.
 type TimeoutDecorator struct{}
 
 // Descriptor returns the decorator metadata.
 func (d *TimeoutDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("timeout").
+	return decorator.NewDescriptor("exec.timeout").
 		Summary("Execute block with timeout constraint").
 		Roles(decorator.RoleWrapper).
 		ParamDuration("duration", "Maximum execution time").
@@ -56,7 +56,7 @@ func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 	}
 
 	if cfg.Duration <= 0 {
-		return decorator.Result{ExitCode: decorator.ExitFailure}, fmt.Errorf("@timeout duration must be > 0")
+		return decorator.Result{ExitCode: decorator.ExitFailure}, fmt.Errorf("@exec.timeout duration must be > 0")
 	}
 
 	parent := ctx.Context
@@ -75,9 +75,9 @@ func (n *timeoutNode) Execute(ctx decorator.ExecContext) (decorator.Result, erro
 	return result, execErr
 }
 
-// Register @timeout decorator with the global registry
+// Register @exec.timeout decorator with the global registry
 func init() {
-	if err := decorator.Register("timeout", &TimeoutDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @timeout decorator: %v", err))
+	if err := decorator.Register("exec.timeout", &TimeoutDecorator{}); err != nil {
+		panic(fmt.Sprintf("failed to register @exec.timeout decorator: %v", err))
 	}
 }

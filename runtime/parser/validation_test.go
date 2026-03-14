@@ -190,12 +190,12 @@ func TestValidateEnvInRemoteTransport(t *testing.T) {
 			reason:    "@env is allowed outside transport-switching decorators",
 		},
 		{
-			name: "@retry allowed in non-transport decorator",
-			input: `@retry(attempts=3) {
+			name: "@exec.retry allowed in non-transport decorator",
+			input: `@exec.retry(times=3) {
 				var home = @env.HOME
 			}`,
 			shouldErr: false,
-			reason:    "@retry doesn't switch transport, so @env is allowed",
+			reason:    "@exec.retry doesn't switch transport, so @env is allowed",
 		},
 		{
 			name: "shell variables allowed everywhere",

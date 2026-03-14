@@ -12,7 +12,7 @@ import (
 
 // Block Scoping Tests
 //
-// These tests verify that execution decorator blocks (@retry, @timeout, @parallel, etc.)
+// These tests verify that execution decorator blocks (@exec.retry, @exec.timeout, @exec.parallel, etc.)
 // create isolated scopes where:
 // 1. Variables declared inside blocks are scoped to that block
 // 2. Mutations inside blocks do NOT leak to outer scope
@@ -25,11 +25,11 @@ import (
 // ========== Basic Isolated Scope Tests ==========
 
 // TestVarBlockScoping_ExecutionDecorator_IsolatedScope tests that
-// execution decorator blocks (@retry, @timeout, etc.) create isolated scopes.
+// execution decorator blocks (@exec.retry, @exec.timeout, etc.) create isolated scopes.
 func TestVarBlockScoping_ExecutionDecorator_IsolatedScope(t *testing.T) {
 	source := `
 var COUNT = "5"
-@retry {
+@exec.retry {
     var COUNT = "3"
     echo "@var.COUNT"
 }
@@ -50,23 +50,23 @@ echo "@var.COUNT"
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (@retry decorator + outer echo)
+	// ASSERT: Should have 2 steps (@exec.retry decorator + outer echo)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
 
-	// ASSERT: First echo (inside @retry) should use COUNT=3
-	// ASSERT: Second echo (outside @retry) should use COUNT=5
+	// ASSERT: First echo (inside @exec.retry) should use COUNT=3
+	// ASSERT: Second echo (outside @exec.retry) should use COUNT=5
 	// They should have DIFFERENT DisplayIDs
 
-	// First step is @retry decorator with block
+	// First step is @exec.retry decorator with block
 	retryStep := plan.Steps[0]
 	retryCmd, ok := retryStep.Tree.(*planfmt.CommandNode)
-	if !ok || retryCmd.Decorator != "@retry" {
-		t.Fatalf("Expected first step to be @retry, got %T with decorator %v", retryStep.Tree, retryCmd)
+	if !ok || retryCmd.Decorator != "@exec.retry" {
+		t.Fatalf("Expected first step to be @exec.retry, got %T with decorator %v", retryStep.Tree, retryCmd)
 	}
 	if len(retryCmd.Block) != 1 {
-		t.Fatalf("Expected @retry block to have 1 step, got %d", len(retryCmd.Block))
+		t.Fatalf("Expected @exec.retry block to have 1 step, got %d", len(retryCmd.Block))
 	}
 
 	firstCommand := getCommandString(retryCmd.Block[0])
@@ -95,8 +95,8 @@ echo "@var.COUNT"
 		t.Errorf("Expected 2 SecretUses (both COUNT values touched), got %d", len(plan.SecretUses))
 	}
 
-	t.Logf("✓ First echo (inside @retry):  %s", firstCommand)
-	t.Logf("✓ Second echo (outside @retry): %s", secondCommand)
+	t.Logf("✓ First echo (inside @exec.retry):  %s", firstCommand)
+	t.Logf("✓ Second echo (outside @exec.retry): %s", secondCommand)
 	t.Logf("✓ Different DisplayIDs confirm isolated scopes")
 }
 
@@ -104,7 +104,7 @@ echo "@var.COUNT"
 // declared inside execution decorator blocks don't leak to outer scope.
 func TestVarBlockScoping_ExecutionDecorator_NoLeakage(t *testing.T) {
 	source := `
-@retry {
+@exec.retry {
     var SECRET = "inside"
 }
 echo "@var.SECRET"
@@ -134,7 +134,7 @@ echo "@var.SECRET"
 		t.Errorf("Error should mention 'undefined variable', got: %v", err)
 	}
 
-	t.Logf("✓ Variable declared in @retry block correctly doesn't leak: %v", err)
+	t.Logf("✓ Variable declared in @exec.retry block correctly doesn't leak: %v", err)
 }
 
 // TestVarBlockScoping_ExecutionDecorator_ParentReadable tests that
@@ -142,7 +142,7 @@ echo "@var.SECRET"
 func TestVarBlockScoping_ExecutionDecorator_ParentReadable(t *testing.T) {
 	source := `
 var API_KEY = "parent-key"
-@retry {
+@exec.retry {
     echo "@var.API_KEY"
 }
 `
@@ -166,7 +166,7 @@ var API_KEY = "parent-key"
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}
 
-	// ASSERT: Echo inside @retry should use parent's API_KEY
+	// ASSERT: Echo inside @exec.retry should use parent's API_KEY
 	command := getCommandString(plan.Steps[0])
 	if !strings.Contains(command, "sigil:") {
 		t.Errorf("Command should contain DisplayID, got: %s", command)
@@ -177,7 +177,7 @@ var API_KEY = "parent-key"
 		t.Errorf("Expected 1 SecretUse (API_KEY), got %d", len(plan.SecretUses))
 	}
 
-	t.Logf("✓ Parent variable accessible in @retry block: %s", command)
+	t.Logf("✓ Parent variable accessible in @exec.retry block: %s", command)
 }
 
 // ========== Nested Blocks Tests ==========
@@ -187,9 +187,9 @@ var API_KEY = "parent-key"
 func TestVarBlockScoping_NestedExecutionDecorators(t *testing.T) {
 	source := `
 var COUNT = "5"
-@retry {
+@exec.retry {
     var COUNT = "3"
-    @timeout(duration=5s) {
+    @exec.timeout(duration=5s) {
         var COUNT = "1"
         echo "@var.COUNT"
     }
@@ -212,33 +212,33 @@ echo "@var.COUNT"
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (@retry decorator + outer echo)
+	// ASSERT: Should have 2 steps (@exec.retry decorator + outer echo)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
 
 	// Navigate the tree structure:
-	// Step 0: @retry { @timeout { echo COUNT=1 }; echo COUNT=3 }
+	// Step 0: @exec.retry { @exec.timeout { echo COUNT=1 }; echo COUNT=3 }
 	// Step 1: echo COUNT=5
 
 	retryCmd := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if retryCmd.Decorator != "@retry" {
-		t.Fatalf("Expected @retry decorator, got %s", retryCmd.Decorator)
+	if retryCmd.Decorator != "@exec.retry" {
+		t.Fatalf("Expected @exec.retry decorator, got %s", retryCmd.Decorator)
 	}
 
-	// Inside @retry: @timeout block and echo COUNT=3
+	// Inside @exec.retry: @exec.timeout block and echo COUNT=3
 	if len(retryCmd.Block) != 2 {
-		t.Fatalf("Expected @retry to have 2 steps, got %d", len(retryCmd.Block))
+		t.Fatalf("Expected @exec.retry to have 2 steps, got %d", len(retryCmd.Block))
 	}
 
 	timeoutCmd := retryCmd.Block[0].Tree.(*planfmt.CommandNode)
-	if timeoutCmd.Decorator != "@timeout" {
-		t.Fatalf("Expected @timeout decorator, got %s", timeoutCmd.Decorator)
+	if timeoutCmd.Decorator != "@exec.timeout" {
+		t.Fatalf("Expected @exec.timeout decorator, got %s", timeoutCmd.Decorator)
 	}
 
-	// Inside @timeout: echo COUNT=1
+	// Inside @exec.timeout: echo COUNT=1
 	if len(timeoutCmd.Block) != 1 {
-		t.Fatalf("Expected @timeout to have 1 step, got %d", len(timeoutCmd.Block))
+		t.Fatalf("Expected @exec.timeout to have 1 step, got %d", len(timeoutCmd.Block))
 	}
 
 	// ASSERT: Innermost echo uses COUNT=1
@@ -276,13 +276,13 @@ echo "@var.COUNT"
 // execution decorator types all create isolated scopes.
 func TestVarBlockScoping_DifferentDecoratorTypes(t *testing.T) {
 	source := `
-@retry {
+@exec.retry {
     var A = "retry-scope"
 }
-@timeout(duration=5s) {
+@exec.timeout(duration=5s) {
     var B = "timeout-scope"
 }
-@parallel {
+@exec.parallel {
     var C = "parallel-scope"
 }
 echo "@var.A @var.B @var.C"
@@ -315,11 +315,11 @@ echo "@var.A @var.B @var.C"
 // execution decorator blocks don't interfere.
 func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 	source := `
-@retry {
+@exec.retry {
     var COUNT = "3"
     echo "@var.COUNT"
 }
-@retry {
+@exec.retry {
     var COUNT = "7"
     echo "@var.COUNT"
 }
@@ -339,7 +339,7 @@ func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (2 @retry decorators)
+	// ASSERT: Should have 2 steps (2 @exec.retry decorators)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
@@ -348,7 +348,7 @@ func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 	// ASSERT: Second echo uses COUNT=7
 	// Different DisplayIDs (independent scopes)
 
-	// Both steps are @retry blocks, navigate into them
+	// Both steps are @exec.retry blocks, navigate into them
 	firstCommand := getCommandString(plan.Steps[0])
 	secondCommand := getCommandString(plan.Steps[1])
 
@@ -362,8 +362,8 @@ func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 		t.Errorf("Second: %s", secondCommand)
 	}
 
-	t.Logf("✓ First @retry block (COUNT=3):  %s", firstCommand)
-	t.Logf("✓ Second @retry block (COUNT=7): %s", secondCommand)
+	t.Logf("✓ First @exec.retry block (COUNT=3):  %s", firstCommand)
+	t.Logf("✓ Second @exec.retry block (COUNT=7): %s", secondCommand)
 }
 
 // ========== Edge Cases ==========
@@ -372,7 +372,7 @@ func TestVarBlockScoping_SiblingExecutionDecorators(t *testing.T) {
 // no-hoisting rule applies inside execution decorator blocks.
 func TestVarBlockScoping_NoHoisting_InExecutionDecorator(t *testing.T) {
 	source := `
-@retry {
+@exec.retry {
     echo "@var.SECRET"
     var SECRET = "value"
 }
@@ -397,7 +397,7 @@ func TestVarBlockScoping_NoHoisting_InExecutionDecorator(t *testing.T) {
 		t.Errorf("Error should mention 'SECRET', got: %v", err)
 	}
 
-	t.Logf("✓ No-hoisting rule applies in @retry block: %v", err)
+	t.Logf("✓ No-hoisting rule applies in @exec.retry block: %v", err)
 }
 
 // TestVarBlockScoping_EmptyExecutionDecorator tests that empty
@@ -405,7 +405,7 @@ func TestVarBlockScoping_NoHoisting_InExecutionDecorator(t *testing.T) {
 func TestVarBlockScoping_EmptyExecutionDecorator(t *testing.T) {
 	source := `
 var COUNT = "5"
-@retry {
+@exec.retry {
 }
 echo "@var.COUNT"
 `
@@ -424,18 +424,18 @@ echo "@var.COUNT"
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (empty @retry + echo command)
+	// ASSERT: Should have 2 steps (empty @exec.retry + echo command)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
 
-	// ASSERT: First step is empty @retry block
+	// ASSERT: First step is empty @exec.retry block
 	retryCmd := plan.Steps[0].Tree.(*planfmt.CommandNode)
-	if retryCmd.Decorator != "@retry" {
-		t.Fatalf("Expected @retry decorator, got %s", retryCmd.Decorator)
+	if retryCmd.Decorator != "@exec.retry" {
+		t.Fatalf("Expected @exec.retry decorator, got %s", retryCmd.Decorator)
 	}
 	if len(retryCmd.Block) != 0 {
-		t.Errorf("Expected empty @retry block, got %d steps", len(retryCmd.Block))
+		t.Errorf("Expected empty @exec.retry block, got %d steps", len(retryCmd.Block))
 	}
 
 	// ASSERT: Second step is echo using COUNT=5 (parent scope)
@@ -444,7 +444,7 @@ echo "@var.COUNT"
 		t.Errorf("Command should contain DisplayID, got: %s", command)
 	}
 
-	t.Logf("✓ Empty @retry block doesn't affect parent scope: %s", command)
+	t.Logf("✓ Empty @exec.retry block doesn't affect parent scope: %s", command)
 }
 
 // TestVarBlockScoping_MultipleVariables_InExecutionDecorator tests
@@ -453,7 +453,7 @@ func TestVarBlockScoping_MultipleVariables_InExecutionDecorator(t *testing.T) {
 	source := `
 var A = "outer-a"
 var B = "outer-b"
-@retry {
+@exec.retry {
     var A = "inner-a"
     var C = "inner-c"
     echo "@var.A @var.B @var.C"
@@ -475,7 +475,7 @@ echo "@var.A @var.B"
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (@retry decorator + outer echo)
+	// ASSERT: Should have 2 steps (@exec.retry decorator + outer echo)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
@@ -484,7 +484,7 @@ echo "@var.A @var.B"
 	// ASSERT: Second echo: A=outer-a (restored), B=outer-b
 	// C not accessible outside block (would need third echo to test, but we can verify via SecretUses)
 
-	// First step is @retry block, navigate into it
+	// First step is @exec.retry block, navigate into it
 	firstCommand := getCommandString(plan.Steps[0])
 	secondCommand := getCommandString(plan.Steps[1])
 
@@ -503,8 +503,8 @@ echo "@var.A @var.B"
 	// A should have different DisplayID in first vs second command (shadowed then restored)
 	// B should have same DisplayID in both commands (inherited)
 
-	t.Logf("✓ First echo (inside @retry):  %s", firstCommand)
-	t.Logf("✓ Second echo (outside @retry): %s", secondCommand)
+	t.Logf("✓ First echo (inside @exec.retry):  %s", firstCommand)
+	t.Logf("✓ Second echo (outside @exec.retry): %s", secondCommand)
 }
 
 // ========== Stress Tests ==========
@@ -514,7 +514,7 @@ func TestVarBlockScoping_InFunction(t *testing.T) {
 	source := `
 fun test {
     var COUNT = "5"
-    @retry {
+    @exec.retry {
         var COUNT = "3"
         echo "@var.COUNT"
     }
@@ -536,16 +536,16 @@ fun test {
 
 	plan := result.Plan
 
-	// ASSERT: Should have 2 steps (@retry decorator + outer echo)
+	// ASSERT: Should have 2 steps (@exec.retry decorator + outer echo)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("Expected 2 steps, got %d", len(plan.Steps))
 	}
 
-	// ASSERT: First echo (inside @retry) should use COUNT=3
-	// ASSERT: Second echo (outside @retry) should use COUNT=5
+	// ASSERT: First echo (inside @exec.retry) should use COUNT=3
+	// ASSERT: Second echo (outside @exec.retry) should use COUNT=5
 	// They should have DIFFERENT DisplayIDs
 
-	// First step is @retry block, navigate into it
+	// First step is @exec.retry block, navigate into it
 	firstCommand := getCommandString(plan.Steps[0])
 	secondCommand := getCommandString(plan.Steps[1])
 
@@ -571,8 +571,8 @@ fun test {
 		t.Errorf("Expected 2 SecretUses (both COUNT values touched), got %d", len(plan.SecretUses))
 	}
 
-	t.Logf("✓ First echo (inside @retry):  %s", firstCommand)
-	t.Logf("✓ Second echo (outside @retry): %s", secondCommand)
+	t.Logf("✓ First echo (inside @exec.retry):  %s", firstCommand)
+	t.Logf("✓ Second echo (outside @exec.retry): %s", secondCommand)
 	t.Logf("✓ Function decorator blocks work correctly")
 }
 
@@ -581,11 +581,11 @@ fun test {
 func TestVarBlockScoping_DeeplyNested(t *testing.T) {
 	source := `
 var COUNT = "5"
-@retry {
-    @parallel {
-        @timeout(duration=5s) {
-            @retry {
-                @timeout(duration=5s) {
+@exec.retry {
+    @exec.parallel {
+        @exec.timeout(duration=5s) {
+            @exec.retry {
+                @exec.timeout(duration=5s) {
                     echo "@var.COUNT"
                 }
             }
@@ -608,7 +608,7 @@ var COUNT = "5"
 
 	plan := result.Plan
 
-	// ASSERT: Should have 1 step (@retry decorator at root)
+	// ASSERT: Should have 1 step (@exec.retry decorator at root)
 	if len(plan.Steps) != 1 {
 		t.Fatalf("Expected 1 step, got %d", len(plan.Steps))
 	}

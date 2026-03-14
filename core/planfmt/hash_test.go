@@ -94,7 +94,7 @@ func TestHashUniqueness(t *testing.T) {
 				Steps: []planfmt.Step{
 					{
 						ID:   1,
-						Tree: &planfmt.CommandNode{Decorator: "@retry"},
+						Tree: &planfmt.CommandNode{Decorator: "@exec.retry"},
 					},
 				},
 			},

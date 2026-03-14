@@ -267,7 +267,7 @@ func TestBuildIR_DecoratorArg_PositionalIdentifier(t *testing.T) {
 }
 
 func TestBuildIR_VarDecl_DecoratorRef_MixedArgNamesPreserved(t *testing.T) {
-	graph := buildIR(t, `var X = @retry(delay=2s, 3, backoff="constant")`)
+	graph := buildIR(t, `var X = @exec.retry(delay=2s, 3, backoff="constant")`)
 
 	if len(graph.Statements) != 1 {
 		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
@@ -544,6 +544,109 @@ echo @var("NAME")`)
 
 	if !hasVarRef {
 		t.Error("@var(\"NAME\") should normalize to VarRef(NAME)")
+	}
+}
+
+func TestBuildIR_CommandWithBracedVarInterpolation(t *testing.T) {
+	graph := buildIR(t, `var NAME = "world"
+echo "Hello @{var.NAME}_suffix"`)
+
+	if len(graph.Statements) != 2 {
+		t.Fatalf("len(Statements) = %d, want 2", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[1].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	if len(parts) != 7 {
+		t.Fatalf("len(Parts) = %d, want 7", len(parts))
+	}
+
+	if diff := cmp.Diff("echo", parts[0].Value); diff != "" {
+		t.Fatalf("command literal mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(" ", parts[1].Value); diff != "" {
+		t.Fatalf("command spacing mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("\"", parts[2].Value); diff != "" {
+		t.Fatalf("opening quote mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("Hello ", parts[3].Value); diff != "" {
+		t.Fatalf("prefix mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(ExprVarRef, parts[4].Kind); diff != "" {
+		t.Fatalf("var ref kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("NAME", parts[4].VarName); diff != "" {
+		t.Fatalf("var ref name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("_suffix", parts[5].Value); diff != "" {
+		t.Fatalf("suffix mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("\"", parts[6].Value); diff != "" {
+		t.Fatalf("closing quote mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_CommandWithBracedNamespacedDecoratorInterpolation(t *testing.T) {
+	graph := buildIR(t, `echo "OS @{os.macOS}"`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[0].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	if len(parts) != 6 {
+		t.Fatalf("len(Parts) = %d, want 6", len(parts))
+	}
+
+	if diff := cmp.Diff(ExprDecoratorRef, parts[4].Kind); diff != "" {
+		t.Fatalf("decorator ref kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("os.macOS", parts[4].Decorator.Name); diff != "" {
+		t.Fatalf("decorator name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{}, parts[4].Decorator.Selector); diff != "" {
+		t.Fatalf("decorator selector mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("\"", parts[5].Value); diff != "" {
+		t.Fatalf("closing quote mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildIR_CommandWithBracedDottedPrimarySelector(t *testing.T) {
+	graph := buildIR(t, `echo "Path @{env.HOME.tar.gz}"`)
+
+	if len(graph.Statements) != 1 {
+		t.Fatalf("len(Statements) = %d, want 1", len(graph.Statements))
+	}
+
+	cmd := graph.Statements[0].Command
+	if cmd == nil || cmd.Command == nil {
+		t.Fatal("Command is nil")
+	}
+
+	parts := cmd.Command.Parts
+	if len(parts) != 6 {
+		t.Fatalf("len(Parts) = %d, want 6", len(parts))
+	}
+
+	if diff := cmp.Diff(ExprDecoratorRef, parts[4].Kind); diff != "" {
+		t.Fatalf("decorator ref kind mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("env", parts[4].Decorator.Name); diff != "" {
+		t.Fatalf("decorator name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"HOME.tar.gz"}, parts[4].Decorator.Selector); diff != "" {
+		t.Fatalf("decorator selector mismatch (-want +got):\n%s", diff)
 	}
 }
 

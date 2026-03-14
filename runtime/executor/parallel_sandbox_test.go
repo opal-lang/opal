@@ -77,7 +77,7 @@ func TestParallelBranchWorkdirIsolation(t *testing.T) {
 		ID: 1,
 		Tree: &planfmt.RedirectNode{
 			Source: &planfmt.CommandNode{
-				Decorator: "@parallel",
+				Decorator: "@exec.parallel",
 				Args: []planfmt.Arg{
 					{Key: "maxConcurrency", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 2}},
 					{Key: "onFailure", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "wait_all"}},

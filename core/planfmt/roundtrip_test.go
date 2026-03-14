@@ -62,7 +62,7 @@ func TestRoundTrip(t *testing.T) {
 					{
 						ID: 1,
 						Tree: &planfmt.CommandNode{
-							Decorator: "@parallel",
+							Decorator: "@exec.parallel",
 							Block: []planfmt.Step{
 								{
 									ID: 2,
@@ -170,9 +170,9 @@ func TestRoundTripPreservesSemantics(t *testing.T) {
 			{
 				ID: 1,
 				Tree: &planfmt.CommandNode{
-					Decorator: "@parallel",
+					Decorator: "@exec.parallel",
 					Args: []planfmt.Arg{
-						{Key: "max_concurrent", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
+						{Key: "maxConcurrency", Val: planfmt.Value{Kind: planfmt.ValueInt, Int: 4}},
 					},
 					Block: []planfmt.Step{
 						{

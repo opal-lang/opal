@@ -48,9 +48,9 @@ The **primary property** is a shorthand for the most important parameter. Decora
 - **Readability** - makes common cases cleaner
 
 **When NOT to use primary property:**
-- **Execution decorators** with multiple equally-important parameters: `@retry(times=3, delay=2s)`
+- **Execution decorators** with multiple equally-important parameters: `@exec.retry(times=3, delay=2s)`
 - **No obvious "main" parameter**
-- **Block-based decorators** where the block is the primary input: `@parallel { ... }`
+- **Block-based decorators** where the block is the primary input: `@exec.parallel { ... }`
 
 **Schema definition:**
 ```go
@@ -71,7 +71,7 @@ Supplemental configuration beyond the primary property.
 
 ```sigil
 @file.read("config.yaml", encoding="utf-8", cache=true)
-@retry(times=3, delay=2s, backoff="exponential")
+@exec.retry(times=3, delay=2s, backoff="exponential")
 @aws.secret.db_password(auth=prodAuth, version="latest")
 ```
 
@@ -86,7 +86,7 @@ A **lambda/unit of execution** passed to the decorator (Kotlin-style). The block
 
 ```sigil
 # Block as lambda for execution control:
-@retry(times=3) {
+@exec.retry(times=3) {
     kubectl apply -f deployment.yaml
     kubectl rollout status deployment/app
 }
@@ -98,7 +98,7 @@ A **lambda/unit of execution** passed to the decorator (Kotlin-style). The block
 }
 
 # Block for iteration:
-@parallel {
+@exec.parallel {
     @task("build-frontend") { npm run build }
     @task("build-backend") { go build }
 }
@@ -222,7 +222,7 @@ schema := types.NewSchema("retry", "execution").
 
 **Usage:**
 ```sigil
-@retry(times=5, delay=2s) {
+@exec.retry(times=5, delay=2s) {
     kubectl apply -f deployment.yaml
 }
 ```
@@ -277,20 +277,20 @@ Schemas are validated at registration time:
 
 **Example validation error:**
 ```
-Error: invalid schema for "retry": primary parameter "attempts" not found in parameters
+Error: invalid schema for "retry": primary parameter "times" not found in parameters
 ```
 
 ## Naming Conventions
 
 **Verb-first naming** for clarity:
 ```sigil
-✅ Good: @retry, @timeout, @log, @aws.secret, @k8s.rollout
-❌ Bad:  @retryPolicy, @timeoutHandler, @logger
+✅ Good: @exec.retry, @exec.timeout, @log, @aws.secret, @k8s.rollout
+❌ Bad:  @exec.retryPolicy, @exec.timeoutHandler, @logger
 ```
 
 **Avoid synonyms** - one concept, one name:
 ```sigil
-✅ Good: @retry (standard)
+✅ Good: @exec.retry (standard)
 ❌ Bad:  @repeat, @redo, @again (confusing alternatives)
 ```
 
@@ -298,9 +298,9 @@ Error: invalid schema for "retry": primary parameter "attempts" not found in par
 
 **Kotlin-style flexibility** - all forms supported:
 ```sigil
-@retry(3, 2s)                    # Positional
-@retry(attempts=3, delay=2s)     # Named
-@retry(3, delay=2s)              # Mixed
+@exec.retry(3, 2s)                    # Positional
+@exec.retry(times=3, delay=2s)        # Named
+@exec.retry(3, delay=2s)              # Mixed
 ```
 
 All three forms are valid. Use what's clearest for your use case.
@@ -615,7 +615,7 @@ var db = @aws.rds.deploy(
 - Any decorator that can query "does this already exist?"
 
 **Decorators that don't need it:**
-- Execution modifiers: `@retry`, `@timeout`, `@parallel` (no state to query)
+- Execution modifiers: `@exec.retry`, `@exec.timeout`, `@exec.parallel` (no state to query)
 - Value readers: `@env.VAR`, `@var.NAME` (read-only)
 - Pure side effects: `@log`, `@shell` (no queryable state)
 
@@ -670,39 +670,39 @@ var secret = @aws.secret.db_password(auth)  # Uses "prod"
 
 ```sigil
 # Timeout applies to the entire block
-@timeout(5m) {
+@exec.timeout(5m) {
     kubectl apply -f k8s/
     kubectl rollout status deployment/app
 }
 
 # ❌ Timeout has no effect - no block to apply to
-@timeout(5m) && kubectl apply -f k8s/
+@exec.timeout(5m) && kubectl apply -f k8s/
 
 # ✅ Use block form for decorator to apply
-@timeout(5m) {
+@exec.timeout(5m) {
     kubectl apply -f k8s/
 }
 ```
 
 **Why this matters:**
-- `@timeout(5m) { ... }` - Timeout wraps the entire block
-- `@timeout(5m) && command` - Timeout has nothing to wrap, does nothing
+- `@exec.timeout(5m) { ... }` - Timeout wraps the entire block
+- `@exec.timeout(5m) && command` - Timeout has nothing to wrap, does nothing
 - Not a style preference - understanding what the decorator applies to
 
 **Chaining blocks works as expected:**
 ```sigil
 # Both decorators apply to their respective blocks
-@timeout(5m) { kubectl apply } && @retry(3) { kubectl rollout status }
+@exec.timeout(5m) { kubectl apply } && @exec.retry(3) { kubectl rollout status }
 ```
 
-### @parallel Semantics
+### @exec.parallel Semantics
 
 **Complete isolation per branch:**
 
-Each branch in `@parallel` gets its own isolated execution context:
+Each branch in `@exec.parallel` gets its own isolated execution context:
 
 ```sigil
-@parallel {
+@exec.parallel {
     cd /tmp && echo "Branch A: $(pwd)"     # Step 1
     cd /var && echo "Branch B: $(pwd)"     # Step 2
     echo "Branch C: $(pwd)"                # Step 3
@@ -730,7 +730,7 @@ Branch C: /home/user  # Original directory
 When parallel execution completes, final output is ordered by step ID (not completion time):
 
 ```sigil
-@parallel {
+@exec.parallel {
     sleep 2 && echo "Slow"   # Step 1: completes last
     echo "Fast"              # Step 2: completes first
 }
@@ -753,7 +753,7 @@ Even though "Fast" completes first, final output is reordered by step ID for det
 
 **Example with failure:**
 ```sigil
-@parallel {
+@exec.parallel {
     echo "Success"     # Step 1: exit 0
     exit 1             # Step 2: exit 1 (fails)
     sleep 10           # Step 3: cancelled
@@ -769,9 +769,9 @@ Even though "Fast" completes first, final output is reordered by step ID for det
 ### Block Nesting Order
 
 **Logical order** (outside to inside):
-1. **Time constraints**: `@timeout`
-2. **Error handling**: `@retry`
-3. **Control flow**: `@parallel`
+1. **Time constraints**: `@exec.timeout`
+2. **Error handling**: `@exec.retry`
+3. **Control flow**: `@exec.parallel`
 4. **Logging/monitoring**: `@log`
 5. **Execution**: shell commands, `@cmd`
 
@@ -830,7 +830,7 @@ var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 ## Decorator Categories
 
 **Official taxonomy** (all decorators must declare):
-- `control` - Flow control (@retry, @timeout, @parallel)
+- `control` - Flow control (`@exec.retry`, `@exec.timeout`, `@exec.parallel`)
 - `io` - Input/output (@log, @file, @http)
 - `cloud` - Cloud providers (@aws.secret, @gcp.storage, @azure.vault)
 - `k8s` - Kubernetes (@k8s.apply, @k8s.rollout)
@@ -843,20 +843,20 @@ var users = @postgres.query(sql="SELECT * FROM users", conn=dbConn)
 
 **D001: Chain complexity** (ERROR)
 ```sigil
-❌ @timeout(5m) && @retry(3) && @log("x") && command
+❌ @exec.timeout(5m) && @exec.retry(3) && @log("x") && command
 ✅ Fix: Use block structure
 ```
 
 **D002: Unknown decorators** (ERROR)
 ```sigil
 ❌ @retrry(3) { command }
-✅ Fix: Did you mean @retry? (auto-fixable)
+✅ Fix: Did you mean @exec.retry? (auto-fixable)
 ```
 
 **D003: Deprecated decorator usage** (WARNING)
 ```sigil
-❌ @retryPolicy(3) { command }  # Old naming convention
-✅ Fix: @retry(3) { command } (auto-fixable)
+❌ @exec.retryPolicy(3) { command }  # Old naming convention
+✅ Fix: @exec.retry(3) { command } (auto-fixable)
 ```
 
 ### CI Integration
@@ -883,16 +883,16 @@ Return pure values (no side effects during planning):
 Perform actions (side effects during execution):
 - `@aws.ec2.run()` - Execute on instances
 - `@k8s.exec()` - Execute in pods
-- `@retry()` - Retry with backoff
-- `@parallel()` - Parallel execution
+- `@exec.retry()` - Retry with backoff
+- `@exec.parallel()` - Parallel execution
 - `@shell()` - Shell command
 
 ### Scoped Decorators
 
 Create context for nested blocks:
 - `@aws.auth() { ... }` - Auth scope
-- `@workdir() { ... }` - Working directory
-- `@timeout() { ... }` - Timeout constraint
+- `@fs.workdir() { ... }` - Working directory
+- `@exec.timeout() { ... }` - Timeout constraint
 
 ## Example: Well-Designed Composition
 
@@ -900,10 +900,10 @@ Create context for nested blocks:
 var ENV = "production"
 var TIMEOUT = 10m
 
-deploy: @timeout(TIMEOUT) {
+deploy: @exec.timeout(TIMEOUT) {
     @log("Starting deployment to @var.ENV", level="info")
     
-    @retry(attempts=3, delay=5s) {
+    @exec.retry(times=3, delay=5s) {
         when @var.ENV {
             production: {
                 kubectl apply -f k8s/prod/
@@ -916,7 +916,7 @@ deploy: @timeout(TIMEOUT) {
         }
     }
     
-    @parallel {
+    @exec.parallel {
         kubectl get pods -l app=myapp
         @log("Deployment completed successfully", level="info")
     }
@@ -1075,7 +1075,7 @@ This ensures consistent behavior across all decorators and executors.
 ```go
 // Decorator can return typed errors for policy decisions
 if err := validateConnection(conn); err != nil {
-    return 1, &RetryableError{Cause: err}  // @retry can handle this
+    return 1, &RetryableError{Cause: err}  // @exec.retry can handle this
 }
 ```
 
@@ -1088,7 +1088,7 @@ if err := validateConnection(conn); err != nil {
 
 ```
 User writes:
-  @retry(times=3) {
+  @exec.retry(times=3) {
       @aws.instance.ssh(host="prod") {
           cat /var/log/app.log
       }
@@ -1148,10 +1148,10 @@ func (s *SSHExecutionContext) ExecuteBlock(steps []Step) (int, error) {
 Decorators can be nested arbitrarily deep:
 
 ```sigil
-@retry(times=3) {
-    @timeout(30s) {
+@exec.retry(times=3) {
+    @exec.timeout(30s) {
         @aws.instance.ssh(host="prod") {
-            @parallel {
+            @exec.parallel {
                 kubectl apply -f deployment.yaml
                 kubectl rollout status deployment/app
             }

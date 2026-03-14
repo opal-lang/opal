@@ -145,6 +145,14 @@ func TestStringWithInterpolation(t *testing.T) {
 				{EOF, "", 1, 42},
 			},
 		},
+		{
+			name:  "brace interpolation stays inside string token",
+			input: `"Hello @{var.name}_suffix"`,
+			expected: []tokenExpectation{
+				{STRING, `"Hello @{var.name}_suffix"`, 1, 1},
+				{EOF, "", 1, 27},
+			},
+		},
 	}
 
 	for _, tt := range tests {

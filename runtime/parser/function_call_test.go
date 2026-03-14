@@ -173,6 +173,44 @@ func TestFunctionCall_IdentifierWithSpaceBeforeParenStaysShell(t *testing.T) {
 	}
 }
 
+func TestFunctionCall_SpaceBeforeParenOnKnownFunctionGetsHint(t *testing.T) {
+	input := `fun deploy(env String) {
+	echo "deploy"
+}
+
+deploy ("prod")`
+
+	tree := ParseString(input)
+
+	if len(tree.Errors) != 1 {
+		t.Fatalf("error count mismatch: want 1, got %d (%v)", len(tree.Errors), tree.Errors)
+	}
+
+	got := struct {
+		Message    string
+		Context    string
+		Suggestion string
+	}{
+		Message:    tree.Errors[0].Message,
+		Context:    tree.Errors[0].Context,
+		Suggestion: tree.Errors[0].Suggestion,
+	}
+
+	want := struct {
+		Message    string
+		Context    string
+		Suggestion string
+	}{
+		Message:    `function call syntax does not allow a space before '('`,
+		Context:    "function call",
+		Suggestion: `Remove the space before '(' to call deploy: deploy(...)`,
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("spaced function call error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFunctionCall_ParsesOptionalTypeAndNoneLiteral(t *testing.T) {
 	input := `fun deploy(token String? = none) {
 	echo @var.token
