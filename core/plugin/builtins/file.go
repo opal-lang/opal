@@ -40,10 +40,6 @@ func (c FileRedirectCapability) Schema() plugin.Schema {
 	}
 }
 
-func (c FileRedirectCapability) Wrap(next plugin.ExecNode, args plugin.ResolvedArgs) plugin.ExecNode {
-	return fileLeafNode{}
-}
-
 func (c FileRedirectCapability) RedirectCaps() plugin.RedirectCaps {
 	return plugin.RedirectCaps{Read: true, Write: true, Append: true, Atomic: true}
 }
@@ -71,12 +67,6 @@ func (c FileRedirectCapability) OpenForWrite(ctx plugin.ExecContext, args plugin
 	}
 	writer := &fileRedirectWriter{ctx: ctx, session: ctx.Session(), path: path, perm: perm, appendMode: appendMode}
 	return writer, nil
-}
-
-type fileLeafNode struct{}
-
-func (n fileLeafNode) Execute(ctx plugin.ExecContext) (plugin.Result, error) {
-	return plugin.Result{ExitCode: plugin.ExitFailure}, fmt.Errorf("@file is an I/O endpoint, not an executable decorator")
 }
 
 type fileRedirectWriter struct {

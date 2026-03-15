@@ -3,6 +3,7 @@ package builtins
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"sync"
 
@@ -83,6 +84,17 @@ func (n parallelNode) Execute(ctx plugin.ExecContext) (plugin.Result, error) {
 		branchIndex := i
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					results[branchIndex] = parallelBranchResult{
+						result: plugin.Result{ExitCode: plugin.ExitFailure},
+						err:    fmt.Errorf("branch %d panicked: %v", branchIndex, recovered),
+					}
+					if n.onFailure == "fail_fast" {
+						cancelOnce.Do(cancel)
+					}
+				}
+			}()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 

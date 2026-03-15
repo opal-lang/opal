@@ -54,6 +54,28 @@ func TestParallelWrapperCapabilityHonorsFailFastCancellation(t *testing.T) {
 	}
 }
 
+func TestParallelWrapperCapabilityConvertsBranchPanicToError(t *testing.T) {
+	capability := ParallelWrapperCapability{}
+	node := capability.Wrap(fakeBranchExecNode{
+		branches: []func(ctx plugin.ExecContext) (plugin.Result, error){
+			func(ctx plugin.ExecContext) (plugin.Result, error) {
+				panic("boom")
+			},
+		},
+	}, fakeArgs{ints: map[string]int{"maxConcurrency": 1}, strings: map[string]string{"onFailure": "wait_all"}})
+
+	result, err := node.Execute(fakeExecContext{ctx: context.Background()})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want panic error")
+	}
+	if diff := cmp.Diff(plugin.ExitFailure, result.ExitCode); diff != "" {
+		t.Fatalf("Execute() exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("branch 0 panicked: boom", err.Error()); diff != "" {
+		t.Fatalf("Execute() error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 type fakeBranchExecNode struct {
 	branches []func(ctx plugin.ExecContext) (plugin.Result, error)
 }

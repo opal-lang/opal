@@ -47,6 +47,9 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 			return e.executePluginWrapper(commandExecCtx, next, typed, params, stdin, stdout)
 		case coreplugin.Transport:
 			return e.executePluginTransport(commandExecCtx, cmd.Block, typed, params)
+		default:
+			_, _ = fmt.Fprintf(e.getStderr(), "Error: @%s is not executable\n", decoratorName)
+			return coreruntime.ExitFailure
 		}
 	}
 
