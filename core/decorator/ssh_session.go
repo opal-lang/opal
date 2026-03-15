@@ -486,12 +486,6 @@ func (s *SSHSessionWithEnv) UnwrapSession() Session {
 // SSHTransport implements Transport for SSH connections.
 type SSHTransport struct{}
 
-func init() {
-	if err := Register("ssh.connect", &SSHTransport{}); err != nil {
-		panic(fmt.Sprintf("failed to register @ssh.connect decorator: %v", err))
-	}
-}
-
 func (t *SSHTransport) Descriptor() Descriptor {
 	return Descriptor{
 		Path: "ssh.connect",
