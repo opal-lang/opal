@@ -9,6 +9,7 @@ import (
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
@@ -220,6 +221,19 @@ func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd
 	}
 
 	decoratorName := normalizeDecoratorName(cmd.Decorator)
+	if capability := isPluginOnlyCapability(decoratorName); capability != nil {
+		var next decorator.ExecNode
+		if len(cmd.Block) > 0 {
+			next = &planBlockNode{executor: e, execCtx: commandExecCtx, steps: cmd.Block}
+		}
+		switch typed := capability.(type) {
+		case coreplugin.WrapperCapability:
+			return e.executePluginWrapper(commandExecCtx, next, typed, params, stdin, stdout)
+		case coreplugin.TransportCapability:
+			return e.executePlanPluginTransport(commandExecCtx, cmd.Block, typed, params)
+		}
+	}
+
 	entry, exists := decorator.Global().Lookup(decoratorName)
 	invariant.Invariant(exists, "unknown decorator: %s", cmd.Decorator)
 
@@ -439,6 +453,22 @@ func sourceTransportIDForPlan(node planfmt.ExecutionNode) string {
 			return ""
 		}
 		return sourceTransportIDForPlan(n.Nodes[0])
+	case *planfmt.LogicNode:
+		if len(n.Block) == 0 {
+			return ""
+		}
+		return sourceTransportIDForPlan(n.Block[0].Tree)
+	case *planfmt.TryNode:
+		if len(n.TryBlock) > 0 {
+			return sourceTransportIDForPlan(n.TryBlock[0].Tree)
+		}
+		if len(n.CatchBlock) > 0 {
+			return sourceTransportIDForPlan(n.CatchBlock[0].Tree)
+		}
+		if len(n.FinallyBlock) > 0 {
+			return sourceTransportIDForPlan(n.FinallyBlock[0].Tree)
+		}
+		return ""
 	default:
 		return ""
 	}

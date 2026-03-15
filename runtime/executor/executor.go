@@ -112,6 +112,7 @@ func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt Dis
 	if e.stderr == nil {
 		e.stderr = os.Stderr
 	}
+	e.sessions.setDisplayIDResolver(vlt)
 	e.workers = newShellWorkerPool(e.sessions)
 	e.sessions.registerPlanTransports(plan.Transports)
 	defer e.sessions.Close()

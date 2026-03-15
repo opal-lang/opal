@@ -106,9 +106,5 @@ func (d *EnvDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorato
 	return results, nil
 }
 
-// Register @env decorator with the global registry
-func init() {
-	if err := decorator.Register("env", &EnvDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @env decorator: %v", err))
-	}
-}
+// EnvDecorator remains for migration-time tests, but `@env` is registered only
+// through the plugin system.

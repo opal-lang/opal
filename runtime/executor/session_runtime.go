@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 )
 
 type sessionFactory func(transportID string) (decorator.Session, error)
@@ -34,6 +36,7 @@ type sessionRuntime struct {
 	pooled     map[string]decorator.Session
 	transports map[string]planfmt.Transport
 	factory    sessionFactory
+	resolver   DisplayIDResolver
 }
 
 func newSessionRuntime(factory sessionFactory) *sessionRuntime {
@@ -48,6 +51,10 @@ func newSessionRuntime(factory sessionFactory) *sessionRuntime {
 		transports: make(map[string]planfmt.Transport),
 		factory:    factory,
 	}
+}
+
+func (r *sessionRuntime) setDisplayIDResolver(resolver DisplayIDResolver) {
+	r.resolver = resolver
 }
 
 func (r *sessionRuntime) registerPlanTransports(transports []planfmt.Transport) {
@@ -103,6 +110,25 @@ func (r *sessionRuntime) SessionFor(transportID string) (decorator.Session, erro
 	return session, nil
 }
 
+func (r *sessionRuntime) installSession(transportID string, session decorator.Session) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := normalizedTransportID(transportID)
+	r.sessions[key] = session
+	r.direct[key] = session
+}
+
+func (r *sessionRuntime) removeSession(transportID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := normalizedTransportID(transportID)
+	if session, ok := r.direct[key]; ok && session != nil {
+		_ = session.Close()
+	}
+	delete(r.sessions, key)
+	delete(r.direct, key)
+}
+
 func (r *sessionRuntime) createSession(transportID string) (decorator.Session, bool, error) {
 	transport, ok := r.lookupTransport(transportID)
 	if !ok {
@@ -124,6 +150,38 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, b
 	}
 
 	name := strings.TrimPrefix(transport.Decorator, "@")
+	if capability := coreplugin.Global().Lookup(name); capability != nil {
+		transportCapability, ok := capability.(coreplugin.TransportCapability)
+		if !ok {
+			return nil, false, fmt.Errorf("plugin capability %q is not a transport", transport.Decorator)
+		}
+
+		parentID := normalizedTransportID(transport.ParentID)
+		if parentID == "" {
+			parentID = "local"
+		}
+		parentSession, err := r.SessionFor(parentID)
+		if err != nil {
+			return nil, false, err
+		}
+
+		resolver := func(displayID string) (string, error) {
+			if r.resolver == nil {
+				return "", fmt.Errorf("secret resolver unavailable")
+			}
+			value, err := r.resolver.ResolveDisplayIDWithTransport(displayID, parentID)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprint(value), nil
+		}
+		opened, err := transportCapability.Open(context.Background(), pluginParentSession{session: parentSession}, newPluginArgs(planArgsToMap(transport.Args), capability.Schema(), resolver))
+		if err != nil {
+			return nil, false, fmt.Errorf("open plugin transport %q: %w", transport.Decorator, err)
+		}
+		return pluginTransportSession{id: transportID, inner: opened}, false, nil
+	}
+
 	entry, exists := decorator.Global().Lookup(name)
 	if !exists {
 		return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)

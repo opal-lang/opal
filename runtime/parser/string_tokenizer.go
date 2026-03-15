@@ -250,6 +250,10 @@ func parseStringDecorator(content []byte, atPos int) (parsedStringDecorator, boo
 }
 
 func isValueDecorator(name []byte) bool {
+	if isPluginValueDecorator(string(name)) {
+		return true
+	}
+
 	entry, ok := decorator.Global().Lookup(string(name))
 	if !ok {
 		return false

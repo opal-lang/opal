@@ -205,6 +205,10 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 // isTransportSwitchingDecorator checks if a decorator switches transport context.
 // Returns true if the decorator has the RoleBoundary role (implements Transport interface).
 func isTransportSwitchingDecorator(path string) bool {
+	if isPluginTransportDecorator(path) {
+		return true
+	}
+
 	entry, ok := decorator.Global().Lookup(path)
 	if !ok {
 		return false
@@ -221,6 +225,10 @@ func isTransportSwitchingDecorator(path string) bool {
 // Returns true if the decorator is a value provider with TransportScopeLocal capability.
 // Tries progressively shorter paths to handle property accessors like @test.env.KEY
 func isRootOnlyValueDecorator(path string) bool {
+	if isPluginValueDecorator(path) {
+		return false
+	}
+
 	// Try progressively shorter paths to find the decorator
 	// For @test.env.KEY, try test.env.KEY, then test.env, then test
 	for {

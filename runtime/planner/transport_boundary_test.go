@@ -6,6 +6,7 @@ import (
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/plugin"
 	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/builtwithtofu/sigil/runtime/parser"
 )
@@ -88,13 +89,12 @@ func TestTransportBoundary_DecoratorRecognition(t *testing.T) {
 // TestTransportBoundary_TransportSensitiveCapability verifies that @env has
 // TransportSensitive set to true.
 func TestTransportBoundary_TransportSensitiveCapability(t *testing.T) {
-	entry, ok := decorator.Global().Lookup("env")
-	if !ok {
-		t.Fatal("@env decorator not found in registry")
+	capability := plugin.Global().Lookup("env")
+	if capability == nil {
+		t.Fatal("@env plugin capability not found in registry")
 	}
 
-	desc := entry.Impl.Descriptor()
-	if !desc.Capabilities.TransportSensitive {
+	if !capability.Schema().TransportSensitive {
 		t.Error("@env should have TransportSensitive = true")
 	}
 }

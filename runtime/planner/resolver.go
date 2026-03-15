@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/vault"
 )
@@ -767,6 +768,35 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 	}
 
 	var restoreTransport string
+	if transportCap, ok := lookupPluginTransportCapability(cmd.Decorator); ok {
+		params, err := evaluateArgs(cmd.Args, r.getValue)
+		if err != nil {
+			return err
+		}
+
+		parentTransport := r.vault.CurrentTransport()
+		transportID, err := deriveTransportID(r.vault.GetPlanKey(), cmd.Decorator, params, parentTransport)
+		if err != nil {
+			return err
+		}
+
+		restoreTransport = parentTransport
+		r.vault.EnterTransport(transportID)
+		defer func() {
+			r.vault.EnterTransport(restoreTransport)
+		}()
+
+		opened, err := transportCap.Open(context.Background(), plannerPluginSession{inner: r.session}, plannerResolvedArgs{params: params, schema: transportCap.Schema()})
+		if err != nil {
+			return fmt.Errorf("failed to open plugin transport %q: %w", cmd.Decorator, err)
+		}
+		defer func() { _ = opened.Close() }()
+		r.pushSession(plannerOpenedTransportSession{inner: opened})
+		defer r.popSession()
+		r.pushEnvContext(true, "")
+		defer r.popEnvContext()
+	}
+
 	if transportDec, desc, ok := lookupTransportDecorator(cmd.Decorator); ok {
 		platform := ""
 		if r.session != nil {
@@ -2499,7 +2529,7 @@ func (r *Resolver) checkEnvAllowed(expr *ExprIR) bool {
 	if expr == nil || expr.Decorator == nil {
 		return true
 	}
-	if expr.Decorator.Name != "env" {
+	if !r.isDecoratorTransportSensitive(expr.Decorator.Name) {
 		return true
 	}
 	if r.envAllowed {
@@ -2510,7 +2540,7 @@ func (r *Resolver) checkEnvAllowed(expr *ExprIR) bool {
 		decoratorName = "non-idempotent transport"
 	}
 	r.errors = append(r.errors, &EvalError{
-		Message: fmt.Sprintf("@env cannot be used inside %s", decoratorName),
+		Message: fmt.Sprintf("@%s cannot be used inside %s", expr.Decorator.Name, decoratorName),
 		Span:    expr.Span,
 	})
 	return false
@@ -2682,6 +2712,9 @@ func (r *Resolver) isDecoratorTransportSensitive(name string) bool {
 	if trimmed == "" {
 		return false
 	}
+	if capability := coreplugin.Global().Lookup(trimmed); capability != nil {
+		return capability.Schema().TransportSensitive
+	}
 	entry, ok := decorator.Global().Lookup(trimmed)
 	if !ok {
 		return false
@@ -2818,6 +2851,10 @@ func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) err
 	// Get current transport scope
 	currentScope := r.session.TransportScope()
 
+	if coreplugin.Global().Lookup(decoratorName) != nil && !decorator.Global().IsRegistered(decoratorName) {
+		return r.resolvePluginBatch(decoratorName, calls)
+	}
+
 	// Call decorator's batch Resolve
 	// This is where the magic happens - multiple @aws.secret calls → one API request
 	results, err := decorator.Global().ResolveValues(ctx, currentScope, valueCalls...)
@@ -2913,11 +2950,11 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 
 	if len(d.Selector) > 0 {
 		fullPath := d.Name + "." + d.Selector[0]
-		if decorator.Global().IsRegistered(fullPath) {
+		if isRegisteredDecoratorPath(fullPath) {
 			call.Path = fullPath
 			if len(d.Selector) > 1 {
 				remaining := d.Selector[1:]
-				if len(remaining) == 1 && decorator.Global().IsRegistered(fullPath+"."+remaining[0]) {
+				if len(remaining) == 1 && isRegisteredDecoratorPath(fullPath+"."+remaining[0]) {
 					call.Path = fullPath + "." + remaining[0]
 				} else {
 					primary := remaining[0]
@@ -2959,12 +2996,11 @@ func buildValueCall(d *DecoratorRef, getValue ValueLookup) (decorator.ValueCall,
 }
 
 func normalizeValueCall(call decorator.ValueCall) (decorator.ValueCall, error) {
-	entry, ok := decorator.Global().Lookup(call.Path)
+	schema, ok := decoratorSchema(call.Path)
 	if !ok {
 		return call, nil
 	}
 
-	schema := entry.Impl.Descriptor().Schema
 	if schema.Path == "" && len(schema.Parameters) == 0 && schema.PrimaryParameter == "" {
 		return call, nil
 	}

@@ -12,14 +12,6 @@ func TestBuiltinDecoratorsRegistered(t *testing.T) {
 		t.Error("built-in decorator 'var' should be registered")
 	}
 
-	if !decorator.Global().IsRegistered("env") {
-		t.Error("built-in decorator 'env' should be registered")
-	}
-
-	if !decorator.Global().IsRegistered("exec.retry") {
-		t.Error("built-in decorator 'exec.retry' should be registered")
-	}
-
 	if !decorator.Global().IsRegistered("exec.timeout") {
 		t.Error("built-in decorator 'exec.timeout' should be registered")
 	}

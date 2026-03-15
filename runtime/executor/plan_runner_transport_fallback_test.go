@@ -50,3 +50,14 @@ func TestTransportIDForPlanDecoratorExecution_BlockWithoutInferrableSourceFallsB
 		t.Fatalf("transport fallback mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestSourceTransportIDForPlan_LogicNodeUsesNestedCommandTransport(t *testing.T) {
+	logic := &planfmt.LogicNode{Block: []planfmt.Step{{
+		ID:   1,
+		Tree: &planfmt.CommandNode{Decorator: "@shell", TransportID: "transport:child"},
+	}}}
+
+	if diff := cmp.Diff("transport:child", sourceTransportIDForPlan(logic)); diff != "" {
+		t.Fatalf("logic transport mismatch (-want +got):\n%s", diff)
+	}
+}

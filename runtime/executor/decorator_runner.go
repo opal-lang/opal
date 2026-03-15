@@ -11,6 +11,7 @@ import (
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
@@ -32,6 +33,23 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	}
 
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
+	if capability := isPluginOnlyCapability(decoratorName); capability != nil {
+		params, ok := e.resolvedCommandParams(commandExecCtx, cmd)
+		if !ok {
+			return decorator.ExitFailure
+		}
+		var next decorator.ExecNode
+		if len(cmd.Block) > 0 {
+			next = &blockNode{execCtx: commandExecCtx, steps: cmd.Block}
+		}
+		switch typed := capability.(type) {
+		case coreplugin.WrapperCapability:
+			return e.executePluginWrapper(commandExecCtx, next, typed, params, stdin, stdout)
+		case coreplugin.TransportCapability:
+			return e.executePluginTransport(commandExecCtx, cmd.Block, typed, params)
+		}
+	}
+
 	entry, exists := decorator.Global().Lookup(decoratorName)
 	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
 
@@ -50,14 +68,13 @@ func withExecutionTransport(execCtx sdk.ExecutionContext, transportID string) sd
 	if !ok {
 		return execCtx
 	}
+	if normalizedTransportID(transportID) == "local" && transportID == "" {
+		return execCtx
+	}
 
 	requestedTransportID := normalizedTransportID(transportID)
 	currentTransportID := normalizedTransportID(ec.transportID)
 	if requestedTransportID == currentTransportID {
-		return execCtx
-	}
-
-	if currentTransportID != "local" {
 		return execCtx
 	}
 
@@ -244,9 +261,18 @@ func shellCommandArgs(shellName, command string) ([]string, error) {
 
 // resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
 func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName, transportID string) (map[string]any, error) {
+	return e.resolveDisplayIDsExcept(params, decoratorName, transportID, nil)
+}
+
+func (e *executor) resolveDisplayIDsExcept(params map[string]any, decoratorName, transportID string, skip map[string]struct{}) (map[string]any, error) {
 	resolved := make(map[string]any)
 
 	for key, val := range params {
+		if _, ok := skip[key]; ok {
+			resolved[key] = val
+			continue
+		}
+
 		strVal, ok := val.(string)
 		if !ok {
 			resolved[key] = val
@@ -342,7 +368,17 @@ func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorN
 		return params, true
 	}
 
-	resolved, err := e.resolveDisplayIDs(params, decoratorName, executionTransportID(execCtx))
+	var skip map[string]struct{}
+	if capability := isPluginOnlyCapability(strings.TrimPrefix(decoratorName, "@")); capability != nil {
+		for _, name := range capability.Schema().Secrets {
+			if skip == nil {
+				skip = make(map[string]struct{})
+			}
+			skip[name] = struct{}{}
+		}
+	}
+
+	resolved, err := e.resolveDisplayIDsExcept(params, decoratorName, executionTransportID(execCtx), skip)
 	if err != nil {
 		_, _ = fmt.Fprintf(e.getStderr(), "Error resolving secrets: %v\n", err)
 		return nil, false

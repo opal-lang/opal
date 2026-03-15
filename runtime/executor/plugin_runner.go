@@ -1,0 +1,305 @@
+package executor
+
+import (
+	"context"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"io/fs"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
+	"github.com/builtwithtofu/sigil/core/sdk"
+)
+
+type pluginExecContext struct {
+	ctx     context.Context
+	session coreplugin.ParentTransport
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
+func (c pluginExecContext) Context() context.Context            { return c.ctx }
+func (c pluginExecContext) Session() coreplugin.ParentTransport { return c.session }
+func (c pluginExecContext) Stdin() io.Reader                    { return c.stdin }
+func (c pluginExecContext) Stdout() io.Writer                   { return c.stdout }
+func (c pluginExecContext) Stderr() io.Writer                   { return c.stderr }
+
+type pluginArgs struct {
+	params  map[string]any
+	secrets map[string]any
+	schema  coreplugin.Schema
+	resolve func(displayID string) (string, error)
+}
+
+func (a pluginArgs) GetString(name string) string {
+	if value, ok := a.params[name].(string); ok {
+		return value
+	}
+	return ""
+}
+func (a pluginArgs) GetStringOptional(name string) string { return a.GetString(name) }
+func (a pluginArgs) GetInt(name string) int {
+	switch value := a.params[name].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	}
+	return 0
+}
+
+func (a pluginArgs) GetDuration(name string) time.Duration {
+	switch value := a.params[name].(type) {
+	case time.Duration:
+		return value
+	case string:
+		parsed, err := time.ParseDuration(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func (a pluginArgs) ResolveSecret(name string) (string, error) {
+	if !a.schema.DeclaresSecret(name) {
+		return "", fmt.Errorf("capability did not declare secret %q", name)
+	}
+	if value, ok := a.secrets[name]; ok {
+		if displayID, ok := value.(string); ok && strings.HasPrefix(displayID, "sigil:") && a.resolve != nil {
+			return a.resolve(displayID)
+		}
+		if secret, ok := value.(string); ok {
+			return secret, nil
+		}
+	}
+	return "", fmt.Errorf("declared secret %q not provided", name)
+}
+
+type pluginParentSession struct{ session decorator.Session }
+
+func (s pluginParentSession) Run(ctx context.Context, argv []string, opts coreplugin.RunOpts) (coreplugin.Result, error) {
+	result, err := s.session.Run(ctx, argv, decorator.RunOpts{Stdin: opts.Stdin, Stdout: opts.Stdout, Stderr: opts.Stderr, Dir: opts.Dir})
+	return coreplugin.Result{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr}, err
+}
+func (s pluginParentSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.session.Put(ctx, data, path, mode)
+}
+func (s pluginParentSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.session.Get(ctx, path)
+}
+func (s pluginParentSession) Snapshot() coreplugin.SessionSnapshot {
+	return coreplugin.SessionSnapshot{Env: s.session.Env(), Workdir: s.session.Cwd(), Platform: s.session.Platform()}
+}
+func (s pluginParentSession) Close() error { return nil }
+
+type pluginNextNode struct {
+	node    decorator.ExecNode
+	session decorator.Session
+}
+
+func (n pluginNextNode) Execute(ctx coreplugin.ExecContext) (coreplugin.Result, error) {
+	result, err := n.node.Execute(decorator.ExecContext{
+		Context: ctx.Context(),
+		Session: n.session,
+		Stdin:   ctx.Stdin(),
+		Stdout:  ctx.Stdout(),
+		Stderr:  ctx.Stderr(),
+	})
+	return coreplugin.Result{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr}, err
+}
+
+func isPluginOnlyCapability(path string) coreplugin.Capability {
+	return coreplugin.Global().Lookup(path)
+}
+
+func applyPluginSession(execCtx sdk.ExecutionContext, session coreplugin.OpenedTransport) sdk.ExecutionContext {
+	child := execCtx
+	snapshot := session.Snapshot()
+	if env := snapshot.Env; env != nil {
+		replaced := make(map[string]string, len(env))
+		for key, value := range env {
+			replaced[key] = value
+		}
+		child = child.WithEnviron(replaced)
+	}
+	if workdir := snapshot.Workdir; workdir != "" {
+		child = child.WithWorkdir(workdir)
+	}
+	return child
+}
+
+type pluginTransportSession struct {
+	id    string
+	inner coreplugin.OpenedTransport
+}
+
+func (s pluginTransportSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+	result, err := s.inner.Run(ctx, argv, coreplugin.RunOpts{Stdin: opts.Stdin, Stdout: opts.Stdout, Stderr: opts.Stderr, Dir: opts.Dir})
+	return decorator.Result{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr}, err
+}
+func (s pluginTransportSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+	return s.inner.Put(ctx, data, path, mode)
+}
+func (s pluginTransportSession) Get(ctx context.Context, path string) ([]byte, error) {
+	return s.inner.Get(ctx, path)
+}
+func (s pluginTransportSession) Env() map[string]string { return s.inner.Snapshot().Env }
+func (s pluginTransportSession) WithEnv(delta map[string]string) decorator.Session {
+	snapshot := s.inner.Snapshot()
+	merged := make(map[string]string, len(snapshot.Env)+len(delta))
+	for key, value := range snapshot.Env {
+		merged[key] = value
+	}
+	for key, value := range delta {
+		merged[key] = value
+	}
+	snapshot.Env = merged
+	return pluginTransportSession{id: s.id, inner: s.inner.WithSnapshot(snapshot)}
+}
+func (s pluginTransportSession) WithWorkdir(dir string) decorator.Session {
+	snapshot := s.inner.Snapshot()
+	snapshot.Workdir = dir
+	return pluginTransportSession{id: s.id, inner: s.inner.WithSnapshot(snapshot)}
+}
+func (s pluginTransportSession) Cwd() string { return s.inner.Snapshot().Workdir }
+func (s pluginTransportSession) ID() string  { return s.id }
+func (s pluginTransportSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeAny
+}
+func (s pluginTransportSession) Platform() string { return s.inner.Snapshot().Platform }
+func (s pluginTransportSession) Close() error     { return s.inner.Close() }
+
+func newPluginArgs(params map[string]any, schema coreplugin.Schema, resolve func(string) (string, error)) pluginArgs {
+	plain := make(map[string]any, len(params))
+	secrets := make(map[string]any)
+	for key, value := range params {
+		if schema.DeclaresSecret(key) {
+			secrets[key] = value
+			continue
+		}
+		plain[key] = value
+	}
+	return pluginArgs{params: plain, secrets: secrets, schema: schema, resolve: resolve}
+}
+
+func syntheticPluginTransportID(currentID, decoratorName string, params map[string]any) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(currentID))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(decoratorName))
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		value := params[key]
+		_, _ = h.Write([]byte("|" + key + "=" + fmt.Sprint(value)))
+	}
+	return fmt.Sprintf("plugin:%x", h.Sum64())
+}
+
+func (e *executor) executePluginWrapper(execCtx sdk.ExecutionContext, next decorator.ExecNode, capability coreplugin.WrapperCapability, params map[string]any, stdin io.Reader, stdout io.Writer) int {
+	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
+	if sessionErr != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
+		return decorator.ExitFailure
+	}
+	session := sessionForExecutionContext(baseSession, execCtx)
+	resolver := func(displayID string) (string, error) {
+		if e.vault == nil {
+			return "", fmt.Errorf("secret resolver unavailable")
+		}
+		value, err := e.vault.ResolveDisplayIDWithTransport(displayID, executionTransportID(execCtx))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprint(value), nil
+	}
+	node := capability.Wrap(pluginNextNode{node: next, session: session}, newPluginArgs(params, capability.Schema(), resolver))
+	result, err := node.Execute(pluginExecContext{ctx: execCtx.Context(), session: pluginParentSession{session: session}, stdin: stdin, stdout: stdout, stderr: e.stderr})
+	if err != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+	}
+	return result.ExitCode
+}
+
+func (e *executor) executePluginTransport(execCtx sdk.ExecutionContext, steps []sdk.Step, capability coreplugin.TransportCapability, params map[string]any) int {
+	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
+	if sessionErr != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
+		return decorator.ExitFailure
+	}
+	session := sessionForExecutionContext(baseSession, execCtx)
+	transportID := syntheticPluginTransportID(executionTransportID(execCtx), capability.Path(), params)
+	resolver := func(displayID string) (string, error) {
+		if e.vault == nil {
+			return "", fmt.Errorf("secret resolver unavailable")
+		}
+		value, err := e.vault.ResolveDisplayIDWithTransport(displayID, executionTransportID(execCtx))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprint(value), nil
+	}
+	opened, err := capability.Open(execCtx.Context(), pluginParentSession{session: session}, newPluginArgs(params, capability.Schema(), resolver))
+	if err != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		return decorator.ExitFailure
+	}
+	adapter := pluginTransportSession{id: transportID, inner: opened}
+	e.sessions.installSession(transportID, adapter)
+	defer e.sessions.removeSession(transportID)
+	child := withExecutionTransport(execCtx, transportID)
+	child = applyPluginSession(child, opened)
+	exitCode, blockErr := child.ExecuteBlock(steps)
+	if blockErr != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", blockErr)
+		return decorator.ExitFailure
+	}
+	return exitCode
+}
+
+func (e *executor) executePlanPluginTransport(execCtx sdk.ExecutionContext, steps []planfmt.Step, capability coreplugin.TransportCapability, params map[string]any) int {
+	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
+	if sessionErr != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
+		return decorator.ExitFailure
+	}
+	session := sessionForExecutionContext(baseSession, execCtx)
+	childTransportID := syntheticPluginTransportID(executionTransportID(execCtx), capability.Path(), params)
+	if len(steps) > 0 {
+		if derived := sourceTransportIDForPlan(steps[0].Tree); derived != "" {
+			childTransportID = normalizedTransportID(derived)
+		}
+	}
+	resolver := func(displayID string) (string, error) {
+		if e.vault == nil {
+			return "", fmt.Errorf("secret resolver unavailable")
+		}
+		value, err := e.vault.ResolveDisplayIDWithTransport(displayID, executionTransportID(execCtx))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprint(value), nil
+	}
+	opened, err := capability.Open(execCtx.Context(), pluginParentSession{session: session}, newPluginArgs(params, capability.Schema(), resolver))
+	if err != nil {
+		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
+		return decorator.ExitFailure
+	}
+	adapter := pluginTransportSession{id: childTransportID, inner: opened}
+	e.sessions.installSession(childTransportID, adapter)
+	defer e.sessions.removeSession(childTransportID)
+	child := withExecutionTransport(execCtx, childTransportID)
+	child = applyPluginSession(child, opened)
+	exitCode := e.executePlanBlock(child, steps)
+	return exitCode
+}
