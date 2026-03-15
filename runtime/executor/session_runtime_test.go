@@ -20,6 +20,8 @@ import (
 
 type multiHopRootSession struct{}
 
+type pluginContextKey struct{}
+
 var (
 	multiHopDialMu    sync.Mutex
 	multiHopDialCalls []string
@@ -771,5 +773,78 @@ func TestRemoveSessionKeepsPooledTransportOpen(t *testing.T) {
 
 	if diff := cmp.Diff(0, pooled.closeCall); diff != "" {
 		t.Fatalf("pooled close call count mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimeUsesExecutionContextForPlanTransportOpen(t *testing.T) {
+	registerExecutorSessionTestPlugin()
+	resetPluginContextProbeValue()
+
+	plan := &planfmt.Plan{
+		Target: "context-aware-open",
+		Transports: []planfmt.Transport{
+			{ID: "local", Decorator: "local", ParentID: ""},
+			{ID: "transport:ctx", Decorator: "@test.transport.ctxprobe", ParentID: "local"},
+		},
+		Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator:   "@test.sessionid.check",
+				TransportID: "transport:ctx",
+				Args: []planfmt.Arg{{
+					Key: "expect",
+					Val: planfmt.Value{Kind: planfmt.ValueString, Str: "transport:ctx"},
+				}},
+			},
+		}},
+	}
+
+	ctx := context.WithValue(context.Background(), pluginContextKey{}, "exec-context")
+	result, err := ExecutePlan(ctx, plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("exec-context", pluginContextProbeValueResult()); diff != "" {
+		t.Fatalf("transport open context mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSessionRuntimeUsesExecutionContextForNestedPlanTransportOpen(t *testing.T) {
+	registerExecutorSessionTestPlugin()
+	resetPluginContextProbeValue()
+
+	plan := &planfmt.Plan{
+		Target: "nested-context-aware-open",
+		Transports: []planfmt.Transport{
+			{ID: "local", Decorator: "local", ParentID: ""},
+			{ID: "transport:parent", Decorator: "@test.transport.ctxprobe", ParentID: "local"},
+			{ID: "transport:child", Decorator: "@test.transport.ctxprobe", ParentID: "transport:parent"},
+		},
+		Steps: []planfmt.Step{{
+			ID: 1,
+			Tree: &planfmt.CommandNode{
+				Decorator:   "@test.sessionid.check",
+				TransportID: "transport:child",
+				Args: []planfmt.Arg{{
+					Key: "expect",
+					Val: planfmt.Value{Kind: planfmt.ValueString, Str: "transport:child"},
+				}},
+			},
+		}},
+	}
+
+	ctx := context.WithValue(context.Background(), pluginContextKey{}, "exec-context")
+	result, err := ExecutePlan(ctx, plan, Config{sessionFactory: scopedLocalSessionFactory}, testVault())
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"exec-context", "exec-context"}, pluginContextProbeValuesResult()); diff != "" {
+		t.Fatalf("nested transport open context mismatch (-want +got):\n%s", diff)
 	}
 }

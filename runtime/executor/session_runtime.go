@@ -84,6 +84,14 @@ func normalizedTransportID(transportID string) string {
 }
 
 func (r *sessionRuntime) SessionFor(transportID string) (coreruntime.Session, error) {
+	return r.SessionForWithContext(context.Background(), transportID)
+}
+
+func (r *sessionRuntime) SessionForWithContext(ctx context.Context, transportID string) (coreruntime.Session, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	key := normalizedTransportID(transportID)
 
 	r.mu.Lock()
@@ -93,7 +101,7 @@ func (r *sessionRuntime) SessionFor(transportID string) (coreruntime.Session, er
 	}
 	r.mu.Unlock()
 
-	session, pooled, err := r.createSession(key)
+	session, pooled, err := r.createSession(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session for transport %q: %w", key, err)
 	}
@@ -171,7 +179,7 @@ func (r *sessionRuntime) isPooledScopedSessionLocked(session coreruntime.Session
 	return false
 }
 
-func (r *sessionRuntime) createSession(transportID string) (coreruntime.Session, bool, error) {
+func (r *sessionRuntime) createSession(ctx context.Context, transportID string) (coreruntime.Session, bool, error) {
 	transport, ok := r.lookupTransport(transportID)
 	if !ok {
 		if transportID == "local" {
@@ -202,7 +210,7 @@ func (r *sessionRuntime) createSession(transportID string) (coreruntime.Session,
 		if parentID == "" {
 			parentID = "local"
 		}
-		parentSession, err := r.SessionFor(parentID)
+		parentSession, err := r.SessionForWithContext(ctx, parentID)
 		if err != nil {
 			return nil, false, err
 		}
@@ -225,7 +233,7 @@ func (r *sessionRuntime) createSession(transportID string) (coreruntime.Session,
 		}
 		r.mu.Unlock()
 
-		opened, err := transportCapability.Open(context.Background(), pluginParentSession{session: parentSession}, newPluginArgs(planArgsToMap(transport.Args), capability.Schema(), resolver))
+		opened, err := transportCapability.Open(ctx, pluginParentSession{session: parentSession}, newPluginArgs(planArgsToMap(transport.Args), capability.Schema(), resolver))
 		if err != nil {
 			return nil, false, fmt.Errorf("open plugin transport %q: %w", transport.Decorator, err)
 		}

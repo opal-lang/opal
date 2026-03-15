@@ -303,7 +303,7 @@ func (e *executionContext) withTransportID(transportID string) *executionContext
 	workdir := e.workdir
 
 	if e.executor != nil && e.executor.sessions != nil {
-		baseSession, err := e.executor.sessions.SessionFor(transportID)
+		baseSession, err := e.executor.sessions.SessionForWithContext(e.ctx, transportID)
 		if err == nil {
 			baseEnviron = baseSession.Env()
 			baseWorkdir = baseSession.Cwd()

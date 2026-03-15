@@ -29,6 +29,8 @@ type pluginPlanRedirectReadonlySinkCapability struct{}
 
 type pluginPoolProbeTransportCapability struct{}
 
+type pluginContextProbeTransportCapability struct{}
+
 type pluginSessionIDCheckNode struct {
 	expect string
 }
@@ -68,6 +70,8 @@ var (
 	pluginTestSinkStore                   = &pluginSinkCaptureStore{records: map[string]*pluginSinkCaptureRecord{}}
 	pluginPoolProbeOpenMu                 sync.Mutex
 	pluginPoolProbeOpenCount              int
+	pluginContextProbeValueMu             sync.Mutex
+	pluginContextProbeValues              []string
 )
 
 func (p *executorSessionTestPlugin) Identity() coreplugin.PluginIdentity {
@@ -75,7 +79,7 @@ func (p *executorSessionTestPlugin) Identity() coreplugin.PluginIdentity {
 }
 
 func (p *executorSessionTestPlugin) Capabilities() []coreplugin.Capability {
-	return []coreplugin.Capability{pluginSessionIDCheckCapability{}, pluginSessionBoundaryCapability{}, pluginCaptureSinkCapability{}, pluginChdirCapability{}, pluginPlanRedirectErrorSinkCapability{}, pluginPlanRedirectReadonlySinkCapability{}, pluginPoolProbeTransportCapability{}}
+	return []coreplugin.Capability{pluginSessionIDCheckCapability{}, pluginSessionBoundaryCapability{}, pluginCaptureSinkCapability{}, pluginChdirCapability{}, pluginPlanRedirectErrorSinkCapability{}, pluginPlanRedirectReadonlySinkCapability{}, pluginPoolProbeTransportCapability{}, pluginContextProbeTransportCapability{}}
 }
 
 func (c pluginSessionIDCheckCapability) Path() string { return "test.sessionid.check" }
@@ -285,6 +289,28 @@ func (c pluginPoolProbeTransportCapability) Open(ctx context.Context, parent cor
 	return &noDialerOpenedTransport{id: "poolprobe", parent: parent, snapshot: snapshot}, nil
 }
 
+func (c pluginContextProbeTransportCapability) Path() string { return "test.transport.ctxprobe" }
+
+func (c pluginContextProbeTransportCapability) Schema() coreplugin.Schema {
+	return coreplugin.Schema{}
+}
+
+func (c pluginContextProbeTransportCapability) Open(ctx context.Context, parent coreplugin.ParentTransport, args coreplugin.ResolvedArgs) (coreplugin.OpenedTransport, error) {
+	_ = args
+	value, _ := ctx.Value(pluginContextKey{}).(string)
+	pluginContextProbeValueMu.Lock()
+	pluginContextProbeValues = append(pluginContextProbeValues, value)
+	pluginContextProbeValueMu.Unlock()
+	snapshot := coreplugin.SessionSnapshot{Env: map[string]string{}, Platform: "linux"}
+	if parent != nil {
+		snapshot = parent.Snapshot()
+	}
+	if snapshot.Env == nil {
+		snapshot.Env = map[string]string{}
+	}
+	return &noDialerOpenedTransport{id: "ctxprobe", parent: parent, snapshot: snapshot}, nil
+}
+
 func (s *pluginSinkCaptureStore) reset(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -339,4 +365,24 @@ func pluginPoolProbeOpenCountValue() int {
 	pluginPoolProbeOpenMu.Lock()
 	defer pluginPoolProbeOpenMu.Unlock()
 	return pluginPoolProbeOpenCount
+}
+
+func resetPluginContextProbeValue() {
+	pluginContextProbeValueMu.Lock()
+	defer pluginContextProbeValueMu.Unlock()
+	pluginContextProbeValues = nil
+}
+
+func pluginContextProbeValueResult() string {
+	values := pluginContextProbeValuesResult()
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
+}
+
+func pluginContextProbeValuesResult() []string {
+	pluginContextProbeValueMu.Lock()
+	defer pluginContextProbeValueMu.Unlock()
+	return append([]string(nil), pluginContextProbeValues...)
 }

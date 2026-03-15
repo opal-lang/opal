@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/planfmt"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 )
@@ -209,5 +210,25 @@ func TestContextTransportBoundaryResetsEnvAndWorkdirToTransportSnapshot(t *testi
 	}
 	if diff := cmp.Diff(filepath.Clean(transportDir), filepath.Clean(transportCtx.Workdir())); diff != "" {
 		t.Fatalf("transport cwd mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestContextWithTransportIDUsesExecutionContextForSessionLookup(t *testing.T) {
+	registerExecutorSessionTestPlugin()
+	resetPluginContextProbeValue()
+
+	exec := &executor{sessions: newSessionRuntime(scopedLocalSessionFactory)}
+	defer exec.sessions.Close()
+	exec.sessions.registerPlanTransports([]planfmt.Transport{
+		{ID: "local", Decorator: "local", ParentID: ""},
+		{ID: "transport:ctx", Decorator: "@test.transport.ctxprobe", ParentID: "local"},
+	})
+
+	ctx := context.WithValue(context.Background(), pluginContextKey{}, "ctx-switch")
+	root := newExecutionContext(map[string]interface{}{}, exec, ctx).(*executionContext)
+	_ = root.withTransportID("transport:ctx")
+
+	if diff := cmp.Diff([]string{"ctx-switch"}, pluginContextProbeValuesResult()); diff != "" {
+		t.Fatalf("context propagation mismatch (-want +got):\n%s", diff)
 	}
 }
