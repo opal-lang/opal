@@ -51,20 +51,29 @@ func TestSandboxTransportCapabilityOpenFailsClosed(t *testing.T) {
 	}
 }
 
-func TestIsolatedTransportCapabilitiesOpen(t *testing.T) {
+func TestIsolatedTransportCapabilitiesFailClosed(t *testing.T) {
 	parent := &memoryParentTransport{snapshot: plugin.SessionSnapshot{Env: map[string]string{}, Workdir: "/tmp", Platform: "linux"}, files: map[string][]byte{}}
 	cases := []plugin.Transport{
 		IsolatedNetworkLoopbackCapability{},
 		IsolatedFilesystemReadonlyCapability{},
 		IsolatedFilesystemEphemeralCapability{},
 		IsolatedMemoryLockCapability{},
+		IsolatedPrivilegesDropCapability{},
 	}
 
 	for _, capability := range cases {
-		opened, err := capability.Open(context.Background(), parent, fakeArgs{})
-		if err != nil {
-			t.Fatalf("Open() error = %v", err)
+		_, err := capability.Open(context.Background(), parent, fakeArgs{})
+		if err == nil {
+			t.Fatal("Open() error = nil, want isolated fail-closed error")
 		}
-		_ = opened.Close()
+		if diff := cmp.Diff("isolated transport is not available through plugin capabilities", err.Error()); diff != "" {
+			t.Fatalf("Open() error mismatch (-want +got):\n%s", diff)
+		}
+	}
+}
+
+func TestIsolatedPrivilegesDropCapabilityIsRegistered(t *testing.T) {
+	if plugin.Global().Lookup("isolated.privileges.drop") == nil {
+		t.Fatal("isolated.privileges.drop should be registered in plugin registry")
 	}
 }

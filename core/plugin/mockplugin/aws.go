@@ -39,6 +39,10 @@ type AWSInstanceConnectCapability struct{}
 
 func (c AWSInstanceConnectCapability) Path() string { return "aws.instance.connect" }
 
+func (c AWSInstanceConnectCapability) AllowTransportSensitiveValuesInPlan() bool {
+	return true
+}
+
 func (c AWSInstanceConnectCapability) Schema() plugin.Schema {
 	return plugin.Schema{
 		Params: []plugin.Param{

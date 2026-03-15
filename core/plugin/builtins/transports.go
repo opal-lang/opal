@@ -115,6 +115,7 @@ func (p *IsolatedPlugin) Capabilities() []plugin.Capability {
 		IsolatedFilesystemReadonlyCapability{},
 		IsolatedFilesystemEphemeralCapability{},
 		IsolatedMemoryLockCapability{},
+		IsolatedPrivilegesDropCapability{},
 	}
 }
 
@@ -131,7 +132,9 @@ func (c IsolatedNetworkLoopbackCapability) Open(ctx context.Context, parent plug
 		return nil, ctx.Err()
 	default:
 	}
-	return newWrappedOpenedTransport(parent, "/isolated.network.loopback"), nil
+	_ = parent
+	_ = args
+	return nil, fmt.Errorf("isolated transport is not available through plugin capabilities")
 }
 
 type IsolatedFilesystemReadonlyCapability struct{}
@@ -147,7 +150,9 @@ func (c IsolatedFilesystemReadonlyCapability) Open(ctx context.Context, parent p
 		return nil, ctx.Err()
 	default:
 	}
-	return newWrappedOpenedTransport(parent, "/isolated.filesystem.readonly"), nil
+	_ = parent
+	_ = args
+	return nil, fmt.Errorf("isolated transport is not available through plugin capabilities")
 }
 
 type IsolatedFilesystemEphemeralCapability struct{}
@@ -163,7 +168,9 @@ func (c IsolatedFilesystemEphemeralCapability) Open(ctx context.Context, parent 
 		return nil, ctx.Err()
 	default:
 	}
-	return newWrappedOpenedTransport(parent, "/isolated.filesystem.ephemeral"), nil
+	_ = parent
+	_ = args
+	return nil, fmt.Errorf("isolated transport is not available through plugin capabilities")
 }
 
 type IsolatedMemoryLockCapability struct{}
@@ -179,7 +186,27 @@ func (c IsolatedMemoryLockCapability) Open(ctx context.Context, parent plugin.Pa
 		return nil, ctx.Err()
 	default:
 	}
-	return newWrappedOpenedTransport(parent, "/isolated.memory.lock"), nil
+	_ = parent
+	_ = args
+	return nil, fmt.Errorf("isolated transport is not available through plugin capabilities")
+}
+
+type IsolatedPrivilegesDropCapability struct{}
+
+func (c IsolatedPrivilegesDropCapability) Path() string { return "isolated.privileges.drop" }
+func (c IsolatedPrivilegesDropCapability) Schema() plugin.Schema {
+	return plugin.Schema{Block: plugin.BlockRequired}
+}
+
+func (c IsolatedPrivilegesDropCapability) Open(ctx context.Context, parent plugin.ParentTransport, args plugin.ResolvedArgs) (plugin.OpenedTransport, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	_ = parent
+	_ = args
+	return nil, fmt.Errorf("isolated transport is not available through plugin capabilities")
 }
 
 type wrappedOpenedTransport struct {
