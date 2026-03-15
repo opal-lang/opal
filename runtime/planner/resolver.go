@@ -786,14 +786,15 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 			r.vault.EnterTransport(restoreTransport)
 		}()
 
-		opened, err := transportCap.Open(context.Background(), plannerPluginSession{inner: r.session}, plannerResolvedArgs{params: params, schema: transportCap.Schema()})
+		opened, err := transportCap.Open(r.config.Context, plannerPluginSession{inner: r.session}, newPlannerResolvedArgs(params, transportCap.Schema()))
 		if err != nil {
 			return fmt.Errorf("failed to open plugin transport %q: %w", cmd.Decorator, err)
 		}
 		defer func() { _ = opened.Close() }()
 		r.pushSession(plannerOpenedTransportSession{inner: opened})
 		defer r.popSession()
-		r.pushEnvContext(true, "")
+		allowTransportEnv := pluginTransportAllowsEnvAccess(transportCap)
+		r.pushEnvContext(allowTransportEnv, cmd.Decorator)
 		defer r.popEnvContext()
 	}
 
@@ -1265,6 +1266,11 @@ func (r *Resolver) resolvePreludeWhen(blocker *BlockerIR) error {
 	}
 
 	return nil
+}
+
+func pluginTransportAllowsEnvAccess(transport coreplugin.Transport) bool {
+	allowing, ok := transport.(coreplugin.PlanSensitiveTransport)
+	return ok && allowing.AllowTransportSensitiveValuesInPlan()
 }
 
 // selectStatements chooses which statements to process based on mode.

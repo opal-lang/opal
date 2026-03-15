@@ -40,6 +40,12 @@ type Transport interface {
 	Open(ctx context.Context, parent ParentTransport, args ResolvedArgs) (OpenedTransport, error)
 }
 
+// PlanSensitiveTransport optionally declares whether transport-sensitive values
+// may be resolved while planning inside this transport boundary.
+type PlanSensitiveTransport interface {
+	AllowTransportSensitiveValuesInPlan() bool
+}
+
 // RedirectTarget supports I/O redirection (>, >>, <).
 type RedirectTarget interface {
 	Capability

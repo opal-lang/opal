@@ -132,6 +132,26 @@ func TestPlanNew_TransportBoundary_DirectEnvInIdempotentTransportWorks(t *testin
 	}
 }
 
+func TestPlanNew_TransportBoundary_DirectEnvInNonIdempotentTransportFails(t *testing.T) {
+	source := `
+@test.transport {
+    echo "Home: @env.HOME"
+}
+`
+
+	planKey := []byte("plan-key-transport-boundary-0000")
+	v := vault.NewWithPlanKey(planKey)
+
+	_, err := parsePlanNew(t, source, v)
+	if err == nil {
+		t.Fatal("Expected transport env error, got nil")
+	}
+
+	if diff := cmp.Diff("failed to resolve: @env cannot be used inside @test.transport", err.Error()); diff != "" {
+		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestPlanNew_TransportBoundary_DirectEnvUsesNearestTransportSession(t *testing.T) {
 	source := `
 @test.transport.env {

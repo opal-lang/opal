@@ -36,6 +36,23 @@ type plannerResolvedArgs struct {
 	schema  coreplugin.Schema
 }
 
+func newPlannerResolvedArgs(params map[string]any, schema coreplugin.Schema) plannerResolvedArgs {
+	resolved := make(map[string]any, len(schema.Params)+len(params)+1)
+	if schema.Primary.Name != "" && schema.Primary.Default != nil && !schema.DeclaresSecret(schema.Primary.Name) {
+		resolved[schema.Primary.Name] = schema.Primary.Default
+	}
+	for _, param := range schema.Params {
+		if param.Default == nil || schema.DeclaresSecret(param.Name) {
+			continue
+		}
+		resolved[param.Name] = param.Default
+	}
+	for key, value := range params {
+		resolved[key] = value
+	}
+	return plannerResolvedArgs{params: resolved, schema: schema}
+}
+
 func (a plannerResolvedArgs) GetString(name string) string {
 	if value, ok := a.params[name].(string); ok {
 		return value
@@ -191,7 +208,7 @@ func (r *Resolver) resolvePluginBatch(decoratorName string, calls []decoratorCal
 	}
 
 	ctx := plannerPluginValueContext{
-		ctx:      context.Background(),
+		ctx:      r.config.Context,
 		session:  plannerPluginSession{inner: r.session},
 		planHash: plannerPlanHashString(r),
 		lookup:   r.getValue,
@@ -211,7 +228,7 @@ func (r *Resolver) resolvePluginBatch(decoratorName string, calls []decoratorCal
 			if valueCall.Primary != nil && schema.Primary.Name != "" {
 				params[schema.Primary.Name] = *valueCall.Primary
 			}
-			batchArgs = append(batchArgs, plannerResolvedArgs{params: params, schema: schema})
+			batchArgs = append(batchArgs, newPlannerResolvedArgs(params, schema))
 		}
 		resolved, err := batchCapability.ResolveBatch(ctx, batchArgs)
 		if err != nil {
@@ -240,7 +257,7 @@ func (r *Resolver) resolvePluginBatch(decoratorName string, calls []decoratorCal
 		if valueCall.Primary != nil && schema.Primary.Name != "" {
 			params[schema.Primary.Name] = *valueCall.Primary
 		}
-		resolved, err := valueCapability.Resolve(ctx, plannerResolvedArgs{params: params, schema: schema})
+		resolved, err := valueCapability.Resolve(ctx, newPlannerResolvedArgs(params, schema))
 		if err != nil {
 			return fmt.Errorf("failed to resolve @%s: %w (cannot plan if cannot resolve)", decoratorName, err)
 		}

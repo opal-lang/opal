@@ -29,9 +29,3 @@ func isPluginValueDecorator(path string) bool {
 	entry := plugin.Global().LookupEntry(path)
 	return entry != nil && entry.IsValue()
 }
-
-func isPluginTransportDecorator(path string) bool {
-	path = normalizedDecoratorPath(path)
-	entry := plugin.Global().LookupEntry(path)
-	return entry != nil && entry.IsTransport()
-}

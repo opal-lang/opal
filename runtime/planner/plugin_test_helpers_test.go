@@ -44,6 +44,25 @@ type transportEnvPluginCapability struct{}
 
 type plannerMultiHopTransportPluginCapability struct{}
 
+type contextAwareTransportPluginCapability struct {
+	path      string
+	valueKey  any
+	seenValue *string
+	openErr   error
+}
+
+type contextAwareValuePluginCapability struct {
+	path      string
+	valueKey  any
+	seenValue *string
+}
+
+type defaultAwareValuePluginCapability struct {
+	path         string
+	seenDelay    *string
+	seenAttempts *int
+}
+
 type plannerWrappedOpenedTransport struct {
 	snapshot pluginSnapshot
 	parent   coreplugin.ParentTransport
@@ -196,6 +215,10 @@ func (c poolCloseTransportPluginCapability) Open(ctx context.Context, parent cor
 }
 
 func (c transportEnvPluginCapability) Path() string { return "test.transport.env" }
+func (c transportEnvPluginCapability) AllowTransportSensitiveValuesInPlan() bool {
+	return true
+}
+
 func (c transportEnvPluginCapability) Schema() coreplugin.Schema {
 	return coreplugin.Schema{Block: coreplugin.BlockRequired}
 }
@@ -212,6 +235,65 @@ func (c transportEnvPluginCapability) Open(ctx context.Context, parent coreplugi
 }
 
 func (c plannerMultiHopTransportPluginCapability) Path() string { return "test.transport.multihop" }
+
+func (c contextAwareTransportPluginCapability) Path() string { return c.path }
+
+func (c contextAwareTransportPluginCapability) Schema() coreplugin.Schema {
+	return coreplugin.Schema{Block: coreplugin.BlockRequired}
+}
+
+func (c contextAwareTransportPluginCapability) Open(ctx context.Context, parent coreplugin.ParentTransport, args coreplugin.ResolvedArgs) (coreplugin.OpenedTransport, error) {
+	_ = args
+	if value, ok := ctx.Value(c.valueKey).(string); ok && c.seenValue != nil {
+		*c.seenValue = value
+	}
+	if c.openErr != nil {
+		return nil, c.openErr
+	}
+	snapshot := parent.Snapshot()
+	if snapshot.Env == nil {
+		snapshot.Env = map[string]string{}
+	}
+	return &plannerWrappedOpenedTransport{snapshot: snapshot, parent: parent}, nil
+}
+
+func (c contextAwareValuePluginCapability) Path() string { return c.path }
+
+func (c contextAwareValuePluginCapability) Schema() coreplugin.Schema {
+	return coreplugin.Schema{Returns: types.TypeString, Block: coreplugin.BlockForbidden}
+}
+
+func (c contextAwareValuePluginCapability) Resolve(ctx coreplugin.ValueContext, args coreplugin.ResolvedArgs) (any, error) {
+	_ = args
+	if value, ok := ctx.Context().Value(c.valueKey).(string); ok && c.seenValue != nil {
+		*c.seenValue = value
+	}
+	return "ok", nil
+}
+
+func (c defaultAwareValuePluginCapability) Path() string { return c.path }
+
+func (c defaultAwareValuePluginCapability) Schema() coreplugin.Schema {
+	return coreplugin.Schema{
+		Params: []coreplugin.Param{
+			{Name: "delay", Type: types.TypeString, Default: "5s"},
+			{Name: "attempts", Type: types.TypeInt, Default: 3},
+		},
+		Returns: types.TypeString,
+		Block:   coreplugin.BlockForbidden,
+	}
+}
+
+func (c defaultAwareValuePluginCapability) Resolve(ctx coreplugin.ValueContext, args coreplugin.ResolvedArgs) (any, error) {
+	_ = ctx
+	if c.seenDelay != nil {
+		*c.seenDelay = args.GetStringOptional("delay")
+	}
+	if c.seenAttempts != nil {
+		*c.seenAttempts = args.GetInt("attempts")
+	}
+	return "ok", nil
+}
 
 func (c plannerMultiHopTransportPluginCapability) Schema() coreplugin.Schema {
 	return coreplugin.Schema{Params: []coreplugin.Param{{Name: "addr", Type: types.TypeString, Required: true}, {Name: "id", Type: types.TypeString, Required: true}}, Block: coreplugin.BlockRequired}

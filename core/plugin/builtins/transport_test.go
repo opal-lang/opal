@@ -38,18 +38,16 @@ func TestTestTransportIdempotentCapabilityOpen(t *testing.T) {
 	}
 }
 
-func TestSandboxTransportCapabilityOpen(t *testing.T) {
+func TestSandboxTransportCapabilityOpenFailsClosed(t *testing.T) {
 	capability := SandboxTransportCapability{}
 	parent := &memoryParentTransport{snapshot: plugin.SessionSnapshot{Env: map[string]string{"BASE": "1"}, Workdir: "/tmp", Platform: "linux"}, files: map[string][]byte{}}
 
-	opened, err := capability.Open(context.Background(), parent, fakeArgs{strings: map[string]string{"level": "none", "network": "allow"}})
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+	_, err := capability.Open(context.Background(), parent, fakeArgs{strings: map[string]string{"level": "none", "network": "allow"}})
+	if err == nil {
+		t.Fatal("Open() error = nil, want sandbox fail-closed error")
 	}
-	defer opened.Close()
-
-	if diff := cmp.Diff("/tmp", opened.Snapshot().Workdir); diff != "" {
-		t.Fatalf("Snapshot().Workdir mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff("sandbox transport is not available through plugin capabilities", err.Error()); diff != "" {
+		t.Fatalf("Open() error mismatch (-want +got):\n%s", diff)
 	}
 }
 

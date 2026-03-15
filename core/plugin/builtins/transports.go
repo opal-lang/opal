@@ -48,6 +48,10 @@ type TestTransportIdempotentCapability struct{}
 
 func (c TestTransportIdempotentCapability) Path() string { return "test.transport.idempotent" }
 
+func (c TestTransportIdempotentCapability) AllowTransportSensitiveValuesInPlan() bool {
+	return true
+}
+
 func (c TestTransportIdempotentCapability) Schema() plugin.Schema {
 	return plugin.Schema{Block: plugin.BlockRequired}
 }
@@ -92,9 +96,10 @@ func (c SandboxTransportCapability) Open(ctx context.Context, parent plugin.Pare
 		return nil, ctx.Err()
 	default:
 	}
+	_ = parent
 	_ = args.GetStringOptional("level")
 	_ = args.GetStringOptional("network")
-	return newWrappedOpenedTransport(parent, "/sandbox"), nil
+	return nil, fmt.Errorf("sandbox transport is not available through plugin capabilities")
 }
 
 // IsolatedPlugin exposes isolated.* transport capabilities.

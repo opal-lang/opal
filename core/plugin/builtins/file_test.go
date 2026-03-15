@@ -2,6 +2,7 @@ package builtins
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"testing"
@@ -118,6 +119,34 @@ func TestFileRedirectTargetAppendFlushesAfterCancelWithContextAwareSession(t *te
 	}
 }
 
+func TestFileRedirectTargetAppendKeepsExistingContentOnReadError(t *testing.T) {
+	capability := FileRedirectCapability{}
+	session := &memoryParentTransport{
+		snapshot: plugin.SessionSnapshot{Workdir: "/tmp"},
+		files:    map[string][]byte{"/tmp/out.txt": []byte("start\n")},
+		getErr:   fmt.Errorf("permission denied"),
+	}
+	execCtx := fakeExecContext{ctx: context.Background(), session: session}
+	args := fakeArgs{strings: map[string]string{"path": "out.txt"}}
+
+	writer, err := capability.OpenForWrite(execCtx, args, true)
+	if err != nil {
+		t.Fatalf("OpenForWrite() error = %v", err)
+	}
+	if _, err := writer.Write([]byte("one\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.Close(); err == nil {
+		t.Fatal("Close() error = nil, want append read failure")
+	}
+	if diff := cmp.Diff(0, session.putCalls); diff != "" {
+		t.Fatalf("Put() call count mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("start\n", string(session.files["/tmp/out.txt"])); diff != "" {
+		t.Fatalf("file content mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFileRedirectTargetAppendFlushesOnceOnClose(t *testing.T) {
 	capability := FileRedirectCapability{}
 	session := &memoryParentTransport{
@@ -166,6 +195,7 @@ type memoryParentTransport struct {
 	files                 map[string][]byte
 	putCalls              int
 	failOnCanceledContext bool
+	getErr                error
 }
 
 func (m *memoryParentTransport) Run(ctx context.Context, argv []string, opts plugin.RunOpts) (plugin.Result, error) {
@@ -190,6 +220,9 @@ func (m *memoryParentTransport) Get(ctx context.Context, path string) ([]byte, e
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+	}
+	if m.getErr != nil {
+		return nil, m.getErr
 	}
 	data := m.files[path]
 	copyData := make([]byte, len(data))

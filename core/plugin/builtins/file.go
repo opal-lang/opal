@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/types"
@@ -119,14 +121,20 @@ func (w *fileRedirectWriter) Close() error {
 		existing, err := w.session.Get(flushCtx, w.path)
 		if err == nil {
 			data = append(append([]byte(nil), existing...), data...)
-		} else {
+		} else if isMissingFileError(err) {
 			data = append([]byte(nil), data...)
+		} else {
+			return fmt.Errorf("failed to read file %q for append: %w", w.path, err)
 		}
 	}
 	if err := w.session.Put(flushCtx, data, w.path, w.perm); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", w.path, err)
 	}
 	return nil
+}
+
+func isMissingFileError(err error) bool {
+	return err != nil && (os.IsNotExist(err) || strings.Contains(err.Error(), "not found"))
 }
 
 func resolveFilePath(ctx plugin.ExecContext, args plugin.ResolvedArgs) (string, error) {

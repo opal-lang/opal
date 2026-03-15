@@ -13,6 +13,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+type plannerContextKey string
+
 // TestResolve_SimpleCommand tests resolving a simple command with no variables.
 func TestResolve_SimpleCommand(t *testing.T) {
 	// Build IR: echo "hello"
@@ -782,6 +784,102 @@ func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
 	}
 	if diff := cmp.Diff("fallback", dec.lastCalls[0].Params["fallback"]); diff != "" {
 		t.Errorf("fallback mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveBatch_PassesResolveContextToPluginValues(t *testing.T) {
+	const path = "test.capture.resolve-context"
+	var seen string
+	if err := registerPlannerCapability(path, contextAwareValuePluginCapability{path: path, valueKey: plannerContextKey("ctx-key"), seenValue: &seen}); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{{
+			Kind: StmtVarDecl,
+			VarDecl: &VarDeclIR{
+				Name:  "X",
+				Value: &ExprIR{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: path}},
+			},
+		}},
+		Scopes: NewScopeStack(),
+	}
+
+	ctx := context.WithValue(context.Background(), plannerContextKey("ctx-key"), "resolve-value")
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: ctx})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff("resolve-value", seen); diff != "" {
+		t.Fatalf("plugin value context mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveCommandBlock_PassesResolveContextToPluginTransportOpen(t *testing.T) {
+	const path = "test.transport.context"
+	var seen string
+	if err := registerPlannerCapability(path, contextAwareTransportPluginCapability{path: path, valueKey: plannerContextKey("ctx-key"), seenValue: &seen}); err != nil {
+		t.Fatalf("Register transport failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{{
+			Kind: StmtCommand,
+			Command: &CommandStmtIR{
+				Decorator: "@test.transport.context",
+				Block: []*StatementIR{{
+					Kind:    StmtCommand,
+					Command: &CommandStmtIR{Decorator: "@shell", Command: &CommandExpr{Parts: []*ExprIR{{Kind: ExprLiteral, Value: "echo ok"}}}},
+				}},
+			},
+		}},
+		Scopes: NewScopeStack(),
+	}
+
+	ctx := context.WithValue(context.Background(), plannerContextKey("ctx-key"), "transport-value")
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: ctx})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff("transport-value", seen); diff != "" {
+		t.Fatalf("plugin transport context mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveBatch_AppliesSchemaDefaultsForPluginValues(t *testing.T) {
+	const path = "test.capture.defaults"
+	var seenDelay string
+	var seenAttempts int
+	if err := registerPlannerCapability(path, defaultAwareValuePluginCapability{path: path, seenDelay: &seenDelay, seenAttempts: &seenAttempts}); err != nil {
+		t.Fatalf("Register decorator failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key"))
+	graph := &ExecutionGraph{
+		Statements: []*StatementIR{{
+			Kind: StmtVarDecl,
+			VarDecl: &VarDeclIR{
+				Name:  "X",
+				Value: &ExprIR{Kind: ExprDecoratorRef, Decorator: &DecoratorRef{Name: path}},
+			},
+		}},
+		Scopes: NewScopeStack(),
+	}
+
+	_, err := Resolve(graph, v, &mockSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if diff := cmp.Diff("5s", seenDelay); diff != "" {
+		t.Fatalf("default delay mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(3, seenAttempts); diff != "" {
+		t.Fatalf("default attempts mismatch (-want +got):\n%s", diff)
 	}
 }
 
