@@ -2,7 +2,6 @@ package decorators
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
@@ -137,9 +136,5 @@ func waitContext(ctx context.Context, wait time.Duration) error {
 	}
 }
 
-// Register @exec.retry decorator with the global registry
-func init() {
-	if err := decorator.Register("exec.retry", &RetryDecorator{}); err != nil {
-		panic(fmt.Sprintf("failed to register @exec.retry decorator: %v", err))
-	}
-}
+// RetryDecorator remains for migration-time tests, but `@exec.retry` is
+// registered only through the plugin system.

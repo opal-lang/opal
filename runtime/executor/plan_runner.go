@@ -6,9 +6,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
@@ -16,7 +17,7 @@ func (e *executor) executePlanStep(execCtx sdk.ExecutionContext, step planfmt.St
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.Precondition(step.Tree != nil, "step must have a tree")
 	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 
 	if logic, ok := step.Tree.(*planfmt.LogicNode); ok {
@@ -36,7 +37,7 @@ func (e *executor) executePlanStep(execCtx sdk.ExecutionContext, step planfmt.St
 func (e *executor) executePlanBlock(execCtx sdk.ExecutionContext, steps []planfmt.Step) int {
 	for _, step := range steps {
 		if isExecutionCanceled(execCtx) {
-			return decorator.ExitCanceled
+			return coreruntime.ExitCanceled
 		}
 		exitCode := e.executePlanStep(execCtx, step)
 		if exitCode != 0 {
@@ -49,7 +50,7 @@ func (e *executor) executePlanBlock(execCtx sdk.ExecutionContext, steps []planfm
 func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.ExecutionNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
 	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 
 	switch n := node.(type) {
@@ -77,7 +78,7 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 		var lastExit int
 		for i, child := range n.Nodes {
 			if isExecutionCanceled(execCtx) {
-				return decorator.ExitCanceled
+				return coreruntime.ExitCanceled
 			}
 			childStdin := io.Reader(nil)
 			if i == len(n.Nodes)-1 {
@@ -95,11 +96,11 @@ func (e *executor) executePlanTreeIO(execCtx sdk.ExecutionContext, node planfmt.
 
 	case *planfmt.TryNode:
 		_, _ = fmt.Fprintln(e.stderr, "Error: try/catch/finally execution is not implemented")
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 
 	default:
 		invariant.Invariant(false, "unknown planfmt.ExecutionNode type: %T", node)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 }
 
@@ -111,7 +112,7 @@ func (e *executor) executePlanTreeNode(execCtx sdk.ExecutionContext, node planfm
 		return e.executePlanRedirect(execCtx, n, stdin)
 	default:
 		invariant.Invariant(false, "invalid pipeline element type %T", node)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 }
 
@@ -119,7 +120,7 @@ func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline 
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.NotNil(pipeline, "pipeline")
 	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 	numCommands := len(pipeline.Commands)
 	invariant.Precondition(numCommands > 0, "pipeline must have at least one command")
@@ -146,7 +147,7 @@ func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline 
 				_ = pipeReaders[j].Close()
 				_ = pipeWriters[j].Close()
 			}
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
 		pipeReaders[i] = pr
 		pipeWriters[i] = pw
@@ -205,14 +206,14 @@ func (e *executor) executePlanPipelineIO(execCtx sdk.ExecutionContext, pipeline 
 func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd *planfmt.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	invariant.NotNil(execCtx, "execCtx")
 	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 
 	commandExecCtx := withExecutionTransport(execCtx, cmd.TransportID)
 
 	params, ok := e.resolveCommandParams(commandExecCtx, cmd.Decorator, planArgsToMap(cmd.Args))
 	if !ok {
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	if isShellDecorator(cmd.Decorator) {
@@ -220,140 +221,96 @@ func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd
 	}
 
 	decoratorName := normalizeDecoratorName(cmd.Decorator)
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Decorator)
-
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Decorator)
-
-	return e.executePlanDecorator(commandExecCtx, cmd, execDec, params, stdin, stdout)
-}
-
-func (e *executor) executePlanDecorator(
-	execCtx sdk.ExecutionContext,
-	cmd *planfmt.CommandNode,
-	execDec decorator.Exec,
-	params map[string]any,
-	stdin io.Reader,
-	stdout io.Writer,
-) int {
-	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+	capability := isPluginOnlyCapability(decoratorName)
+	if capability == nil {
+		_, _ = fmt.Fprintf(e.stderr, "Error: unknown decorator: %s\n", cmd.Decorator)
+		return coreruntime.ExitFailure
 	}
 
-	var next decorator.ExecNode
+	var next coreruntime.ExecNode
 	if len(cmd.Block) > 0 {
-		next = &planBlockNode{executor: e, execCtx: execCtx, steps: cmd.Block}
+		next = &planBlockNode{executor: e, execCtx: commandExecCtx, steps: cmd.Block}
 	}
 
-	node := execDec.Wrap(next, params)
-	if node == nil {
-		if next == nil {
-			return 0
-		}
-		node = next
+	switch typed := capability.(type) {
+	case coreplugin.Wrapper:
+		return e.executePluginWrapper(commandExecCtx, next, typed, params, stdin, stdout)
+	case coreplugin.Transport:
+		return e.executePlanPluginTransport(commandExecCtx, cmd.Block, typed, params)
+	default:
+		_, _ = fmt.Fprintf(e.stderr, "Error: @%s is not executable\n", decoratorName)
+		return coreruntime.ExitFailure
 	}
-
-	transportID := transportIDForPlanDecoratorExecution(execCtx, cmd, execDec)
-	baseSession, sessionErr := e.sessions.SessionFor(transportID)
-	if sessionErr != nil {
-		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
-		return decorator.ExitFailure
-	}
-	session := sessionForExecutionContext(baseSession, execCtx)
-
-	if stdout == nil {
-		stdout = os.Stdout
-	}
-
-	decoratorExecCtx := decorator.ExecContext{
-		Context: execCtx.Context(),
-		Session: session,
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  e.stderr,
-		Trace:   nil,
-	}
-
-	result, err := node.Execute(decoratorExecCtx)
-	if err != nil {
-		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", err)
-	}
-
-	return result.ExitCode
 }
 
 func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *planfmt.RedirectNode, stdin io.Reader) int {
 	invariant.NotNil(execCtx, "execCtx")
 	invariant.NotNil(redirect, "redirect node")
 	if isExecutionCanceled(execCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 
 	redirectExecCtx := withExecutionTransport(execCtx, sourceTransportIDForPlan(redirect.Source))
 	stderrOnly := planRedirectStderrEnabled(redirect.Source)
 	transportID := executionTransportID(redirectExecCtx)
 
-	ioDecorator, sinkIdentity, ok := resolvePlanIOSink(&redirect.Target, e.stderr)
+	redirectTarget, args, sinkIdentity, ok := resolvePlanIOSink(&redirect.Target, e.stderr)
 	if !ok {
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
-	caps := ioDecorator.IOCaps()
+	caps := redirectTarget.RedirectCaps()
 	if redirect.Mode == planfmt.RedirectInput && !caps.Read {
 		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support input (<)")})
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 	if redirect.Mode == planfmt.RedirectOverwrite && !caps.Write {
 		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support overwrite (>)")})
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 	if redirect.Mode == planfmt.RedirectAppend && !caps.Append {
 		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "validate", TransportID: transportID, Cause: fmt.Errorf("does not support append (>>)")})
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(redirectExecCtx))
 	if sessionErr != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Error creating session: %v\n", sessionErr)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 	session := sessionForExecutionContext(baseSession, redirectExecCtx)
 	if isExecutionCanceled(redirectExecCtx) {
-		return decorator.ExitCanceled
+		return coreruntime.ExitCanceled
 	}
 
-	decoratorCtx := decorator.ExecContext{
-		Context: redirectExecCtx.Context(),
-		Session: session,
-		Stderr:  e.stderr,
-	}
+	pluginCtx := pluginExecContext{ctx: redirectExecCtx.Context(), session: pluginParentSession{session: session}, stdin: stdin, stdout: nil, stderr: e.stderr}
+	resolvedArgs := newPluginArgs(args, redirectTarget.Schema(), nil)
 
 	if redirect.Mode == planfmt.RedirectInput {
-		reader, err := ioDecorator.OpenRead(decoratorCtx)
+		reader, err := redirectTarget.OpenForRead(pluginCtx, resolvedArgs)
 		if err != nil {
 			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
 
 		exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), reader, nil)
 		if closeErr := reader.Close(); closeErr != nil {
 			_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
 		return exitCode
 	}
 
-	writer, err := ioDecorator.OpenWrite(decoratorCtx, redirect.Mode == planfmt.RedirectAppend)
+	writer, err := redirectTarget.OpenForWrite(pluginCtx, resolvedArgs, redirect.Mode == planfmt.RedirectAppend)
 	if err != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "open", TransportID: transportID, Cause: err})
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	exitCode := e.executePlanTreeIO(redirectExecCtx, withPlanRedirectedStderrSource(redirect.Source, stderrOnly), stdin, writer)
 	if closeErr := writer.Close(); closeErr != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Error: %v\n", SinkError{SinkID: sinkIdentity, Operation: "close", TransportID: transportID, Cause: closeErr})
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	return exitCode
@@ -439,28 +396,25 @@ func sourceTransportIDForPlan(node planfmt.ExecutionNode) string {
 			return ""
 		}
 		return sourceTransportIDForPlan(n.Nodes[0])
+	case *planfmt.LogicNode:
+		if len(n.Block) == 0 {
+			return ""
+		}
+		return sourceTransportIDForPlan(n.Block[0].Tree)
+	case *planfmt.TryNode:
+		if len(n.TryBlock) > 0 {
+			return sourceTransportIDForPlan(n.TryBlock[0].Tree)
+		}
+		if len(n.CatchBlock) > 0 {
+			return sourceTransportIDForPlan(n.CatchBlock[0].Tree)
+		}
+		if len(n.FinallyBlock) > 0 {
+			return sourceTransportIDForPlan(n.FinallyBlock[0].Tree)
+		}
+		return ""
 	default:
 		return ""
 	}
-}
-
-func transportIDForPlanDecoratorExecution(execCtx sdk.ExecutionContext, cmd *planfmt.CommandNode, execDec decorator.Exec) string {
-	transportID := executionTransportID(execCtx)
-	if cmd == nil || len(cmd.Block) == 0 {
-		return transportID
-	}
-
-	transportDec, ok := execDec.(decorator.Transport)
-	if !ok || !transportDec.MaterializeSession() {
-		return transportID
-	}
-
-	blockTransportID := sourceTransportIDForPlan(cmd.Block[0].Tree)
-	if blockTransportID == "" {
-		return transportID
-	}
-
-	return normalizedTransportID(blockTransportID)
 }
 
 type planBlockNode struct {
@@ -469,22 +423,22 @@ type planBlockNode struct {
 	steps    []planfmt.Step
 }
 
-func (n *planBlockNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
+func (n *planBlockNode) Execute(ctx coreruntime.ExecContext) (coreruntime.Result, error) {
 	child := childExecutionContextFromDecorator(n.execCtx, ctx)
 	exitCode := n.executor.executePlanBlock(child, n.steps)
-	return decorator.Result{ExitCode: exitCode}, nil
+	return coreruntime.Result{ExitCode: exitCode}, nil
 }
 
 func (n *planBlockNode) BranchCount() int {
 	return len(n.steps)
 }
 
-func (n *planBlockNode) ExecuteBranch(index int, ctx decorator.ExecContext) (decorator.Result, error) {
+func (n *planBlockNode) ExecuteBranch(index int, ctx coreruntime.ExecContext) (coreruntime.Result, error) {
 	invariant.Precondition(index >= 0 && index < len(n.steps), "branch index out of bounds: %d", index)
 
 	child := childExecutionContextFromDecorator(n.execCtx, ctx)
 	exitCode := n.executor.executePlanStep(child, n.steps[index])
-	return decorator.Result{ExitCode: exitCode}, nil
+	return coreruntime.Result{ExitCode: exitCode}, nil
 }
 
 func normalizeDecoratorName(name string) string {
@@ -494,42 +448,32 @@ func normalizeDecoratorName(name string) string {
 	return name
 }
 
-func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (decorator.IO, string, bool) {
+func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (coreplugin.RedirectTarget, map[string]any, string, bool) {
 	if target == nil {
 		_, _ = fmt.Fprintln(stderr, "Error: redirect target is nil")
-		return nil, "", false
+		return nil, nil, "", false
 	}
 
 	decoratorPath, args := normalizePlanIOArgs(target.Decorator, planArgsToMap(target.Args))
-	entry, exists := decorator.Global().Lookup(decoratorPath)
-	if !exists {
-		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
-		return nil, target.Decorator, false
-	}
-
-	ioDecorator, ok := entry.Impl.(decorator.IO)
-	if !ok {
-		_, _ = fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
-		return nil, target.Decorator, false
-	}
-
-	if factory, ok := ioDecorator.(decorator.IOFactory); ok {
-		ioDecorator = factory.WithParams(args)
-	}
-
-	identity := target.Decorator
-	if decoratorPath == "file" {
-		if path, ok := args["path"].(string); ok && path != "" {
-			identity = "@file(" + path + ")"
+	if entry := coreplugin.Global().LookupEntry(decoratorPath); entry != nil && entry.IsRedirect() {
+		capability, ok := coreplugin.Global().Lookup(decoratorPath).(coreplugin.RedirectTarget)
+		if !ok {
+			_, _ = fmt.Fprintf(stderr, "Error: decorator %s registered as redirect target but does not implement redirect interface\n", target.Decorator)
+			return nil, nil, target.Decorator, false
 		}
-		return ioDecorator, identity, true
+
+		identity := target.Decorator
+		if decoratorPath == "file" {
+			if path, ok := args["path"].(string); ok && path != "" {
+				identity = "@file(" + path + ")"
+			}
+		}
+
+		return capability, args, identity, true
 	}
 
-	if commandPath, ok := args["command"].(string); ok && commandPath != "" {
-		identity = identity + "(" + commandPath + ")"
-	}
-
-	return ioDecorator, identity, true
+	_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
+	return nil, nil, target.Decorator, false
 }
 
 func normalizePlanIOArgs(decoratorName string, args map[string]any) (string, map[string]any) {

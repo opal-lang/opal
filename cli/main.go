@@ -22,10 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	_ "github.com/builtwithtofu/sigil/core/plugin/builtins"
 	"github.com/builtwithtofu/sigil/core/sdk/secret"
-	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register built-in decorators
 	"github.com/builtwithtofu/sigil/runtime/executor"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
 	"github.com/builtwithtofu/sigil/runtime/parser"

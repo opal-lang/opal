@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 )
 
 // DisplayIDResolver resolves display IDs in an execution transport context.
@@ -112,6 +112,7 @@ func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt Dis
 	if e.stderr == nil {
 		e.stderr = os.Stderr
 	}
+	e.sessions.setDisplayIDResolver(vlt)
 	e.workers = newShellWorkerPool(e.sessions)
 	e.sessions.registerPlanTransports(plan.Transports)
 	defer e.sessions.Close()
@@ -175,7 +176,7 @@ func ExecutePlan(ctx context.Context, plan *planfmt.Plan, config Config, vlt Dis
 	}
 
 	invariant.Postcondition(
-		e.exitCode == decorator.ExitCanceled || (e.exitCode >= 0 && e.exitCode <= 255),
+		e.exitCode == coreruntime.ExitCanceled || (e.exitCode >= 0 && e.exitCode <= 255),
 		"exit code must be -1 (canceled) or in range [0, 255], got %d", e.exitCode)
 	invariant.Postcondition(e.stepsRun >= 0, "steps run must be non-negative")
 	invariant.Postcondition(e.stepsRun <= len(plan.Steps), "steps run cannot exceed total steps")

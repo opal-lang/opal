@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
 )
@@ -20,8 +20,8 @@ func TestBarePathEquivalence(t *testing.T) {
 		t.Parallel()
 
 		workdir := t.TempDir()
-		session := decorator.NewLocalSession().WithWorkdir(workdir)
-		execCtx := decorator.ExecContext{Context: context.Background(), Session: session}
+		session := coreruntime.NewLocalSession().WithWorkdir(workdir)
+		execCtx := pluginExecContext{ctx: context.Background(), session: pluginParentSession{session: session}}
 
 		relPath := filepath.Join("io", "out.txt")
 		bareTarget := &planfmt.CommandNode{
@@ -39,11 +39,11 @@ func TestBarePathEquivalence(t *testing.T) {
 			}},
 		}
 
-		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
+		bareIO, bareArgs, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected bare target to resolve")
 		}
-		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
+		explicitIO, explicitArgs, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected explicit target to resolve")
 		}
@@ -52,7 +52,7 @@ func TestBarePathEquivalence(t *testing.T) {
 			t.Fatalf("sink identity mismatch (-want +got):\n%s", diff)
 		}
 
-		bareWriter, err := bareIO.OpenWrite(execCtx, false)
+		bareWriter, err := bareIO.OpenForWrite(execCtx, newPluginArgs(bareArgs, bareIO.Schema(), nil), false)
 		if err != nil {
 			t.Fatalf("open bare writer: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestBarePathEquivalence(t *testing.T) {
 			t.Fatalf("close bare writer: %v", err)
 		}
 
-		explicitWriter, err := explicitIO.OpenWrite(execCtx, false)
+		explicitWriter, err := explicitIO.OpenForWrite(execCtx, newPluginArgs(explicitArgs, explicitIO.Schema(), nil), false)
 		if err != nil {
 			t.Fatalf("open explicit writer: %v", err)
 		}
@@ -87,8 +87,8 @@ func TestBarePathEquivalence(t *testing.T) {
 		t.Parallel()
 
 		workdir := t.TempDir()
-		session := decorator.NewLocalSession().WithWorkdir(workdir)
-		execCtx := decorator.ExecContext{Context: context.Background(), Session: session}
+		session := coreruntime.NewLocalSession().WithWorkdir(workdir)
+		execCtx := pluginExecContext{ctx: context.Background(), session: pluginParentSession{session: session}}
 
 		relPath := filepath.Join("io", "in.txt")
 		expected := "from-input\n"
@@ -111,11 +111,11 @@ func TestBarePathEquivalence(t *testing.T) {
 			}},
 		}
 
-		bareIO, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
+		bareIO, bareArgs, bareIdentity, ok := resolvePlanIOSink(bareTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected bare target to resolve")
 		}
-		explicitIO, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
+		explicitIO, explicitArgs, explicitIdentity, ok := resolvePlanIOSink(explicitTarget, os.Stderr)
 		if !ok {
 			t.Fatal("expected explicit target to resolve")
 		}
@@ -124,7 +124,7 @@ func TestBarePathEquivalence(t *testing.T) {
 			t.Fatalf("source identity mismatch (-want +got):\n%s", diff)
 		}
 
-		bareReader, err := bareIO.OpenRead(execCtx)
+		bareReader, err := bareIO.OpenForRead(execCtx, newPluginArgs(bareArgs, bareIO.Schema(), nil))
 		if err != nil {
 			t.Fatalf("open bare reader: %v", err)
 		}
@@ -136,7 +136,7 @@ func TestBarePathEquivalence(t *testing.T) {
 			t.Fatalf("close bare reader: %v", err)
 		}
 
-		explicitReader, err := explicitIO.OpenRead(execCtx)
+		explicitReader, err := explicitIO.OpenForRead(execCtx, newPluginArgs(explicitArgs, explicitIO.Schema(), nil))
 		if err != nil {
 			t.Fatalf("open explicit reader: %v", err)
 		}

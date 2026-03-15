@@ -4,50 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
 	"github.com/builtwithtofu/sigil/runtime/parser"
 	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/google/go-cmp/cmp"
 )
 
-type envTransportDecorator struct{}
-
-func (d *envTransportDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.env").
-		Summary("Test transport that provides a custom environment").
-		Roles(decorator.RoleBoundary).
-		Block(decorator.BlockRequired).
-		Idempotent().
-		Build()
-}
-
-func (d *envTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	base, err := decorator.NewTestTransport("test-env").Open(parent, params)
-	if err != nil {
-		return nil, err
-	}
-	return base.WithEnv(map[string]string{"HOME": "remote-home"}), nil
-}
-
-func (d *envTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-func (d *envTransportDecorator) MaterializeSession() bool {
-	return true
-}
-
-func (d *envTransportDecorator) Capabilities() decorator.TransportCaps {
-	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
-}
-
-func (d *envTransportDecorator) IsolationContext() decorator.IsolationContext {
-	return nil
-}
-
 func init() {
-	_ = decorator.Register("test.transport.env", &envTransportDecorator{})
+	_ = registerPlannerCapability("test.transport.env", transportEnvPluginCapability{})
 }
 
 func TestPlanNew_TransportIDs(t *testing.T) {

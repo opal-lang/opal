@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
 	"github.com/builtwithtofu/sigil/runtime/parser"
@@ -1623,13 +1622,13 @@ func splitDecoratorRefParts(parts []string) (string, []string) {
 	longest := parts[0]
 	longestLen := 1
 	current := parts[0]
-	if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+	if isRegisteredDecoratorPath(current) {
 		longest = current
 	}
 
 	for i := 1; i < len(parts); i++ {
 		current = current + "." + parts[i]
-		if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+		if isRegisteredDecoratorPath(current) {
 			longest = current
 			longestLen = i + 1
 		}
@@ -1639,38 +1638,6 @@ func splitDecoratorRefParts(parts []string) (string, []string) {
 		return longest, nil
 	}
 	return longest, parts[longestLen:]
-}
-
-func decoratorSchema(path string) (types.DecoratorSchema, bool) {
-	candidates := []string{path, strings.TrimPrefix(path, "@")}
-	seen := map[string]struct{}{}
-
-	var entry decorator.Entry
-	ok := false
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if _, exists := seen[candidate]; exists {
-			continue
-		}
-		seen[candidate] = struct{}{}
-
-		entry, ok = decorator.Global().Lookup(candidate)
-		if ok {
-			break
-		}
-	}
-	if !ok {
-		return types.DecoratorSchema{}, false
-	}
-
-	schema := entry.Impl.Descriptor().Schema
-	if schema.Path == "" && len(schema.Parameters) == 0 && schema.PrimaryParameter == "" {
-		return types.DecoratorSchema{}, false
-	}
-
-	return schema, true
 }
 
 func canonicalizeNamesWithSchema(rawNames []string, schema types.DecoratorSchema, hasPrimary bool) []string {

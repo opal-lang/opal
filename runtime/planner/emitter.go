@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/runtime/vault"
 )
 
@@ -257,8 +258,9 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 		})
 	}
 
+	capability := pluginCapability(cmd.Decorator)
 	for _, arg := range cmd.Args {
-		argValue, err := e.buildArgValue(arg.Value, displayIDs)
+		argValue, err := e.buildCommandArgValue(arg.Name, arg.Value, displayIDs, capability)
 		if err != nil {
 			return nil, fmt.Errorf("failed to evaluate command argument %q: %w", arg.Name, err)
 		}
@@ -294,6 +296,84 @@ func (e *Emitter) buildCommandNode(cmd *CommandStmtIR) (*planfmt.CommandNode, er
 	}
 
 	return cmdNode, nil
+}
+
+func (e *Emitter) buildCommandArgValue(paramName string, expr *ExprIR, displayIDs map[string]string, capability coreplugin.Capability) (planfmt.Value, error) {
+	if capability != nil && capability.Schema().DeclaresSecret(paramName) {
+		return e.buildSecretArgValue(paramName, expr)
+	}
+	return e.buildArgValue(expr, displayIDs)
+}
+
+func (e *Emitter) buildSecretArgValue(paramName string, expr *ExprIR) (planfmt.Value, error) {
+	value, err := EvaluateExpr(expr, e.getValue)
+	if err != nil {
+		return planfmt.Value{}, err
+	}
+	raw := RenderExpr(expr, nil)
+	var exprID string
+	if e.isSecretExprTransportSensitive(expr) {
+		exprID = e.vault.TrackExpressionTransportSensitive(raw)
+	} else {
+		exprID = e.vault.TrackExpression(raw)
+	}
+	e.vault.StoreUnresolvedValue(exprID, value)
+	e.vault.MarkTouched(exprID)
+	e.vault.ResolveAllTouched()
+	displayID := e.vault.GetDisplayID(exprID)
+	if displayID == "" {
+		return planfmt.Value{}, fmt.Errorf("failed to generate display ID for secret param %q", paramName)
+	}
+	e.recordSecretUse(exprID, displayID, paramName)
+	return planfmt.Value{Kind: planfmt.ValueString, Str: displayID}, nil
+}
+
+func (e *Emitter) isSecretExprTransportSensitive(expr *ExprIR) bool {
+	if expr == nil {
+		return false
+	}
+	for _, ref := range e.secretExprRefs(expr) {
+		if ref != "" && e.vault.IsExpressionTransportSensitive(ref) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Emitter) secretExprRefs(expr *ExprIR) []string {
+	if expr == nil {
+		return nil
+	}
+	switch expr.Kind {
+	case ExprVarRef:
+		if e.scopes != nil {
+			if exprID, ok := e.scopes.Lookup(expr.VarName); ok {
+				return []string{exprID}
+			}
+		}
+	case ExprDecoratorRef:
+		if exprID, ok := e.decoratorExprIDs[decoratorKey(expr.Decorator)]; ok {
+			return []string{exprID}
+		}
+	case ExprBinaryOp:
+		return append(e.secretExprRefs(expr.Left), e.secretExprRefs(expr.Right)...)
+	case ExprLiteral:
+		if arr, ok := expr.Value.([]*ExprIR); ok {
+			var refs []string
+			for _, item := range arr {
+				refs = append(refs, e.secretExprRefs(item)...)
+			}
+			return refs
+		}
+		if obj, ok := expr.Value.(map[string]*ExprIR); ok {
+			var refs []string
+			for _, item := range obj {
+				refs = append(refs, e.secretExprRefs(item)...)
+			}
+			return refs
+		}
+	}
+	return nil
 }
 
 func (e *Emitter) buildCommandNodeOrRedirect(cmd *CommandStmtIR) (planfmt.ExecutionNode, error) {

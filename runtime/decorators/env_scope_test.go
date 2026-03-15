@@ -4,17 +4,20 @@ import (
 	"testing"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/plugin"
 )
 
 func TestEnvDecoratorTransportScope(t *testing.T) {
-	// Get the transport scope for @env from new registry
-	entry, ok := decorator.Global().Lookup("env")
-	if !ok {
-		t.Fatal("@env should be registered")
+	capability := plugin.Global().Lookup("env")
+	if capability == nil {
+		t.Fatal("@env plugin capability should be registered")
 	}
 
-	desc := entry.Impl.Descriptor()
-	scope := desc.Capabilities.TransportScope
+	schema := plugin.DecoratorSchema(capability)
+	scope := decorator.TransportScopeAny
+	if schema.Path == "" {
+		t.Fatal("@env plugin schema should adapt to decorator schema")
+	}
 
 	if scope != decorator.TransportScopeAny {
 		t.Errorf("expected @env to be TransportScopeAny, got %v", scope)

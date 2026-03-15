@@ -1,7 +1,5 @@
 package parser
 
-import "github.com/builtwithtofu/sigil/core/decorator"
-
 // StringPart represents a part of an interpolated string using byte offsets (zero allocation)
 type StringPart struct {
 	Start         int  // Byte offset in content (start of this part)
@@ -250,16 +248,5 @@ func parseStringDecorator(content []byte, atPos int) (parsedStringDecorator, boo
 }
 
 func isValueDecorator(name []byte) bool {
-	entry, ok := decorator.Global().Lookup(string(name))
-	if !ok {
-		return false
-	}
-
-	for _, role := range entry.Roles {
-		if role == decorator.RoleProvider {
-			return true
-		}
-	}
-
-	return false
+	return isPluginValueDecorator(string(name))
 }

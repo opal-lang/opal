@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
+	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
 )
 
 func deriveTransportID(planKey []byte, decoratorName string, args map[string]any, parentID string) (string, error) {
@@ -113,23 +113,18 @@ func evaluateArgs(args []ArgIR, getValue ValueLookup) (map[string]any, error) {
 	return params, nil
 }
 
-func lookupTransportDecorator(name string) (decorator.Transport, decorator.Descriptor, bool) {
+func isTransportDecoratorName(name string) bool {
 	trimmed := strings.TrimPrefix(name, "@")
-	if trimmed == "" {
-		return nil, decorator.Descriptor{}, false
-	}
-	entry, ok := decorator.Global().Lookup(trimmed)
-	if !ok {
-		return nil, decorator.Descriptor{}, false
-	}
-	transport, ok := entry.Impl.(decorator.Transport)
-	if !ok {
-		return nil, decorator.Descriptor{}, false
-	}
-	return transport, entry.Impl.Descriptor(), true
+	entry := coreplugin.Global().LookupEntry(trimmed)
+	return entry != nil && entry.IsTransport()
 }
 
-func isTransportDecoratorName(name string) bool {
-	_, _, ok := lookupTransportDecorator(name)
-	return ok
+func lookupPluginTransportCapability(name string) (coreplugin.Transport, bool) {
+	trimmed := strings.TrimPrefix(name, "@")
+	if trimmed == "" {
+		return nil, false
+	}
+	capability := coreplugin.Global().Lookup(trimmed)
+	transport, ok := capability.(coreplugin.Transport)
+	return transport, ok
 }

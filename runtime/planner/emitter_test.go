@@ -5,10 +5,16 @@ import (
 	"testing"
 
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/plugin"
+	"github.com/builtwithtofu/sigil/core/plugin/mockplugin"
 	_ "github.com/builtwithtofu/sigil/runtime/decorators" // Register decorators
 	"github.com/builtwithtofu/sigil/runtime/vault"
 	"github.com/google/go-cmp/cmp"
 )
+
+func init() {
+	_ = plugin.Global().Register(&mockplugin.AWSPlugin{})
+}
 
 // TestEmit_SimpleCommand tests emitting a simple command with no variables.
 // Input IR: echo "hello"
@@ -114,6 +120,54 @@ func TestEmit_NilCommand(t *testing.T) {
 	expected := "nil command in StmtCommand at index 0"
 	if diff := cmp.Diff(expected, err.Error()); diff != "" {
 		t.Errorf("Error mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestEmit_PluginSecretArgUsesDisplayID(t *testing.T) {
+	result := &ResolveResult{
+		Statements: []*StatementIR{{
+			Kind: StmtCommand,
+			Command: &CommandStmtIR{
+				Decorator: "@aws.instance.connect",
+				Args: []ArgIR{
+					{Name: "connectionType", Value: &ExprIR{Kind: ExprLiteral, Value: "ssh"}},
+					{Name: "credentials", Value: &ExprIR{Kind: ExprLiteral, Value: "creds"}},
+					{Name: "instance", Value: &ExprIR{Kind: ExprLiteral, Value: "i-123"}},
+				},
+			},
+		}},
+	}
+
+	v := vault.NewWithPlanKey([]byte("test-key-plugin-secret"))
+	emitter := NewEmitter(result, v, NewScopeStack(), "")
+	plan, err := emitter.Emit()
+	if err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	cmdNode, ok := plan.Steps[0].Tree.(*planfmt.CommandNode)
+	if !ok {
+		t.Fatalf("Step.Tree is %T, want *planfmt.CommandNode", plan.Steps[0].Tree)
+	}
+
+	var secretArg planfmt.Arg
+	for _, arg := range cmdNode.Args {
+		if arg.Key == "credentials" {
+			secretArg = arg
+			break
+		}
+	}
+	if diff := cmp.Diff(planfmt.ValueString, secretArg.Val.Kind); diff != "" {
+		t.Fatalf("secret arg kind mismatch (-want +got):\n%s", diff)
+	}
+	if secretArg.Val.Str == "creds" {
+		t.Fatal("secret arg leaked raw secret into plan")
+	}
+	if !strings.HasPrefix(secretArg.Val.Str, "sigil:") {
+		t.Fatalf("secret arg should be display ID, got %q", secretArg.Val.Str)
+	}
+	if diff := cmp.Diff(1, len(plan.SecretUses)); diff != "" {
+		t.Fatalf("secret use count mismatch (-want +got):\n%s", diff)
 	}
 }
 

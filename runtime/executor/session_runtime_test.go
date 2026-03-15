@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
@@ -20,129 +18,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-type sessionIDCheckDecorator struct{}
-
-type sessionBoundaryDecorator struct{}
-
-type transportSessionCheckDecorator struct{}
-
-type testSSHTransportDecorator struct{}
-
-type sessionPoolProbeDecorator struct{}
+type multiHopRootSession struct{}
 
 var (
-	sessionPoolProbeOpenMu    sync.Mutex
-	sessionPoolProbeOpenCount int
+	multiHopDialMu    sync.Mutex
+	multiHopDialCalls []string
 )
-
-func (d *sessionIDCheckDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.sessionid.check").
-		Summary("Checks active session identifier").
-		Roles(decorator.RoleWrapper).
-		Build()
-}
-
-func (d *sessionBoundaryDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.session.boundary").
-		Summary("Runs a block with an overridden session transport ID").
-		Roles(decorator.RoleWrapper).
-		ParamString("id", "Session identifier to use in the block").
-		Required().
-		Done().
-		Block(decorator.BlockRequired).
-		Build()
-}
-
-func (d *transportSessionCheckDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.session.check").
-		Summary("Checks that execution uses a non-local transport session").
-		Roles(decorator.RoleWrapper).
-		Build()
-}
-
-func (d *testSSHTransportDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.sshprobe").
-		Summary("Provides a deterministic SSH-scoped transport session for tests").
-		Roles(decorator.RoleBoundary).
-		Build()
-}
-
-func (d *sessionPoolProbeDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.poolprobe").
-		Summary("Counts transport session opens for pooling tests").
-		Roles(decorator.RoleBoundary).
-		Build()
-}
-
-func (d *testSSHTransportDecorator) Capabilities() decorator.TransportCaps {
-	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
-}
-
-func (d *sessionPoolProbeDecorator) Capabilities() decorator.TransportCaps {
-	return decorator.TransportCapNetwork | decorator.TransportCapEnvironment
-}
-
-func (d *sessionIDCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return &sessionIDCheckNode{params: params}
-}
-
-func (d *sessionBoundaryDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return &sessionBoundaryNode{next: next, params: params}
-}
-
-func (d *transportSessionCheckDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return &transportSessionCheckNode{}
-}
-
-func (d *testSSHTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	return &testSSHSession{parent: parent}, nil
-}
-
-func (d *sessionPoolProbeDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	sessionPoolProbeOpenMu.Lock()
-	sessionPoolProbeOpenCount++
-	sessionPoolProbeOpenMu.Unlock()
-	return &testSSHSession{parent: parent}, nil
-}
-
-func (d *testSSHTransportDecorator) MaterializeSession() bool {
-	return true
-}
-
-func (d *sessionPoolProbeDecorator) MaterializeSession() bool {
-	return true
-}
-
-func (d *testSSHTransportDecorator) IsolationContext() decorator.IsolationContext {
-	return nil
-}
-
-func (d *sessionPoolProbeDecorator) IsolationContext() decorator.IsolationContext {
-	return nil
-}
-
-func (d *testSSHTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-func (d *sessionPoolProbeDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-type sessionIDCheckNode struct {
-	params map[string]any
-}
-
-type sessionBoundaryNode struct {
-	next   decorator.ExecNode
-	params map[string]any
-}
-
-type transportSessionCheckNode struct{}
-
-type testSSHSession struct {
-	parent decorator.Session
-}
 
 type closeOrderSession struct {
 	id        string
@@ -150,319 +31,6 @@ type closeOrderSession struct {
 	order     *[]string
 	closeErr  error
 	closeCall int
-}
-
-func (n *sessionIDCheckNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	want, _ := n.params["expect"].(string)
-	got := ctx.Session.ID()
-	if diff := cmp.Diff(want, got); diff != "" {
-		return decorator.Result{ExitCode: 99}, fmt.Errorf("session mismatch (-want +got):\n%s", diff)
-	}
-	return decorator.Result{ExitCode: 0}, nil
-}
-
-func (n *sessionBoundaryNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	if n.next == nil {
-		return decorator.Result{ExitCode: 0}, nil
-	}
-
-	id, _ := n.params["id"].(string)
-	if id == "" {
-		return decorator.Result{ExitCode: 1}, fmt.Errorf("missing session id")
-	}
-
-	child := ctx.WithSession(&transportScopedSession{id: id, session: ctx.Session})
-	return n.next.Execute(child)
-}
-
-func (n *transportSessionCheckNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	wrapped, ok := ctx.Session.(*transportScopedSession)
-	if !ok {
-		return decorator.Result{ExitCode: 98}, fmt.Errorf("expected transportScopedSession, got %T", ctx.Session)
-	}
-
-	if _, isLocal := wrapped.session.(*decorator.LocalSession); isLocal {
-		return decorator.Result{ExitCode: 98}, fmt.Errorf("expected transport session, got local session")
-	}
-
-	if diff := cmp.Diff(decorator.TransportScopeSSH, wrapped.TransportScope()); diff != "" {
-		return decorator.Result{ExitCode: 98}, fmt.Errorf("transport scope mismatch (-want +got):\n%s", diff)
-	}
-
-	return decorator.Result{ExitCode: 0}, nil
-}
-
-func (s *testSSHSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
-	return s.parent.Run(ctx, argv, opts)
-}
-
-func (s *testSSHSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
-	return s.parent.Put(ctx, data, path, mode)
-}
-
-func (s *testSSHSession) Get(ctx context.Context, path string) ([]byte, error) {
-	return s.parent.Get(ctx, path)
-}
-
-func (s *testSSHSession) Env() map[string]string {
-	return s.parent.Env()
-}
-
-func (s *testSSHSession) WithEnv(delta map[string]string) decorator.Session {
-	return &testSSHSession{parent: s.parent.WithEnv(delta)}
-}
-
-func (s *testSSHSession) WithWorkdir(dir string) decorator.Session {
-	return &testSSHSession{parent: s.parent.WithWorkdir(dir)}
-}
-
-func (s *testSSHSession) Cwd() string {
-	return s.parent.Cwd()
-}
-
-func (s *testSSHSession) Platform() string {
-	return ""
-}
-
-func (s *testSSHSession) ID() string {
-	return "ssh:probe"
-}
-
-func (s *testSSHSession) TransportScope() decorator.TransportScope {
-	return decorator.TransportScopeSSH
-}
-
-func (s *testSSHSession) Close() error {
-	return nil
-}
-
-func (s *closeOrderSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
-	return decorator.Result{ExitCode: 0}, nil
-}
-
-func (s *closeOrderSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
-	return nil
-}
-
-func (s *closeOrderSession) Get(ctx context.Context, path string) ([]byte, error) {
-	return nil, nil
-}
-
-func (s *closeOrderSession) Env() map[string]string {
-	return nil
-}
-
-func (s *closeOrderSession) WithEnv(delta map[string]string) decorator.Session {
-	return s
-}
-
-func (s *closeOrderSession) WithWorkdir(dir string) decorator.Session {
-	return s
-}
-
-func (s *closeOrderSession) Cwd() string {
-	return ""
-}
-
-func (s *closeOrderSession) Platform() string {
-	return ""
-}
-
-func (s *closeOrderSession) ID() string {
-	return s.id
-}
-
-func (s *closeOrderSession) TransportScope() decorator.TransportScope {
-	return decorator.TransportScopeLocal
-}
-
-func (s *closeOrderSession) Close() error {
-	s.orderMu.Lock()
-	defer s.orderMu.Unlock()
-	*s.order = append(*s.order, s.id)
-	s.closeCall++
-	return s.closeErr
-}
-
-var (
-	registerSessionIDCheckDecoratorOnce  sync.Once
-	registerSessionBoundaryDecoratorOnce sync.Once
-	registerTransportSessionCheckOnce    sync.Once
-	registerTestSSHTransportOnce         sync.Once
-	registerSessionPoolProbeOnce         sync.Once
-)
-
-func registerSessionIDCheckDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerSessionIDCheckDecoratorOnce.Do(func() {
-		registerErr = decorator.Register("test.sessionid.check", &sessionIDCheckDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.sessionid.check: %v", registerErr)
-	}
-}
-
-func registerSessionBoundaryDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerSessionBoundaryDecoratorOnce.Do(func() {
-		registerErr = decorator.Register("test.session.boundary", &sessionBoundaryDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.session.boundary: %v", registerErr)
-	}
-}
-
-func registerTransportSessionCheckDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerTransportSessionCheckOnce.Do(func() {
-		registerErr = decorator.Register("test.transport.session.check", &transportSessionCheckDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.transport.session.check: %v", registerErr)
-	}
-}
-
-func registerTestSSHTransportDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerTestSSHTransportOnce.Do(func() {
-		registerErr = decorator.Register("test.transport.sshprobe", &testSSHTransportDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.transport.sshprobe: %v", registerErr)
-	}
-}
-
-func registerSessionPoolProbeDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerSessionPoolProbeOnce.Do(func() {
-		registerErr = decorator.Register("test.transport.poolprobe", &sessionPoolProbeDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.transport.poolprobe: %v", registerErr)
-	}
-}
-
-func resetSessionPoolProbeOpenCount() {
-	sessionPoolProbeOpenMu.Lock()
-	defer sessionPoolProbeOpenMu.Unlock()
-	sessionPoolProbeOpenCount = 0
-}
-
-func sessionPoolProbeOpenCountValue() int {
-	sessionPoolProbeOpenMu.Lock()
-	defer sessionPoolProbeOpenMu.Unlock()
-	return sessionPoolProbeOpenCount
-}
-
-type multiHopTransportDecorator struct{}
-
-type noDialerTransportDecorator struct{}
-
-type multiHopRootSession struct{}
-
-type multiHopSession struct {
-	id           string
-	parent       decorator.Session
-	parentDialer decorator.NetworkDialer
-}
-
-type noDialerSession struct {
-	id string
-}
-
-var (
-	registerMultiHopTransportOnce sync.Once
-	registerNoDialerTransportOnce sync.Once
-
-	multiHopDialMu    sync.Mutex
-	multiHopDialCalls []string
-)
-
-func (d *multiHopTransportDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.multihop").
-		Summary("Opens nested sessions via parent NetworkDialer").
-		Roles(decorator.RoleBoundary).
-		Build()
-}
-
-func (d *multiHopTransportDecorator) Capabilities() decorator.TransportCaps {
-	return decorator.TransportCapNetwork
-}
-
-func (d *multiHopTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	addr, _ := params["addr"].(string)
-	if strings.TrimSpace(addr) == "" {
-		return nil, fmt.Errorf("multi-hop transport requires non-empty addr")
-	}
-
-	id, _ := params["id"].(string)
-	if strings.TrimSpace(id) == "" {
-		return nil, fmt.Errorf("multi-hop transport requires non-empty id")
-	}
-
-	parentDialer, ok := parent.(decorator.NetworkDialer)
-	if !ok {
-		return nil, fmt.Errorf("parent session %T does not implement NetworkDialer", parent)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	conn, err := parentDialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("dial through parent NetworkDialer to %q: %w", addr, err)
-	}
-	_ = conn.Close()
-
-	return &multiHopSession{id: id, parent: parent, parentDialer: parentDialer}, nil
-}
-
-func (d *multiHopTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-func (d *multiHopTransportDecorator) MaterializeSession() bool {
-	return true
-}
-
-func (d *multiHopTransportDecorator) IsolationContext() decorator.IsolationContext {
-	return nil
-}
-
-func (d *noDialerTransportDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.transport.nodialer").
-		Summary("Opens a session that has no NetworkDialer").
-		Roles(decorator.RoleBoundary).
-		Build()
-}
-
-func (d *noDialerTransportDecorator) Capabilities() decorator.TransportCaps {
-	return 0
-}
-
-func (d *noDialerTransportDecorator) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	id, _ := params["id"].(string)
-	if strings.TrimSpace(id) == "" {
-		return nil, fmt.Errorf("no-dialer transport requires non-empty id")
-	}
-	return &noDialerSession{id: id}, nil
-}
-
-func (d *noDialerTransportDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-func (d *noDialerTransportDecorator) MaterializeSession() bool {
-	return true
-}
-
-func (d *noDialerTransportDecorator) IsolationContext() decorator.IsolationContext {
-	return nil
 }
 
 func (s *multiHopRootSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
@@ -516,119 +84,52 @@ func (s *multiHopRootSession) Close() error {
 	return nil
 }
 
-func (s *multiHopSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
-	return s.parent.Run(ctx, argv, opts)
-}
-
-func (s *multiHopSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
-	return s.parent.Put(ctx, data, path, mode)
-}
-
-func (s *multiHopSession) Get(ctx context.Context, path string) ([]byte, error) {
-	return s.parent.Get(ctx, path)
-}
-
-func (s *multiHopSession) Env() map[string]string {
-	return s.parent.Env()
-}
-
-func (s *multiHopSession) WithEnv(delta map[string]string) decorator.Session {
-	return &multiHopSession{id: s.id, parent: s.parent.WithEnv(delta), parentDialer: s.parentDialer}
-}
-
-func (s *multiHopSession) WithWorkdir(dir string) decorator.Session {
-	return &multiHopSession{id: s.id, parent: s.parent.WithWorkdir(dir), parentDialer: s.parentDialer}
-}
-
-func (s *multiHopSession) Cwd() string {
-	return s.parent.Cwd()
-}
-
-func (s *multiHopSession) Platform() string {
-	return s.parent.Platform()
-}
-
-func (s *multiHopSession) ID() string {
-	return s.id
-}
-
-func (s *multiHopSession) TransportScope() decorator.TransportScope {
-	return decorator.TransportScopeSSH
-}
-
-func (s *multiHopSession) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	recordMultiHopDial(s.id, addr)
-	return s.parentDialer.DialContext(ctx, network, addr)
-}
-
-func (s *multiHopSession) Close() error {
-	return nil
-}
-
-func (s *noDialerSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
+func (s *closeOrderSession) Run(ctx context.Context, argv []string, opts decorator.RunOpts) (decorator.Result, error) {
 	return decorator.Result{ExitCode: 0}, nil
 }
 
-func (s *noDialerSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
+func (s *closeOrderSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
 	return nil
 }
 
-func (s *noDialerSession) Get(ctx context.Context, path string) ([]byte, error) {
+func (s *closeOrderSession) Get(ctx context.Context, path string) ([]byte, error) {
 	return nil, nil
 }
 
-func (s *noDialerSession) Env() map[string]string {
-	return map[string]string{}
-}
-
-func (s *noDialerSession) WithEnv(delta map[string]string) decorator.Session {
-	return s
-}
-
-func (s *noDialerSession) WithWorkdir(dir string) decorator.Session {
-	return s
-}
-
-func (s *noDialerSession) Cwd() string {
-	return ""
-}
-
-func (s *noDialerSession) Platform() string {
-	return ""
-}
-
-func (s *noDialerSession) ID() string {
-	return s.id
-}
-
-func (s *noDialerSession) TransportScope() decorator.TransportScope {
-	return decorator.TransportScopeSSH
-}
-
-func (s *noDialerSession) Close() error {
+func (s *closeOrderSession) Env() map[string]string {
 	return nil
 }
 
-func registerMultiHopTransportDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerMultiHopTransportOnce.Do(func() {
-		registerErr = decorator.Register("test.transport.multihop", &multiHopTransportDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.transport.multihop: %v", registerErr)
-	}
+func (s *closeOrderSession) WithEnv(delta map[string]string) decorator.Session {
+	return s
 }
 
-func registerNoDialerTransportDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerNoDialerTransportOnce.Do(func() {
-		registerErr = decorator.Register("test.transport.nodialer", &noDialerTransportDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register test.transport.nodialer: %v", registerErr)
-	}
+func (s *closeOrderSession) WithWorkdir(dir string) decorator.Session {
+	return s
+}
+
+func (s *closeOrderSession) Cwd() string {
+	return ""
+}
+
+func (s *closeOrderSession) Platform() string {
+	return ""
+}
+
+func (s *closeOrderSession) ID() string {
+	return s.id
+}
+
+func (s *closeOrderSession) TransportScope() decorator.TransportScope {
+	return decorator.TransportScopeLocal
+}
+
+func (s *closeOrderSession) Close() error {
+	s.orderMu.Lock()
+	defer s.orderMu.Unlock()
+	*s.order = append(*s.order, s.id)
+	s.closeCall++
+	return s.closeErr
 }
 
 func multiHopRootSessionFactory(transportID string) (decorator.Session, error) {
@@ -655,37 +156,38 @@ func multiHopDialCallsValue() []string {
 }
 
 func TestNestedTransportUsesParentNetworkDialer(t *testing.T) {
-	registerSessionIDCheckDecorator(t)
-	registerMultiHopTransportDecorator(t)
-	registerNoDialerTransportDecorator(t)
+	registerParentDialerTestPlugin()
 
 	t.Run("happy path delegates nested dial through parent", func(t *testing.T) {
 		resetMultiHopDialCalls()
 
-		plan := &planfmt.Plan{Target: "nested-parent-dialer", Transports: []planfmt.Transport{
+		runtime := newSessionRuntime(multiHopRootSessionFactory)
+		defer runtime.Close()
+		runtime.registerPlanTransports([]planfmt.Transport{
 			{ID: "local", Decorator: "local", ParentID: ""},
 			{ID: "transport:bastion", Decorator: "@test.transport.multihop", ParentID: "local", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "bastion.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:bastion"}}}},
-			{ID: "transport:internal", Decorator: "@test.transport.multihop", ParentID: "session:bastion", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:internal"}}}},
-		}, Steps: []planfmt.Step{{
-			ID: 1,
-			Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
-				planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:bastion"}}, "transport:bastion"),
-				planExec("@test.sessionid.check", map[string]planfmt.Value{"expect": {Kind: planfmt.ValueString, Str: "transport:internal"}}, "transport:internal"),
-			}},
-		}}}
+			{ID: "transport:internal", Decorator: "@test.transport.multihop", ParentID: "transport:bastion", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:internal"}}}},
+		})
 
-		result, err := ExecutePlan(context.Background(), plan, Config{sessionFactory: multiHopRootSessionFactory}, testVault())
+		bastion, err := runtime.SessionFor("transport:bastion")
 		if err != nil {
-			t.Fatalf("execute failed: %v", err)
+			t.Fatalf("session for transport:bastion: %v", err)
 		}
-		if diff := cmp.Diff(0, result.ExitCode); diff != "" {
-			t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+		if diff := cmp.Diff("transport:bastion", bastion.ID()); diff != "" {
+			t.Fatalf("bastion session id mismatch (-want +got):\n%s", diff)
+		}
+
+		internal, err := runtime.SessionFor("transport:internal")
+		if err != nil {
+			t.Fatalf("session for transport:internal: %v", err)
+		}
+		if diff := cmp.Diff("transport:internal", internal.ID()); diff != "" {
+			t.Fatalf("internal session id mismatch (-want +got):\n%s", diff)
 		}
 
 		wantDials := []string{
 			"local->bastion.internal:22",
 			"session:bastion->internal.internal:22",
-			"local->internal.internal:22",
 		}
 		if diff := cmp.Diff(wantDials, multiHopDialCallsValue()); diff != "" {
 			t.Fatalf("dial delegation mismatch (-want +got):\n%s", diff)
@@ -693,13 +195,14 @@ func TestNestedTransportUsesParentNetworkDialer(t *testing.T) {
 	})
 
 	t.Run("error when parent session has no NetworkDialer", func(t *testing.T) {
+		registerParentDialerTestPlugin()
 		runtime := newSessionRuntime(multiHopRootSessionFactory)
 		defer runtime.Close()
 
 		runtime.registerPlanTransports([]planfmt.Transport{
 			{ID: "local", Decorator: "local", ParentID: ""},
 			{ID: "transport:no-dialer", Decorator: "@test.transport.nodialer", ParentID: "local", Args: []planfmt.Arg{{Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:no-dialer"}}}},
-			{ID: "transport:child", Decorator: "@test.transport.multihop", ParentID: "session:no-dialer", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:child"}}}},
+			{ID: "transport:child", Decorator: "@test.transport.multihop", ParentID: "transport:no-dialer", Args: []planfmt.Arg{{Key: "addr", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "internal.internal:22"}}, {Key: "id", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "session:child"}}}},
 		})
 
 		_, err := runtime.SessionFor("transport:no-dialer")
@@ -712,7 +215,7 @@ func TestNestedTransportUsesParentNetworkDialer(t *testing.T) {
 			t.Fatal("expected session creation error")
 		}
 
-		wantErr := "failed to create session for transport \"transport:child\": open transport \"@test.transport.multihop\": parent session *executor.noDialerSession does not implement NetworkDialer"
+		wantErr := "failed to create session for transport \"transport:child\": open plugin transport \"@test.transport.multihop\": parent transport executor.pluginParentSession does not implement NetworkDialer"
 		if diff := cmp.Diff(wantErr, err.Error()); diff != "" {
 			t.Fatalf("error mismatch (-want +got):\n%s", diff)
 		}
@@ -720,7 +223,7 @@ func TestNestedTransportUsesParentNetworkDialer(t *testing.T) {
 }
 
 func TestExecuteRoutesSessionByTransportID(t *testing.T) {
-	registerSessionIDCheckDecorator(t)
+	registerExecutorSessionTestPlugin()
 
 	plan := &planfmt.Plan{Target: "route-by-transport", Transports: localTestTransports("transport:A", "transport:B"), Steps: []planfmt.Step{{
 		ID: 1,
@@ -742,8 +245,7 @@ func TestExecuteRoutesSessionByTransportID(t *testing.T) {
 }
 
 func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
-	registerSessionIDCheckDecorator(t)
-	registerSessionBoundaryDecorator(t)
+	registerExecutorSessionTestPlugin()
 
 	plan := &planfmt.Plan{Target: "wrapper-session-inherit", Transports: localTestTransports("transport:boundary"), Steps: []planfmt.Step{{
 		ID: 1,
@@ -767,8 +269,7 @@ func TestExecuteBlockInheritsWrapperSessionTransportID(t *testing.T) {
 }
 
 func TestExecutePlan_TransportIDUsesTransportSession(t *testing.T) {
-	registerTransportSessionCheckDecorator(t)
-	registerTestSSHTransportDecorator(t)
+	registerExecutorSessionTestPlugin()
 
 	const (
 		localTransportID = "local"
@@ -779,13 +280,14 @@ func TestExecutePlan_TransportIDUsesTransportSession(t *testing.T) {
 		Target: "transport-session-resolution",
 		Transports: []planfmt.Transport{
 			{ID: localTransportID, Decorator: "local", ParentID: ""},
-			{ID: sshTransportID, Decorator: "@test.transport.sshprobe", ParentID: localTransportID},
+			{ID: sshTransportID, Decorator: "@test.transport", ParentID: localTransportID},
 		},
 		Steps: []planfmt.Step{{
 			ID: 1,
 			Tree: &planfmt.CommandNode{
-				Decorator:   "@test.transport.session.check",
+				Decorator:   "@test.sessionid.check",
 				TransportID: sshTransportID,
+				Args:        []planfmt.Arg{{Key: "expect", Val: planfmt.Value{Kind: planfmt.ValueString, Str: sshTransportID}}},
 			},
 		}},
 	}
@@ -800,9 +302,8 @@ func TestExecutePlan_TransportIDUsesTransportSession(t *testing.T) {
 }
 
 func TestExecutePlan_ReusesPooledTransportSessionPerTarget(t *testing.T) {
-	registerTransportSessionCheckDecorator(t)
-	registerSessionPoolProbeDecorator(t)
-	resetSessionPoolProbeOpenCount()
+	registerExecutorSessionTestPlugin()
+	resetPluginPoolProbeOpenCount()
 
 	const (
 		localTransportID = "local"
@@ -825,8 +326,8 @@ func TestExecutePlan_ReusesPooledTransportSessionPerTarget(t *testing.T) {
 		Steps: []planfmt.Step{{
 			ID: 1,
 			Tree: &planfmt.SequenceNode{Nodes: []planfmt.ExecutionNode{
-				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 2, Tree: &planfmt.CommandNode{Decorator: "@test.transport.session.check", TransportID: childA1}}}},
-				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 3, Tree: &planfmt.CommandNode{Decorator: "@test.transport.session.check", TransportID: childA2}}}},
+				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 2, Tree: &planfmt.CommandNode{Decorator: "@test.sessionid.check", TransportID: childA1, Args: []planfmt.Arg{{Key: "expect", Val: planfmt.Value{Kind: planfmt.ValueString, Str: childA1}}}}}}},
+				&planfmt.CommandNode{Decorator: "@test.transport.poolprobe", TransportID: localTransportID, Args: transportArgs, Block: []planfmt.Step{{ID: 3, Tree: &planfmt.CommandNode{Decorator: "@test.sessionid.check", TransportID: childA2, Args: []planfmt.Arg{{Key: "expect", Val: planfmt.Value{Kind: planfmt.ValueString, Str: childA2}}}}}}},
 			}},
 		}},
 	}
@@ -838,7 +339,7 @@ func TestExecutePlan_ReusesPooledTransportSessionPerTarget(t *testing.T) {
 	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
 		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(1, sessionPoolProbeOpenCountValue()); diff != "" {
+	if diff := cmp.Diff(1, pluginPoolProbeOpenCountValue()); diff != "" {
 		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -1007,8 +508,8 @@ func TestSessionRuntimeReturnsErrorForUnknownTransportID(t *testing.T) {
 }
 
 func TestSessionRuntimePoolsByParentAndParams(t *testing.T) {
-	registerSessionPoolProbeDecorator(t)
-	resetSessionPoolProbeOpenCount()
+	registerExecutorSessionTestPlugin()
+	resetPluginPoolProbeOpenCount()
 
 	runtime := newSessionRuntime(scopedLocalSessionFactory)
 	defer runtime.Close()
@@ -1052,7 +553,7 @@ func TestSessionRuntimePoolsByParentAndParams(t *testing.T) {
 	if diff := cmp.Diff(false, firstScoped.session == thirdScoped.session); diff != "" {
 		t.Fatalf("different parent should not reuse base session (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(2, sessionPoolProbeOpenCountValue()); diff != "" {
+	if diff := cmp.Diff(2, pluginPoolProbeOpenCountValue()); diff != "" {
 		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -1138,8 +639,8 @@ func TestSessionPoolKeyIncludesAuthFingerprint(t *testing.T) {
 }
 
 func TestSessionRuntimePoolsByParentAndAuthFingerprint(t *testing.T) {
-	registerSessionPoolProbeDecorator(t)
-	resetSessionPoolProbeOpenCount()
+	registerExecutorSessionTestPlugin()
+	resetPluginPoolProbeOpenCount()
 
 	runtime := newSessionRuntime(scopedLocalSessionFactory)
 	defer runtime.Close()
@@ -1182,7 +683,7 @@ func TestSessionRuntimePoolsByParentAndAuthFingerprint(t *testing.T) {
 	if diff := cmp.Diff(false, firstScoped.session == thirdScoped.session); diff != "" {
 		t.Fatalf("different auth should use different base session (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(2, sessionPoolProbeOpenCountValue()); diff != "" {
+	if diff := cmp.Diff(2, pluginPoolProbeOpenCountValue()); diff != "" {
 		t.Fatalf("pool open count mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -1256,5 +757,19 @@ func TestSessionRuntimeCloseContinuesAfterCloseError(t *testing.T) {
 	}
 	if diff := cmp.Diff(true, strings.Contains(logBuf.String(), "session runtime: close transport \"transport:child\": child close failed")); diff != "" {
 		t.Fatalf("close error log mismatch (-want +got):\n%s\nlog: %q", diff, logBuf.String())
+	}
+}
+
+func TestRemoveSessionKeepsPooledTransportOpen(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	pooled := &closeOrderSession{id: "transport:child(base)", orderMu: &sync.Mutex{}, order: &[]string{}}
+	scoped := &transportScopedSession{id: "transport:child", session: pooled}
+
+	runtime.pooled["pool:child"] = pooled
+	runtime.installSession("transport:child", scoped)
+	runtime.removeSession("transport:child")
+
+	if diff := cmp.Diff(0, pooled.closeCall); diff != "" {
+		t.Fatalf("pooled close call count mismatch (-want +got):\n%s", diff)
 	}
 }

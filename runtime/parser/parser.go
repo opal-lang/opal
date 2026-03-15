@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
@@ -2346,7 +2345,7 @@ func (p *parser) decorator() {
 	currentPos := tempPos
 
 	// Check if first identifier is registered
-	if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+	if isRegisteredDecoratorPath(currentName) {
 		longestMatch = currentName
 		longestMatchPos = currentPos
 	}
@@ -2368,7 +2367,7 @@ func (p *parser) decorator() {
 		currentPos = p.pos
 
 		// Check if this longer name is registered
-		if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+		if isRegisteredDecoratorPath(currentName) {
 			longestMatch = currentName
 			longestMatchPos = currentPos
 		}
@@ -2376,16 +2375,6 @@ func (p *parser) decorator() {
 
 	// If no registered decorator found, reset position and treat @ as literal
 	if longestMatch == "" {
-		if replacement, ok := removedRootDecoratorReplacement(decoratorName); ok {
-			p.pos = atPos
-			p.errorWithDetails(
-				fmt.Sprintf("@%s has moved to @%s", decoratorName, replacement),
-				"decorator",
-				removedRootDecoratorSuggestion(decoratorName, replacement),
-			)
-			p.consumeRemovedRootDecorator(true)
-			return
-		}
 		p.pos = tempPos
 		return
 	}
@@ -2394,21 +2383,7 @@ func (p *parser) decorator() {
 	decoratorName = longestMatch
 	p.pos = longestMatchPos
 
-	// Get the schema for validation
-	// Try new registry first, fall back to old registry for backward compatibility
-	var schema types.DecoratorSchema
-	var hasSchema bool
-
-	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
-	if hasNewEntry {
-		// Extract schema from new registry
-		desc := entry.Impl.Descriptor()
-		schema = desc.Schema
-		hasSchema = true
-	} else {
-		// Fall back to old registry
-		schema, hasSchema = types.Global().GetSchema(decoratorName)
-	}
+	schema, hasSchema := lookupDecoratorSchema(decoratorName)
 
 	// It's a registered decorator, parse it
 	// Reset position to @ and start the node
@@ -2467,45 +2442,8 @@ func (p *parser) decorator() {
 		p.validateRequiredParameters(decoratorName, schema, providedParams)
 	}
 
-	// Parse optional block (use new registry's Block capability)
-	if hasNewEntry {
-		desc := entry.Impl.Descriptor()
-		blockReq := desc.Capabilities.Block
-
-		// Default to BlockForbidden if not specified (safe default for value decorators)
-		if blockReq == "" {
-			blockReq = decorator.BlockForbidden
-		}
-
-		switch blockReq {
-		case decorator.BlockRequired:
-			// Block is required
-			if !p.at(lexer.LBRACE) {
-				p.errorWithDetails(
-					fmt.Sprintf("@%s requires a block", decoratorName),
-					"decorator block",
-					fmt.Sprintf("Add a block: @%s(...) { ... }", decoratorName),
-				)
-			} else {
-				p.block()
-			}
-		case decorator.BlockOptional:
-			// Block is optional
-			if p.at(lexer.LBRACE) {
-				p.block()
-			}
-		case decorator.BlockForbidden:
-			// Block is not allowed
-			if p.at(lexer.LBRACE) {
-				p.errorWithDetails(
-					fmt.Sprintf("@%s cannot have a block", decoratorName),
-					"decorator block",
-					fmt.Sprintf("@%s is a value decorator and does not accept blocks", decoratorName),
-				)
-			}
-		}
-	} else if hasSchema {
-		// Fall back to old schema-based validation for decorators not in new registry
+	// Parse optional block using schema requirement
+	if hasSchema {
 		switch schema.BlockRequirement {
 		case types.BlockRequired:
 			// Block is required
@@ -2568,7 +2506,7 @@ func (p *parser) decoratorInExpressionContext() {
 	currentName := decoratorName
 	currentPos := tempPos
 
-	if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+	if isRegisteredDecoratorPath(currentName) {
 		longestMatch = currentName
 		longestMatchPos = currentPos
 	}
@@ -2585,23 +2523,13 @@ func (p *parser) decoratorInExpressionContext() {
 		currentName = currentName + "." + string(p.current().Text)
 		currentPos = p.pos
 
-		if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+		if isRegisteredDecoratorPath(currentName) {
 			longestMatch = currentName
 			longestMatchPos = currentPos
 		}
 	}
 
 	if longestMatch == "" {
-		if replacement, ok := removedRootDecoratorReplacement(decoratorName); ok {
-			p.pos = atPos
-			p.errorWithDetails(
-				fmt.Sprintf("@%s has moved to @%s", decoratorName, replacement),
-				"decorator",
-				removedRootDecoratorSuggestion(decoratorName, replacement),
-			)
-			p.consumeRemovedRootDecorator(false)
-			return
-		}
 		p.pos = tempPos
 		return
 	}
@@ -2634,16 +2562,7 @@ func (p *parser) decoratorInExpressionContext() {
 	}
 
 	// Get schema for validation (needed for primary parameter tracking)
-	var schema types.DecoratorSchema
-	var hasSchema bool
-	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
-	if hasNewEntry {
-		desc := entry.Impl.Descriptor()
-		schema = desc.Schema
-		hasSchema = true
-	} else {
-		schema, hasSchema = types.Global().GetSchema(decoratorName)
-	}
+	schema, hasSchema := lookupDecoratorSchema(decoratorName)
 
 	// Track if primary parameter was provided via dot syntax
 	hasPrimaryViaDot := false
@@ -2675,68 +2594,6 @@ func (p *parser) decoratorInExpressionContext() {
 
 	if p.config.debug >= DebugPaths {
 		p.recordDebugEvent("exit_decorator_expr", "decorator in expression context complete")
-	}
-}
-
-func removedRootDecoratorReplacement(name string) (string, bool) {
-	switch name {
-	case "retry":
-		return "exec.retry", true
-	case "timeout":
-		return "exec.timeout", true
-	case "parallel":
-		return "exec.parallel", true
-	case "workdir":
-		return "fs.workdir", true
-	default:
-		return "", false
-	}
-}
-
-func removedRootDecoratorSuggestion(name, replacement string) string {
-	if name == "parallel" {
-		return fmt.Sprintf("Use @%s { ... }", replacement)
-	}
-	return fmt.Sprintf("Use @%s(...) { ... }", replacement)
-}
-
-func (p *parser) consumeRemovedRootDecorator(consumeBlock bool) {
-	if p.at(lexer.AT) {
-		p.advance()
-	}
-	if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
-		p.advance()
-	}
-
-	for p.at(lexer.DOT) {
-		p.advance()
-		if p.at(lexer.IDENTIFIER) || p.at(lexer.VAR) {
-			p.advance()
-		}
-	}
-
-	if p.at(lexer.LPAREN) {
-		depth := 0
-		for !p.at(lexer.EOF) {
-			if p.at(lexer.LPAREN) {
-				depth++
-			} else if p.at(lexer.RPAREN) {
-				depth--
-			}
-			p.advance()
-			if depth == 0 {
-				break
-			}
-		}
-	}
-
-	if !consumeBlock {
-		return
-	}
-
-	p.skipNewlines()
-	if p.at(lexer.LBRACE) {
-		p.block()
 	}
 }
 
