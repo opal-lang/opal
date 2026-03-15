@@ -132,9 +132,9 @@ func TestPlanNew_TransportBoundary_DirectEnvInIdempotentTransportWorks(t *testin
 	}
 }
 
-func TestPlanNew_TransportBoundary_DirectEnvInNonIdempotentTransportBlocked(t *testing.T) {
+func TestPlanNew_TransportBoundary_DirectEnvUsesNearestTransportSession(t *testing.T) {
 	source := `
-@test.transport {
+@test.transport.env {
     echo "Home: @env.HOME"
 }
 `
@@ -142,21 +142,19 @@ func TestPlanNew_TransportBoundary_DirectEnvInNonIdempotentTransportBlocked(t *t
 	planKey := []byte("plan-key-transport-boundary-0000")
 	v := vault.NewWithPlanKey(planKey)
 
-	_, err := parsePlanNew(t, source, v)
-	if err == nil {
-		t.Fatal("Expected error for @env in non-idempotent transport, got nil")
+	result, err := parsePlanNew(t, source, v)
+	if err != nil {
+		t.Fatalf("PlanNew failed: %v", err)
 	}
-
-	expected := "failed to resolve: @env cannot be used inside @test.transport"
-	if diff := cmp.Diff(expected, err.Error()); diff != "" {
-		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	if result == nil || result.Plan == nil {
+		t.Fatal("Expected plan result, got nil")
 	}
 }
 
-func TestPlanNew_TransportBoundary_NestedIdempotentBlockedByOuter(t *testing.T) {
+func TestPlanNew_TransportBoundary_NestedEnvUsesNearestParentTransport(t *testing.T) {
 	source := `
-@test.transport {
-    @test.transport.idempotent {
+@test.transport.env {
+    @test.transport.env {
         echo "Home: @env.HOME"
     }
 }
@@ -165,13 +163,11 @@ func TestPlanNew_TransportBoundary_NestedIdempotentBlockedByOuter(t *testing.T) 
 	planKey := []byte("plan-key-transport-boundary-0000")
 	v := vault.NewWithPlanKey(planKey)
 
-	_, err := parsePlanNew(t, source, v)
-	if err == nil {
-		t.Fatal("Expected error for nested @env under non-idempotent transport, got nil")
+	result, err := parsePlanNew(t, source, v)
+	if err != nil {
+		t.Fatalf("PlanNew failed: %v", err)
 	}
-
-	expected := "failed to resolve: @env cannot be used inside @test.transport"
-	if diff := cmp.Diff(expected, err.Error()); diff != "" {
-		t.Errorf("error mismatch (-want +got):\n%s", diff)
+	if result == nil || result.Plan == nil {
+		t.Fatal("Expected plan result, got nil")
 	}
 }

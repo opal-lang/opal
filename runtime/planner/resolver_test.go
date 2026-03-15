@@ -563,52 +563,6 @@ type countingValueDecorator struct {
 	batchSizes *[]int
 }
 
-type resolverPoolCloseTransport struct {
-	path       string
-	openCount  *int
-	closeCount *int
-}
-
-type resolverPoolCloseSession struct {
-	*mockSession
-	closeCount *int
-}
-
-func (s *resolverPoolCloseSession) Close() error {
-	*s.closeCount = *s.closeCount + 1
-	return nil
-}
-
-func (d *resolverPoolCloseTransport) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor(d.path).
-		Summary("Resolver transport pool close test transport").
-		Roles(decorator.RoleBoundary).
-		Idempotent().
-		Block(decorator.BlockRequired).
-		Build()
-}
-
-func (d *resolverPoolCloseTransport) Capabilities() decorator.TransportCaps {
-	return decorator.TransportCapNetwork
-}
-
-func (d *resolverPoolCloseTransport) Open(parent decorator.Session, params map[string]any) (decorator.Session, error) {
-	*d.openCount = *d.openCount + 1
-	return &resolverPoolCloseSession{mockSession: &mockSession{}, closeCount: d.closeCount}, nil
-}
-
-func (d *resolverPoolCloseTransport) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return next
-}
-
-func (d *resolverPoolCloseTransport) MaterializeSession() bool {
-	return true
-}
-
-func (d *resolverPoolCloseTransport) IsolationContext() decorator.IsolationContext {
-	return nil
-}
-
 func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
 	return decorator.NewDescriptor(d.path).
 		Summary("Capture resolver value-call metadata for tests").
@@ -731,7 +685,7 @@ func TestResolve_ClosesTransportPoolSessions(t *testing.T) {
 	openCount := 0
 	closeCount := 0
 
-	if err := decorator.Register(path, &resolverPoolCloseTransport{path: path, openCount: &openCount, closeCount: &closeCount}); err != nil {
+	if err := registerPlannerCapability(path, poolCloseTransportPluginCapability{path: path, openCount: &openCount, closeCount: &closeCount}); err != nil {
 		t.Fatalf("Register transport failed: %v", err)
 	}
 
@@ -773,7 +727,7 @@ func TestResolve_ClosesTransportPoolSessions(t *testing.T) {
 func TestResolveBatch_PassesContextMetadataAndArgs(t *testing.T) {
 	const path = "test.capture.ctxmeta"
 	dec := &captureValueDecorator{path: path}
-	if err := decorator.Register(path, dec); err != nil {
+	if err := registerPlannerCapability(path, captureValuePluginCapability{path: path, dec: dec}); err != nil {
 		t.Fatalf("Register decorator failed: %v", err)
 	}
 
@@ -836,10 +790,10 @@ func TestResolveBatch_ResolvesDecoratorGroupsInSortedOrder(t *testing.T) {
 	const pathB = "test.order.b"
 
 	order := []string{}
-	if err := decorator.Register(pathA, &orderedValueDecorator{path: pathA, order: &order}); err != nil {
+	if err := registerPlannerCapability(pathA, orderedValuePluginCapability{path: pathA, impl: &orderedValueDecorator{path: pathA, order: &order}}); err != nil {
 		t.Fatalf("Register decorator %q failed: %v", pathA, err)
 	}
-	if err := decorator.Register(pathB, &orderedValueDecorator{path: pathB, order: &order}); err != nil {
+	if err := registerPlannerCapability(pathB, orderedValuePluginCapability{path: pathB, impl: &orderedValueDecorator{path: pathB, order: &order}}); err != nil {
 		t.Fatalf("Register decorator %q failed: %v", pathB, err)
 	}
 
@@ -3753,7 +3707,7 @@ func TestResolve_WaveModel_BatchesReachableFrontierBeforeBlocker(t *testing.T) {
 	const path = "test.wave.frontier"
 
 	batchSizes := []int{}
-	if err := decorator.Register(path, &countingValueDecorator{path: path, batchSizes: &batchSizes}); err != nil {
+	if err := registerPlannerCapability(path, countingValuePluginCapability{path: path, impl: &countingValueDecorator{path: path, batchSizes: &batchSizes}}); err != nil {
 		t.Fatalf("Register decorator failed: %v", err)
 	}
 
@@ -3827,6 +3781,43 @@ func TestResolve_WaveModel_BatchesReachableFrontierBeforeBlocker(t *testing.T) {
 	want := []int{3}
 	if diff := cmp.Diff(want, batchSizes); diff != "" {
 		t.Errorf("Batch sizes mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolve_NestedPluginTransportUsesNearestParentDialer(t *testing.T) {
+	if err := registerPlannerCapability("test.transport.multihop", plannerMultiHopTransportPluginCapability{}); err != nil {
+		t.Fatalf("register multihop capability failed: %v", err)
+	}
+	resetPlannerDialCalls()
+
+	source := `
+@test.transport.multihop(addr="bastion.internal:22", id="session:bastion") {
+	@test.transport.multihop(addr="internal.internal:22", id="session:internal") {
+		echo "ok"
+	}
+}
+`
+	tree := parser.ParseString(source)
+	if len(tree.Errors) > 0 {
+		t.Fatalf("Parse errors: %v", tree.Errors)
+	}
+	graph, err := BuildIR(tree.Events, tree.Tokens)
+	if err != nil {
+		t.Fatalf("BuildIR failed: %v", err)
+	}
+
+	v := vault.NewWithPlanKey([]byte("planner-multihop-test"))
+	_, err = Resolve(graph, v, &plannerRootDialerSession{}, ResolveConfig{Context: context.Background()})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	want := []string{
+		"local->bastion.internal:22",
+		"session:bastion->internal.internal:22",
+	}
+	if diff := cmp.Diff(want, plannerDialCallsValue()); diff != "" {
+		t.Fatalf("dial routing mismatch (-want +got):\n%s", diff)
 	}
 }
 

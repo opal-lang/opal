@@ -25,8 +25,6 @@ func (p *EnvPlugin) Capabilities() []plugin.Capability {
 // EnvValueCapability resolves environment variables from the current session.
 type EnvValueCapability struct{}
 
-func (c EnvValueCapability) Kind() plugin.CapabilityKind { return plugin.KindValue }
-
 func (c EnvValueCapability) Path() string { return "env" }
 
 func (c EnvValueCapability) Schema() plugin.Schema {
@@ -41,7 +39,7 @@ func (c EnvValueCapability) Schema() plugin.Schema {
 	}
 }
 
-func (c EnvValueCapability) Resolve(ctx plugin.ValueContext, args plugin.ResolvedArgs) (string, error) {
+func (c EnvValueCapability) Resolve(ctx plugin.ValueContext, args plugin.ResolvedArgs) (any, error) {
 	name := args.GetString("property")
 	value, exists := ctx.Session().Snapshot().Env[name]
 	if exists {

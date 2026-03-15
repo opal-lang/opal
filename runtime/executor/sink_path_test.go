@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
 )
@@ -62,8 +62,8 @@ func TestFileSinkPathStyles(t *testing.T) {
 			t.Parallel()
 
 			workdir := t.TempDir()
-			session := decorator.NewLocalSession().WithWorkdir(workdir)
-			execCtx := decorator.ExecContext{Context: context.Background(), Session: session}
+			session := coreruntime.NewLocalSession().WithWorkdir(workdir)
+			execCtx := pluginExecContext{ctx: context.Background(), session: pluginParentSession{session: session}}
 
 			target := &planfmt.CommandNode{
 				Decorator: tt.decorator,
@@ -73,7 +73,7 @@ func TestFileSinkPathStyles(t *testing.T) {
 				}},
 			}
 
-			ioDecorator, identity, ok := resolvePlanIOSink(target, os.Stderr)
+			ioDecorator, args, identity, ok := resolvePlanIOSink(target, os.Stderr)
 			if diff := cmp.Diff(true, ok); diff != "" {
 				t.Fatalf("expected target resolution success (-want +got):\n%s", diff)
 			}
@@ -83,7 +83,7 @@ func TestFileSinkPathStyles(t *testing.T) {
 				t.Fatalf("sink identity mismatch (-want +got):\n%s", diff)
 			}
 
-			writer, err := ioDecorator.OpenWrite(execCtx, false)
+			writer, err := ioDecorator.OpenForWrite(execCtx, newPluginArgs(args, ioDecorator.Schema(), nil), false)
 			if err != nil {
 				t.Fatalf("open sink writer: %v", err)
 			}
@@ -103,7 +103,7 @@ func TestFileSinkPathStyles(t *testing.T) {
 				t.Fatalf("redirect sink content mismatch (-want +got):\n%s", diff)
 			}
 
-			reader, err := ioDecorator.OpenRead(execCtx)
+			reader, err := ioDecorator.OpenForRead(execCtx, newPluginArgs(args, ioDecorator.Schema(), nil))
 			if err != nil {
 				t.Fatalf("open sink reader: %v", err)
 			}

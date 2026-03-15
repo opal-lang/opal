@@ -30,12 +30,12 @@ func DecoratorSchema(capability Capability) types.DecoratorSchema {
 
 	decoratorSchema := types.DecoratorSchema{
 		Path:              capability.Path(),
-		Kind:              decoratorKind(capability.Kind()),
+		Kind:              decoratorKind(capability),
 		PrimaryParameter:  primary,
 		Parameters:        params,
 		ParameterOrder:    order,
 		BlockRequirement:  types.BlockRequirement(schema.Block),
-		SwitchesTransport: capability.Kind() == KindTransport,
+		SwitchesTransport: isTransportCapability(capability),
 	}
 
 	if schema.Returns != "" {
@@ -45,13 +45,16 @@ func DecoratorSchema(capability Capability) types.DecoratorSchema {
 	return decoratorSchema
 }
 
-func decoratorKind(kind CapabilityKind) types.DecoratorKindString {
-	switch kind {
-	case KindValue:
+func decoratorKind(capability Capability) types.DecoratorKindString {
+	if _, ok := capability.(ValueProvider); ok {
 		return types.KindValue
-	default:
-		return types.KindExecution
 	}
+	return types.KindExecution
+}
+
+func isTransportCapability(capability Capability) bool {
+	_, ok := capability.(Transport)
+	return ok
 }
 
 func adaptParam(param Param) types.ParamSchema {

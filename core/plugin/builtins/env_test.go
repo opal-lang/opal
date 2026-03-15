@@ -12,10 +12,17 @@ import (
 
 type fakeValueContext struct {
 	session plugin.ParentTransport
+	vars    map[string]any
+	planKey string
 }
 
 func (f fakeValueContext) Context() context.Context        { return context.Background() }
 func (f fakeValueContext) Session() plugin.ParentTransport { return f.session }
+func (f fakeValueContext) PlanHash() string                { return f.planKey }
+func (f fakeValueContext) LookupValue(name string) (any, bool) {
+	value, ok := f.vars[name]
+	return value, ok
+}
 
 type fakeArgs struct {
 	strings   map[string]string
@@ -30,13 +37,15 @@ func (f fakeArgs) GetDuration(name string) time.Duration     { return f.duration
 func (f fakeArgs) ResolveSecret(name string) (string, error) { return "", nil }
 
 type fakeSession struct {
-	env map[string]string
-	cwd string
+	env      map[string]string
+	cwd      string
+	platform string
 }
 
 func (f *fakeSession) Run(ctx context.Context, argv []string, opts plugin.RunOpts) (plugin.Result, error) {
 	return plugin.Result{}, nil
 }
+
 func (f *fakeSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
 	return nil
 }
@@ -46,7 +55,11 @@ func (f *fakeSession) Snapshot() plugin.SessionSnapshot {
 	if workdir == "" {
 		workdir = "/tmp"
 	}
-	return plugin.SessionSnapshot{Env: f.env, Workdir: workdir, Platform: "linux"}
+	platform := f.platform
+	if platform == "" {
+		platform = "linux"
+	}
+	return plugin.SessionSnapshot{Env: f.env, Workdir: workdir, Platform: platform}
 }
 func (f *fakeSession) Close() error { return nil }
 

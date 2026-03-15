@@ -3,7 +3,6 @@ package parser
 import (
 	"fmt"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
 
@@ -205,64 +204,13 @@ func validateEnvInRemoteTransport(t *ParseTree) error {
 // isTransportSwitchingDecorator checks if a decorator switches transport context.
 // Returns true if the decorator has the RoleBoundary role (implements Transport interface).
 func isTransportSwitchingDecorator(path string) bool {
-	if isPluginTransportDecorator(path) {
-		return true
-	}
-
-	entry, ok := decorator.Global().Lookup(path)
-	if !ok {
-		return false
-	}
-	for _, role := range entry.Roles {
-		if role == decorator.RoleBoundary {
-			return true
-		}
-	}
-	return false
+	return isPluginTransportDecorator(path)
 }
 
 // isRootOnlyValueDecorator checks if a value decorator is restricted to local/RootOnly scope.
 // Returns true if the decorator is a value provider with TransportScopeLocal capability.
 // Tries progressively shorter paths to handle property accessors like @test.env.KEY
 func isRootOnlyValueDecorator(path string) bool {
-	if isPluginValueDecorator(path) {
-		return false
-	}
-
-	// Try progressively shorter paths to find the decorator
-	// For @test.env.KEY, try test.env.KEY, then test.env, then test
-	for {
-		entry, ok := decorator.Global().Lookup(path)
-		if ok {
-			// Check if it's a value provider
-			hasValueRole := false
-			for _, role := range entry.Roles {
-				if role == decorator.RoleProvider {
-					hasValueRole = true
-					break
-				}
-			}
-			if !hasValueRole {
-				return false
-			}
-			// Check if it's restricted to local scope
-			return entry.Impl.Descriptor().Capabilities.TransportScope == decorator.TransportScopeLocal
-		}
-
-		// Try shorter path by removing last component
-		lastDot := -1
-		for i := len(path) - 1; i >= 0; i-- {
-			if path[i] == '.' {
-				lastDot = i
-				break
-			}
-		}
-		if lastDot == -1 {
-			break // No more components to remove
-		}
-		path = path[:lastDot]
-	}
-
 	return false
 }
 

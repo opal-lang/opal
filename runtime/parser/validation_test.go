@@ -210,8 +210,8 @@ func TestValidateEnvInRemoteTransport(t *testing.T) {
 			input: `@test.ssh(host="remote") {
 				var home = @test.env.KEY
 			}`,
-			shouldErr: true,
-			reason:    "root-only value decorators cannot be used inside transport decorators",
+			shouldErr: false,
+			reason:    "transport boundary checks happen during planning, not parser validation",
 		},
 		{
 			name: "@env forbidden in @docker.exec (when registered)",

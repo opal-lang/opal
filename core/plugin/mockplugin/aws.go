@@ -22,8 +22,7 @@ func (p AWSPlugin) Capabilities() []plugin.Capability {
 
 type AWSSecretsCapability struct{}
 
-func (c AWSSecretsCapability) Kind() plugin.CapabilityKind { return plugin.KindValue }
-func (c AWSSecretsCapability) Path() string                { return "aws.secrets" }
+func (c AWSSecretsCapability) Path() string { return "aws.secrets" }
 
 func (c AWSSecretsCapability) Schema() plugin.Schema {
 	return plugin.Schema{
@@ -32,14 +31,13 @@ func (c AWSSecretsCapability) Schema() plugin.Schema {
 	}
 }
 
-func (c AWSSecretsCapability) Resolve(ctx plugin.ValueContext, args plugin.ResolvedArgs) (string, error) {
+func (c AWSSecretsCapability) Resolve(ctx plugin.ValueContext, args plugin.ResolvedArgs) (any, error) {
 	return fmt.Sprintf("mock-secret-%s", args.GetString("name")), nil
 }
 
 type AWSInstanceConnectCapability struct{}
 
-func (c AWSInstanceConnectCapability) Kind() plugin.CapabilityKind { return plugin.KindTransport }
-func (c AWSInstanceConnectCapability) Path() string                { return "aws.instance.connect" }
+func (c AWSInstanceConnectCapability) Path() string { return "aws.instance.connect" }
 
 func (c AWSInstanceConnectCapability) Schema() plugin.Schema {
 	return plugin.Schema{
@@ -93,6 +91,7 @@ type mockSession struct {
 func (s *mockSession) Run(ctx context.Context, argv []string, opts plugin.RunOpts) (plugin.Result, error) {
 	return plugin.Result{ExitCode: plugin.ExitSuccess}, nil
 }
+
 func (s *mockSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
 	return nil
 }
@@ -104,6 +103,7 @@ func (s *mockSession) Snapshot() plugin.SessionSnapshot {
 	}
 	return plugin.SessionSnapshot{Env: copyEnv, Workdir: s.workdir, Platform: s.platform}
 }
+
 func (s *mockSession) WithSnapshot(snapshot plugin.SessionSnapshot) plugin.OpenedTransport {
 	clone := *s
 	clone.env = make(map[string]string, len(snapshot.Env))

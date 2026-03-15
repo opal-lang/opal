@@ -20,16 +20,24 @@ func TestRegistryRegisterAndLookup(t *testing.T) {
 	if capability == nil {
 		t.Fatal("Lookup() = nil, want capability")
 	}
-	if diff := cmp.Diff(plugin.KindValue, capability.Kind()); diff != "" {
-		t.Fatalf("Lookup() kind mismatch (-want +got):\n%s", diff)
+	entry := registry.LookupEntry("aws.secrets")
+	if entry == nil {
+		t.Fatal("LookupEntry() = nil, want entry")
+	}
+	if !entry.IsValue() {
+		t.Fatal("LookupEntry().IsValue() = false, want true")
 	}
 
 	transport := registry.Lookup("aws.instance.connect")
 	if transport == nil {
 		t.Fatal("Lookup() transport = nil, want capability")
 	}
-	if diff := cmp.Diff(plugin.KindTransport, transport.Kind()); diff != "" {
-		t.Fatalf("Lookup() transport kind mismatch (-want +got):\n%s", diff)
+	transportEntry := registry.LookupEntry("aws.instance.connect")
+	if transportEntry == nil {
+		t.Fatal("LookupEntry() transport = nil, want entry")
+	}
+	if !transportEntry.IsTransport() {
+		t.Fatal("LookupEntry().IsTransport() = false, want true")
 	}
 }
 

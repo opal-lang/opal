@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
 )
@@ -512,21 +512,19 @@ func (v *semanticValidator) validateRedirectSupport(decoratorName string, redire
 	}
 }
 
-func (v *semanticValidator) lookupIOCaps(decoratorName string) (decorator.IOCaps, bool) {
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	if !exists {
-		return decorator.IOCaps{}, false
+func (v *semanticValidator) lookupIOCaps(decoratorName string) (plugin.RedirectCaps, bool) {
+	if entry := plugin.Global().LookupEntry(decoratorName); entry != nil && entry.IsRedirect() {
+		if capability := plugin.Global().Lookup(decoratorName); capability != nil {
+			if redirect, ok := capability.(plugin.RedirectTarget); ok {
+				return redirect.RedirectCaps(), true
+			}
+		}
 	}
 
-	ioDecorator, ok := entry.Impl.(decorator.IO)
-	if !ok {
-		return decorator.IOCaps{}, false
-	}
-
-	return ioDecorator.IOCaps(), true
+	return plugin.RedirectCaps{}, false
 }
 
-func (v *semanticValidator) validateRedirectIOCaps(decoratorName string, redirectToken lexer.Token, caps decorator.IOCaps) {
+func (v *semanticValidator) validateRedirectIOCaps(decoratorName string, redirectToken lexer.Token, caps plugin.RedirectCaps) {
 	if redirectToken.Type == lexer.LT {
 		if !caps.Read {
 			v.errors = append(v.errors, ParseError{

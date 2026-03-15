@@ -9,9 +9,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/invariant"
 	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 	"github.com/builtwithtofu/sigil/core/sdk"
 )
 
@@ -36,27 +36,22 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	if capability := isPluginOnlyCapability(decoratorName); capability != nil {
 		params, ok := e.resolvedCommandParams(commandExecCtx, cmd)
 		if !ok {
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
-		var next decorator.ExecNode
+		var next coreruntime.ExecNode
 		if len(cmd.Block) > 0 {
 			next = &blockNode{execCtx: commandExecCtx, steps: cmd.Block}
 		}
 		switch typed := capability.(type) {
-		case coreplugin.WrapperCapability:
+		case coreplugin.Wrapper:
 			return e.executePluginWrapper(commandExecCtx, next, typed, params, stdin, stdout)
-		case coreplugin.TransportCapability:
+		case coreplugin.Transport:
 			return e.executePluginTransport(commandExecCtx, cmd.Block, typed, params)
 		}
 	}
 
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
-
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
-
-	return e.executeDecorator(commandExecCtx, cmd, execDec, stdin, stdout)
+	_, _ = fmt.Fprintf(e.getStderr(), "Error: unknown decorator: %s\n", cmd.Name)
+	return coreruntime.ExitFailure
 }
 
 func isShellDecorator(name string) bool {
@@ -92,7 +87,7 @@ func executionTransportID(execCtx sdk.ExecutionContext) string {
 func (e *executor) executeShellCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode, stdin io.Reader, stdout io.Writer) int {
 	params, ok := e.resolvedCommandParams(execCtx, cmd)
 	if !ok {
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	return e.executeShellWithParams(execCtx, params, stdin, stdout)
@@ -101,13 +96,13 @@ func (e *executor) executeShellCommandWithPipes(execCtx sdk.ExecutionContext, cm
 func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params map[string]any, stdin io.Reader, stdout io.Writer) int {
 	if params == nil {
 		_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell missing parameters")
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	command, ok := params["command"].(string)
 	if !ok || command == "" {
 		_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell requires a non-empty string command")
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	if displayIDPattern.MatchString(command) {
@@ -122,7 +117,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		shellStr, ok := shellArg.(string)
 		if !ok {
 			_, _ = fmt.Fprintln(e.getStderr(), "Error: @shell expects 'shell' to be a string when provided")
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
 		explicitShell = shellStr
 	}
@@ -131,7 +126,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	shellName, err := resolveShellName(explicitShell, execCtx.Environ())
 	if err != nil {
 		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	runCtx := execCtx.Context()
@@ -154,12 +149,12 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 		}
 
 		if errors.Is(workerErr, context.Canceled) || errors.Is(workerErr, context.DeadlineExceeded) {
-			return decorator.ExitCanceled
+			return coreruntime.ExitCanceled
 		}
 
 		if !canFallbackToSessionRun(workerErr) {
 			_, _ = fmt.Fprintf(e.getStderr(), "Error: shell worker execution failed after command start: %v\n", workerErr)
-			return decorator.ExitFailure
+			return coreruntime.ExitFailure
 		}
 
 		_, _ = fmt.Fprintf(e.getStderr(), "Warning: shell worker unavailable before command start, falling back to session run: %v\n", workerErr)
@@ -168,7 +163,7 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	baseSession, sessionErr := e.sessions.SessionFor(transportID)
 	if sessionErr != nil {
 		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	session := sessionForExecutionContext(baseSession, execCtx)
@@ -176,14 +171,14 @@ func (e *executor) executeShellWithParams(execCtx sdk.ExecutionContext, params m
 	argv, err := shellCommandArgs(shellName, command)
 	if err != nil {
 		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
-		return decorator.ExitFailure
+		return coreruntime.ExitFailure
 	}
 
 	if stdout == nil {
 		stdout = os.Stdout
 	}
 
-	result, err := session.Run(runCtx, argv, decorator.RunOpts{
+	result, err := session.Run(runCtx, argv, coreruntime.RunOpts{
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: e.stderr,
@@ -259,11 +254,6 @@ func shellCommandArgs(shellName, command string) ([]string, error) {
 	}
 }
 
-// resolveDisplayIDs scans params for DisplayID strings and resolves them to actual values.
-func (e *executor) resolveDisplayIDs(params map[string]any, decoratorName, transportID string) (map[string]any, error) {
-	return e.resolveDisplayIDsExcept(params, decoratorName, transportID, nil)
-}
-
 func (e *executor) resolveDisplayIDsExcept(params map[string]any, decoratorName, transportID string, skip map[string]struct{}) (map[string]any, error) {
 	resolved := make(map[string]any)
 
@@ -300,60 +290,6 @@ func (e *executor) resolveDisplayIDsExcept(params map[string]any, decoratorName,
 	return resolved, nil
 }
 
-// executeDecorator executes a decorator via the Exec interface.
-func (e *executor) executeDecorator(
-	execCtx sdk.ExecutionContext,
-	cmd *sdk.CommandNode,
-	execDec decorator.Exec,
-	stdin io.Reader,
-	stdout io.Writer,
-) int {
-	params, ok := e.resolvedCommandParams(execCtx, cmd)
-	if !ok {
-		return decorator.ExitFailure
-	}
-
-	var next decorator.ExecNode
-	if len(cmd.Block) > 0 {
-		next = &blockNode{execCtx: execCtx, steps: cmd.Block}
-	}
-
-	node := execDec.Wrap(next, params)
-	if node == nil {
-		if next == nil {
-			return 0
-		}
-		node = next
-	}
-
-	baseSession, sessionErr := e.sessions.SessionFor(executionTransportID(execCtx))
-	if sessionErr != nil {
-		_, _ = fmt.Fprintf(e.getStderr(), "Error creating session: %v\n", sessionErr)
-		return 1
-	}
-	session := sessionForExecutionContext(baseSession, execCtx)
-
-	if stdout == nil {
-		stdout = os.Stdout
-	}
-
-	decoratorExecCtx := decorator.ExecContext{
-		Context: execCtx.Context(),
-		Session: session,
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  e.stderr,
-		Trace:   nil,
-	}
-
-	result, err := node.Execute(decoratorExecCtx)
-	if err != nil {
-		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
-	}
-
-	return result.ExitCode
-}
-
 func (e *executor) resolvedCommandParams(execCtx sdk.ExecutionContext, cmd *sdk.CommandNode) (map[string]any, bool) {
 	return e.resolveCommandParams(execCtx, cmd.Name, cmd.Args)
 }
@@ -387,7 +323,7 @@ func (e *executor) resolveCommandParams(execCtx sdk.ExecutionContext, decoratorN
 	return resolved, true
 }
 
-func sessionForExecutionContext(base decorator.Session, execCtx sdk.ExecutionContext) decorator.Session {
+func sessionForExecutionContext(base coreruntime.Session, execCtx sdk.ExecutionContext) coreruntime.Session {
 	session := base
 	ec, typed := execCtx.(*executionContext)
 

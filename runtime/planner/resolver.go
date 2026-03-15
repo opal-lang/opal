@@ -797,56 +797,6 @@ func (r *Resolver) resolveCommandBlock(cmd *CommandStmtIR) error {
 		defer r.popEnvContext()
 	}
 
-	if transportDec, desc, ok := lookupTransportDecorator(cmd.Decorator); ok {
-		platform := ""
-		if r.session != nil {
-			platform = r.session.Platform()
-		}
-		decoratorName := strings.TrimPrefix(cmd.Decorator, "@")
-		if err := decorator.Global().ValidatePlatform(decoratorName, platform); err != nil {
-			return err
-		}
-
-		params, err := evaluateArgs(cmd.Args, r.getValue)
-		if err != nil {
-			return err
-		}
-
-		parentTransport := r.vault.CurrentTransport()
-		transportID, err := deriveTransportID(r.vault.GetPlanKey(), cmd.Decorator, params, parentTransport)
-		if err != nil {
-			return err
-		}
-
-		restoreTransport = parentTransport
-		r.vault.EnterTransport(transportID)
-		defer func() {
-			r.vault.EnterTransport(restoreTransport)
-		}()
-
-		if desc.Capabilities.Idempotent {
-			session, ok := r.transportPool[transportID]
-			if !ok {
-				session, err = transportDec.Open(r.session, params)
-				if err != nil {
-					return fmt.Errorf("failed to open transport %q: %w", cmd.Decorator, err)
-				}
-				r.transportPool[transportID] = session
-			}
-			if delta := extractEnvDelta(params); len(delta) > 0 {
-				session = session.WithEnv(delta)
-			}
-			r.pushSession(session)
-			defer r.popSession()
-			r.pushEnvContext(true, "")
-			defer r.popEnvContext()
-		}
-		if !desc.Capabilities.Idempotent {
-			r.pushEnvContext(false, cmd.Decorator)
-			defer r.popEnvContext()
-		}
-	}
-
 	if r.scopes != nil {
 		r.scopes.Push()
 		defer r.scopes.Pop()
@@ -1266,36 +1216,6 @@ func (r *Resolver) popEnvContext() {
 	r.envContextStack = r.envContextStack[:len(r.envContextStack)-1]
 	r.envAllowed = prev.allowed
 	r.envBlockedBy = prev.decorator
-}
-
-func extractEnvDelta(params map[string]any) map[string]string {
-	if params == nil {
-		return nil
-	}
-	value, ok := params["env"]
-	if !ok {
-		return nil
-	}
-	if value == nil {
-		return nil
-	}
-
-	switch v := value.(type) {
-	case map[string]string:
-		return v
-	case map[string]any:
-		delta := make(map[string]string, len(v))
-		for key, raw := range v {
-			str, ok := raw.(string)
-			if !ok {
-				continue
-			}
-			delta[key] = str
-		}
-		return delta
-	default:
-		return nil
-	}
 }
 
 func (r *Resolver) resolvePreludeFor(blocker *BlockerIR) error {
@@ -2550,19 +2470,6 @@ func (r *Resolver) validateDecoratorPlatform(expr *ExprIR) bool {
 	if expr == nil || expr.Decorator == nil {
 		return true
 	}
-	platform := ""
-	if r.session != nil {
-		platform = r.session.Platform()
-	}
-
-	if err := decorator.Global().ValidatePlatform(expr.Decorator.Name, platform); err != nil {
-		r.errors = append(r.errors, &EvalError{
-			Message: err.Error(),
-			Span:    expr.Span,
-		})
-		return false
-	}
-
 	return true
 }
 
@@ -2715,11 +2622,7 @@ func (r *Resolver) isDecoratorTransportSensitive(name string) bool {
 	if capability := coreplugin.Global().Lookup(trimmed); capability != nil {
 		return capability.Schema().TransportSensitive
 	}
-	entry, ok := decorator.Global().Lookup(trimmed)
-	if !ok {
-		return false
-	}
-	return entry.Impl.Descriptor().Capabilities.TransportSensitive
+	return false
 }
 
 // batchResolve resolves all pending decorator calls in batches (grouped by decorator type).
@@ -2817,73 +2720,7 @@ func (r *Resolver) getOrCreateMetrics(decoratorName string) *DecoratorResolution
 
 // resolveBatch resolves a batch of calls for a single decorator type.
 func (r *Resolver) resolveBatch(decoratorName string, calls []decoratorCall) error {
-	// Build ValueCall slice for batch resolution
-	valueCalls := make([]decorator.ValueCall, len(calls))
-	for i, call := range calls {
-		valueCall, err := buildValueCall(call.decorator, r.getValue)
-		if err != nil {
-			return err
-		}
-		valueCalls[i] = valueCall
-	}
-
-	// Build evaluation context
-	stepPath := r.config.StepPath
-	if stepPath == "" {
-		stepPath = "planner.resolve"
-	}
-	if decoratorName != "" {
-		stepPath = stepPath + "." + decoratorName
-	}
-
-	planHash := r.config.PlanHash
-	if len(planHash) == 0 {
-		planHash = r.vault.GetPlanKey()
-	}
-
-	ctx := decorator.ValueEvalContext{
-		Session:     r.session,
-		LookupValue: r.getValue,
-		PlanHash:    planHash,
-		StepPath:    stepPath,
-	}
-
-	// Get current transport scope
-	currentScope := r.session.TransportScope()
-
-	if coreplugin.Global().Lookup(decoratorName) != nil && !decorator.Global().IsRegistered(decoratorName) {
-		return r.resolvePluginBatch(decoratorName, calls)
-	}
-
-	// Call decorator's batch Resolve
-	// This is where the magic happens - multiple @aws.secret calls → one API request
-	results, err := decorator.Global().ResolveValues(ctx, currentScope, valueCalls...)
-	if err != nil {
-		return fmt.Errorf("failed to resolve @%s: %w (cannot plan if cannot resolve)", decoratorName, err)
-	}
-	if len(results) != len(calls) {
-		return fmt.Errorf("internal error: resolver received %d results for %d @%s calls", len(results), len(calls), decoratorName)
-	}
-
-	// Store results in Vault
-	for i, result := range results {
-		call := calls[i]
-		exprID := call.exprID
-
-		// Store value in Vault (single source of truth)
-		r.vault.StoreUnresolvedValue(exprID, result.Value)
-		r.vault.MarkTouched(exprID)
-
-		// Track decorator key → exprID for getValue() lookups
-		// This allows direct decorator refs in conditions (e.g., if @env.HOME == "/root")
-		decKey := decoratorKey(call.decorator)
-		r.decoratorExprIDs[decKey] = exprID
-
-		// Note: Variable name → exprID is already tracked in ScopeStack
-		// via collectVarDecl, so no need to duplicate here
-	}
-
-	return nil
+	return r.resolvePluginBatch(decoratorName, calls)
 }
 
 // evaluateCollection evaluates a collection expression for a for-loop.

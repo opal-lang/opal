@@ -10,13 +10,32 @@ import (
 type Registry struct {
 	plugins      map[string]Plugin
 	capabilities map[string]Capability
+	entries      map[string]*Entry
 }
+
+// Entry preserves plugin identity and discovered capabilities.
+type Entry struct {
+	Path     string
+	Version  string
+	Plugin   any
+	Schema   Schema
+	canValue bool
+	canWrap  bool
+	canTrans bool
+	canRedir bool
+}
+
+func (e *Entry) IsValue() bool     { return e != nil && e.canValue }
+func (e *Entry) IsWrapper() bool   { return e != nil && e.canWrap }
+func (e *Entry) IsTransport() bool { return e != nil && e.canTrans }
+func (e *Entry) IsRedirect() bool  { return e != nil && e.canRedir }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins:      make(map[string]Plugin),
 		capabilities: make(map[string]Capability),
+		entries:      make(map[string]*Entry),
 	}
 }
 
@@ -49,7 +68,22 @@ func (r *Registry) Register(plugin Plugin) error {
 
 	r.plugins[identity.Name] = plugin
 	for _, capability := range plugin.Capabilities() {
-		r.capabilities[capability.Path()] = capability
+		path := capability.Path()
+		r.capabilities[path] = capability
+		_, isValue := capability.(ValueProvider)
+		_, isWrap := capability.(Wrapper)
+		_, isTrans := capability.(Transport)
+		_, isRedir := capability.(RedirectTarget)
+		r.entries[path] = &Entry{
+			Path:     path,
+			Version:  identity.Version,
+			Plugin:   capability,
+			Schema:   capability.Schema(),
+			canValue: isValue,
+			canWrap:  isWrap,
+			canTrans: isTrans,
+			canRedir: isRedir,
+		}
 	}
 
 	return nil
@@ -58,6 +92,11 @@ func (r *Registry) Register(plugin Plugin) error {
 // Lookup returns the capability at the given path, if present.
 func (r *Registry) Lookup(path string) Capability {
 	return r.capabilities[path]
+}
+
+// LookupEntry returns the discovered capability entry at the given path.
+func (r *Registry) LookupEntry(path string) *Entry {
+	return r.entries[path]
 }
 
 // Plugin returns the registered plugin namespace, if present.

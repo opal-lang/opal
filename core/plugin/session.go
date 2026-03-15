@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"net"
 )
 
 // RunOpts configures command execution for plugin sessions.
@@ -29,6 +30,24 @@ type ParentTransport interface {
 	Get(ctx context.Context, path string) ([]byte, error)
 	Snapshot() SessionSnapshot
 	Close() error
+}
+
+// NetworkDialer opens outbound network connections through a parent transport.
+// Nested transports use this for bastion/IAP-style double-hop connections.
+type NetworkDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+// NetworkDialerProvider optionally exposes parent-routed dialing.
+type NetworkDialerProvider interface {
+	NetworkDialer() NetworkDialer
+}
+
+// ParentTransportWrapper optionally exposes an underlying parent transport.
+// Wrappers that adjust snapshot state (for example workdir) should implement
+// this so hosts can recover base transport identity when needed.
+type ParentTransportWrapper interface {
+	UnwrapParentTransport() ParentTransport
 }
 
 // OpenedTransport is the narrow runtime object returned by a transport capability.

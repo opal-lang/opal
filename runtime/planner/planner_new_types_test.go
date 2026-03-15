@@ -1,52 +1,59 @@
 package planner_test
 
 import (
+	"sync"
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
+	"github.com/builtwithtofu/sigil/core/plugin"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/parser"
 	"github.com/builtwithtofu/sigil/runtime/planner"
 )
 
-type typesTestDecorator struct{}
+type typesTestPlugin struct{}
 
-func (d *typesTestDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("types.test").
-		Summary("Test decorator for plan type coverage").
-		Roles(decorator.RoleWrapper).
-		ParamInt("intVal", "Int parameter").Done().
-		ParamFloat("floatVal", "Float parameter").Done().
-		ParamBool("boolVal", "Bool parameter").Done().
-		ParamDuration("durationVal", "Duration parameter").Done().
-		ParamArray("intArray", "Int array parameter").
-		ElementType(types.TypeInt).
-		Done().
-		ParamArray("stringArray", "String array parameter").
-		ElementType(types.TypeString).
-		Done().
-		ParamObject("objectVal", "Object parameter").
-		Field("name", types.TypeString, "Name").
-		Field("count", types.TypeInt, "Count").
-		FieldObject("meta", "Meta").
-		Field("enabled", types.TypeBool, "Enabled").
-		DoneField().
-		Done().
-		Block(decorator.BlockOptional).
-		Build()
+type typesTestCapability struct{}
+
+var registerTypesTestPluginOnce sync.Once
+
+func (p *typesTestPlugin) Identity() plugin.PluginIdentity {
+	return plugin.PluginIdentity{Name: "planner-types-test", Version: "1.0.0", APIVersion: 1}
 }
 
-func (d *typesTestDecorator) Wrap(next decorator.ExecNode, _ map[string]any) decorator.ExecNode {
+func (p *typesTestPlugin) Capabilities() []plugin.Capability {
+	return []plugin.Capability{typesTestCapability{}}
+}
+
+func (c typesTestCapability) Path() string { return "types.test" }
+
+func (c typesTestCapability) Schema() plugin.Schema {
+	return plugin.Schema{
+		Params: []plugin.Param{
+			{Name: "intVal", Type: types.TypeInt},
+			{Name: "floatVal", Type: types.TypeFloat},
+			{Name: "boolVal", Type: types.TypeBool},
+			{Name: "durationVal", Type: types.TypeDuration},
+			{Name: "intArray", Type: types.TypeArray},
+			{Name: "stringArray", Type: types.TypeArray},
+			{Name: "objectVal", Type: types.TypeObject},
+		},
+		Block: plugin.BlockOptional,
+	}
+}
+
+func (c typesTestCapability) Wrap(next plugin.ExecNode, args plugin.ResolvedArgs) plugin.ExecNode {
 	return next
 }
 
-func init() {
-	_ = decorator.Register("types.test", &typesTestDecorator{})
+func registerTypesTestPlugin() {
+	registerTypesTestPluginOnce.Do(func() {
+		_ = plugin.Global().Register(&typesTestPlugin{})
+	})
 }
 
 func TestPlanNew_DecoratorArgTypes(t *testing.T) {
-	// Arguments must be sorted alphabetically for plan validation
+	registerTypesTestPlugin()
 	source := `@types.test(
 		boolVal=true,
 		durationVal=5s,
@@ -101,63 +108,28 @@ func TestPlanNew_DecoratorArgTypes(t *testing.T) {
 		return planfmt.Value{}
 	}
 
-	intVal := assertArg("intVal", planfmt.ValueInt)
-	if intVal.Int != 3 {
-		t.Fatalf("intVal mismatch: want 3, got %d", intVal.Int)
+	if assertArg("intVal", planfmt.ValueInt).Int != 3 {
+		t.Fatalf("intVal mismatch")
 	}
-
-	floatVal := assertArg("floatVal", planfmt.ValueFloat)
-	if floatVal.Float != 1.25 {
-		t.Fatalf("floatVal mismatch: want 1.25, got %v", floatVal.Float)
+	if assertArg("floatVal", planfmt.ValueFloat).Float != 1.25 {
+		t.Fatalf("floatVal mismatch")
 	}
-
-	boolVal := assertArg("boolVal", planfmt.ValueBool)
-	if boolVal.Bool != true {
-		t.Fatalf("boolVal mismatch: want true, got %v", boolVal.Bool)
+	if assertArg("boolVal", planfmt.ValueBool).Bool != true {
+		t.Fatalf("boolVal mismatch")
 	}
-
-	durationVal := assertArg("durationVal", planfmt.ValueDuration)
-	if durationVal.Duration != "5s" {
-		t.Fatalf("durationVal mismatch: want 5s, got %q", durationVal.Duration)
+	if assertArg("durationVal", planfmt.ValueDuration).Duration != "5s" {
+		t.Fatalf("durationVal mismatch")
 	}
-
 	intArray := assertArg("intArray", planfmt.ValueArray)
-	if len(intArray.Array) != 2 {
-		t.Fatalf("intArray length mismatch: want 2, got %d", len(intArray.Array))
+	if len(intArray.Array) != 2 || intArray.Array[0].Int != 1 || intArray.Array[1].Int != 2 {
+		t.Fatalf("intArray mismatch: %+v", intArray.Array)
 	}
-	if intArray.Array[0].Kind != planfmt.ValueInt || intArray.Array[0].Int != 1 {
-		t.Fatalf("intArray[0] mismatch: want 1, got %+v", intArray.Array[0])
-	}
-	if intArray.Array[1].Kind != planfmt.ValueInt || intArray.Array[1].Int != 2 {
-		t.Fatalf("intArray[1] mismatch: want 2, got %+v", intArray.Array[1])
-	}
-
 	stringArray := assertArg("stringArray", planfmt.ValueArray)
-	if len(stringArray.Array) != 2 {
-		t.Fatalf("stringArray length mismatch: want 2, got %d", len(stringArray.Array))
+	if len(stringArray.Array) != 2 || stringArray.Array[0].Str != "alpha" || stringArray.Array[1].Str != "beta" {
+		t.Fatalf("stringArray mismatch: %+v", stringArray.Array)
 	}
-	if stringArray.Array[0].Kind != planfmt.ValueString || stringArray.Array[0].Str != "alpha" {
-		t.Fatalf("stringArray[0] mismatch: want alpha, got %+v", stringArray.Array[0])
-	}
-	if stringArray.Array[1].Kind != planfmt.ValueString || stringArray.Array[1].Str != "beta" {
-		t.Fatalf("stringArray[1] mismatch: want beta, got %+v", stringArray.Array[1])
-	}
-
 	objectVal := assertArg("objectVal", planfmt.ValueMap)
-	nameVal, ok := objectVal.Map["name"]
-	if !ok || nameVal.Kind != planfmt.ValueString || nameVal.Str != "api" {
-		t.Fatalf("objectVal.name mismatch: got %+v", nameVal)
-	}
-	countVal, ok := objectVal.Map["count"]
-	if !ok || countVal.Kind != planfmt.ValueInt || countVal.Int != 2 {
-		t.Fatalf("objectVal.count mismatch: got %+v", countVal)
-	}
-	metaVal, ok := objectVal.Map["meta"]
-	if !ok || metaVal.Kind != planfmt.ValueMap {
-		t.Fatalf("objectVal.meta kind mismatch: got %+v", metaVal)
-	}
-	enabledVal, ok := metaVal.Map["enabled"]
-	if !ok || enabledVal.Kind != planfmt.ValueBool || enabledVal.Bool != true {
-		t.Fatalf("objectVal.meta.enabled mismatch: got %+v", enabledVal)
+	if objectVal.Map["name"].Str != "api" || objectVal.Map["count"].Int != 2 || objectVal.Map["meta"].Map["enabled"].Bool != true {
+		t.Fatalf("objectVal mismatch: %+v", objectVal.Map)
 	}
 }

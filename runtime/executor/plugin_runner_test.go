@@ -62,9 +62,11 @@ type overlayOpenedTransport struct {
 func (o overlayOpenedTransport) Run(ctx context.Context, argv []string, opts plugin.RunOpts) (plugin.Result, error) {
 	return plugin.Result{ExitCode: plugin.ExitSuccess}, nil
 }
+
 func (o overlayOpenedTransport) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
 	return nil
 }
+
 func (o overlayOpenedTransport) Get(ctx context.Context, path string) ([]byte, error) {
 	return nil, nil
 }

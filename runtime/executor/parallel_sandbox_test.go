@@ -4,68 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
-	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
 )
-
-type testChdirDecorator struct{}
-
-func (d *testChdirDecorator) Descriptor() decorator.Descriptor {
-	return decorator.NewDescriptor("test.chdir").
-		Summary("Test-only decorator that changes session workdir for its block").
-		Roles(decorator.RoleWrapper).
-		ParamString("dir", "Workdir for nested block").
-		Required().
-		Done().
-		Block(decorator.BlockRequired).
-		Build()
-}
-
-func (d *testChdirDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
-	return &testChdirNode{next: next, params: params}
-}
-
-type testChdirNode struct {
-	next   decorator.ExecNode
-	params map[string]any
-}
-
-func (n *testChdirNode) Execute(ctx decorator.ExecContext) (decorator.Result, error) {
-	if n.next == nil {
-		return decorator.Result{ExitCode: 0}, nil
-	}
-
-	dir, _ := n.params["dir"].(string)
-	if dir == "" {
-		return decorator.Result{ExitCode: 1}, nil
-	}
-
-	child := ctx.WithSession(ctx.Session.WithWorkdir(dir))
-	return n.next.Execute(child)
-}
-
-var registerTestChdirDecoratorOnce sync.Once
-
-func registerTestChdirDecorator(t *testing.T) {
-	t.Helper()
-	var registerErr error
-	registerTestChdirDecoratorOnce.Do(func() {
-		registerErr = decorator.Register("test.chdir", &testChdirDecorator{})
-	})
-	if registerErr != nil {
-		t.Fatalf("register @test.chdir failed: %v", registerErr)
-	}
-}
 
 func TestParallelBranchWorkdirIsolation(t *testing.T) {
 	t.Parallel()
 
-	registerTestChdirDecorator(t)
+	registerExecutorSessionTestPlugin()
 	originalWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd failed: %v", err)

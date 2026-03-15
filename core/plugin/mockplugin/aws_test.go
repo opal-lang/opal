@@ -17,6 +17,10 @@ type fakeValueContext struct {
 
 func (f fakeValueContext) Context() context.Context        { return context.Background() }
 func (f fakeValueContext) Session() plugin.ParentTransport { return f.session }
+func (f fakeValueContext) PlanHash() string                { return "" }
+func (f fakeValueContext) LookupValue(name string) (any, bool) {
+	return nil, false
+}
 
 type fakeArgs struct {
 	strings   map[string]string
@@ -45,6 +49,7 @@ type fakeSession struct {
 func (f *fakeSession) Run(ctx context.Context, argv []string, opts plugin.RunOpts) (plugin.Result, error) {
 	return plugin.Result{}, nil
 }
+
 func (f *fakeSession) Put(ctx context.Context, data []byte, path string, mode fs.FileMode) error {
 	return nil
 }

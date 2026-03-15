@@ -10,6 +10,8 @@ import (
 type ValueContext interface {
 	Context() context.Context
 	Session() ParentTransport
+	PlanHash() string
+	LookupValue(name string) (any, bool)
 }
 
 // ExecContext provides runtime execution state.

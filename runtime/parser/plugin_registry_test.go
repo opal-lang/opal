@@ -21,13 +21,16 @@ func (p *testPlugin) Capabilities() []plugin.Capability {
 
 type testValueCapability struct{}
 
-func (c testValueCapability) Kind() plugin.CapabilityKind { return plugin.KindValue }
-func (c testValueCapability) Path() string                { return "plug.value" }
+func (c testValueCapability) Path() string { return "plug.value" }
 func (c testValueCapability) Schema() plugin.Schema {
 	return plugin.Schema{
 		Primary: plugin.Param{Name: "name", Type: types.TypeString, Required: true},
 		Returns: types.TypeString,
 	}
+}
+
+func (c testValueCapability) Resolve(ctx plugin.ValueContext, args plugin.ResolvedArgs) (any, error) {
+	return "ok", nil
 }
 
 func init() {

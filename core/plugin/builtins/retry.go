@@ -16,8 +16,6 @@ var (
 	retryMax = float64(100)
 )
 
-func (c RetryWrapperCapability) Kind() plugin.CapabilityKind { return plugin.KindWrapper }
-
 func (c RetryWrapperCapability) Path() string { return "exec.retry" }
 
 func (c RetryWrapperCapability) Schema() plugin.Schema {

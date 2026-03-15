@@ -10,12 +10,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/planfmt"
 	coreplugin "github.com/builtwithtofu/sigil/core/plugin"
+	coreruntime "github.com/builtwithtofu/sigil/core/runtime"
 )
 
-type sessionFactory func(transportID string) (decorator.Session, error)
+type sessionFactory func(transportID string) (coreruntime.Session, error)
 
 type AuthFingerprint struct {
 	User          string
@@ -31,9 +31,9 @@ func (af AuthFingerprint) Hash() string {
 
 type sessionRuntime struct {
 	mu         sync.Mutex
-	sessions   map[string]decorator.Session
-	direct     map[string]decorator.Session
-	pooled     map[string]decorator.Session
+	sessions   map[string]coreruntime.Session
+	direct     map[string]coreruntime.Session
+	pooled     map[string]coreruntime.Session
 	transports map[string]planfmt.Transport
 	factory    sessionFactory
 	resolver   DisplayIDResolver
@@ -45,9 +45,9 @@ func newSessionRuntime(factory sessionFactory) *sessionRuntime {
 	}
 
 	return &sessionRuntime{
-		sessions:   make(map[string]decorator.Session),
-		direct:     make(map[string]decorator.Session),
-		pooled:     make(map[string]decorator.Session),
+		sessions:   make(map[string]coreruntime.Session),
+		direct:     make(map[string]coreruntime.Session),
+		pooled:     make(map[string]coreruntime.Session),
 		transports: make(map[string]planfmt.Transport),
 		factory:    factory,
 	}
@@ -70,10 +70,10 @@ func (r *sessionRuntime) registerPlanTransports(transports []planfmt.Transport) 
 	}
 }
 
-func defaultSessionFactory(transportID string) (decorator.Session, error) {
+func defaultSessionFactory(transportID string) (coreruntime.Session, error) {
 	// Factory is only called for local transports (either literal "local" or derived IDs).
 	// Create a LocalSession regardless of the specific transport ID format.
-	return decorator.NewLocalSession(), nil
+	return coreruntime.NewLocalSession(), nil
 }
 
 func normalizedTransportID(transportID string) string {
@@ -83,7 +83,7 @@ func normalizedTransportID(transportID string) string {
 	return transportID
 }
 
-func (r *sessionRuntime) SessionFor(transportID string) (decorator.Session, error) {
+func (r *sessionRuntime) SessionFor(transportID string) (coreruntime.Session, error) {
 	key := normalizedTransportID(transportID)
 
 	r.mu.Lock()
@@ -110,7 +110,34 @@ func (r *sessionRuntime) SessionFor(transportID string) (decorator.Session, erro
 	return session, nil
 }
 
-func (r *sessionRuntime) installSession(transportID string, session decorator.Session) {
+func (r *sessionRuntime) AcquirePooledPluginSession(transportID, decoratorName string, parentSession coreruntime.Session, params map[string]any, open func() (coreplugin.OpenedTransport, error)) (coreruntime.Session, error) {
+	poolKey := transportPoolKey(decoratorName, parentSession, params)
+
+	r.mu.Lock()
+	if pooled, ok := r.pooled[poolKey]; ok {
+		r.mu.Unlock()
+		return &transportScopedSession{id: transportID, session: pooled}, nil
+	}
+	r.mu.Unlock()
+
+	opened, err := open()
+	if err != nil {
+		return nil, err
+	}
+
+	wrapped := pluginTransportSession{id: transportID, inner: opened}
+	r.mu.Lock()
+	if pooled, ok := r.pooled[poolKey]; ok {
+		r.mu.Unlock()
+		_ = opened.Close()
+		return &transportScopedSession{id: transportID, session: pooled}, nil
+	}
+	r.pooled[poolKey] = wrapped
+	r.mu.Unlock()
+	return &transportScopedSession{id: transportID, session: wrapped}, nil
+}
+
+func (r *sessionRuntime) installSession(transportID string, session coreruntime.Session) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := normalizedTransportID(transportID)
@@ -129,7 +156,7 @@ func (r *sessionRuntime) removeSession(transportID string) {
 	delete(r.direct, key)
 }
 
-func (r *sessionRuntime) createSession(transportID string) (decorator.Session, bool, error) {
+func (r *sessionRuntime) createSession(transportID string) (coreruntime.Session, bool, error) {
 	transport, ok := r.lookupTransport(transportID)
 	if !ok {
 		if transportID == "local" {
@@ -151,7 +178,7 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, b
 
 	name := strings.TrimPrefix(transport.Decorator, "@")
 	if capability := coreplugin.Global().Lookup(name); capability != nil {
-		transportCapability, ok := capability.(coreplugin.TransportCapability)
+		transportCapability, ok := capability.(coreplugin.Transport)
 		if !ok {
 			return nil, false, fmt.Errorf("plugin capability %q is not a transport", transport.Decorator)
 		}
@@ -175,68 +202,39 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, b
 			}
 			return fmt.Sprint(value), nil
 		}
+		poolKey := transportPoolKey(name, parentSession, planArgsToMap(transport.Args))
+		r.mu.Lock()
+		if pooled, ok := r.pooled[poolKey]; ok {
+			r.mu.Unlock()
+			return &transportScopedSession{id: transportID, session: pooled}, true, nil
+		}
+		r.mu.Unlock()
+
 		opened, err := transportCapability.Open(context.Background(), pluginParentSession{session: parentSession}, newPluginArgs(planArgsToMap(transport.Args), capability.Schema(), resolver))
 		if err != nil {
 			return nil, false, fmt.Errorf("open plugin transport %q: %w", transport.Decorator, err)
 		}
-		return pluginTransportSession{id: transportID, inner: opened}, false, nil
-	}
 
-	entry, exists := decorator.Global().Lookup(name)
-	if !exists {
-		return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)
-	}
-
-	transportDecorator, ok := entry.Impl.(decorator.Transport)
-	if !ok {
-		return nil, false, fmt.Errorf("decorator %q is not a transport", transport.Decorator)
-	}
-
-	if !isTransportSessionMaterialized(name) {
-		session, err := r.factory(transportID)
-		return session, false, err
-	}
-
-	parentID := normalizedTransportID(transport.ParentID)
-	if parentID == "" {
-		parentID = "local"
-	}
-	parentSession, err := r.SessionFor(parentID)
-	if err != nil {
-		return nil, false, err
-	}
-
-	poolKey := transportPoolKey(name, parentSession, planArgsToMap(transport.Args))
-
-	r.mu.Lock()
-	if pooled, ok := r.pooled[poolKey]; ok {
+		r.mu.Lock()
+		if pooled, ok := r.pooled[poolKey]; ok {
+			r.mu.Unlock()
+			_ = opened.Close()
+			return &transportScopedSession{id: transportID, session: pooled}, true, nil
+		}
+		wrapped := pluginTransportSession{id: transportID, inner: opened}
+		r.pooled[poolKey] = wrapped
 		r.mu.Unlock()
-		return &transportScopedSession{id: transportID, session: pooled}, true, nil
-	}
-	r.mu.Unlock()
-
-	openedSession, err := transportDecorator.Open(parentSession, planArgsToMap(transport.Args))
-	if err != nil {
-		return nil, false, fmt.Errorf("open transport %q: %w", transport.Decorator, err)
+		return &transportScopedSession{id: transportID, session: wrapped}, true, nil
 	}
 
-	r.mu.Lock()
-	if pooled, ok := r.pooled[poolKey]; ok {
-		r.mu.Unlock()
-		_ = openedSession.Close()
-		return &transportScopedSession{id: transportID, session: pooled}, true, nil
-	}
-	r.pooled[poolKey] = openedSession
-	r.mu.Unlock()
-
-	return &transportScopedSession{id: transportID, session: openedSession}, true, nil
+	return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)
 }
 
-func transportPoolKey(decoratorName string, parentSession decorator.Session, params map[string]any) string {
+func transportPoolKey(decoratorName string, parentSession coreruntime.Session, params map[string]any) string {
 	return fmt.Sprintf("%s:%s", decoratorName, SessionPoolKey(parentSession, params))
 }
 
-func SessionPoolKey(parentSession decorator.Session, params map[string]any) string {
+func SessionPoolKey(parentSession coreruntime.Session, params map[string]any) string {
 	parentContext := "root"
 	if parentSession != nil {
 		if parentID := strings.TrimSpace(parentSession.ID()); parentID != "" {
@@ -361,7 +359,7 @@ func (r *sessionRuntime) lookupTransport(transportID string) (planfmt.Transport,
 	return transport, ok
 }
 
-func (r *sessionRuntime) lookupSessionByIdentity(sessionID string) (decorator.Session, bool) {
+func (r *sessionRuntime) lookupSessionByIdentity(sessionID string) (coreruntime.Session, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -380,20 +378,6 @@ func (r *sessionRuntime) lookupSessionByIdentity(sessionID string) (decorator.Se
 	return nil, false
 }
 
-func isTransportSessionMaterialized(name string) bool {
-	entry, exists := decorator.Global().Lookup(name)
-	if !exists {
-		return false
-	}
-
-	transport, ok := entry.Impl.(decorator.Transport)
-	if !ok {
-		return false
-	}
-
-	return transport.MaterializeSession()
-}
-
 func (r *sessionRuntime) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -408,18 +392,18 @@ func (r *sessionRuntime) Close() {
 		}
 	}
 
-	r.sessions = make(map[string]decorator.Session)
-	r.direct = make(map[string]decorator.Session)
-	r.pooled = make(map[string]decorator.Session)
+	r.sessions = make(map[string]coreruntime.Session)
+	r.direct = make(map[string]coreruntime.Session)
+	r.pooled = make(map[string]coreruntime.Session)
 }
 
-func (r *sessionRuntime) closeTargetsByTransportIDLocked() map[string]decorator.Session {
-	closers := make(map[string]decorator.Session)
+func (r *sessionRuntime) closeTargetsByTransportIDLocked() map[string]coreruntime.Session {
+	closers := make(map[string]coreruntime.Session)
 	for transportID, session := range r.direct {
 		closers[transportID] = session
 	}
 
-	closed := make(map[decorator.Session]struct{})
+	closed := make(map[coreruntime.Session]struct{})
 	for transportID, session := range closers {
 		closed[session] = struct{}{}
 		closers[transportID] = session
