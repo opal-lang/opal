@@ -27,6 +27,8 @@ type pluginPlanRedirectErrorSinkCapability struct{}
 
 type pluginPlanRedirectReadonlySinkCapability struct{}
 
+type pluginPlanRedirectSecretSinkCapability struct{}
+
 type pluginPoolProbeTransportCapability struct{}
 
 type pluginContextProbeTransportCapability struct{}
@@ -72,6 +74,8 @@ var (
 	pluginPoolProbeOpenCount              int
 	pluginContextProbeValueMu             sync.Mutex
 	pluginContextProbeValues              []string
+	pluginRedirectSecretMu                sync.Mutex
+	pluginRedirectSecretValues            = map[string]string{}
 )
 
 func (p *executorSessionTestPlugin) Identity() coreplugin.PluginIdentity {
@@ -79,7 +83,7 @@ func (p *executorSessionTestPlugin) Identity() coreplugin.PluginIdentity {
 }
 
 func (p *executorSessionTestPlugin) Capabilities() []coreplugin.Capability {
-	return []coreplugin.Capability{pluginSessionIDCheckCapability{}, pluginSessionBoundaryCapability{}, pluginCaptureSinkCapability{}, pluginChdirCapability{}, pluginPlanRedirectErrorSinkCapability{}, pluginPlanRedirectReadonlySinkCapability{}, pluginPoolProbeTransportCapability{}, pluginContextProbeTransportCapability{}}
+	return []coreplugin.Capability{pluginSessionIDCheckCapability{}, pluginSessionBoundaryCapability{}, pluginCaptureSinkCapability{}, pluginChdirCapability{}, pluginPlanRedirectErrorSinkCapability{}, pluginPlanRedirectReadonlySinkCapability{}, pluginPlanRedirectSecretSinkCapability{}, pluginPoolProbeTransportCapability{}, pluginContextProbeTransportCapability{}}
 }
 
 func (c pluginSessionIDCheckCapability) Path() string { return "test.sessionid.check" }
@@ -266,6 +270,38 @@ func (c pluginPlanRedirectReadonlySinkCapability) OpenForWrite(ctx coreplugin.Ex
 	return nil, fmt.Errorf("write unsupported")
 }
 
+func (c pluginPlanRedirectSecretSinkCapability) Path() string {
+	return "test.plan.redirect.secret.sink"
+}
+
+func (c pluginPlanRedirectSecretSinkCapability) Schema() coreplugin.Schema {
+	return coreplugin.Schema{Params: []coreplugin.Param{{Name: "command", Type: types.TypeString, Required: true}, {Name: "token", Type: types.TypeString, Required: true}}, Secrets: []string{"token"}}
+}
+
+func (c pluginPlanRedirectSecretSinkCapability) RedirectCaps() coreplugin.RedirectCaps {
+	return coreplugin.RedirectCaps{Write: true, Append: true}
+}
+
+func (c pluginPlanRedirectSecretSinkCapability) OpenForRead(ctx coreplugin.ExecContext, args coreplugin.ResolvedArgs) (io.ReadCloser, error) {
+	_ = ctx
+	_ = args
+	return nil, fmt.Errorf("read unsupported")
+}
+
+func (c pluginPlanRedirectSecretSinkCapability) OpenForWrite(ctx coreplugin.ExecContext, args coreplugin.ResolvedArgs, appendMode bool) (io.WriteCloser, error) {
+	_ = ctx
+	_ = appendMode
+	id := args.GetString("command")
+	token, err := args.ResolveSecret("token")
+	if err != nil {
+		return nil, err
+	}
+	pluginRedirectSecretMu.Lock()
+	pluginRedirectSecretValues[id] = token
+	pluginRedirectSecretMu.Unlock()
+	return &planCloseControlledWriter{}, nil
+}
+
 func (c pluginPoolProbeTransportCapability) Path() string { return "test.transport.poolprobe" }
 
 func (c pluginPoolProbeTransportCapability) Schema() coreplugin.Schema {
@@ -385,4 +421,16 @@ func pluginContextProbeValuesResult() []string {
 	pluginContextProbeValueMu.Lock()
 	defer pluginContextProbeValueMu.Unlock()
 	return append([]string(nil), pluginContextProbeValues...)
+}
+
+func resetPluginRedirectSecretValue(id string) {
+	pluginRedirectSecretMu.Lock()
+	defer pluginRedirectSecretMu.Unlock()
+	delete(pluginRedirectSecretValues, id)
+}
+
+func pluginRedirectSecretValue(id string) string {
+	pluginRedirectSecretMu.Lock()
+	defer pluginRedirectSecretMu.Unlock()
+	return pluginRedirectSecretValues[id]
 }

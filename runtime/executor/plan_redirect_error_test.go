@@ -99,6 +99,49 @@ func TestPlanRedirectOutputCloseFailureReturnsStructuredSinkError(t *testing.T) 
 	})
 }
 
+func TestPlanRedirectResolvesSecretArgsForSink(t *testing.T) {
+	registerExecutorSessionTestPlugin()
+	vlt := testVault()
+
+	exprID := vlt.TrackExpression("token")
+	vlt.StoreUnresolvedValue(exprID, "redirect-secret")
+	vlt.MarkTouched(exprID)
+	vlt.ResolveAllTouched()
+	displayID := vlt.GetDisplayID(exprID)
+
+	id := t.TempDir() + "/redirect-secret"
+	resetPluginRedirectSecretValue(id)
+
+	plan := &planfmt.Plan{Target: "plan-redirect-secret", Transports: []planfmt.Transport{{ID: "local", Decorator: "local", ParentID: ""}}, Steps: []planfmt.Step{{
+		ID: 1,
+		Tree: &planfmt.RedirectNode{
+			Source: &planfmt.CommandNode{
+				Decorator: "@shell",
+				Args:      []planfmt.Arg{{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: "echo redirect-secret"}}},
+			},
+			Target: planfmt.CommandNode{
+				Decorator: "@test.plan.redirect.secret.sink",
+				Args: []planfmt.Arg{
+					{Key: "command", Val: planfmt.Value{Kind: planfmt.ValueString, Str: id}},
+					{Key: "token", Val: planfmt.Value{Kind: planfmt.ValueString, Str: displayID}},
+				},
+			},
+			Mode: planfmt.RedirectOverwrite,
+		},
+	}}}
+
+	result, err := ExecutePlan(context.Background(), plan, Config{}, vlt)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if diff := cmp.Diff(0, result.ExitCode); diff != "" {
+		t.Fatalf("exit code mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("redirect-secret", pluginRedirectSecretValue(id)); diff != "" {
+		t.Fatalf("resolved secret mismatch (-want +got):\n%s", diff)
+	}
+}
+
 type planRedirectErrorCase struct {
 	mode            planfmt.RedirectMode
 	sourceCommand   string

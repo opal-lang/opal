@@ -284,7 +284,17 @@ func (e *executor) executePlanRedirect(execCtx sdk.ExecutionContext, redirect *p
 	}
 
 	pluginCtx := pluginExecContext{ctx: redirectExecCtx.Context(), session: pluginParentSession{session: session}, stdin: stdin, stdout: nil, stderr: e.stderr}
-	resolvedArgs := newPluginArgs(args, redirectTarget.Schema(), nil)
+	resolver := func(displayID string) (string, error) {
+		if e.vault == nil {
+			return "", fmt.Errorf("secret resolver unavailable")
+		}
+		value, err := e.vault.ResolveDisplayIDWithTransport(displayID, executionTransportID(redirectExecCtx))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprint(value), nil
+	}
+	resolvedArgs := newPluginArgs(args, redirectTarget.Schema(), resolver)
 
 	if redirect.Mode == planfmt.RedirectInput {
 		reader, err := redirectTarget.OpenForRead(pluginCtx, resolvedArgs)
