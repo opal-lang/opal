@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/builtwithtofu/sigil/core/decorator"
+	"github.com/builtwithtofu/sigil/core/plugin"
 )
 
 func TestBuiltinDecoratorsRegistered(t *testing.T) {
@@ -12,16 +13,16 @@ func TestBuiltinDecoratorsRegistered(t *testing.T) {
 		t.Error("built-in decorator 'var' should be registered")
 	}
 
-	if !decorator.Global().IsRegistered("exec.timeout") {
-		t.Error("built-in decorator 'exec.timeout' should be registered")
+	if plugin.Global().Lookup("exec.timeout") == nil {
+		t.Error("built-in plugin capability 'exec.timeout' should be registered")
 	}
 
-	if !decorator.Global().IsRegistered("exec.parallel") {
-		t.Error("built-in decorator 'exec.parallel' should be registered")
+	if plugin.Global().Lookup("exec.parallel") == nil {
+		t.Error("built-in plugin capability 'exec.parallel' should be registered")
 	}
 
-	if !decorator.Global().IsRegistered("fs.workdir") {
-		t.Error("built-in decorator 'fs.workdir' should be registered")
+	if plugin.Global().Lookup("fs.workdir") == nil {
+		t.Error("built-in plugin capability 'fs.workdir' should be registered")
 	}
 }
 

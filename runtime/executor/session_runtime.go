@@ -150,10 +150,25 @@ func (r *sessionRuntime) removeSession(transportID string) {
 	defer r.mu.Unlock()
 	key := normalizedTransportID(transportID)
 	if session, ok := r.direct[key]; ok && session != nil {
-		_ = session.Close()
+		if !r.isPooledScopedSessionLocked(session) {
+			_ = session.Close()
+		}
 	}
 	delete(r.sessions, key)
 	delete(r.direct, key)
+}
+
+func (r *sessionRuntime) isPooledScopedSessionLocked(session coreruntime.Session) bool {
+	scoped, ok := session.(*transportScopedSession)
+	if !ok || scoped == nil || scoped.session == nil {
+		return false
+	}
+	for _, pooled := range r.pooled {
+		if pooled == scoped.session {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *sessionRuntime) createSession(transportID string) (coreruntime.Session, bool, error) {

@@ -2,12 +2,16 @@ package executor
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/sigil/core/planfmt"
 	"github.com/builtwithtofu/sigil/core/plugin"
+	builtins "github.com/builtwithtofu/sigil/core/plugin/builtins"
 	"github.com/builtwithtofu/sigil/core/plugin/mockplugin"
+	"github.com/builtwithtofu/sigil/core/types"
 	_ "github.com/builtwithtofu/sigil/runtime/decorators"
 	"github.com/google/go-cmp/cmp"
 )
@@ -94,5 +98,44 @@ func TestPluginTransportSessionPreservesEnvAndWorkdirOverlays(t *testing.T) {
 	withDir := withEnv.WithWorkdir("/srv/app").(pluginTransportSession)
 	if diff := cmp.Diff("/srv/app", withDir.Cwd()); diff != "" {
 		t.Fatalf("workdir overlay mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestNewPluginArgsAppliesSchemaDefaults(t *testing.T) {
+	schema := plugin.Schema{
+		Params: []plugin.Param{
+			{Name: "times", Type: types.TypeInt, Default: 3},
+			{Name: "backoff", Type: types.TypeString, Default: "exponential"},
+			{Name: "delay", Type: types.TypeDuration, Default: time.Second},
+		},
+	}
+
+	args := newPluginArgs(map[string]any{}, schema, nil)
+	if diff := cmp.Diff(3, args.GetInt("times")); diff != "" {
+		t.Fatalf("GetInt() default mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("exponential", args.GetStringOptional("backoff")); diff != "" {
+		t.Fatalf("GetStringOptional() default mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(time.Second, args.GetDuration("delay")); diff != "" {
+		t.Fatalf("GetDuration() default mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecutePluginWrapperWithNilNextNode(t *testing.T) {
+	e := &executor{sessions: newSessionRuntime(nil), stderr: io.Discard}
+	execCtx := newExecutionContext(map[string]interface{}{}, e, context.Background())
+
+	exitCode := e.executePluginWrapper(
+		execCtx,
+		nil,
+		builtins.RetryWrapperCapability{},
+		map[string]any{"times": 2, "delay": time.Millisecond, "backoff": "constant"},
+		nil,
+		io.Discard,
+	)
+
+	if diff := cmp.Diff(plugin.ExitSuccess, exitCode); diff != "" {
+		t.Fatalf("executePluginWrapper() exit code mismatch (-want +got):\n%s", diff)
 	}
 }

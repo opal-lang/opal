@@ -759,3 +759,17 @@ func TestSessionRuntimeCloseContinuesAfterCloseError(t *testing.T) {
 		t.Fatalf("close error log mismatch (-want +got):\n%s\nlog: %q", diff, logBuf.String())
 	}
 }
+
+func TestRemoveSessionKeepsPooledTransportOpen(t *testing.T) {
+	runtime := newSessionRuntime(nil)
+	pooled := &closeOrderSession{id: "transport:child(base)", orderMu: &sync.Mutex{}, order: &[]string{}}
+	scoped := &transportScopedSession{id: "transport:child", session: pooled}
+
+	runtime.pooled["pool:child"] = pooled
+	runtime.installSession("transport:child", scoped)
+	runtime.removeSession("transport:child")
+
+	if diff := cmp.Diff(0, pooled.closeCall); diff != "" {
+		t.Fatalf("pooled close call count mismatch (-want +got):\n%s", diff)
+	}
+}

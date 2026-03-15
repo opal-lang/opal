@@ -94,17 +94,6 @@ func (w *fileRedirectWriter) Write(p []byte) (int, error) {
 	if err := readCtx(w.ctx).Err(); err != nil {
 		return 0, err
 	}
-	if w.appendMode {
-		existing, err := w.session.Get(readCtx(w.ctx), w.path)
-		if err != nil {
-			existing = nil
-		}
-		combined := append(append([]byte(nil), existing...), p...)
-		if err := w.session.Put(readCtx(w.ctx), combined, w.path, w.perm); err != nil {
-			return 0, fmt.Errorf("failed to append file %q: %w", w.path, err)
-		}
-		return len(p), nil
-	}
 	return w.buf.Write(p)
 }
 
@@ -113,13 +102,28 @@ func (w *fileRedirectWriter) Close() error {
 		return nil
 	}
 	w.closed = true
+	if !w.appendMode {
+		if err := readCtx(w.ctx).Err(); err != nil {
+			return err
+		}
+	}
+	data := w.buf.Bytes()
+	flushCtx := readCtx(w.ctx)
 	if w.appendMode {
-		return nil
+		flushCtx = context.WithoutCancel(flushCtx)
+		if deadline, ok := readCtx(w.ctx).Deadline(); ok {
+			var cancel context.CancelFunc
+			flushCtx, cancel = context.WithDeadline(flushCtx, deadline)
+			defer cancel()
+		}
+		existing, err := w.session.Get(flushCtx, w.path)
+		if err == nil {
+			data = append(append([]byte(nil), existing...), data...)
+		} else {
+			data = append([]byte(nil), data...)
+		}
 	}
-	if err := readCtx(w.ctx).Err(); err != nil {
-		return err
-	}
-	if err := w.session.Put(readCtx(w.ctx), w.buf.Bytes(), w.path, w.perm); err != nil {
+	if err := w.session.Put(flushCtx, data, w.path, w.perm); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", w.path, err)
 	}
 	return nil

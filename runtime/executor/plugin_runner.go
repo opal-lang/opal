@@ -280,8 +280,17 @@ func (s pluginTransportSession) NetworkDialer() coreruntime.NetworkDialer {
 }
 
 func newPluginArgs(params map[string]any, schema coreplugin.Schema, resolve func(string) (string, error)) pluginArgs {
-	plain := make(map[string]any, len(params))
+	plain := make(map[string]any, len(schema.Params)+1)
 	secrets := make(map[string]any)
+	if schema.Primary.Name != "" && schema.Primary.Default != nil && !schema.DeclaresSecret(schema.Primary.Name) {
+		plain[schema.Primary.Name] = schema.Primary.Default
+	}
+	for _, param := range schema.Params {
+		if param.Default == nil || schema.DeclaresSecret(param.Name) {
+			continue
+		}
+		plain[param.Name] = param.Default
+	}
 	for key, value := range params {
 		if schema.DeclaresSecret(key) {
 			secrets[key] = value
@@ -326,7 +335,11 @@ func (e *executor) executePluginWrapper(execCtx sdk.ExecutionContext, next corer
 		}
 		return fmt.Sprint(value), nil
 	}
-	node := capability.Wrap(pluginNextNode{node: next, session: session}, newPluginArgs(params, capability.Schema(), resolver))
+	var wrappedNext coreplugin.ExecNode
+	if next != nil {
+		wrappedNext = pluginNextNode{node: next, session: session}
+	}
+	node := capability.Wrap(wrappedNext, newPluginArgs(params, capability.Schema(), resolver))
 	result, err := node.Execute(pluginExecContext{ctx: execCtx.Context(), session: pluginParentSession{session: session}, stdin: stdin, stdout: stdout, stderr: e.stderr})
 	if err != nil {
 		_, _ = fmt.Fprintf(e.getStderr(), "Error: %v\n", err)
