@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/builtwithtofu/sigil/core/plugin"
@@ -61,6 +62,39 @@ func TestRegistryRejectsDuplicateNamespace(t *testing.T) {
 	if err := registry.Register(&testAWSPlugin{}); err == nil {
 		t.Fatal("Register() second error = nil, want duplicate namespace error")
 	}
+}
+
+func TestRegistryConcurrentLookupDuringRegister(t *testing.T) {
+	registry := plugin.NewRegistry()
+
+	start := make(chan struct{})
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 2000; j++ {
+				_ = registry.Lookup("aws.secrets")
+				_ = registry.LookupEntry("aws.secrets")
+				_ = registry.ListNamespace("aws")
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	close(start)
+	if err := registry.Register(&testAWSPlugin{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	<-done
 }
 
 type testAWSPlugin struct{}

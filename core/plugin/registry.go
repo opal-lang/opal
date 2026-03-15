@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Registry stores plugins and their capabilities by namespace and path.
 type Registry struct {
+	mu           sync.RWMutex
 	plugins      map[string]Plugin
 	capabilities map[string]Capability
 	entries      map[string]*Entry
@@ -48,6 +50,9 @@ func Global() *Registry {
 
 // Register adds a plugin and all of its capabilities.
 func (r *Registry) Register(plugin Plugin) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	identity := plugin.Identity()
 	if identity.Name == "" {
 		return fmt.Errorf("plugin name cannot be empty")
@@ -91,21 +96,30 @@ func (r *Registry) Register(plugin Plugin) error {
 
 // Lookup returns the capability at the given path, if present.
 func (r *Registry) Lookup(path string) Capability {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.capabilities[path]
 }
 
 // LookupEntry returns the discovered capability entry at the given path.
 func (r *Registry) LookupEntry(path string) *Entry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.entries[path]
 }
 
 // Plugin returns the registered plugin namespace, if present.
 func (r *Registry) Plugin(name string) Plugin {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.plugins[name]
 }
 
 // ListNamespace returns registered capability paths under a namespace.
 func (r *Registry) ListNamespace(namespace string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	prefix := namespace + "."
 	paths := make([]string, 0)
 	for path := range r.capabilities {
