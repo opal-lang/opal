@@ -124,9 +124,13 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, b
 	}
 
 	name := strings.TrimPrefix(transport.Decorator, "@")
-	transportDecorator, ok := decorator.Global().GetTransport(name)
+	entry, ok := decorator.Global().Lookup(name)
 	if !ok {
 		return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)
+	}
+	transportDecorator := entry.Transport
+	if transportDecorator == nil {
+		return nil, false, fmt.Errorf("decorator %q is not a transport", transport.Decorator)
 	}
 
 	if !isTransportSessionMaterialized(name) {

@@ -89,6 +89,9 @@ func TestWorkdirInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("descriptor should define required parameter 'path'")
 	}
+	if diff := cmp.Diff(types.BlockRequired, desc.Schema.BlockRequirement); diff != "" {
+		t.Fatalf("block requirement mismatch (-want +got):\n%s", diff)
+	}
 	if diff := cmp.Diff(types.TypeString, param.Type); diff != "" {
 		t.Fatalf("parameter type mismatch (-want +got):\n%s", diff)
 	}

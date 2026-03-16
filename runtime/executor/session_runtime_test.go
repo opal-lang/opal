@@ -1006,6 +1006,26 @@ func TestSessionRuntimeReturnsErrorForUnknownTransportID(t *testing.T) {
 	}
 }
 
+func TestSessionRuntimeDistinguishesNonTransportDecorator(t *testing.T) {
+	runtime := newSessionRuntime(scopedLocalSessionFactory)
+	defer runtime.Close()
+
+	runtime.registerPlanTransports([]planfmt.Transport{{
+		ID:        "transport:invalid",
+		Decorator: "@env",
+		ParentID:  "",
+	}})
+
+	_, err := runtime.SessionFor("transport:invalid")
+	if err == nil {
+		t.Fatalf("expected non-transport decorator error")
+	}
+
+	if diff := cmp.Diff(true, strings.Contains(err.Error(), "is not a transport")); diff != "" {
+		t.Fatalf("error mismatch (-want +got):\n%s\nerr: %q", diff, err.Error())
+	}
+}
+
 func TestSessionRuntimePoolsByParentAndParams(t *testing.T) {
 	registerSessionPoolProbeDecorator(t)
 	resetSessionPoolProbeOpenCount()
