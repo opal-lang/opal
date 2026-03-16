@@ -351,6 +351,7 @@ jobs:
         with:
           name: test-log-${{ matrix.module }}
           path: ${{ runner.temp }}/test-${{ matrix.module }}.log
+          if-no-files-found: ignore
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
