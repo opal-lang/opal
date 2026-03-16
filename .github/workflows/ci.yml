@@ -325,29 +325,18 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 1073741824
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ runner.temp }}/go-build
-            ${{ runner.temp }}/go-mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Run module tests
         env:
           TMPDIR: ${{ runner.temp }}/go-tmp
           GOTMPDIR: ${{ runner.temp }}/go-tmp
-          GOCACHE: ${{ runner.temp }}/go-build
-          GOMODCACHE: ${{ runner.temp }}/go-mod
         run: |
           set -euo pipefail
-          mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE"
+          mkdir -p "$TMPDIR"
           nix develop -c bash -c '
+            go clean -cache -testcache
             echo "Running ${{ matrix.module }} module tests..."
             cd ${{ matrix.module }}
-            go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./...
+            go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./... 2>&1 | tee /tmp/test-${{ matrix.module }}.log
           '
 
       - name: Upload coverage
