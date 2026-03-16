@@ -32,11 +32,8 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	}
 
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
-
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
+	execDec, ok := decorator.Global().GetExec(decoratorName)
+	invariant.Invariant(ok, "unknown or non-exec decorator: %s", cmd.Name)
 
 	return e.executeDecorator(commandExecCtx, cmd, execDec, stdin, stdout)
 }

@@ -3,15 +3,23 @@ package parser
 import (
 	"testing"
 
-	"github.com/builtwithtofu/sigil/core/types"
+	"github.com/builtwithtofu/sigil/core/decorator"
 )
 
+type tokenizerTestExecDecorator struct{}
+
+func (d *tokenizerTestExecDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{Path: "test_exec"}
+}
+
+func (d *tokenizerTestExecDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
 func init() {
-	// Register a test execution decorator to verify it doesn't interpolate
-	dummyHandler := func(ctx types.Context, args types.Args) error {
-		return nil
+	if err := decorator.Register("test_exec", &tokenizerTestExecDecorator{}); err != nil {
+		panic(err)
 	}
-	types.Global().RegisterExecution("test_exec", dummyHandler)
 }
 
 func TestTokenizeString(t *testing.T) {

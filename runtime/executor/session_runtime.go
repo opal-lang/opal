@@ -124,14 +124,9 @@ func (r *sessionRuntime) createSession(transportID string) (decorator.Session, b
 	}
 
 	name := strings.TrimPrefix(transport.Decorator, "@")
-	entry, exists := decorator.Global().Lookup(name)
-	if !exists {
-		return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)
-	}
-
-	transportDecorator, ok := entry.Impl.(decorator.Transport)
+	transportDecorator, ok := decorator.Global().GetTransport(name)
 	if !ok {
-		return nil, false, fmt.Errorf("decorator %q is not a transport", transport.Decorator)
+		return nil, false, fmt.Errorf("unknown transport decorator %q", transport.Decorator)
 	}
 
 	if !isTransportSessionMaterialized(name) {
@@ -323,12 +318,7 @@ func (r *sessionRuntime) lookupSessionByIdentity(sessionID string) (decorator.Se
 }
 
 func isTransportSessionMaterialized(name string) bool {
-	entry, exists := decorator.Global().Lookup(name)
-	if !exists {
-		return false
-	}
-
-	transport, ok := entry.Impl.(decorator.Transport)
+	transport, ok := decorator.Global().GetTransport(name)
 	if !ok {
 		return false
 	}

@@ -130,20 +130,9 @@ type Capabilities struct {
 	// Default: false
 	TransportSensitive bool
 
-	// Purity indicates if the decorator is deterministic (can be cached/constant-folded)
-	// Default: false (safe default - assume side effects)
-	Purity bool
-
 	// Idempotent indicates if the decorator is safe to retry
 	// Default: false (safe default - assume not idempotent)
 	Idempotent bool
-
-	// Block specifies whether decorator accepts/requires a block
-	// Default: BlockForbidden (safe default for value decorators)
-	Block BlockRequirement
-
-	// IO describes I/O behavior for pipe and redirect operators
-	IO IOSemantics
 }
 
 func (c *Capabilities) IsSupportedOn(os string) bool {
@@ -180,23 +169,6 @@ const (
 	// BlockRequired means decorator must have a block (e.g., @parallel, @timeout)
 	BlockRequired BlockRequirement = "required"
 )
-
-// IOSemantics describes I/O capabilities for decorators.
-// This is a simplified v1.0 model - decorators are inherently concurrency-safe
-// by design (pure/monadic), so no ConcurrentSafe flag is needed.
-type IOSemantics struct {
-	// PipeIn indicates decorator can read from stdin (supports: cmd | @decorator)
-	PipeIn bool
-
-	// PipeOut indicates decorator can write to stdout (supports: @decorator | cmd)
-	PipeOut bool
-
-	// RedirectIn indicates decorator can read from file (supports: @decorator < file)
-	RedirectIn bool
-
-	// RedirectOut indicates decorator can write to file (supports: cmd > @decorator)
-	RedirectOut bool
-}
 
 // DescriptorBuilder provides a fluent API for building Descriptor without duplication.
 // Only requires parameters and returns - Path, Summary, Roles are set directly.
@@ -241,21 +213,16 @@ func (b *DescriptorBuilder) TransportSensitive() *DescriptorBuilder {
 	return b
 }
 
-// Pure marks the decorator as deterministic (can be cached/constant-folded).
-func (b *DescriptorBuilder) Pure() *DescriptorBuilder {
-	b.desc.Capabilities.Purity = true
-	return b
-}
-
 // Idempotent marks the decorator as safe to retry.
 func (b *DescriptorBuilder) Idempotent() *DescriptorBuilder {
 	b.desc.Capabilities.Idempotent = true
 	return b
 }
 
-// Block sets the block requirement.
+// Block sets the parser-level block requirement in schema metadata.
+// This is not a runtime capability.
 func (b *DescriptorBuilder) Block(req BlockRequirement) *DescriptorBuilder {
-	b.desc.Capabilities.Block = req
+	b.desc.Schema.BlockRequirement = types.BlockRequirement(req)
 	return b
 }
 

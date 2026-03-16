@@ -236,54 +236,6 @@ func TestValidateSchemaPrimaryNotInParams(t *testing.T) {
 	}
 }
 
-func TestRegisterWithSchema(t *testing.T) {
-	r := NewRegistry()
-
-	schema := NewSchema("test", "value").
-		PrimaryParam("prop", "string", "Test property").
-		Param("default", "string").
-		Optional().
-		Done().
-		Build()
-
-	handler := func(ctx Context, args Args) (Value, error) {
-		return "test", nil
-	}
-
-	err := r.RegisterValueWithSchema(schema, handler)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Retrieve schema
-	retrieved, exists := r.GetSchema("test")
-	if !exists {
-		t.Fatal("schema not found after registration")
-	}
-	if retrieved.PrimaryParameter != "prop" {
-		t.Errorf("expected primary parameter 'prop', got %q", retrieved.PrimaryParameter)
-	}
-	if len(retrieved.Parameters) != 2 {
-		t.Errorf("expected 2 parameters, got %d", len(retrieved.Parameters))
-	}
-}
-
-func TestRegisterWithSchemaWrongKind(t *testing.T) {
-	r := NewRegistry()
-
-	schema := NewSchema("test", KindExecution). // Wrong kind
-							Build()
-
-	handler := func(ctx Context, args Args) (Value, error) {
-		return nil, nil
-	}
-
-	err := r.RegisterValueWithSchema(schema, handler)
-	if err == nil {
-		t.Error("expected error when registering execution schema with RegisterValueWithSchema")
-	}
-}
-
 func TestParameterOrder(t *testing.T) {
 	schema := NewSchema("retry", KindExecution).
 		Param("times", TypeInt).Required().Done().

@@ -296,7 +296,7 @@ func TestShellDecorator_NewArch_Registered(t *testing.T) {
 	}
 
 	// Verify it implements Exec interface
-	_, ok := entry.Impl.(decorator.Exec)
+	_, ok := decorator.Global().GetExec("shell")
 	if !ok {
 		t.Error("@shell should implement Exec interface")
 	}

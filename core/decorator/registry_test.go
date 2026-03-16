@@ -289,6 +289,62 @@ func TestValueCallConstruction(t *testing.T) {
 	}
 }
 
+func TestRegistryGettersUnknownPath(t *testing.T) {
+	r := NewRegistry()
+
+	if _, ok := r.GetValue("missing"); ok {
+		t.Fatal("GetValue should return false for unknown path")
+	}
+	if _, ok := r.GetExec("missing"); ok {
+		t.Fatal("GetExec should return false for unknown path")
+	}
+	if _, ok := r.GetTransport("missing"); ok {
+		t.Fatal("GetTransport should return false for unknown path")
+	}
+	if _, ok := r.GetRedirectTarget("missing"); ok {
+		t.Fatal("GetRedirectTarget should return false for unknown path")
+	}
+}
+
+func TestRegistryGettersByRole(t *testing.T) {
+	r := NewRegistry()
+
+	valueDec := &mockValueDecorator{path: "test.value"}
+	execIODec := &mockExecIODecorator{path: "test.execio"}
+	transportDec := &mockTransportDecorator{path: "test.transport"}
+
+	if err := r.register(valueDec.path, valueDec); err != nil {
+		t.Fatalf("register value decorator: %v", err)
+	}
+	if err := r.register(execIODec.path, execIODec); err != nil {
+		t.Fatalf("register exec+io decorator: %v", err)
+	}
+	if err := r.register(transportDec.path, transportDec); err != nil {
+		t.Fatalf("register transport decorator: %v", err)
+	}
+
+	if _, ok := r.GetValue(valueDec.path); !ok {
+		t.Fatal("GetValue should succeed for value decorator")
+	}
+	if _, ok := r.GetTransport(valueDec.path); ok {
+		t.Fatal("GetTransport should fail for value decorator")
+	}
+
+	if _, ok := r.GetExec(execIODec.path); !ok {
+		t.Fatal("GetExec should succeed for exec+io decorator")
+	}
+	if _, ok := r.GetRedirectTarget(execIODec.path); !ok {
+		t.Fatal("GetRedirectTarget should succeed for exec+io decorator")
+	}
+
+	if _, ok := r.GetTransport(transportDec.path); !ok {
+		t.Fatal("GetTransport should succeed for transport decorator")
+	}
+	if _, ok := r.GetValue(transportDec.path); ok {
+		t.Fatal("GetValue should fail for transport decorator")
+	}
+}
+
 // TestExport verifies Export returns all registered decorators
 func TestExport(t *testing.T) {
 	r := NewRegistry()
@@ -451,6 +507,30 @@ func (m *mockIODecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IO
 
 type mockMultiRoleDecorator struct {
 	path string
+}
+
+type mockExecIODecorator struct {
+	path string
+}
+
+func (m *mockExecIODecorator) Descriptor() Descriptor {
+	return Descriptor{Path: m.path}
+}
+
+func (m *mockExecIODecorator) Wrap(next ExecNode, params map[string]any) ExecNode {
+	return nil
+}
+
+func (m *mockExecIODecorator) IOCaps() IOCaps {
+	return IOCaps{Read: false, Write: true, Append: true}
+}
+
+func (m *mockExecIODecorator) OpenRead(ctx ExecContext, opts ...IOOpts) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (m *mockExecIODecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IOOpts) (io.WriteCloser, error) {
+	return nil, nil
 }
 
 func (m *mockMultiRoleDecorator) Descriptor() Descriptor {

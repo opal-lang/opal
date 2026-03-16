@@ -52,7 +52,6 @@ func (d *VarDecorator) Descriptor() decorator.Descriptor {
 		Done().
 		Returns(types.TypeString, "Value of the variable").
 		TransportScope(decorator.TransportScopeAny).
-		Pure().
 		Idempotent().
 		Block(decorator.BlockForbidden).
 		Build()

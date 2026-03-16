@@ -2346,7 +2346,7 @@ func (p *parser) decorator() {
 	currentPos := tempPos
 
 	// Check if first identifier is registered
-	if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+	if decorator.Global().IsRegistered(currentName) {
 		longestMatch = currentName
 		longestMatchPos = currentPos
 	}
@@ -2368,7 +2368,7 @@ func (p *parser) decorator() {
 		currentPos = p.pos
 
 		// Check if this longer name is registered
-		if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+		if decorator.Global().IsRegistered(currentName) {
 			longestMatch = currentName
 			longestMatchPos = currentPos
 		}
@@ -2395,19 +2395,14 @@ func (p *parser) decorator() {
 	p.pos = longestMatchPos
 
 	// Get the schema for validation
-	// Try new registry first, fall back to old registry for backward compatibility
 	var schema types.DecoratorSchema
 	var hasSchema bool
 
-	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
-	if hasNewEntry {
-		// Extract schema from new registry
+	entry, hasEntry := decorator.Global().Lookup(decoratorName)
+	if hasEntry {
 		desc := entry.Impl.Descriptor()
 		schema = desc.Schema
 		hasSchema = true
-	} else {
-		// Fall back to old registry
-		schema, hasSchema = types.Global().GetSchema(decoratorName)
 	}
 
 	// It's a registered decorator, parse it
@@ -2467,48 +2462,10 @@ func (p *parser) decorator() {
 		p.validateRequiredParameters(decoratorName, schema, providedParams)
 	}
 
-	// Parse optional block (use new registry's Block capability)
-	if hasNewEntry {
-		desc := entry.Impl.Descriptor()
-		blockReq := desc.Capabilities.Block
-
-		// Default to BlockForbidden if not specified (safe default for value decorators)
-		if blockReq == "" {
-			blockReq = decorator.BlockForbidden
-		}
-
-		switch blockReq {
-		case decorator.BlockRequired:
-			// Block is required
-			if !p.at(lexer.LBRACE) {
-				p.errorWithDetails(
-					fmt.Sprintf("@%s requires a block", decoratorName),
-					"decorator block",
-					fmt.Sprintf("Add a block: @%s(...) { ... }", decoratorName),
-				)
-			} else {
-				p.block()
-			}
-		case decorator.BlockOptional:
-			// Block is optional
-			if p.at(lexer.LBRACE) {
-				p.block()
-			}
-		case decorator.BlockForbidden:
-			// Block is not allowed
-			if p.at(lexer.LBRACE) {
-				p.errorWithDetails(
-					fmt.Sprintf("@%s cannot have a block", decoratorName),
-					"decorator block",
-					fmt.Sprintf("@%s is a value decorator and does not accept blocks", decoratorName),
-				)
-			}
-		}
-	} else if hasSchema {
-		// Fall back to old schema-based validation for decorators not in new registry
+	// Parse optional block using schema requirement from registered decorator metadata.
+	if hasEntry && hasSchema {
 		switch schema.BlockRequirement {
 		case types.BlockRequired:
-			// Block is required
 			if !p.at(lexer.LBRACE) {
 				p.errorWithDetails(
 					fmt.Sprintf("@%s requires a block", decoratorName),
@@ -2519,12 +2476,10 @@ func (p *parser) decorator() {
 				p.block()
 			}
 		case types.BlockOptional:
-			// Block is optional
 			if p.at(lexer.LBRACE) {
 				p.block()
 			}
-		case types.BlockForbidden:
-			// Block is not allowed
+		default:
 			if p.at(lexer.LBRACE) {
 				p.errorWithDetails(
 					fmt.Sprintf("@%s cannot have a block", decoratorName),
@@ -2568,7 +2523,7 @@ func (p *parser) decoratorInExpressionContext() {
 	currentName := decoratorName
 	currentPos := tempPos
 
-	if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+	if decorator.Global().IsRegistered(currentName) {
 		longestMatch = currentName
 		longestMatchPos = currentPos
 	}
@@ -2585,7 +2540,7 @@ func (p *parser) decoratorInExpressionContext() {
 		currentName = currentName + "." + string(p.current().Text)
 		currentPos = p.pos
 
-		if types.Global().IsRegistered(currentName) || decorator.Global().IsRegistered(currentName) {
+		if decorator.Global().IsRegistered(currentName) {
 			longestMatch = currentName
 			longestMatchPos = currentPos
 		}
@@ -2636,13 +2591,11 @@ func (p *parser) decoratorInExpressionContext() {
 	// Get schema for validation (needed for primary parameter tracking)
 	var schema types.DecoratorSchema
 	var hasSchema bool
-	entry, hasNewEntry := decorator.Global().Lookup(decoratorName)
-	if hasNewEntry {
+	entry, hasEntry := decorator.Global().Lookup(decoratorName)
+	if hasEntry {
 		desc := entry.Impl.Descriptor()
 		schema = desc.Schema
 		hasSchema = true
-	} else {
-		schema, hasSchema = types.Global().GetSchema(decoratorName)
 	}
 
 	// Track if primary parameter was provided via dot syntax

@@ -14,9 +14,13 @@ type Registry struct {
 
 // Entry represents a registered decorator.
 type Entry struct {
-	Impl    Decorator // The decorator implementation
-	Roles   []Role    // Auto-inferred from implemented interfaces
-	decoder *Decoder
+	Impl           Decorator // The decorator implementation
+	Roles          []Role    // Auto-inferred from implemented interfaces
+	Value          Value
+	Exec           Exec
+	Transport      Transport
+	RedirectTarget IO
+	decoder        *Decoder
 }
 
 // NewRegistry creates a new decorator registry.
@@ -53,14 +57,62 @@ func (r *Registry) register(path string, impl Decorator) error {
 	// Auto-infer roles from implemented interfaces
 	roles := inferRoles(impl)
 	compiledDecoder := CompileDecoder(impl.Descriptor().Schema)
+	valueImpl, _ := impl.(Value)
+	execImpl, _ := impl.(Exec)
+	transportImpl, _ := impl.(Transport)
+	redirectImpl, _ := impl.(IO)
 
 	r.entries[path] = Entry{
-		Impl:    impl,
-		Roles:   roles,
-		decoder: compiledDecoder,
+		Impl:           impl,
+		Roles:          roles,
+		Value:          valueImpl,
+		Exec:           execImpl,
+		Transport:      transportImpl,
+		RedirectTarget: redirectImpl,
+		decoder:        compiledDecoder,
 	}
 
 	return nil
+}
+
+// GetValue retrieves a value decorator by path.
+func (r *Registry) GetValue(path string) (Value, bool) {
+	entry, ok := r.Lookup(path)
+	if !ok || entry.Value == nil {
+		return nil, false
+	}
+
+	return entry.Value, true
+}
+
+// GetExec retrieves an exec decorator by path.
+func (r *Registry) GetExec(path string) (Exec, bool) {
+	entry, ok := r.Lookup(path)
+	if !ok || entry.Exec == nil {
+		return nil, false
+	}
+
+	return entry.Exec, true
+}
+
+// GetTransport retrieves a transport decorator by path.
+func (r *Registry) GetTransport(path string) (Transport, bool) {
+	entry, ok := r.Lookup(path)
+	if !ok || entry.Transport == nil {
+		return nil, false
+	}
+
+	return entry.Transport, true
+}
+
+// GetRedirectTarget retrieves an I/O redirect target decorator by path.
+func (r *Registry) GetRedirectTarget(path string) (IO, bool) {
+	entry, ok := r.Lookup(path)
+	if !ok || entry.RedirectTarget == nil {
+		return nil, false
+	}
+
+	return entry.RedirectTarget, true
 }
 
 // Lookup retrieves a decorator by path (URI-based lookup).
@@ -186,9 +238,9 @@ func (r *Registry) ResolveValues(
 		return nil, fmt.Errorf("decorator %q not found", decoratorPath)
 	}
 
-	// Step 2: Type assert to Value interface
-	valueDecorator, ok := entry.Impl.(Value)
-	if !ok {
+	// Step 2: Ensure decorator implements Value interface
+	valueDecorator := entry.Value
+	if valueDecorator == nil {
 		return nil, fmt.Errorf("decorator %q does not implement Value interface", decoratorPath)
 	}
 
