@@ -13,9 +13,11 @@ func TestSSHTransportRegistration(t *testing.T) {
 		t.Fatalf("ssh.connect transport not found in registry")
 	}
 
-	transport, typeOK := coredecorator.Global().GetTransport("ssh.connect")
+	transport, typeOK, reason := coredecorator.Global().GetTransport("ssh.connect")
 	if typeOK {
 		_, typeOK = transport.(*coredecorator.SSHTransport)
+	} else if reason != "" {
+		t.Fatalf("unexpected transport lookup reason: %s", reason)
 	}
 	if diff := cmp.Diff(true, typeOK); diff != "" {
 		t.Fatalf("registered ssh.connect transport type mismatch (-want +got):\n%s", diff)

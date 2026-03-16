@@ -5,6 +5,14 @@ import (
 	"sync"
 )
 
+func wrongRoleReason(path, role string) string {
+	return fmt.Sprintf("decorator %q is not a %s", path, role)
+}
+
+func missingValueReason(path string) string {
+	return fmt.Sprintf("decorator %q does not implement Value interface", path)
+}
+
 // Registry holds registered decorators with auto-inferred roles.
 // Uses the database/sql driver registration pattern.
 type Registry struct {
@@ -76,43 +84,55 @@ func (r *Registry) register(path string, impl Decorator) error {
 }
 
 // GetValue retrieves a value decorator by path.
-func (r *Registry) GetValue(path string) (Value, bool) {
+func (r *Registry) GetValue(path string) (Value, bool, string) {
 	entry, ok := r.Lookup(path)
-	if !ok || entry.Value == nil {
-		return nil, false
+	if !ok {
+		return nil, false, ""
+	}
+	if entry.Value == nil {
+		return nil, false, missingValueReason(path)
 	}
 
-	return entry.Value, true
+	return entry.Value, true, ""
 }
 
 // GetExec retrieves an exec decorator by path.
-func (r *Registry) GetExec(path string) (Exec, bool) {
+func (r *Registry) GetExec(path string) (Exec, bool, string) {
 	entry, ok := r.Lookup(path)
-	if !ok || entry.Exec == nil {
-		return nil, false
+	if !ok {
+		return nil, false, ""
+	}
+	if entry.Exec == nil {
+		return nil, false, wrongRoleReason(path, "exec decorator")
 	}
 
-	return entry.Exec, true
+	return entry.Exec, true, ""
 }
 
 // GetTransport retrieves a transport decorator by path.
-func (r *Registry) GetTransport(path string) (Transport, bool) {
+func (r *Registry) GetTransport(path string) (Transport, bool, string) {
 	entry, ok := r.Lookup(path)
-	if !ok || entry.Transport == nil {
-		return nil, false
+	if !ok {
+		return nil, false, ""
+	}
+	if entry.Transport == nil {
+		return nil, false, wrongRoleReason(path, "transport")
 	}
 
-	return entry.Transport, true
+	return entry.Transport, true, ""
 }
 
 // GetRedirectTarget retrieves an I/O redirect target decorator by path.
-func (r *Registry) GetRedirectTarget(path string) (IO, bool) {
+func (r *Registry) GetRedirectTarget(path string) (IO, bool, string) {
 	entry, ok := r.Lookup(path)
-	if !ok || entry.RedirectTarget == nil {
-		return nil, false
+	if !ok {
+		return nil, false, ""
+	}
+	if entry.RedirectTarget == nil {
+		return nil, false, wrongRoleReason(path, "redirect target")
 	}
 
-	return entry.RedirectTarget, true
+	return entry.RedirectTarget, true, ""
 }
 
 // Lookup retrieves a decorator by path (URI-based lookup).
@@ -239,9 +259,12 @@ func (r *Registry) ResolveValues(
 	}
 
 	// Step 2: Ensure decorator implements Value interface
-	valueDecorator := entry.Value
-	if valueDecorator == nil {
-		return nil, fmt.Errorf("decorator %q does not implement Value interface", decoratorPath)
+	valueDecorator, ok, reason := r.GetValue(decoratorPath)
+	if !ok {
+		if reason == "" {
+			return nil, fmt.Errorf("decorator %q not found", decoratorPath)
+		}
+		return nil, fmt.Errorf("%s", reason)
 	}
 
 	// Step 3: Check transport scope compatibility

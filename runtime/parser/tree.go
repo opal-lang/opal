@@ -513,7 +513,7 @@ func (v *semanticValidator) validateRedirectSupport(decoratorName string, redire
 }
 
 func (v *semanticValidator) lookupIOCaps(decoratorName string) (decorator.IOCaps, bool) {
-	ioDecorator, ok := decorator.Global().GetRedirectTarget(decoratorName)
+	ioDecorator, ok, _ := decorator.Global().GetRedirectTarget(decoratorName)
 	if !ok {
 		return decorator.IOCaps{}, false
 	}

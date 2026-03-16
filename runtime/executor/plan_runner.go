@@ -220,8 +220,8 @@ func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd
 	}
 
 	decoratorName := normalizeDecoratorName(cmd.Decorator)
-	execDec, ok := decorator.Global().GetExec(decoratorName)
-	invariant.Invariant(ok, "unknown or non-exec decorator: %s", cmd.Decorator)
+	execDec, ok, reason := decorator.Global().GetExec(decoratorName)
+	invariant.Invariant(ok, "%s", execLookupError(cmd.Decorator, reason))
 
 	return e.executePlanDecorator(commandExecCtx, cmd, execDec, params, stdin, stdout)
 }
@@ -498,10 +498,10 @@ func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (decorator
 	}
 
 	decoratorPath, args := normalizePlanIOArgs(target.Decorator, planArgsToMap(target.Args))
-	ioDecorator, ok := decorator.Global().GetRedirectTarget(decoratorPath)
+	ioDecorator, ok, reason := decorator.Global().GetRedirectTarget(decoratorPath)
 	if !ok {
-		if _, exists := decorator.Global().Lookup(decoratorPath); exists {
-			_, _ = fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
+		if reason != "" {
+			_, _ = fmt.Fprintf(stderr, "Error: %s\n", reason)
 			return nil, target.Decorator, false
 		}
 		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)

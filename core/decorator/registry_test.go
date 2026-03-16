@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestAutoInference verifies roles are auto-inferred from interfaces
@@ -292,17 +294,25 @@ func TestValueCallConstruction(t *testing.T) {
 func TestRegistryGettersUnknownPath(t *testing.T) {
 	r := NewRegistry()
 
-	if _, ok := r.GetValue("missing"); ok {
+	if _, ok, reason := r.GetValue("missing"); ok {
 		t.Fatal("GetValue should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetValue should not return reason for unknown path, got %q", reason)
 	}
-	if _, ok := r.GetExec("missing"); ok {
+	if _, ok, reason := r.GetExec("missing"); ok {
 		t.Fatal("GetExec should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetExec should not return reason for unknown path, got %q", reason)
 	}
-	if _, ok := r.GetTransport("missing"); ok {
+	if _, ok, reason := r.GetTransport("missing"); ok {
 		t.Fatal("GetTransport should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetTransport should not return reason for unknown path, got %q", reason)
 	}
-	if _, ok := r.GetRedirectTarget("missing"); ok {
+	if _, ok, reason := r.GetRedirectTarget("missing"); ok {
 		t.Fatal("GetRedirectTarget should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetRedirectTarget should not return reason for unknown path, got %q", reason)
 	}
 }
 
@@ -323,25 +333,37 @@ func TestRegistryGettersByRole(t *testing.T) {
 		t.Fatalf("register transport decorator: %v", err)
 	}
 
-	if _, ok := r.GetValue(valueDec.path); !ok {
+	if _, ok, reason := r.GetValue(valueDec.path); !ok {
 		t.Fatal("GetValue should succeed for value decorator")
+	} else if reason != "" {
+		t.Fatalf("GetValue should not return reason on success, got %q", reason)
 	}
-	if _, ok := r.GetTransport(valueDec.path); ok {
+	if _, ok, reason := r.GetTransport(valueDec.path); ok {
 		t.Fatal("GetTransport should fail for value decorator")
+	} else if diff := cmp.Diff("decorator \"test.value\" is not a transport", reason); diff != "" {
+		t.Fatalf("GetTransport reason mismatch (-want +got):\n%s", diff)
 	}
 
-	if _, ok := r.GetExec(execIODec.path); !ok {
+	if _, ok, reason := r.GetExec(execIODec.path); !ok {
 		t.Fatal("GetExec should succeed for exec+io decorator")
+	} else if reason != "" {
+		t.Fatalf("GetExec should not return reason on success, got %q", reason)
 	}
-	if _, ok := r.GetRedirectTarget(execIODec.path); !ok {
+	if _, ok, reason := r.GetRedirectTarget(execIODec.path); !ok {
 		t.Fatal("GetRedirectTarget should succeed for exec+io decorator")
+	} else if reason != "" {
+		t.Fatalf("GetRedirectTarget should not return reason on success, got %q", reason)
 	}
 
-	if _, ok := r.GetTransport(transportDec.path); !ok {
+	if _, ok, reason := r.GetTransport(transportDec.path); !ok {
 		t.Fatal("GetTransport should succeed for transport decorator")
+	} else if reason != "" {
+		t.Fatalf("GetTransport should not return reason on success, got %q", reason)
 	}
-	if _, ok := r.GetValue(transportDec.path); ok {
+	if _, ok, reason := r.GetValue(transportDec.path); ok {
 		t.Fatal("GetValue should fail for transport decorator")
+	} else if diff := cmp.Diff("decorator \"test.transport\" does not implement Value interface", reason); diff != "" {
+		t.Fatalf("GetValue reason mismatch (-want +got):\n%s", diff)
 	}
 }
 

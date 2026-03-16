@@ -118,15 +118,11 @@ func lookupTransportDecorator(name string) (decorator.Transport, decorator.Descr
 	if trimmed == "" {
 		return nil, decorator.Descriptor{}, false
 	}
-	transport, ok := decorator.Global().GetTransport(trimmed)
+	transport, ok, _ := decorator.Global().GetTransport(trimmed)
 	if !ok {
 		return nil, decorator.Descriptor{}, false
 	}
-	entry, ok := decorator.Global().Lookup(trimmed)
-	if !ok {
-		return nil, decorator.Descriptor{}, false
-	}
-	return transport, entry.Impl.Descriptor(), true
+	return transport, transport.Descriptor(), true
 }
 
 func isTransportDecoratorName(name string) bool {
