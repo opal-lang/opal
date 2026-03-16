@@ -329,16 +329,28 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}/go-tmp
           GOTMPDIR: ${{ runner.temp }}/go-tmp
+          GOCACHE: ${{ runner.temp }}/go-build
+          GOMODCACHE: ${{ runner.temp }}/go-mod
+          TEST_LOG: ${{ runner.temp }}/test-${{ matrix.module }}.log
         run: |
           set -euo pipefail
-          mkdir -p "$TMPDIR"
+          rm -rf "$GOCACHE" "$GOMODCACHE"
+          mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE"
           nix develop -c bash -c '
             set -euo pipefail
-            go clean -cache -testcache
             echo "Running ${{ matrix.module }} module tests..."
+            echo "Using GOCACHE=$GOCACHE"
+            echo "Using GOMODCACHE=$GOMODCACHE"
             cd ${{ matrix.module }}
-            go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./... 2>&1 | tee /tmp/test-${{ matrix.module }}.log
+            go test -v -race -coverprofile=../coverage-${{ matrix.module }}.out -covermode=atomic ./... 2>&1 | tee "$TEST_LOG"
           '
+
+      - name: Upload failed test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.module }}
+          path: ${{ runner.temp }}/test-${{ matrix.module }}.log
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
