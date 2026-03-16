@@ -333,6 +333,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           nix develop -c bash -c '
+            set -euo pipefail
             go clean -cache -testcache
             echo "Running ${{ matrix.module }} module tests..."
             cd ${{ matrix.module }}
