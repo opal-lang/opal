@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestAutoInference verifies roles are auto-inferred from interfaces
@@ -289,6 +291,82 @@ func TestValueCallConstruction(t *testing.T) {
 	}
 }
 
+func TestRegistryGettersUnknownPath(t *testing.T) {
+	r := NewRegistry()
+
+	if _, ok, reason := r.GetValue("missing"); ok {
+		t.Fatal("GetValue should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetValue should not return reason for unknown path, got %q", reason)
+	}
+	if _, ok, reason := r.GetExec("missing"); ok {
+		t.Fatal("GetExec should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetExec should not return reason for unknown path, got %q", reason)
+	}
+	if _, ok, reason := r.GetTransport("missing"); ok {
+		t.Fatal("GetTransport should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetTransport should not return reason for unknown path, got %q", reason)
+	}
+	if _, ok, reason := r.GetRedirectTarget("missing"); ok {
+		t.Fatal("GetRedirectTarget should return false for unknown path")
+	} else if reason != "" {
+		t.Fatalf("GetRedirectTarget should not return reason for unknown path, got %q", reason)
+	}
+}
+
+func TestRegistryGettersByRole(t *testing.T) {
+	r := NewRegistry()
+
+	valueDec := &mockValueDecorator{path: "test.value"}
+	execIODec := &mockExecIODecorator{path: "test.execio"}
+	transportDec := &mockTransportDecorator{path: "test.transport"}
+
+	if err := r.register(valueDec.path, valueDec); err != nil {
+		t.Fatalf("register value decorator: %v", err)
+	}
+	if err := r.register(execIODec.path, execIODec); err != nil {
+		t.Fatalf("register exec+io decorator: %v", err)
+	}
+	if err := r.register(transportDec.path, transportDec); err != nil {
+		t.Fatalf("register transport decorator: %v", err)
+	}
+
+	if _, ok, reason := r.GetValue(valueDec.path); !ok {
+		t.Fatal("GetValue should succeed for value decorator")
+	} else if reason != "" {
+		t.Fatalf("GetValue should not return reason on success, got %q", reason)
+	}
+	if _, ok, reason := r.GetTransport(valueDec.path); ok {
+		t.Fatal("GetTransport should fail for value decorator")
+	} else if diff := cmp.Diff("decorator \"test.value\" is not a transport", reason); diff != "" {
+		t.Fatalf("GetTransport reason mismatch (-want +got):\n%s", diff)
+	}
+
+	if _, ok, reason := r.GetExec(execIODec.path); !ok {
+		t.Fatal("GetExec should succeed for exec+io decorator")
+	} else if reason != "" {
+		t.Fatalf("GetExec should not return reason on success, got %q", reason)
+	}
+	if _, ok, reason := r.GetRedirectTarget(execIODec.path); !ok {
+		t.Fatal("GetRedirectTarget should succeed for exec+io decorator")
+	} else if reason != "" {
+		t.Fatalf("GetRedirectTarget should not return reason on success, got %q", reason)
+	}
+
+	if _, ok, reason := r.GetTransport(transportDec.path); !ok {
+		t.Fatal("GetTransport should succeed for transport decorator")
+	} else if reason != "" {
+		t.Fatalf("GetTransport should not return reason on success, got %q", reason)
+	}
+	if _, ok, reason := r.GetValue(transportDec.path); ok {
+		t.Fatal("GetValue should fail for transport decorator")
+	} else if diff := cmp.Diff("decorator \"test.transport\" does not implement Value interface", reason); diff != "" {
+		t.Fatalf("GetValue reason mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestExport verifies Export returns all registered decorators
 func TestExport(t *testing.T) {
 	r := NewRegistry()
@@ -451,6 +529,30 @@ func (m *mockIODecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IO
 
 type mockMultiRoleDecorator struct {
 	path string
+}
+
+type mockExecIODecorator struct {
+	path string
+}
+
+func (m *mockExecIODecorator) Descriptor() Descriptor {
+	return Descriptor{Path: m.path}
+}
+
+func (m *mockExecIODecorator) Wrap(next ExecNode, params map[string]any) ExecNode {
+	return nil
+}
+
+func (m *mockExecIODecorator) IOCaps() IOCaps {
+	return IOCaps{Read: false, Write: true, Append: true}
+}
+
+func (m *mockExecIODecorator) OpenRead(ctx ExecContext, opts ...IOOpts) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (m *mockExecIODecorator) OpenWrite(ctx ExecContext, appendMode bool, opts ...IOOpts) (io.WriteCloser, error) {
+	return nil, nil
 }
 
 func (m *mockMultiRoleDecorator) Descriptor() Descriptor {

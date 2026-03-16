@@ -32,17 +32,21 @@ func (e *executor) executeCommandWithPipes(execCtx sdk.ExecutionContext, cmd *sd
 	}
 
 	decoratorName := strings.TrimPrefix(cmd.Name, "@")
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Name)
-
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Name)
+	execDec, ok, reason := decorator.Global().GetExec(decoratorName)
+	invariant.Invariant(ok, "%s", execLookupError(cmd.Name, reason))
 
 	return e.executeDecorator(commandExecCtx, cmd, execDec, stdin, stdout)
 }
 
 func isShellDecorator(name string) bool {
 	return strings.TrimPrefix(name, "@") == "shell"
+}
+
+func execLookupError(name, reason string) string {
+	if reason != "" {
+		return reason
+	}
+	return fmt.Sprintf("unknown exec decorator %q", name)
 }
 
 func withExecutionTransport(execCtx sdk.ExecutionContext, transportID string) sdk.ExecutionContext {

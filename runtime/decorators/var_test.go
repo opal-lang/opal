@@ -62,11 +62,6 @@ func TestVarDecoratorDescriptor(t *testing.T) {
 		t.Errorf("TransportScope: got %v, want TransportScopeAny", desc.Capabilities.TransportScope)
 	}
 
-	// Verify purity (deterministic)
-	if !desc.Capabilities.Purity {
-		t.Error("Purity should be true (deterministic)")
-	}
-
 	// Verify idempotent
 	if !desc.Capabilities.Idempotent {
 		t.Error("Idempotent should be true")

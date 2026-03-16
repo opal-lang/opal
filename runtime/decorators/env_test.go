@@ -34,11 +34,6 @@ func TestEnvDecoratorDescriptor(t *testing.T) {
 		t.Errorf("TransportScope: got %v, want TransportScopeAny", desc.Capabilities.TransportScope)
 	}
 
-	// Verify NOT pure (reads external state)
-	if desc.Capabilities.Purity {
-		t.Error("Purity should be false (reads external state)")
-	}
-
 	// Verify idempotent
 	if !desc.Capabilities.Idempotent {
 		t.Error("Idempotent should be true")

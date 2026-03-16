@@ -1623,13 +1623,13 @@ func splitDecoratorRefParts(parts []string) (string, []string) {
 	longest := parts[0]
 	longestLen := 1
 	current := parts[0]
-	if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+	if decorator.Global().IsRegistered(current) {
 		longest = current
 	}
 
 	for i := 1; i < len(parts); i++ {
 		current = current + "." + parts[i]
-		if decorator.Global().IsRegistered(current) || types.Global().IsRegistered(current) {
+		if decorator.Global().IsRegistered(current) {
 			longest = current
 			longestLen = i + 1
 		}

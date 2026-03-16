@@ -17,11 +17,9 @@ func (m *mockTransportDecorator) Descriptor() decorator.Descriptor {
 	return decorator.Descriptor{
 		Path: m.path,
 		Schema: types.DecoratorSchema{
-			Path: m.path,
-			Kind: types.KindExecution,
-		},
-		Capabilities: decorator.Capabilities{
-			Block: decorator.BlockRequired,
+			Path:             m.path,
+			Kind:             types.KindExecution,
+			BlockRequirement: types.BlockRequired,
 		},
 	}
 }

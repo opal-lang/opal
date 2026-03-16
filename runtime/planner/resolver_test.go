@@ -618,7 +618,6 @@ func (d *captureValueDecorator) Descriptor() decorator.Descriptor {
 		ParamString("fallback", "Fallback value").
 		Done().
 		TransportScope(decorator.TransportScopeAny).
-		Pure().
 		Idempotent().
 		Block(decorator.BlockForbidden).
 		Build()

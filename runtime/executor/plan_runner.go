@@ -220,11 +220,8 @@ func (e *executor) executePlanCommandWithPipes(execCtx sdk.ExecutionContext, cmd
 	}
 
 	decoratorName := normalizeDecoratorName(cmd.Decorator)
-	entry, exists := decorator.Global().Lookup(decoratorName)
-	invariant.Invariant(exists, "unknown decorator: %s", cmd.Decorator)
-
-	execDec, ok := entry.Impl.(decorator.Exec)
-	invariant.Invariant(ok, "%s is not an execution decorator", cmd.Decorator)
+	execDec, ok, reason := decorator.Global().GetExec(decoratorName)
+	invariant.Invariant(ok, "%s", execLookupError(cmd.Decorator, reason))
 
 	return e.executePlanDecorator(commandExecCtx, cmd, execDec, params, stdin, stdout)
 }
@@ -501,15 +498,13 @@ func resolvePlanIOSink(target *planfmt.CommandNode, stderr io.Writer) (decorator
 	}
 
 	decoratorPath, args := normalizePlanIOArgs(target.Decorator, planArgsToMap(target.Args))
-	entry, exists := decorator.Global().Lookup(decoratorPath)
-	if !exists {
-		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
-		return nil, target.Decorator, false
-	}
-
-	ioDecorator, ok := entry.Impl.(decorator.IO)
+	ioDecorator, ok, reason := decorator.Global().GetRedirectTarget(decoratorPath)
 	if !ok {
-		_, _ = fmt.Fprintf(stderr, "Error: decorator %s does not support redirect sink I/O\n", target.Decorator)
+		if reason != "" {
+			_, _ = fmt.Fprintf(stderr, "Error: %s\n", reason)
+			return nil, target.Decorator, false
+		}
+		_, _ = fmt.Fprintf(stderr, "Error: unknown redirect sink decorator: %s\n", target.Decorator)
 		return nil, target.Decorator, false
 	}
 

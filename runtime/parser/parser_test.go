@@ -4,14 +4,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/sigil/core/decorator"
 	"github.com/builtwithtofu/sigil/core/types"
 	"github.com/builtwithtofu/sigil/runtime/lexer"
 	"github.com/google/go-cmp/cmp"
 )
 
+type parserTestValueDecorator struct {
+	path   string
+	schema types.DecoratorSchema
+}
+
+func (d *parserTestValueDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{Path: d.path, Schema: d.schema}
+}
+
+func (d *parserTestValueDecorator) Resolve(ctx decorator.ValueEvalContext, calls ...decorator.ValueCall) ([]decorator.ResolveResult, error) {
+	results := make([]decorator.ResolveResult, len(calls))
+	for i := range calls {
+		results[i] = decorator.ResolveResult{Value: "test"}
+	}
+	return results, nil
+}
+
+type parserTestExecDecorator struct {
+	path   string
+	schema types.DecoratorSchema
+}
+
+func (d *parserTestExecDecorator) Descriptor() decorator.Descriptor {
+	return decorator.Descriptor{Path: d.path, Schema: d.schema}
+}
+
+func (d *parserTestExecDecorator) Wrap(next decorator.ExecNode, params map[string]any) decorator.ExecNode {
+	return next
+}
+
 func init() {
-	// Register test decorators for pipe validation tests
-	// @testvalue - value decorator without I/O support (for testing pipe validation)
 	testValueSchema := types.NewSchema("testvalue", types.KindValue).
 		Description("Test value decorator without I/O").
 		Param("arg", types.TypeString).
@@ -21,13 +50,6 @@ func init() {
 		Returns(types.TypeString, "Test value").
 		Build()
 
-	// Register without I/O capabilities - this decorator doesn't support piping
-	if err := types.Global().RegisterValueWithSchema(testValueSchema, nil); err != nil {
-		panic(err)
-	}
-
-	// Register namespaced decorator for testing dot-separated names
-	// @file.read - value decorator for testing namespaced decorator parsing
 	fileReadSchema := types.NewSchema("file.read", types.KindValue).
 		Description("Read file").
 		Param("path", types.TypeString).
@@ -36,20 +58,10 @@ func init() {
 		Returns(types.TypeString, "Contents").
 		Build()
 
-	if err := types.Global().RegisterValueWithSchema(fileReadSchema, nil); err != nil {
-		panic(err)
-	}
-
-	// Register @file.temp for redirect validation tests
-	// Supports overwrite only (no append)
 	fileTempSchema := types.NewSchema("file.temp", types.KindExecution).
 		Description("Create temporary file").
 		WithRedirect(types.RedirectOverwriteOnly).
 		Build()
-
-	if err := types.Global().RegisterExecutionWithSchema(fileTempSchema, nil); err != nil {
-		panic(err)
-	}
 
 	testSinkSchema := types.NewSchema("test.sink.path", types.KindExecution).
 		Description("Test sink decorator").
@@ -59,12 +71,21 @@ func init() {
 		WithRedirect(types.RedirectBoth).
 		Build()
 
-	if err := types.Global().RegisterExecutionWithSchema(testSinkSchema, nil); err != nil {
+	if err := decorator.Register("testvalue", &parserTestValueDecorator{path: "testvalue", schema: testValueSchema}); err != nil {
 		panic(err)
 	}
 
-	// Note: @retry, @parallel, @timeout are now registered in runtime/decorators/
-	// No need for mocks - real decorators with stub implementations are used
+	if err := decorator.Register("file.read", &parserTestValueDecorator{path: "file.read", schema: fileReadSchema}); err != nil {
+		panic(err)
+	}
+
+	if err := decorator.Register("file.temp", &parserTestExecDecorator{path: "file.temp", schema: fileTempSchema}); err != nil {
+		panic(err)
+	}
+
+	if err := decorator.Register("test.sink.path", &parserTestExecDecorator{path: "test.sink.path", schema: testSinkSchema}); err != nil {
+		panic(err)
+	}
 }
 
 func TestDecoratorSink(t *testing.T) {
